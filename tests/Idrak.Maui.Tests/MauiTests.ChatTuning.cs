@@ -6,10 +6,6 @@ using System.Text.Json.Nodes;
 using Idrak.Maui.Abstractions;
 using Idrak.Maui.ViewModels;
 using Idrak.Maui.Views;
-using Idrak.Text.Plugins.Gemma;
-using Idrak.Text.Plugins.Llama;
-using Idrak.Text.Plugins.Mistral;
-using Idrak.Text.Plugins.Qwen;
 
 namespace Idrak.Maui.Tests;
 

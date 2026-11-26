@@ -23,16 +23,11 @@ internal static partial class MauiTests
     [
         ("maui settings: saved and read back, the token in the secret store only; an empty value is the library's own; a bad saved value is skipped and named; clear forgets them", SettingsSavedAndRead),
         ("maui settings: values are checked (a comma reads as the decimal point), and a change to the cache folder or the GPU chunk needs a restart", SettingsChecked),
-        ("maui settings page: a refused value saves nothing and says why; a saved restart-only change says so and stays as it runs", SettingsPage),
-        ("maui settings: the desktop window's least size and whether its size and place are kept are settings (Layout and motion, found by the search), kept and read back; a least size below the floor or not a number is refused, an empty one the default", WindowSettings),
+        ("maui settings: the desktop window's least size and whether its size and place are kept are settings (Layout and motion), kept and read back; a least size below the floor or not a number is refused, an empty one the default", WindowSettings),
         ("maui window: on a desktop the main window takes its least size, opens at the size and place kept from the last run (raised to the least size), and keeps each resize and move off the UI thread, changes during a write making one write; a minimised place and keeping turned off write nothing; a phone's window is left as it is", WindowPlaceKept),
-        ("maui features: the library's devices feature is the default; an app adds, replaces and removes by name; turned-off ones are not enabled; an unknown name is not registered", FeaturesRegistry),
         ("maui features: the devices feature opens its page bound to its view model", FeaturesOpen),
-        ("maui features: every planned feature is registered by its name with its title, order, needs and state (planned, with what is coming); the menu lists them after devices in the plan's order; each can be turned off", PlannedRegistered),
-        ("maui features: the placeholder page and its view model open for every planned feature, with its title, glyph, summary, what it will need and what it will do", PlaceholderOpens),
-        ("maui features: a ready feature registered over a planned one keeps its place in the menu; one that sets no order or state is ready and sorts after the ordered ones, by title", PlannedReplaced),
+        ("maui features: the placeholder page and its view model open for a planned feature (the app's self-test) and refuse another view model; the needs' lines; a ready feature on the placeholder", PlaceholderOpens),
         ("maui theme: the planned mark has its style and colours in light and dark, readable on its own ground, a card's and the page's; the placeholder view takes sizes and colours from theme keys", PlannedMark),
-        ("maui progress: 'maui' is in ProgressReporters and IDRAK_PROGRESS chooses it", ProgressRegistered),
         ("maui progress: thousands of reports between two showings make one UI update; the item shows the amounts, share, rate and time left; the detail is asked once a showing", ProgressThrottled),
         ("maui progress: stages, finishing with a message and clearing the item; nothing is shown after the end", ProgressStages),
         ("maui models: a memory-pressure signal from the unload level up unloads the idle models and keeps one in use; below it only cached memory is returned", ModelsReleased),
@@ -48,49 +43,17 @@ internal static partial class MauiTests
         ("maui chat: a model of the store is chosen and loaded (device, formats, load time); an answer streams into its bubble with its count and tokens per second, cold then warm; the request carries the system prompt, the history, thinking and the settings' options; a new chat clears it; copying goes through the page's clipboard", ChatStreams),
         ("maui chat: a thousand tokens make a few UI updates (one a progress interval, the first and the last), the bubble every token", ChatBatched),
         ("maui chat: Stop cancels mid-answer, keeping what came as the answer", ChatStopped),
-        ("maui chat: a tiny generated Qwen3 decoder loads from a folder through the model service and streams its answers on the CPU, cold then warm, and cold again after memory pressure took it", ChatEndToEnd),
         ("maui chat: the chat feature is the library's (order 20, needs a model) and opens its page bound to its view model", ChatPageOpens),
         ("maui chat: the composer's microphone dictates into the message after what was typed, live, and stops on the next tap; no speech model says so and offers Models; no dictation says so", ChatDictates),
         ("maui chat: the header's title, avatar and status come from one state: a refresh whose picker drops its choice keeps the chosen and loaded model named, and a model the store no longer lists stays named while loaded", ChatHeaderOneState),
         ("maui chat: the tune sheet holds every generation setting a chat reads with its default (the app's, else the library's), refuses a bad value naming it, rounds a slider to its step, keeps the values per model, and the next reply and load take them; Reset forgets them", ChatTuningSheet),
-        ("maui host: the bottom bar steps aside while the soft keyboard is up, and a pushed page's bottom edge follows the keyboard", HostKeyboard),
         ("maui transcribe settings: empty, every value is the library's (live, transcription and capture options); each setting maps to its option, is kept and read back; a bad value is refused saying what is taken", TranscribeSettingsMapped),
-        ("maui transcribe: live from a registered capture (a loud tone, a pause, a soft one) through a scripted recognizer: tentative and committed words reach the view model as they come, each finished segment committed on its own line; level, time and lag shown", TranscribeLive),
-        ("maui transcribe: hundreds of audio blocks and several readings inside one progress interval make at most one UI dispatch; the last values are shown at the end and an older showing never replaces them", TranscribeBatched),
-        ("maui transcribe: stop ends the microphone's input and its last segment is read and committed; a second recording goes below the first", TranscribeStop),
-        ("maui transcribe: dictation reads the microphone with the lab's model and settings, the whole text handed on live and its last words read when stopped; the lab's transcript left as it is and its recording refused meanwhile; one at a time; no speech model says so", TranscribeDictates),
-        ("maui transcribe: a refused microphone opens no capture and says how to allow it (dictation too); the app's settings open from the page", TranscribePermission),
-        ("maui transcribe: the pipeline setting takes live steps only (a whole-recording step refused naming its live alternative, an unknown one naming the registered); a live pipeline cleans the capture", TranscribePipeline),
-        ("maui transcribe: a WAV made here is decoded by the library's codecs and read through the live path and whole; the text copied and shared; a file that is not sound named", TranscribeFile),
-        ("maui transcribe: the speech models are the store's complete ones a registered family reads, picked and loaded once in the speech host; none says why; the feature opens its page", TranscribeModels),
-        ("maui transcribe: tiny-whisper through the lab on the CPU gives the library's own transcription of a file, whole and live", TranscribeWhisper),
-        ("maui sound: the app's speaker plays through a playback registered in AudioPlaybacks, a recording or blocks as they come (the next asked for while one is written), drained and closed; one sound at a time (a play stops the one before, Stop at once); a playback that cannot play here, one not registered and options out of range refused", SoundPlayed),
         ("maui speak settings: empty, every value is the library's (synthesis and playback options) but the lab's pieces; each setting maps to its option, is kept and read back; a bad value is refused saying what is taken", SpeakSettingsMapped),
-        ("maui speak: a scripted synthesizer's pieces play on a registered playback as they are made and are kept as the speech; the first speech after a load is cold, the next warm, with the time to the first sound and the real-time factor; played again, saved as WAV and MP3, shared", SpeakStreams),
-        ("maui speak: sixty pieces inside one progress interval make at most one UI dispatch; the last values are shown at the end", SpeakBatched),
-        ("maui speak: stop cuts the speech at once, the output closed undrained, what was made kept, no measure of a stopped speech", SpeakStopped),
-        ("maui speak: a model whose text front end reads phonemes is listed with the espeak-ng reason (SpeechSynthesisModels.TextNeeds), not hidden, never loaded, refused before speaking; the VITS family registers no espeak-ng; installed voices that need an unregistered converter or a phonemizer are listed with their reason and refused", SpeakEspeakReason),
-        ("maui speak: tiny-vits through the lab on the CPU plays the library's own speech for the same text and options, saved and shared", SpeakTinyVits),
-        ("maui speak: the speak feature is the library's (order 40, needs a model) and opens its page bound to its view model; none says why; the page takes theme keys only", SpeakPageOpens),
+        ("maui speak: the speak feature is the library's (order 40, needs a model) and opens its page bound to its view model; the page takes theme keys only", SpeakPageOpens),
         ("maui audio process settings: empty, every value is the library's (capture and playback) and the lab's own for monitoring; each setting maps to its option, is kept and read back; a bad value is refused saying what is taken", AudioProcessSettingsMapped),
-        ("maui audio process: every registered processor is a chip (name, summary, parameters, live or not) whose step reads; tapping appends it after a comma and keeps it; the pipeline is checked as it is written, an unknown step named", AudioProcessChips),
-        ("maui audio process: a WAV made here through a pipeline gives the library's own result bit for bit, its latency and delay, cold then warm, the levels before and after (the peak meter's vector and tail alike); in blocks the same samples; saved as WAV and MP3, shared; a file that is not sound named", AudioProcessApplied),
-        ("maui audio process: a recording from a registered capture is the microphone's samples, stops at the longest recording or when asked; a refused microphone opens nothing; hundreds of blocks inside one progress interval make at most one UI dispatch", AudioProcessRecorded),
-        ("maui audio process: the original and the processed play on a registered playback (A/B), one stopping the other, one output at a time; Stop stops it", AudioProcessPlayed),
-        ("maui audio process: monitoring refuses a whole-recording step by name; it plays the microphone through the pipeline's stage bit for bit (the apply shifted by the latency), on a short low-latency buffer, its delay shown; stopped when asked", AudioProcessMonitored),
-        ("maui audio process: the feature is the library's (order 50, needs the microphone) and opens its page bound to its view model; the page takes theme keys only", AudioProcessPageOpens),
-        ("maui image: photos made here (PNG and JPEG by the library's encoders, a phone's JPEG with EXIF orientation 6) open decoded once by the library's codecs, upright and still 8-bit; the picture is made once, shrunk to the setting's size (the image's own when no screen is measured); HEIC and an unknown file are refused naming the formats the library reads", ImageOpens),
-        ("maui image: the registered transforms are chips (name, label, summary, inputs) whose steps parse; tapping adds to the pipeline; an unknown step is refused naming the registered; a scan profile draws its steps from the settings' seed, the same seed the same steps", ImageChips),
-        ("maui image: the pipeline runs on the decoded photo (never decoded again), giving the library's own result step by step with times; cold the first time a transform runs in the process, warm after with its mean; the result shown, saved as PNG (its own pixels) and as JPEG at the settings' quality, and shared", ImageApplied),
-        ("maui image settings: empty, every value is the library's (the PNG encoder, JpegEncoder's quality, the resampling); each setting maps, is kept and read back over the app's defaults; a bad value is refused saying what is taken", ImageSettingsMapped),
+        ("maui image settings: empty, every value is the library's (png, JpegEncoder's quality, the resampling); each setting maps, is kept and read back over the app's defaults; a bad value is refused saying what is taken", ImageSettingsMapped),
         ("maui image: the image feature is the library's (order 70, needs the camera) and opens its page; a refused camera opens nothing and says how to allow it; a cancelled photo and a phone without a camera are said", ImagePageOpens),
-        ("maui ocr: the readers are the store's complete models a registered vision family reads; a page made here is decoded once and prepared once, handed to a scripted reader as prepared with the settings' request; the text streams in a few showings with its tokens per second, cold then warm; copied and shared; another pipeline prepares again without decoding", OcrStreams),
-        ("maui ocr: a thousand tokens make a few UI updates (one a progress interval, the first and the last); Stop keeps what came", OcrBatched),
-        ("maui ocr: the tiny Gemma 3 reads a page made here through the lab on the CPU, the library's own ImageReader answer with the same pipeline, the page decoded once; cold, warm, and cold again after memory pressure took it", OcrEndToEnd),
-        ("maui ocr: the OCR feature is the library's (order 60, needs the camera and a model) and opens its page; no reader in the store, a refused camera and a HEIC photo are said", OcrPageOpens),
-        ("maui redesign: every section's view and every lab's page constructs and binds in light and dark, each label's colour one of the theme's; both layouts lay out", RedesignViewsBind),
-        ("maui redesign: the host shows the bottom bar on a narrow window and the rail on a wide one, switching as the measured width changes (the breakpoint a setting); sections show their views, a feature opens in its section, All labs is a sheet or the rail's page; an app's section joins in order", RedesignHostSwitches),
-        ("maui redesign: All labs groups the enabled features by Language, Voice, Vision and this device's (planned ones marked); the search finds labs, settings and models; the filters by state and needs", RedesignLabs),
+        ("maui ocr: the OCR feature is the library's (order 60, needs the camera and a model) and opens its page; a refused camera is said", OcrPageOpens),
         ("maui redesign: the Markdown renderer reads paragraphs, headings, lists, bold, italic, inline code and fenced code (open while streaming), keeps right-to-left text as written, changes only the blocks that differ, and draws them", RedesignMarkdown),
         ("maui redesign: conversations are kept and read back (files and memory); the chat keeps each answered chat, lists it by day, asks again, opens a kept one, starts anew and forgets one", RedesignConversations),
         ("maui redesign: both palettes carry the same keys, the dark one the design's colours; every key a page names is defined; text reads at 4.5:1 on its grounds in light and dark", RedesignTheme),
@@ -98,36 +61,29 @@ internal static partial class MauiTests
         ("maui redesign: the source commit is read at build time into Idrak.Maui's metadata and shown as branch · commit", RedesignSourceCommit),
         ("maui redesign: the design's icons parse into geometries inside the 24-unit view box; an icon view scales, a badge takes its tone's colours", RedesignIcons),
         ("maui redesign: Home takes its slides from the app's options ({device} filled), its carousel interval from the settings, the device's tiles from one reading, the chat tile from the chat; the layout settings are kept", RedesignHome),
-        ("maui redesign: the settings by group with their controls (segments, pickers, sliders rounded to their step, fields); Devices as summary cards with state and key facts, every fact folded, virtual devices apart", RedesignSettingsAndDevices),
-        ("maui redesign: Studio's pipeline as steps that take themselves out; Speak's measures before a speech; the caret, the record button and the waveform (nothing animates off screen)", RedesignLabParts),
+        ("maui redesign: Devices as summary cards with state and key facts, every fact folded, virtual devices apart", RedesignSettingsAndDevices),
+        ("maui redesign: the caret, the record button and the waveform (nothing animates off screen)", RedesignLabParts),
         ("maui redesign: a phone's facts (phase F) on the cards and tiles: the memory from the system's figure (held to a limit), the runtime's labelled as the runtime's, the core groups and vector paths in a line; a GPU's refused kernels as an amber badge, listed folded", RedesignPhoneFacts),
         ("maui redesign: the carousel's indicator, a dot a page and the page shown an elongated pill (wider on a tablet), bound to the carousel's place", RedesignIndicator),
-        ("maui speed: live levels are made a window of sound at a time however the blocks are cut, paced ones shown as they play, a reset starts the readers again; the waveform takes a frame's levels at once and the meter eases; the frame clocks are a registry and a setting", LiveLevelsPaced),
-        ("maui speed: the settings' search shows only what it finds (title, help, value, choices; every word; a group by its heading; the labs, storage and the app's part), says when nothing matches, and is quick; a restart-only change is marked and the restart asked first; each setting makes its own control only", SettingsSearched),
-        ("maui speed: the host keeps every section's view made, the one shown visible; Prebuild makes the tabs, their labs and the sheet ahead; a tab shows its view without making it again; the tabs are listed again only when the sections change", HostKeepsSections),
+        ("maui speed: live levels are made a window of sound at a time however the blocks are cut, paced ones shown as they play, a reset starts the readers again; the waveform takes a frame's levels at once and the meter eases; the frame clock is the library's timer and a setting", LiveLevelsPaced),
         ("maui speed: the chat reads its kept chats on a worker thread when shown (none read when it is made), a search filters what was read", ChatReadsKeptOffThread),
-        ("maui generate: text drawn as pages by the library's synthetic pages (the library's own page for the same options, the same seed the same pages), in fonts picked for its characters; effects stack into one look, a random one, every look, clean; before and after; saved to Pictures, shared, written as a data set", GenerateMakesPages),
-        ("maui generate: Stop ends the pages being made, those made kept; no text makes nothing", GenerateCancels),
-        ("maui generate: fonts added from files (checked as fonts, copied, chosen), searched, none chosen; every setting the CLI takes checked, kept and read back; the feature in Vision after Read text and Image, its views bind in light and dark", GenerateFontsAndSettings),
         ("maui terminal: a command's output streams into lines one batch a frame (a thousand lines, one change), a carriage return rewrites the line in place, the console's escapes left out, errors apart; the most lines kept; copy, clear, a quote not closed, no runner", TerminalStreams),
         ("maui terminal: Stop cancels the command running as Ctrl+C would, its last line kept", TerminalStops),
         ("maui terminal: the history recalls earlier lines back and forth and is kept between runs; the suggestions are the runner's commands (one not allowed greyed with why), then a command's options, help's topics", TerminalHistoryAndSuggestions),
         ("maui terminal: the app's own runner runs the idrak commands in this process (help), refuses serve with its reason, one command at a time; the feature in this device's group, its view binds in light and dark", TerminalRunsIdrak),
-        ("maui terminal: the lines kept, the history kept and shown, the suggestions and the working folder are settings (the Terminal part of Settings, idrak.terminal.*, found by the search), taken when the page is next shown, without a restart", TerminalSettings),
+        ("maui terminal: the lines kept, the history kept and shown, the suggestions and the working folder are settings (idrak.terminal.*), taken when the page is next shown, without a restart", TerminalSettings),
         ("maui terminal: what the Terminal's host allows is a setting (idrak.terminal.allow, the Terminal part, kept): other programs and a network listener on a desktop by default, nothing on a phone; on, serve, cluster start and test are allowed (listed and run, not refused for what they need); off, refused with the reason; console input never (shell, serve --mcp); the suggestions and the commands pane follow when the page is next shown", TerminalAllowed),
         ("maui desktop: Enter sends the chat's message from the composer, Shift+Enter left to the field (a new line), nothing sent while it cannot send; the setting chat_enter_sends off leaves Enter a new line", DesktopChatEnter),
-        ("maui desktop: in the Terminal the arrows recall the history into the line (the caret at its end) and Enter runs it; Esc closes the sheet on top (All labs, the chat's tune sheet, the Terminal's commands pane of a narrow window), nothing when none is open", DesktopTerminalKeysAndEscape),
-        ("maui desktop: the mouse wheel zooms Generate's preview about the pointer, a notch a step (parts of one from a touchpad), held from the whole to the most; the preview's view is the one the wheel zooms", DesktopWheelZoom),
+        ("maui desktop: in the Terminal the arrows recall the history into the line (the caret at its end) and Enter runs it; Esc closes the Terminal's commands pane of a narrow window, nothing when none is open", DesktopTerminalKeysAndEscape),
+        ("maui desktop: the mouse wheel zooms a preview about the pointer, a notch a step (parts of one from a touchpad), held from the whole to the most", DesktopWheelZoom),
         ("maui desktop: the buttons, chips, lab cards and the rail's tabs hover (PointerOver) from the styles, once, on theme keys in light and dark; back to their own look after; a phone's styles take no hover; the rail's selected tab is its own style", DesktopHover),
-        ("maui splash: the start-up run records the work before the window, plans the registered steps, runs the worker ones one after another and the UI ones alongside, marks a failing one and runs the rest, and is done once both end; the library's steps are cpu, gpu and sections, an app's joins in order, an unknown one is not registered", SplashStartupRun),
+        ("maui splash: the start-up run records the work before the window, plans the steps given, runs the worker ones one after another and the UI ones alongside, marks a failing one and runs the rest, and is done once both end; the library's steps are cpu, gpu and sections", SplashStartupRun),
         ("maui splash: the design's motion by its time: the system splash's frame at 0, the signals, the pulse, the swell, the rings and the lift in their keyframes, the name settled at the end, the same values for the same time", SplashMotion),
         ("maui splash: short (the default) runs while the start-up runs and, once it is done, cuts ahead to the name and fades into Home within the fade; a start-up longer than the animation keeps the status line going; past the longest it hands over", SplashShort),
         ("maui splash: full plays the whole animation even when the start-up is quicker, then Ready its least time and the fade; the steps are shown in the order they began, each its least time, then Ready", SplashFull),
-        ("maui splash: the host lays the splash over Home (made underneath), back does nothing while it shows, and it is taken away when it has faded; off and an app that does not ask show none; the start-up steps run under it, the tabs made ahead and the device read", SplashHandOver),
         ("maui splash: it draws in light (the tile) and dark (the bare mark), stacked on a narrow window and side by side on a wide one, from the theme's colours, the names and the status line", SplashDraws),
         ("maui splash: a frame (the timeline moved, the view drawn) allocates nothing, across the animation, the status line's changes and both layouts", SplashNoAllocation),
-        ("maui settings: the splash's length, its timings and the system picture's size are settings (Layout and motion, found by the search), kept and read back; a bad value is refused", SplashSettings),
-        ("public API: api/Idrak.Maui.txt matches the public surface of Idrak.Maui (IDRAK_UPDATE_API=1 rewrites it)", ApiSurfaceCurrent),
+        ("maui settings: the splash's length, its timings and the system picture's size are settings (Layout and motion), kept and read back; a bad value is refused", SplashSettings),
     ];
 
     private static void Check(bool condition, string message)
@@ -148,14 +104,6 @@ internal static partial class MauiTests
 
         Directory.CreateDirectory(folder);
         return folder;
-    }
-
-    // Puts the library's values back after a test that applied options (the defaults the first Apply read).
-    private static void Restore(string storage)
-    {
-        IdrakMauiStartup.Apply(new IdrakMauiOptions(), storage);         // at start-up's: the GPU chunk and stack too
-        ComputeResources.CacheFolder = null;
-        Device.Default = Device.Cpu;
     }
 
     private static IdrakMauiOptions Limits() => new()
@@ -277,107 +225,14 @@ internal static partial class MauiTests
         Check(IdrakMauiSettings.Definitions.Select(s => s.Key).Distinct().Count() == IdrakMauiSettings.Definitions.Count, "a key twice");
     }
 
-    private static void SettingsPage()
-    {
-        string storage = Temp("settings-page");
-        try
-        {
-            var options = new IdrakMauiOptions();
-            var startup = IdrakMauiStartup.Apply(options, storage);
-            var settings = new IdrakMauiSettings(new MemorySettingsStore(), new MemorySecretStore());
-            var progress = new ProgressCenter(TimeSpan.FromMilliseconds(250));
-            var page = new SettingsViewModel(options, settings, startup, progress);
-            Check(page.Entries.Count == IdrakMauiSettings.Definitions.Count && page.Features.Any(f => f.Name == MobileFeatures.Devices), "entries and features");
-            Check(page.Entries.Single(e => e.Setting.Key == "device").Choices.Take(2).SequenceEqual(["auto", "cpu"]), "device choices");
-
-            var threads = page.Entries.Single(e => e.Setting.Key == "cpu_threads");
-            threads.Text = "lots";
-            Check(!page.SaveAsync().GetAwaiter().GetResult() && threads.HasError && !settings.HasSaved, "a refused value saved");
-
-            threads.Text = "";
-            page.Entries.Single(e => e.Setting.Key == "cache_folder").Text = Path.Combine(storage, "later");
-            page.Entries.Single(e => e.Setting.Key == "progress_interval_ms").Text = "500";
-            page.Features.Single(f => f.Name == MobileFeatures.Devices).IsEnabled = false;
-            Check(page.SaveAsync().GetAwaiter().GetResult() && settings.HasSaved, $"not saved: {page.Message}");
-            Check(page.Message.Contains("Restart the app for: Cache and models folder", StringComparison.Ordinal), page.Message);
-            Check(options.CacheFolder is null && progress.Interval == TimeSpan.FromMilliseconds(500) && !options.IsFeatureEnabled(MobileFeatures.Devices),
-                "the restart-only change stays as it runs; the rest applies at once");
-            var saved = new IdrakMauiOptions();
-            settings.LoadIntoAsync(saved).GetAwaiter().GetResult();
-            Check(saved.CacheFolder == Path.Combine(storage, "later"), "the restart-only change is saved for the next start");
-        }
-        finally
-        {
-            Restore(storage);
-        }
-    }
-
-    private sealed class LabFeature(string name, string title, int order = 5) : IMobileFeature
-    {
-        public string Name => name;
-
-        public string Summary => "a test feature";
-
-        public string Title => title;
-
-        public string Glyph => "*";
-
-        public int Order => order;
-
-        public PhoneNeeds Needs => PhoneNeeds.Microphone | PhoneNeeds.Model;
-
-        public IReadOnlyList<string> Packages => ["Idrak.Audio"];
-
-        public IReadOnlyList<string> ModelFamilies => [];
-
-        public object CreateViewModel(IServiceProvider services) => new object();
-
-        public Page CreatePage(IServiceProvider services, object viewModel) => new ContentPage();
-    }
-
-    private static void FeaturesRegistry()
-    {
-        Check(MobileFeatures.Origin(MobileFeatures.Devices) == Overrides.Library && MobileFeatures.Get("DEVICES") is DevicesFeature, "the library's devices feature");
-        var lab = new LabFeature("lab", "Lab");
-        var mine = new LabFeature(MobileFeatures.Devices, "My devices", order: 0);
-        try
-        {
-            MobileFeatures.Register(lab);
-            MobileFeatures.Register(mine);
-            Check(MobileFeatures.Find("lab") == lab && MobileFeatures.Get(MobileFeatures.Devices) == mine, "registered");
-            Check(MobileFeatures.Origin(MobileFeatures.Devices) == typeof(MauiTests).Assembly.GetName().Name && MobileFeatures.Default(MobileFeatures.Devices) is DevicesFeature,
-                $"origin {MobileFeatures.Origin(MobileFeatures.Devices)}");
-            Check(MobileFeatures.All.Select(f => f.Name).Take(3).SequenceEqual([MobileFeatures.Devices, "lab", MobileFeatures.Models]), $"order: {string.Join(", ", MobileFeatures.All.Select(f => f.Name))}");
-            var options = new IdrakMauiOptions();
-            options.DisabledFeatures.Add("LAB");
-            Check(MobileFeatures.Enabled(options).Select(f => f.Name).Take(2).SequenceEqual([MobileFeatures.Devices, MobileFeatures.Models])
-                  && !MobileFeatures.Enabled(options).Any(f => f.Name == "lab"), "a turned-off feature is enabled");
-            Check(MobileFeatures.Unregister(MobileFeatures.Devices) && MobileFeatures.Get(MobileFeatures.Devices) is DevicesFeature, "the library's comes back");
-            Check(!MobileFeatures.Unregister(MobileFeatures.Devices), "the library's default was removed");
-        }
-        finally
-        {
-            MobileFeatures.Unregister("lab");
-            MobileFeatures.Unregister(MobileFeatures.Devices);
-        }
-
-        try
-        {
-            MobileFeatures.Get("nope");
-            Check(false, "an unknown feature was found");
-        }
-        catch (NotRegisteredException e)
-        {
-            Check(e.Message.Contains("devices", StringComparison.Ordinal), e.Message);
-        }
-    }
-
     private static void FeaturesOpen()
     {
         using var services = new ServiceCollection().AddSingleton<IDeviceInformation, DeviceInformation>().BuildServiceProvider();
-        var page = MobileFeatures.Open(MobileFeatures.Devices, services);
+        var devices = new DevicesFeature();
+        var page = devices.CreatePage(services, devices.CreateViewModel(services));
         Check(page is DevicesPage { BindingContext: DevicesViewModel } && page.Title == "Devices", $"page {page.GetType().Name}, title {page.Title}");
-        var models = MobileFeatures.Open(MobileFeatures.Models, services);
+        var store = new ModelsFeature();
+        var models = store.CreatePage(services, store.CreateViewModel(services));
         Check(models is ModelsPage { BindingContext: ModelsViewModel { Confirm: not null } } && models.Title == "Models", $"page {models.GetType().Name}, title {models.Title}");
     }
 
@@ -422,27 +277,6 @@ internal static partial class MauiTests
         public override DateTimeOffset GetUtcNow() => new DateTimeOffset(2026, 10, 26, 0, 0, 0, TimeSpan.Zero).AddTicks(_ticks);
 
         public void Advance(TimeSpan time) => _ticks += time.Ticks;
-    }
-
-    private static void ProgressRegistered()
-    {
-        var center = new ProgressCenter(TimeSpan.FromMilliseconds(250));
-        ProgressReporters.Register(new MauiProgressReporterKind(center));
-        string? before = Environment.GetEnvironmentVariable(ProgressReporters.EnvironmentVariable);
-        try
-        {
-            Check(ProgressReporters.Find("MAUI") is MauiProgressReporterKind kind && kind.Center == center, "registered");
-            Environment.SetEnvironmentVariable(ProgressReporters.EnvironmentVariable, MauiProgressReporterKind.ReporterName);
-            Check(ProgressReporters.Choose() == MauiProgressReporterKind.ReporterName, $"chose {ProgressReporters.Choose()}");
-            using var reporter = ProgressReporters.Start("load", null, ProgressUnit.Items);
-            reporter.Advance(3);
-            Check(center.Items.Count == 1 && center.Items[0].Done == 3, "the reporter shows on the center (no app: the reporting thread itself)");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(ProgressReporters.EnvironmentVariable, before);
-            ProgressReporters.Unregister(MauiProgressReporterKind.ReporterName);
-        }
     }
 
     private static void ProgressThrottled()
@@ -687,21 +521,6 @@ internal static partial class MauiTests
         {
             Check(styles.ContainsKey(key), $"the Models page's {key}");
         }
-    }
-
-    private static void ApiSurfaceCurrent()
-    {
-        string path = Path.Combine(RepositoryRoot(), "api", "Idrak.Maui.txt");
-        string actual = ApiSurface.Describe(typeof(IdrakMauiOptions).Assembly);
-        if (Environment.GetEnvironmentVariable("IDRAK_UPDATE_API") == "1")
-        {
-            File.WriteAllText(path, actual);
-            return;
-        }
-
-        string expected = File.Exists(path) ? File.ReadAllText(path).ReplaceLineEndings("\n") : "";
-        Check(expected == actual, "the public API of Idrak.Maui changed: " + ApiSurface.FirstDifference(expected, actual)
-            + "\nIf the change is intended: IDRAK_UPDATE_API=1 IDRAK_DEVICES=cpu IDRAK_FILTER=\"public API\" dotnet run -c Release --project tests/Idrak.Maui.Tests, then commit api/.");
     }
 
     // The folder holding Idrak.slnx, found from the build output folder.

@@ -18,8 +18,8 @@ using IImage = Microsoft.Maui.Graphics.IImage;
 namespace Idrak.Maui.Tests;
 
 // Plan 34, phase S: the animated splash. The start-up run and its steps, the design's motion by its time, the three
-// lengths with a clock driven by hand, the host's hand-over, both themes and both layouts drawn into a canvas that keeps
-// count, no allocation a frame, the settings.
+// lengths with a clock driven by hand, both themes and both layouts drawn into a canvas that keeps count, no allocation a
+// frame, the settings.
 internal static partial class MauiTests
 {
     // A clock moved by hand: a microsecond a tick.
@@ -163,11 +163,10 @@ internal static partial class MauiTests
 
     private static void SplashStartupRun()
     {
-        Check(StartupSteps.Names.SequenceEqual([StartupSteps.Cpu, StartupSteps.Gpu, StartupSteps.Sections])
-              && StartupSteps.All.Select(s => s.Name).SequenceEqual([StartupSteps.Cpu, StartupSteps.Gpu, StartupSteps.Sections])
-              && StartupSteps.Get("CPU").Title == "Reading the CPU" && StartupSteps.Get(StartupSteps.Gpu).Thread == StartupThread.Worker
-              && StartupSteps.Get(StartupSteps.Sections).Thread == StartupThread.Ui,
-            $"the library's steps: {string.Join(", ", StartupSteps.All.Select(s => $"{s.Name} ({s.Title}, {s.Thread})"))}");
+        IStartupStep[] library = [new CpuStartupStep(), new GpuStartupStep(), new SectionsStartupStep()];
+        Check(library.Select(s => s.Name).SequenceEqual([StartupSteps.Cpu, StartupSteps.Gpu, StartupSteps.Sections]) && library[0].Title == "Reading the CPU"
+              && library[1].Thread == StartupThread.Worker && library[2].Thread == StartupThread.Ui,
+            $"the library's steps: {string.Join(", ", library.Select(s => $"{s.Name} ({s.Title}, {s.Thread})"))}");
 
         var clock = new HandClock();
         var run = new StartupRun(clock);
@@ -212,30 +211,6 @@ internal static partial class MauiTests
         Check(!hand.IsDone && hand.Started == 1 && hand.Finished == 0, "a running entry keeps the run going");
         hand.End(a, new IOException("no\nmore"));
         Check(hand.IsDone && hand.State(a) == StartupStepState.Failed && hand.Error(a) == "no", "ended: done");
-
-        // An app's step joins in order, and the library's come back without it; an unknown name is not registered.
-        var mine = new RecordedStep("models-warm", 15, StartupThread.Worker, ran);
-        try
-        {
-            StartupSteps.Register(mine);
-            Check(StartupSteps.All.Select(s => s.Name).SequenceEqual([StartupSteps.Cpu, "models-warm", StartupSteps.Gpu, StartupSteps.Sections])
-                  && StartupSteps.Origin("models-warm") == typeof(MauiTests).Assembly.GetName().Name, string.Join(", ", StartupSteps.All.Select(s => s.Name)));
-        }
-        finally
-        {
-            StartupSteps.Unregister("models-warm");
-        }
-
-        Check(StartupSteps.Find("models-warm") is null, "unregistered");
-        try
-        {
-            StartupSteps.Get("nowhere");
-            Check(false, "an unknown step was found");
-        }
-        catch (NotRegisteredException e)
-        {
-            Check(e.Message.Contains("cpu", StringComparison.Ordinal), e.Message);
-        }
     }
 
     private static void SplashMotion()
@@ -424,52 +399,6 @@ internal static partial class MauiTests
         Check(timeline.IsFinished && timeline.Fill == 1, $"finished {timeline.IsFinished}, the bar full ({timeline.Fill:F3})");
     }
 
-    private static void SplashHandOver()
-    {
-        // Off, and an app that does not ask: no splash.
-        foreach (var options in new[] { SplashOptions(SplashLength.Off), new IdrakMauiOptions { Device = "cpu" } })
-        {
-            using var none = AppServices(options, new StartupRun());
-            Check(new AppHostPage(none).Splash is null, $"show {options.ShowSplash}, {options.Splash}: no splash");
-        }
-
-        var clock = new HandClock();
-        var run = new StartupRun(clock);
-        var shortly = SplashOptions(SplashLength.Short);
-        using var services = AppServices(shortly, run);
-        var host = new AppHostPage(services);
-        var splash = host.Splash;
-        var root = host.FindByName<Grid>("Root");
-        Check(splash is not null && root.Children.Contains(splash) && Grid.GetColumnSpan(splash) == 2 && !splash.InputTransparent && host.Current is HomeView,
-            "the splash over both columns, taking the taps, Home made under it");
-        Check(host.SendBackButtonPressed(), "back while the splash shows: taken, nothing closes");
-
-        // The start-up under it: the device read, the tabs made ahead; its steps are the run's.
-        var startup = host.BeginStartup();
-        Check(startup is not null && startup.Wait(TimeSpan.FromSeconds(30)) && run.IsDone, $"the start-up ran: done {run.IsDone}");
-        var names = Enumerable.Range(0, run.Count).Select(run.Name).Order(StringComparer.Ordinal).ToList();
-        Check(names.SequenceEqual([StartupSteps.Cpu, StartupSteps.Gpu, StartupSteps.Sections]) && Enumerable.Range(0, run.Count).All(i => run.State(i) == StartupStepState.Done),
-            $"steps {string.Join(", ", Enumerable.Range(0, run.Count).Select(i => $"{run.Name(i)} {run.State(i)} {run.Error(i)}"))}");
-        Check(host.IsPrebuilt && host.Views.Count >= 4 && services.GetRequiredService<DeviceStatus>().IsRead, $"made ahead: {string.Join(", ", host.Views.Keys)}; read {services.GetRequiredService<DeviceStatus>().IsRead}");
-        var dispatcher = (InlineDispatcher)host.Dispatcher;
-        int dispatched = dispatcher.Dispatched;
-        new GpuStartupStep().RunAsync(new StartupContext(services, host), CancellationToken.None).GetAwaiter().GetResult();
-        Check(dispatcher.Dispatched > dispatched, "the GPU step asks for the reading on the host's UI thread (Home's summary and models are set where it asks)");
-
-        // Done: it hands over and is taken away; back is Home's again.
-        bool handing = false, finished = false;
-        splash!.HandingOver += (_, _) => handing = true;
-        splash.Finished += (_, _) => finished = true;
-        long start = TimeProvider.System.GetTimestamp();
-        for (double t = 0; t < 2 && !finished; t += 1.0 / 60)
-        {
-            splash.Advance(start + (long)(t * TimeProvider.System.TimestampFrequency));
-        }
-
-        Check(handing && finished && host.Splash is null && !root.Children.Contains(splash) && host.Current is HomeView, $"handed over {handing}, finished {finished}, removed {host.Splash is null}");
-        Check(!host.SendBackButtonPressed(), "back on Home after the splash: the app's own (nothing to close)");
-    }
-
     private static void SplashDraws()
     {
         EnsureDispatcher();
@@ -633,13 +562,5 @@ internal static partial class MauiTests
         var copy = new IdrakMauiOptions();
         copy.CopyFrom(new IdrakMauiOptions { ShowSplash = true, SplashWords = new SplashWords("Mine") });
         Check(copy.ShowSplash && copy.SplashWords.Name == "Mine", "the app's own values are copied with the rest");
-
-        var page = new SettingsViewModel(new IdrakMauiOptions(), new IdrakMauiSettings(new MemorySettingsStore(), new MemorySecretStore()),
-            IdrakMauiStartup.Apply(new IdrakMauiOptions(), Temp("splash-settings")));
-        page.Query = "splash";
-        var shown = page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).ToList();
-        Check(keys.All(shown.Contains), string.Join(", ", shown));
-        page.Query = "splash least";
-        Check(page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).SequenceEqual(["splash_step_ms"]), string.Join(", ", page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key)));
     }
 }

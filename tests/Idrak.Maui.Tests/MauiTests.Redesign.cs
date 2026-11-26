@@ -20,9 +20,8 @@ using Path = System.IO.Path;
 
 namespace Idrak.Maui.Tests;
 
-// Plan 34, phase R: the approved redesign. The navigation host (bottom bar or rail by the window's width), the sections,
-// All labs, Home, the Markdown renderer, the kept conversations, the theme (both palettes, contrast, no literals), the icons,
-// the source commit, the settings' controls and the devices' summary cards.
+// Plan 34, phase R: the approved redesign. Home, the Markdown renderer, the kept conversations, the theme (both palettes,
+// contrast, no literals), the icons, the source commit and the devices' summary cards.
 internal static partial class MauiTests
 {
     // A device listing without starting a backend: a CPU, a GPU that started, one that did not, and a virtual one.
@@ -132,184 +131,6 @@ internal static partial class MauiTests
         }
 
         return labels;
-    }
-
-    private static void RedesignViewsBind()
-    {
-        using var services = AppServices();
-        foreach (var theme in new[] { AppTheme.Light, AppTheme.Dark })
-        {
-            int labels = 0;
-            foreach (var section in AppSections.Visible(services.GetRequiredService<IdrakMauiOptions>()))
-            {
-                var view = section.CreateView(services);
-                var page = Themed(view, theme);
-                Check(page.BackgroundColor is not null && page.BackgroundColor.Equals(IdrakThemes.Colors(theme)["IdrakPageBackground"]), $"{section.Name} in {theme}: the page's ground");
-                labels += CheckLabels(view, theme, section.Name);
-                if (view is SegmentedSectionView segmented)
-                {
-                    foreach (var segment in segmented.ViewModel.Segments.ToList())
-                    {
-                        segmented.ShowFeature(segment.Name);
-                        Check(segmented.Current is IHostedView && segmented.ViewModel.Selected == segment, $"{section.Name}: {segment.Name} shown");
-                        labels += CheckLabels(segmented.Current!, theme, segment.Name);
-                    }
-                }
-            }
-
-            foreach (var feature in MobileFeatures.Enabled(services.GetRequiredService<IdrakMauiOptions>()))
-            {
-                var page = MobileFeatures.Open(feature.Name, services);
-                page.Resources.MergedDictionaries.Add(new IdrakStyles());
-                page.Resources.MergedDictionaries.Add(IdrakThemes.Colors(theme));
-                Check(page is LabPage { View: not null } && page.Title == feature.Title, $"{feature.Name}: {page.GetType().Name} titled '{page.Title}'");
-                labels += CheckLabels(page, theme, feature.Name + "'s page");
-                foreach (bool wide in (bool[])[true, false])
-                {
-                    ((page as LabPage)?.View as AdaptiveView)?.Apply(wide);                       // both layouts lay out
-                }
-            }
-
-            labels += CheckLabels(Themed(SettingsPages.CreateView(services), theme), theme, "settings");
-            Check(labels > 200, $"{labels} labels checked in {theme}");
-        }
-    }
-
-    private static void RedesignHostSwitches()
-    {
-        var options = new IdrakMauiOptions { Device = "cpu", WideLayoutWidth = 840 };
-        using var services = AppServices(options);
-        var host = new AppHostPage(services);
-        var bar = host.FindByName<View>("Bar");
-        var rail = host.FindByName<View>("Rail");
-        Check(host.ViewModel.Tabs.Select(t => t.Name).SequenceEqual([AppSections.Home, AppSections.Chat, AppSections.Voice, AppSections.Vision])
-              && host.ViewModel.Foot.Select(t => t.Name).SequenceEqual([AppSections.Labs, AppSections.Settings]),
-            $"tabs {string.Join(", ", host.ViewModel.Tabs.Select(t => t.Name))}; foot {string.Join(", ", host.ViewModel.Foot.Select(t => t.Name))}");
-        Check(host.Current is HomeView && host.ViewModel.Find(AppSections.Home)!.IsSelected, "Home first");
-
-        host.ApplySize(412, 915);                                                        // a phone, upright
-        Check(host.ViewModel.IsNarrow && bar.IsVisible && !rail.IsVisible, "a narrow window: the bottom bar");
-        host.ApplySize(1280, 800);                                                       // a tablet, or the phone turned in a wide window
-        Check(host.ViewModel.IsWide && !bar.IsVisible && rail.IsVisible, "a wide window: the rail");
-        host.ApplySize(600, 900);                                                        // split screen
-        Check(host.ViewModel.IsNarrow && bar.IsVisible && !rail.IsVisible, "narrow again: the bar again");
-
-        // The breakpoint is a setting: the same window turns wide when it is lowered.
-        services.GetRequiredService<AppLayout>().Breakpoint = 560;
-        Check(host.ViewModel.IsWide && rail.IsVisible, "a lower breakpoint: the same 600 is wide");
-        services.GetRequiredService<AppLayout>().Breakpoint = 840;
-
-        // Sections and features: a tab shows its view (made once), a feature opens in the section that hosts it.
-        Check(host.OpenSectionAsync(AppSections.Voice).GetAwaiter().GetResult() && host.Current is SegmentedSectionView voice
-              && host.ViewModel.Selected == AppSections.Voice && host.ViewModel.Find(AppSections.Voice)!.IsSelected && !host.ViewModel.Find(AppSections.Home)!.IsSelected,
-            $"voice shown: {host.Current?.GetType().Name}");
-        var voiceView = host.Current;
-        host.OpenFeatureAsync(MobileFeatures.Speak).GetAwaiter().GetResult();
-        Check(ReferenceEquals(host.Current, voiceView) && ((SegmentedSectionView)voiceView!).Current is SpeakView, "Speak opens in Voice, the same view");
-        host.OpenFeatureAsync(MobileFeatures.Image).GetAwaiter().GetResult();
-        Check(host.ViewModel.Selected == AppSections.Vision && ((SegmentedSectionView)host.Current!).Current is ImageView, "Image opens in Vision");
-        host.ViewModel.Find(AppSections.Chat)!.SelectCommand.Execute(null);
-        Check(host.Current is ChatView, $"the chat tab: {host.Current?.GetType().Name}");
-
-        // All labs: a sheet over the page on a narrow window, the rail's page on a wide one.
-        host.OpenLabsAsync().GetAwaiter().GetResult();
-        Check(host.ViewModel.IsSheetOpen && host.FindByName<ContentView>("SheetBody").Content is LabsView && host.Current is ChatView, "narrow: All labs as a sheet");
-        host.ViewModel.CloseSheetCommand.Execute(null);
-        host.ApplySize(1280, 800);
-        host.OpenLabsAsync().GetAwaiter().GetResult();
-        Check(!host.ViewModel.IsSheetOpen && host.Current is LabsView && host.ViewModel.Find(AppSections.Labs)!.IsSelected, "wide: All labs as the rail's page");
-        Check(host.OpenSettingsAsync() is not null && host.OpenSectionAsync(AppSections.Settings).GetAwaiter().GetResult() && host.Current is SettingsView, "wide: the settings in the rail");
-
-        // Features turned off take their section with them when they were all it showed; an unknown section is refused.
-        options.DisabledFeatures.UnionWith([MobileFeatures.Ocr, MobileFeatures.Image, MobileFeatures.Generate]);
-        host.ViewModel.Refresh();
-        Check(host.ViewModel.Find(AppSections.Vision) is null && host.ViewModel.Tabs.Count == 3, $"tabs without vision: {string.Join(", ", host.ViewModel.Tabs.Select(t => t.Name))}");
-        Check(!host.OpenSectionAsync("nowhere").GetAwaiter().GetResult(), "an unknown section opened");
-        options.DisabledFeatures.Clear();
-
-        // An app's section joins the tabs in its order, and the library's comes back when it is removed.
-        var mine = new FeatureSection("lab-x", "Lab X", "spark", 25, MobileFeatures.Devices, "the app's own");
-        try
-        {
-            AppSections.Register(mine);
-            host.ViewModel.Refresh();
-            Check(host.ViewModel.Tabs.Select(t => t.Name).SequenceEqual([AppSections.Home, AppSections.Chat, AppSections.Voice, "lab-x", AppSections.Vision])
-                  && AppSections.Origin("lab-x") == typeof(MauiTests).Assembly.GetName().Name, $"tabs {string.Join(", ", host.ViewModel.Tabs.Select(t => t.Name))}");
-            Check(host.OpenSectionAsync("lab-x").GetAwaiter().GetResult() && host.Current is DevicesView, "the app's section shows its feature's view");
-        }
-        finally
-        {
-            AppSections.Unregister("lab-x");
-        }
-
-        try
-        {
-            AppSections.Get("nope");
-            Check(false, "an unknown section was found");
-        }
-        catch (NotRegisteredException e)
-        {
-            Check(e.Message.Contains("home", StringComparison.Ordinal), e.Message);
-        }
-    }
-
-    private static void RedesignLabs()
-    {
-        var options = new IdrakMauiOptions();
-        using var services = AppServices(options);
-        var status = services.GetRequiredService<DeviceStatus>();
-        status.RefreshAsync().GetAwaiter().GetResult();
-        var labs = new LabsViewModel(options, status);
-        string Groups() => string.Join(" | ", labs.Groups.Select(g => $"{g.Title}: {string.Join(", ", g.Select(l => l.Name))}"));
-        Check(labs.Groups.Select(g => g.Group).SequenceEqual([FeatureGroup.Language, FeatureGroup.Voice, FeatureGroup.Vision, FeatureGroup.Device]), Groups());
-        Check(labs.Groups[0].Select(l => l.Name).SequenceEqual([MobileFeatures.Chat, MobileFeatures.Search])
-              && labs.Groups[1].Select(l => l.Name).SequenceEqual([MobileFeatures.Transcribe, MobileFeatures.Speak, MobileFeatures.AudioProcess])
-              && labs.Groups[2].Select(l => l.Name).SequenceEqual([MobileFeatures.Ocr, MobileFeatures.Image, MobileFeatures.Generate])
-              && labs.Groups[3].Select(l => l.Name).SequenceEqual([MobileFeatures.Devices, MobileFeatures.Models, MobileFeatures.Terminal, AppSections.Settings]), Groups());
-        var search = labs.All.Single(l => l.Name == MobileFeatures.Search);
-        var chat = labs.All.Single(l => l.Name == MobileFeatures.Chat);
-        Check(search is { IsPlanned: true, StateText: "● Planned", Icon: "search", Tone: "Sky" } && chat is { IsReady: true, Tagline: "Stream a model", Icon: "chat", Tone: "Indigo" },
-            $"search {search.StateText} {search.Icon}; chat {chat.Tagline} {chat.Icon}");
-        Check(labs.CountsText == "11 ready · 1 planned" && labs.All.Single(l => l.Name == MobileFeatures.AudioProcess).Title == "Studio"
-              && labs.All.Single(l => l.Name == MobileFeatures.Ocr).Title == "Read text", labs.CountsText);
-        Check(labs.All.Single(l => l.Name == MobileFeatures.Devices).Detail == "CPU · GPU ready" && labs.All.Single(l => l.Name == MobileFeatures.Models).Detail == $"2 pulled · {ProgressText.Bytes(885_000_000)}",
-            $"{labs.All.Single(l => l.Name == MobileFeatures.Devices).Detail}; {labs.All.Single(l => l.Name == MobileFeatures.Models).Detail}");
-
-        // The search: a lab by its words, a setting by its title (the Settings card), a model by its id (the Models card).
-        labs.Query = "speech";
-        Check(labs.Groups.SelectMany(g => g).Select(l => l.Name).Contains(MobileFeatures.Transcribe) && !labs.Groups.SelectMany(g => g).Any(l => l.Name == MobileFeatures.Image), Groups());
-        labs.Query = "temperature";
-        Check(labs.Groups.Single().Single().Name == AppSections.Settings, Groups());
-        labs.Query = "whisper-tiny";
-        Check(labs.Groups.Single().Single().Name == MobileFeatures.Models, Groups());
-        labs.Query = "nothing like it";
-        Check(labs.IsEmpty, Groups());
-        labs.Query = "";
-
-        // The filters.
-        labs.Filters.Single(f => f.Filter == LabFilter.Planned).SelectCommand.Execute(null);
-        Check(labs.Filter == LabFilter.Planned && labs.Groups.SelectMany(g => g).Select(l => l.Name).SequenceEqual([MobileFeatures.Search]) && labs.Filters.Single(f => f.IsSelected).Filter == LabFilter.Planned, Groups());
-        labs.Filter = LabFilter.Microphone;
-        Check(labs.Groups.SelectMany(g => g).Select(l => l.Name).SequenceEqual([MobileFeatures.Transcribe, MobileFeatures.AudioProcess]), Groups());
-        labs.Filter = LabFilter.Camera;
-        Check(labs.Groups.SelectMany(g => g).Select(l => l.Name).SequenceEqual([MobileFeatures.Ocr, MobileFeatures.Image]), Groups());
-        labs.Filter = LabFilter.All;
-
-        // A feature turned off is not listed; the app's planned Self-test joins this device's group with its own icon.
-        options.DisabledFeatures.Add(MobileFeatures.Speak);
-        var selfTest = new PlannedFeature("self-test", "Self-test", "✓", 90, "The library's tests, run on this phone", "A test group by filter",
-            icon: "shield", tagline: "The library's own tests");
-        try
-        {
-            MobileFeatures.Register(selfTest);
-            labs.Refresh();
-            Check(!labs.All.Any(l => l.Name == MobileFeatures.Speak) && labs.Groups[3].Select(l => l.Name).SequenceEqual([MobileFeatures.Devices, MobileFeatures.Models, MobileFeatures.Terminal, "self-test", AppSections.Settings])
-                  && labs.All.Single(l => l.Name == "self-test") is { IsPlanned: true, Icon: "shield", Tone: "Neutral" }, Groups());
-        }
-        finally
-        {
-            MobileFeatures.Unregister("self-test");
-        }
     }
 
     private static void RedesignMarkdown()
@@ -611,7 +432,7 @@ internal static partial class MauiTests
         chat.SendAsync().GetAwaiter().GetResult();
         home.RefreshAsync().GetAwaiter().GetResult();
         Check(home.ChatQuestion == "What runs here?" && home.ChatAnswer == "ababab" && home.HasChatRate && home.ChatRate.StartsWith("3.0 tok/s on cpu", StringComparison.Ordinal)
-              && home.ChatModel == "Qwen3-0.6B · float32", $"'{home.ChatQuestion}' '{home.ChatAnswer}' '{home.ChatRate}' '{home.ChatModel}'");
+              && home.ChatModel == "Qwen3-0.6B", $"'{home.ChatQuestion}' '{home.ChatAnswer}' '{home.ChatRate}' '{home.ChatModel}'");
 
         // The layout settings are kept and read back.
         var settings = new IdrakMauiSettings(new MemorySettingsStore(), new MemorySecretStore());
@@ -636,48 +457,6 @@ internal static partial class MauiTests
 
     private static void RedesignSettingsAndDevices()
     {
-        string storage = Temp("settings-groups");
-        try
-        {
-            var options = new IdrakMauiOptions();
-            var startup = IdrakMauiStartup.Apply(options, storage);
-            var page = new SettingsViewModel(options, new IdrakMauiSettings(new MemorySettingsStore(), new MemorySecretStore()), startup);
-            Check(page.Groups.Select(g => g.Title).SequenceEqual(SettingsViewModel.GroupOrder) && page.Groups.Sum(g => g.Count) == IdrakMauiSettings.Definitions.Count,
-                string.Join(", ", page.Groups.Select(g => $"{g.Title} {g.Count}")));
-            var theme = page.Entries.Single(e => e.Setting.Key == "theme");
-            Check(theme is { IsSegmented: true, IsPicker: false, IsField: false } && theme.Segments.Select(s => s.Text).SequenceEqual(["system", "light", "dark"])
-                  && theme.Segments[0].IsSelected, "the theme as segments");
-            theme.Segments[2].SelectCommand.Execute(null);
-            Check(theme.Text == "dark" && theme.Segments[2].IsSelected && !theme.Segments[0].IsSelected, $"chose '{theme.Text}'");
-            var vectors = page.Entries.Single(e => e.Setting.Key == "cpu_vectors");
-            Check(vectors is { IsSegmented: true, Group: "General", Text.Length: 0 } && vectors.Segments.Select(s => s.Label).SequenceEqual(["Automatic", "Native", "Portable", "Scalar"])
-                  && vectors.Segments[0].IsSelected && theme.Segments[0].Label == "System", $"the vector paths as segments: {string.Join(", ", vectors.Segments.Select(s => s.Label))}");
-            vectors.Segments[2].SelectCommand.Execute(null);
-            Check(vectors.Text == "portable" && vectors.Segments[2].IsSelected, $"chose '{vectors.Text}'");
-            vectors.Segments[0].SelectCommand.Execute(null);
-            Check(vectors.Text.Length == 0, "automatic is the library's own");
-            var weights = page.Entries.Single(e => e.Setting.Key == "chat_weights");
-            Check(weights.IsSegmented == weights.Choices.Count <= 4 && weights.IsPicker == !weights.IsSegmented && page.Entries.Single(e => e.Setting.Key == "device") is { IsPicker: true, IsSegmented: false }
-              && page.Entries.Single(e => e.Setting.Key == "lookup_tables") is { IsSegmented: true, Segments.Count: 4 }, $"weights ({weights.Choices.Count} choices) and the device");
-            var temperature = page.Entries.Single(e => e.Setting.Key == "chat_temperature");
-            Check(temperature is { IsSlider: true, IsField: false, Minimum: 0, Maximum: 2 } && temperature.NumberText.StartsWith("default", StringComparison.Ordinal), temperature.NumberText);
-            temperature.Number = 0.737;
-            Check(temperature.Text == "0.75" && temperature.NumberText == "0.75", $"rounded to the step: '{temperature.Text}'");
-            temperature.ResetCommand.Execute(null);
-            Check(temperature.Text.Length == 0, "reset to the library's");
-            Check(page.Entries.Single(e => e.Setting.Key == "hf_token") is { IsField: true, IsPassword: true } && page.Entries.Single(e => e.Setting.Key == "cpu_threads").IsField,
-                "the token and a number without a range as fields");
-            page.Query = "packed weights";
-            var packedFound = page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).ToList();
-            Check(packedFound.Contains("packed_cache") && packedFound.Contains("packed_cache_folder") && page.Entries.Single(e => e.Setting.Key == "packed_cache") is { IsSegmented: true, Group: "Storage" },
-                $"the packed-weight cache's settings found by the search, in Storage: {string.Join(", ", packedFound)}");
-            page.Query = "";
-        }
-        finally
-        {
-            Restore(storage);
-        }
-
         // Devices: a summary card each, its state and key facts, every fact folded; virtual devices apart.
         var cards = DevicesViewModel.Summarize(new ListedDevices().Read());
         Check(cards.Select(c => c.Title).SequenceEqual(["This phone", "CPU", "Vulkan", "Vulkan", "deferred", "CUDA"]), string.Join(", ", cards.Select(c => c.Title)));
@@ -695,20 +474,6 @@ internal static partial class MauiTests
 
     private static void RedesignLabParts()
     {
-        // Studio: the pipeline as steps, each taking itself out.
-        using var lab = new ProcessLab();
-        var studio = lab.Vm;
-        studio.PipelineText = "highpass=80, denoise, agc";
-        Check(studio.Steps.Select(s => s.Name).SequenceEqual(["highpass", "denoise", "agc"]) && studio.Steps[0] is { Value: "80", HasArrow: false } && studio.Steps[1].HasArrow,
-            string.Join(" › ", studio.Steps.Select(s => s.Name)));
-        studio.Steps[1].RemoveCommand.Execute(null);
-        Check(studio.PipelineText == "highpass=80, agc" && studio.Steps.Count == 2, studio.PipelineText);
-
-        // Speak: the measures' words before a speech.
-        using var speak = new SpeakLab(new ScriptedSynthesizer());
-        Check(speak.Vm.FirstSoundText == "–" && speak.Vm.RealTimeText == "–" && speak.Vm.Pieces.Count == 0 && !speak.Vm.HasMeasures && speak.Vm.ModelChip == "voice",
-            $"nothing measured yet; chip '{speak.Vm.ModelChip}'");
-
         // The caret, the record button and the waveform: nothing animates off screen (no handler here), the waveform keeps its last levels.
         var caret = new CaretView { IsBlinking = true };
         var record = new RecordButton { IsRecording = true };

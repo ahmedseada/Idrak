@@ -13,20 +13,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Idrak.Maui.Tests;
 
 // The owner's lag notes (October 2026): the live levels handed from the capture thread and drawn once a display frame, the
-// settings' search and restart, the host keeping its sections' views, the kept chats read off the UI thread.
+// kept chats read off the UI thread.
 internal static partial class MauiTests
 {
-    private sealed class FakeRestarter(bool can) : IAppRestarter
-    {
-        public int Restarts { get; private set; }
-
-        public bool CanRestart => can;
-
-        public string Unavailable => can ? "" : "not here";
-
-        public void Restart() => Restarts++;
-    }
-
     // A second of a tone that swells and fades, at 16 kHz.
     private static float[] Swell(int rate = 16_000)
     {
@@ -117,117 +106,9 @@ internal static partial class MauiTests
         meter.IsLive = false;
         Check(meter.Shown == 0, "not live: empty");
 
-        // The frame clocks: the timer everywhere (the display's own on Android), chosen by name, an unknown one refused.
-        Check(FrameClocks.Names.Contains(FrameClocks.Timer) && FrameClocks.Use("timer").Name == FrameClocks.Timer && FrameClocks.Current.Name == FrameClocks.Timer,
-            string.Join(", ", FrameClocks.Names));
-        FrameClocks.Use(null);
-        bool refused = false;
-        try
-        {
-            FrameClocks.Use("nowhere");
-        }
-        catch (NotRegisteredException)
-        {
-            refused = true;
-        }
-
-        Check(refused, "an unknown frame clock was taken");
-        Check(IdrakMauiSettings.Definitions.Single(s => s.Key == "frame_clock").Choices.Contains(FrameClocks.Timer), "the clock is a setting");
-    }
-
-    private static void SettingsSearched()
-    {
-        string storage = Temp("settings-search");
-        var options = new IdrakMauiOptions();
-        var startup = IdrakMauiStartup.Apply(options, storage);
-        var restarter = new FakeRestarter(true);
-        var page = new SettingsViewModel(options, new IdrakMauiSettings(new MemorySettingsStore(), new MemorySecretStore()), startup, restarter: restarter);
-        string Shown() => string.Join(", ", page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key));
-
-        page.Query = "temperature";
-        Check(page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).SequenceEqual(["chat_temperature"]) && page.Groups.Single(g => g.IsShown).Title == "Chat"
-              && !page.ShowFeatures && !page.ShowStorage && !page.ShowApp && !page.HasNoMatch && page.IsSearching, Shown());
-        page.Query = "CHAT";
-        Check(page.Entries.Where(e => e.IsShown).All(e => e.Group == "Chat") && page.Groups.Single(g => g.Title == "Chat").All(e => e.IsShown), Shown());
-        page.Query = "int8 weights";
-        Check(page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).Order(StringComparer.Ordinal).SequenceEqual(["chat_weights", "packed_cache", "packed_cache_folder"]),
-              $"every word, a choice's too (the chat's weights by a choice, the packed cache by its help): {Shown()}");
-        options.MaxCpuThreads = 3;
-        page.Entries.Single(e => e.Setting.Key == "cpu_threads").Text = "3";
-        page.Query = "3";
-        Check(page.Entries.Single(e => e.Setting.Key == "cpu_threads").IsShown, $"by its value: {Shown()}");
-        page.Query = "transcribe";
-        Check(page.ShowFeatures && page.Features.Where(f => f.IsShown).Select(f => f.Name).Contains(MobileFeatures.Transcribe), "a lab shown, by its title");
-        page.Query = "restart";
-        Check(page.ShowApp, "the app's restart, by its words");
-        page.Query = "zzzz qqq";
-        Check(page.HasNoMatch && page.Groups.All(g => !g.IsShown) && !page.ShowFeatures && !page.ShowStorage && !page.ShowApp, "no setting matches");
-        page.Query = "";
-        Check(page.Entries.All(e => e.IsShown) && page.Groups.All(g => g.IsShown) && page.ShowFeatures && page.ShowStorage && page.ShowApp && !page.HasNoMatch, "all again");
-
-        // The search is quick: a thousand queries over every setting.
-        var clock = Stopwatch.StartNew();
-        for (int i = 0; i < 1000; i++)
-        {
-            page.Query = i % 2 == 0 ? "gpu memory" : "chat";
-        }
-
-        Check(clock.Elapsed < TimeSpan.FromSeconds(5), $"a thousand searches took {clock.Elapsed.TotalMilliseconds:F0} ms");
-        page.Query = "";
-
-        // A saved change that waits for the next start is marked and the restart offered; the restart asks first.
-        page.Entries.Single(e => e.Setting.Key == "gpu_chunk_mb").Text = "64";
-        Check(page.HasUnsavedChanges, "a change not saved");
-        Check(page.SaveAsync().GetAwaiter().GetResult() && page.IsRestartPending && page.Entries.Single(e => e.Setting.Key == "gpu_chunk_mb").WaitsForRestart
-              && page.Entries.Count(e => e.WaitsForRestart) == 1 && page.Message.Contains("Restart the app for", StringComparison.Ordinal), page.Message);
-        Check(!page.RestartAsync().GetAwaiter().GetResult() && restarter.Restarts == 0, "no one asked: not restarted");
-        page.Confirm = (_, _) => Task.FromResult(false);
-        Check(!page.RestartAsync().GetAwaiter().GetResult() && restarter.Restarts == 0, "declined: not restarted");
-        string asked = "";
-        page.Confirm = (_, message) =>
-        {
-            asked = message;
-            return Task.FromResult(true);
-        };
-        Check(page.RestartAsync().GetAwaiter().GetResult() && restarter.Restarts == 1 && !asked.Contains("not saved", StringComparison.Ordinal), asked);
-        var none = new SettingsViewModel(options, new IdrakMauiSettings(new MemorySettingsStore(), new MemorySecretStore()), startup, restarter: new UnavailableAppRestarter());
-        Check(!none.CanRestart && !none.RestartAsync().GetAwaiter().GetResult() && none.Message.Contains("by hand", StringComparison.Ordinal), none.Message);
-
-        // The page makes each setting's own control only: a picker a picker, a slider a slider, a field a field.
-        using var services = AppServices();
-        var view = new SettingsView(page);
-        Themed(view, AppTheme.Dark);
-        var tree = Tree(view).ToList();
-        int pickers = tree.OfType<Picker>().Count(), sliders = tree.OfType<Slider>().Count(), entries = tree.OfType<Entry>().Count(), all = tree.Count;
-        int wantPickers = page.Entries.Count(e => e.IsPicker), wantSliders = page.Entries.Count(e => e.IsSlider), wantFields = page.Entries.Count(e => e.IsField);
-        Check(pickers == wantPickers && sliders == wantSliders && entries == wantFields + 1, $"{pickers} pickers ({wantPickers}), {sliders} sliders ({wantSliders}), {entries} fields ({wantFields} and the search)");
-        Console.WriteLine($"    settings page: {all} elements for {page.Entries.Count} settings: {pickers} pickers, {sliders} sliders, {entries} fields "
-            + $"(every setting carried all four before: {page.Entries.Count} of each)");
-    }
-
-    private static void HostKeepsSections()
-    {
-        var options = new IdrakMauiOptions { Device = "cpu" };
-        using var services = AppServices(options);
-        var host = new AppHostPage(services);
-        var body = host.FindByName<Grid>("Body");
-        Check(host.Views.Count == 1 && body.Children.Count == 1 && host.Current is HomeView, "Home alone at first");
-        host.Prebuild();
-        Check(host.Views.Keys.Order(StringComparer.Ordinal).SequenceEqual([AppSections.Chat, AppSections.Home, AppSections.Vision, AppSections.Voice]) && body.Children.Count == 4
-              && body.Children.Count(c => ((View)c).IsVisible) == 1 && ReferenceEquals(body.Children.Single(c => ((View)c).IsVisible), host.Current),
-            $"made ahead: {string.Join(", ", host.Views.Keys)}; {body.Children.Count(c => ((View)c).IsVisible)} visible");
-        Check(((SegmentedSectionView)host.Views[AppSections.Vision]).FindByName<Grid>("Body").Children.Count == 3, "Vision's labs made ahead: Read text, Image, Generate");
-        var voice = (SegmentedSectionView)host.Views[AppSections.Voice];
-        Check(voice.FindByName<Grid>("Body").Children.Count == 3, $"Voice's labs made ahead: {voice.FindByName<Grid>("Body").Children.Count}");
-        Check(host.FindByName<ContentView>("SheetBody").Content is LabsView, "the sheet made ahead");
-        var chat = host.Views[AppSections.Chat];
-        host.OpenSectionAsync(AppSections.Chat).GetAwaiter().GetResult();
-        Check(ReferenceEquals(host.Current, chat) && chat.IsVisible && !host.Views[AppSections.Home].IsVisible && body.Children.Count == 4, "a tab shows its view made ahead; nothing made again");
-        host.OpenSectionAsync(AppSections.Home).GetAwaiter().GetResult();
-        Check(host.Current is HomeView && !chat.IsVisible && host.ViewModel.ShowsSame(), "back: the same views, the tabs the same");
-        options.DisabledFeatures.UnionWith([MobileFeatures.Ocr, MobileFeatures.Image, MobileFeatures.Generate]);
-        Check(!host.ViewModel.ShowsSame(), "a section turned off: the tabs listed again");
-        options.DisabledFeatures.Clear();
+        // The frame clock: the library's timer clock when none is chosen.
+        Check(FrameClocks.Use(null).Name == FrameClocks.Timer && FrameClocks.Current.Name == FrameClocks.Timer, FrameClocks.Current.Name);
+        Check(IdrakMauiSettings.Definitions.Any(s => s.Key == "frame_clock"), "the clock is a setting");
     }
 
     private static void ChatReadsKeptOffThread()

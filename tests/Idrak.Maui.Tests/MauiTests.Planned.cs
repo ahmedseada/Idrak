@@ -10,101 +10,19 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Idrak.Maui.Tests;
 
-// The planned features (plan 34's labs not built yet): registered by their real names and places, opened on the one
-// placeholder page, replaced by a ready feature in the same place, and the "planned" mark in both themes.
+// The planned features (plan 34's labs not built yet): opened on the one placeholder page, and the "planned" mark in both
+// themes.
 internal static partial class MauiTests
 {
-    // The library's planned labs in the plan's menu order (after Devices and Models).
-    private static readonly (string Name, string Title, int Order, PhoneNeeds Needs)[] PlannedLabs =
-    [
-        (MobileFeatures.Search, "Search", 80, PhoneNeeds.Model | PhoneNeeds.Network),
-    ];
-
     // The app's Self-test as apps/Idrak.Mobile registers it (AppFeatures; the app is built for Android only, so not here).
     private static PlannedFeature SelfTest() => new("self-test", "Self-test", "✓", 90, "The library's tests, run on this phone",
         "A test group by filter on cpu or vulkan:N with live progress; the failures file shared out", PhoneNeeds.None, ["Idrak.Tests.Library"]);
 
-    private static string Menu() => string.Join(", ", MobileFeatures.All.Select(f => $"{f.Name}@{MobileFeatures.Place(f)}"));
-
-    private static void PlannedRegistered()
-    {
-        var devices = MobileFeatures.Get(MobileFeatures.Devices);
-        Check(devices.State == FeatureState.Ready && devices.Coming.Length == 0, "the devices feature is ready");
-        foreach (var (name, title, order, needs) in PlannedLabs)
-        {
-            var feature = MobileFeatures.Get(name);
-            Check(feature is PlannedFeature && MobileFeatures.Origin(name) == Overrides.Library && ReferenceEquals(MobileFeatures.Default(name), feature),
-                $"{name}: {feature.GetType().Name} from {MobileFeatures.Origin(name)}");
-            Check(feature.Name == name && feature.Title == title && feature.Order == order && MobileFeatures.Place(feature) == order && feature.State == FeatureState.Planned,
-                $"{name}: title {feature.Title}, order {feature.Order}, state {feature.State}");
-            Check(feature.Needs == needs && feature.Packages.Count > 0 && feature.Packages.All(p => p.StartsWith("Idrak", StringComparison.Ordinal)) && feature.ModelFamilies.Count == 0,
-                $"{name}: needs {feature.Needs}, packages {string.Join(", ", feature.Packages)}, families {string.Join(", ", feature.ModelFamilies)}");
-            Check(feature.Coming.Length > 0 && feature.Summary.Length > 0 && feature.Glyph.Length is > 0 and <= 2 && feature.Order > devices.Order,
-                $"{name}: coming '{feature.Coming}', summary '{feature.Summary}', glyph '{feature.Glyph}'");
-        }
-
-        var plannedNames = PlannedLabs.Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var listed = MobileFeatures.All.Select(f => f.Name).Where(n => n == MobileFeatures.Devices || plannedNames.Contains(n)).ToList();
-        Check(listed.SequenceEqual([MobileFeatures.Devices, .. PlannedLabs.Select(p => p.Name)]), $"menu: {Menu()}");
-
-        var selfTest = SelfTest();
-        try
-        {
-            MobileFeatures.Register(selfTest);
-            Check(MobileFeatures.All[^1] == selfTest && MobileFeatures.Origin("self-test") == typeof(MauiTests).Assembly.GetName().Name && MobileFeatures.Default("self-test") is null,
-                $"the app's self-test: {Menu()}");
-            var options = new IdrakMauiOptions();
-            options.DisabledFeatures.Add("SEARCH");
-            Check(!MobileFeatures.Enabled(options).Any(f => f.Name == MobileFeatures.Search) && MobileFeatures.Enabled(options).Any(f => f.Name == MobileFeatures.Devices),
-                "a planned feature is turned off like any other");
-        }
-        finally
-        {
-            MobileFeatures.Unregister("self-test");
-        }
-
-        foreach (var (empty, make) in new (string, Func<PlannedFeature>)[]
-                 {
-                     ("name", () => new PlannedFeature(" ", "T", "*", 1, "s", "c")),
-                     ("title", () => new PlannedFeature("n", "", "*", 1, "s", "c")),
-                     ("summary", () => new PlannedFeature("n", "T", "*", 1, "", "c")),
-                     ("what is coming", () => new PlannedFeature("n", "T", "*", 1, "s", " ")),
-                 })
-        {
-            bool refused = false;
-            try
-            {
-                _ = make();
-            }
-            catch (ArgumentException)
-            {
-                refused = true;
-            }
-
-            Check(refused, $"a planned feature without its {empty} was made");
-        }
-    }
-
     private static void PlaceholderOpens()
     {
         using var services = new ServiceCollection().BuildServiceProvider();
-        foreach (var (name, title, _, needs) in PlannedLabs)
-        {
-            var feature = MobileFeatures.Get(name);
-            var page = MobileFeatures.Open(name, services);
-            Check(page is PlaceholderPage { BindingContext: PlaceholderViewModel } && page.Title == title, $"{name}: page {page.GetType().Name}, title {page.Title}");
-            var vm = (PlaceholderViewModel)page.BindingContext;
-            Check(vm.Feature == feature && vm.Title == title && vm.Glyph == feature.Glyph && vm.Summary == feature.Summary && vm.Coming == feature.Coming && vm.HasComing,
-                $"{name}: the view model shows another feature");
-            Check(vm.IsPlanned && vm.StateText == "planned" && vm.HasPackages && vm.Packages == string.Join(", ", feature.Packages) && !vm.HasModelFamilies,
-                $"{name}: state {vm.StateText}, packages {vm.Packages}");
-            Check(vm.NeedLines.Count == BitOperations.PopCount((uint)needs) && vm.NeedsNothing == (needs == PhoneNeeds.None), $"{name}: needs {string.Join(" | ", vm.NeedLines)}");
-        }
-
-        var search = (PlaceholderViewModel)MobileFeatures.Open(MobileFeatures.Search, services).BindingContext;
-        Check(search.NeedLines.SequenceEqual(PlaceholderViewModel.Describe(PhoneNeeds.Network | PhoneNeeds.Model))
-              && search.NeedLines[0].Contains("network", StringComparison.OrdinalIgnoreCase) && search.NeedLines[^1].Contains("model", StringComparison.Ordinal),
-            $"search: {string.Join(" | ", search.NeedLines)}");
+        var lines = PlaceholderViewModel.Describe(PhoneNeeds.Network | PhoneNeeds.Model);
+        Check(lines[0].Contains("network", StringComparison.OrdinalIgnoreCase) && lines[^1].Contains("model", StringComparison.Ordinal), $"search: {string.Join(" | ", lines)}");
         Check(PlaceholderViewModel.Describe(PhoneNeeds.Camera).Single().Contains("camera", StringComparison.Ordinal) && PlaceholderViewModel.Describe(PhoneNeeds.None).Count == 0,
             "the camera's line, and none for nothing");
 
@@ -123,65 +41,7 @@ internal static partial class MauiTests
         }
 
         Check(refused, "the placeholder page took another view model");
-        Check(new PlaceholderViewModel(MobileFeatures.Get(MobileFeatures.Devices)) is { IsPlanned: false, StateText: "ready", HasComing: false }, "a ready feature on the placeholder");
-    }
-
-    // A feature that sets only what it must: no order, no state, nothing coming.
-    private sealed class PlainFeature(string name, string title) : IMobileFeature
-    {
-        public string Name => name;
-
-        public string Summary => "a plain test feature";
-
-        public string Title => title;
-
-        public string Glyph => "+";
-
-        public PhoneNeeds Needs => PhoneNeeds.None;
-
-        public IReadOnlyList<string> Packages => [];
-
-        public IReadOnlyList<string> ModelFamilies => [];
-
-        public object CreateViewModel(IServiceProvider services) => new object();
-
-        public Page CreatePage(IServiceProvider services, object viewModel) => new ContentPage();
-    }
-
-    private static void PlannedReplaced()
-    {
-        var before = MobileFeatures.All.Select(f => f.Name).ToList();
-        int at = before.IndexOf(MobileFeatures.Search);
-        Check(at > 0, $"search is not in the menu: {Menu()}");
-        IMobileFeature ready = new PlainFeature(MobileFeatures.Search, "Search");
-        IMobileFeature ordered = new LabFeature(MobileFeatures.Search, "Search", order: 80);
-        IMobileFeature zeta = new PlainFeature("zeta-lab", "Zeta"), alpha = new PlainFeature("alpha-lab", "Alpha");
-        try
-        {
-            MobileFeatures.Register(ready);
-            Check(MobileFeatures.Get(MobileFeatures.Search) == ready && ready.State == FeatureState.Ready && ready.Coming.Length == 0 && ready.Order == MobileFeatures.Unordered,
-                $"the ready search: state {ready.State}, order {ready.Order}");
-            Check(MobileFeatures.Place(ready) == 80 && MobileFeatures.All.Select(f => f.Name).SequenceEqual(before), $"a ready search without an order moved: {Menu()}");
-            Check(MobileFeatures.Enabled(new IdrakMauiOptions()).Select(f => f.Name).SequenceEqual(before), "the enabled menu changed");
-
-            MobileFeatures.Register(ordered);
-            Check(MobileFeatures.Get(MobileFeatures.Search) == ordered && MobileFeatures.All.Select(f => f.Name).SequenceEqual(before), $"a ready search at its order moved: {Menu()}");
-
-            MobileFeatures.Register(zeta);
-            MobileFeatures.Register(alpha);
-            var all = MobileFeatures.All;
-            Check(all[^2] == alpha && all[^1] == zeta && MobileFeatures.Place(zeta) == MobileFeatures.Unordered && zeta.State == FeatureState.Ready,
-                $"features without an order come last, by title: {Menu()}");
-            Check(all.Take(all.Count - 2).All(f => MobileFeatures.Place(f) < MobileFeatures.Unordered), $"an ordered feature after the unordered: {Menu()}");
-        }
-        finally
-        {
-            MobileFeatures.Unregister(MobileFeatures.Search);
-            MobileFeatures.Unregister("zeta-lab");
-            MobileFeatures.Unregister("alpha-lab");
-        }
-
-        Check(MobileFeatures.Get(MobileFeatures.Search) is PlannedFeature && MobileFeatures.All.Select(f => f.Name).SequenceEqual(before), $"the planned search came back elsewhere: {Menu()}");
+        Check(new PlaceholderViewModel(new DevicesFeature()) is { IsPlanned: false, StateText: "ready", HasComing: false }, "a ready feature on the placeholder");
     }
 
     // The contrast of two colours (WCAG 2: relative luminances, 1 to 21).

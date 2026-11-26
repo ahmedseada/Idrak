@@ -225,9 +225,9 @@ internal static partial class MauiTests
         gate.Set();
         Check(second && first.GetAwaiter().GetResult().ExitCode == 0, "a second command while one runs was taken");
 
-        // The feature: in this device's group, reached from All labs and Home; its view binds in light and dark, ticking only while a command runs on screen.
-        var feature = MobileFeatures.Get(MobileFeatures.Terminal);
-        Check(feature is { Title: "Terminal", Group: FeatureGroup.Device, Icon: "terminal" } && new LabsViewModel(new IdrakMauiOptions()).All.Any(l => l.Name == MobileFeatures.Terminal), feature.Title);
+        // The feature: in this device's group; its view binds in light and dark, ticking only while a command runs on screen.
+        IMobileFeature feature = new TerminalFeature();
+        Check(feature is { Name: MobileFeatures.Terminal, Title: "Terminal", Group: FeatureGroup.Device, Icon: "terminal" }, feature.Title);
         using var services = AppServices();
         foreach (var theme in new[] { AppTheme.Light, AppTheme.Dark })
         {
@@ -277,24 +277,9 @@ internal static partial class MauiTests
         vm.RunAsync("models list").GetAwaiter().GetResult();
         Check(runner.Folder == other, "the commands run in the folder set");
 
-        // The settings page's Terminal part: found by the search, kept as idrak.terminal.*, applied at once.
-        var page = new SettingsViewModel(app, new IdrakMauiSettings(store, new MemorySecretStore()), new IdrakStartupReport(ComputeResources.CacheFolder, "auto", [], folder));
-        var part = page.Groups.Single(g => g.Title == "Terminal");
-        Check(part.Select(e => e.Setting.Key).SequenceEqual(["terminal.lines", "terminal.history", "terminal.history_shown", "terminal.suggestions", "terminal.folder", "terminal.allow"])
-              && part.All(e => !e.Setting.NeedsRestart), string.Join(", ", part.Select(e => e.Setting.Key)));
+        // The Terminal's settings, kept as idrak.terminal.*.
         Check(IdrakMauiSettings.Definitions.All(d => IdrakMauiSettings.Prefix + d.Key != TerminalViewModel.HistoryKey),
               "the saved history lines have a key of their own: no setting is stored under it (saving Settings would write over them)");
-        page.Query = "terminal working folder";
-        Check(page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).SequenceEqual(["terminal.folder"]), "found by the search");
-        page.Query = "terminal";
-        Check(part.All(e => e.IsShown) && part.IsShown, "the whole part by its heading");
-        page.Query = "";
-        part.Single(e => e.Setting.Key == "terminal.lines").Text = "7";
-        part.Single(e => e.Setting.Key == "terminal.folder").Text = "relative";
-        Check(!page.SaveAsync().GetAwaiter().GetResult(), "a folder that is not a full path refused");
-        part.Single(e => e.Setting.Key == "terminal.folder").Text = "";
-        Check(page.SaveAsync().GetAwaiter().GetResult() && app.TerminalLines == 7 && vm.LineLimit == 7 && vm.WorkingFolder == folder && store.Get("idrak.terminal.lines") == "7"
-              && !page.IsRestartPending, page.Message);
     }
 
     private static void TerminalAllowed()

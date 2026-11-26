@@ -12,7 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Idrak.Maui.Tests;
 
 // A desktop's keyboard and mouse (plan 34, phase W): what the keys and the wheel do, through the shared paths the Windows
-// handlers call (DesktopKeys.Press, ZoomView.ZoomByWheel, AppHostPage.CloseTopSheet), and the hover states of the styles.
+// handlers call (DesktopKeys.Press, ZoomView.ZoomByWheel, a view's CloseSheet), and the hover states of the styles.
 // The WinUI handlers themselves (Platforms/Windows) build and run only on Windows.
 internal static partial class MauiTests
 {
@@ -80,19 +80,6 @@ internal static partial class MauiTests
         view.Apply(true);
         vm.ShowCommands = true;
         Check(!view.CloseSheet(), "wide: the pane is not a sheet");
-
-        // The host's path: All labs' sheet, then the shown section's (the chat's tune sheet), nothing when none is open.
-        var host = new AppHostPage(services);
-        host.ApplySize(412, 915);
-        Check(!host.CloseTopSheet(), "nothing open");
-        host.OpenLabsAsync().GetAwaiter().GetResult();
-        Check(host.ViewModel.IsSheetOpen && host.CloseTopSheet() && !host.ViewModel.IsSheetOpen, "All labs' sheet closed");
-        host.ViewModel.Find(AppSections.Chat)!.SelectCommand.Execute(null);
-        var chat = services.GetRequiredService<ChatViewModel>();
-        chat.IsTuning = true;
-        Check(host.Current is ChatView && host.CloseTopSheet() && !chat.IsTuning && !host.CloseTopSheet(), $"the tune sheet closed: {host.Current?.GetType().Name}");
-        host.OpenFeatureAsync(MobileFeatures.Speak).GetAwaiter().GetResult();
-        Check(host.Current is SegmentedSectionView && !host.CloseTopSheet(), "a tab of several labs: its lab's sheet, none open");
     }
 
     private static void DesktopWheelZoom()
@@ -117,11 +104,6 @@ internal static partial class MauiTests
         zoom.WheelStep = 2;
         zoom.ZoomByWheel(1);
         Check(zoom.Zoom == 2, $"the step is the view's: {zoom.Zoom}");
-
-        // Generate's preview is a ZoomView (the one the wheel zooms on Windows).
-        string storage = Temp("desktop-wheel");
-        var generate = new GenerateView(new GenerateViewModel(new FakeShare(), new MemorySettingsStore(), storage, defaults: new GenerateLabOptions { SystemFonts = Path.Combine(storage, "none") }));
-        Check(generate.FindByName<ZoomView>("Zoom") is not null, "Generate's preview");
     }
 
     private static void DesktopHover()

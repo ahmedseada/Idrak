@@ -7,7 +7,6 @@ using Idrak.Maui.Abstractions;
 using Idrak.Maui.ViewModels;
 using Idrak.Maui.Views;
 using Idrak.Models;
-using Idrak.Text.Plugins.Qwen;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui.Dispatching;
 
@@ -16,8 +15,7 @@ using Device = Idrak.Abstraction.Device;
 namespace Idrak.Maui.Tests;
 
 // The Chat lab: its view model streaming from a model behind the library's chat contract (IChatModel), the batching of
-// its UI updates, Stop, the speeds, the settings as generation options, and the chat model service over a tiny generated
-// Qwen3 decoder (the test registers the family, as the app does).
+// its UI updates, Stop, the speeds and the settings as generation options.
 internal static partial class MauiTests
 {
     // A model store holding the given models.
@@ -85,8 +83,7 @@ internal static partial class MauiTests
             Requests.Add(request);
             bool load = Unloaded;
             Unloaded = false;
-            var info = new ChatModelInfo(request.Model, "cpu", request.Weights ?? "float32", request.KeyValueFormat ?? "float32", request.Context,
-                TimeSpan.FromSeconds(1.5), thinking, Estimate(request));
+            var info = new ChatModelInfo(request.Model, "cpu", request.KeyValueFormat ?? "float32", request.Context, TimeSpan.FromSeconds(1.5), thinking, Estimate(request));
             return Task.FromResult(new ChatLease(chat, info, load ? TimeSpan.FromSeconds(1.5) : TimeSpan.Zero));
         }
     }
@@ -137,7 +134,7 @@ internal static partial class MauiTests
         Check(page.Models.Count == 1 && page.Models[0].Title == "lab/chat" && page.Models[0].Path == folder, $"the finished models: {string.Join(", ", page.Models)}");
         page.SelectedModel = page.Models[0];
         Check(page.Loading!.GetAwaiter().GetResult() && page.ModelText.Contains("lab/chat on cpu", StringComparison.Ordinal)
-              && page.ModelText.Contains("loaded in 1.5 s", StringComparison.Ordinal) && page.ModelText.Contains("weights float32", StringComparison.Ordinal), page.ModelText);
+              && page.ModelText.Contains("loaded in 1.5 s", StringComparison.Ordinal), page.ModelText);
         Check(page.HasThinkingSwitch && !page.Thinking, "the setting's thinking over the model's default");
 
         // A thousand pieces at one time make one showing and the final one; the bubble gets them all when the UI thread runs.
@@ -225,80 +222,13 @@ internal static partial class MauiTests
             "what came is kept as the answer");
     }
 
-    // A tiny Qwen3 decoder made from a spec (random weights from a seed), with a byte-level tokenizer holding ChatML's
-    // tokens and the ChatML template: what the library makes with PretrainedModel.Create.
-    private static string TinyChatModel(string name)
-    {
-        string folder = Temp(name), tokenizerFolder = Temp(name + "-tokenizer");
-        var printable = Enumerable.Range('!', '~' - '!' + 1).Concat(Enumerable.Range('¡', '¬' - '¡' + 1)).Concat(Enumerable.Range('®', 'ÿ' - '®' + 1)).ToHashSet();
-        var vocab = new JsonObject();
-        for (int b = 0, n = 0; b < 256; b++)
-        {
-            vocab[((char)(printable.Contains(b) ? b : 256 + n++)).ToString()] = b;
-        }
-
-        File.WriteAllText(Path.Combine(tokenizerFolder, "tokenizer.json"), new JsonObject
-        {
-            ["added_tokens"] = new JsonArray(
-                new JsonObject { ["id"] = 256, ["content"] = "<|im_start|>", ["special"] = true },
-                new JsonObject { ["id"] = 257, ["content"] = "<|im_end|>", ["special"] = true },
-                new JsonObject { ["id"] = 258, ["content"] = "<|endoftext|>", ["special"] = true }),
-            ["model"] = new JsonObject { ["type"] = "BPE", ["vocab"] = vocab, ["merges"] = new JsonArray() },
-            ["pre_tokenizer"] = new JsonObject { ["type"] = "ByteLevel", ["add_prefix_space"] = false, ["use_regex"] = true },
-            ["decoder"] = new JsonObject { ["type"] = "ByteLevel" },
-        }.ToJsonString());
-        var spec = new DecoderSpec
-        {
-            Vocabulary = 260, Dim = 32, Layers = 2, Heads = 2, KvHeads = 1, HeadDim = 16, FfDim = 64, MaxPositions = 256,
-            Rope = new RopeSettings(10000f), NormEpsilon = 1e-6f, QkNorm = true, TieEmbeddings = true,
-        };
-        var files = new ModelFiles { Tokenizer = PretrainedTokenizers.Load(tokenizerFolder), EosToken = "<|im_end|>", StopTokens = ["<|endoftext|>"] };
-        using var _ = PretrainedModel.Create(folder, spec, QwenPlugin.Qwen3ForCausalLM, files, new CreateOptions { Device = Device.Cpu, Seed = 7, Overwrite = true });
-        return folder;
-    }
-
-    private static void ChatEndToEnd()
-    {
-        QwenPlugin.Register();
-        string folder = TinyChatModel("chat-end-to-end");
-        var pressure = new ManualMemoryPressure();
-        var options = new IdrakMauiOptions { Device = "cpu", ChatMaxNewTokens = 6, ChatTemperature = 0, ChatContext = 128, ModelKeepAlive = null };
-        using var models = new ModelService(pressure, options);
-        var page = new ChatViewModel(new ListedStore(Stored(folder, "lab/tiny")), new ChatModelService(models), options);
-        page.RefreshAsync().GetAwaiter().GetResult();
-        page.SelectedModel = page.Models.Single();
-        Check(page.Loading!.GetAwaiter().GetResult(), $"not loaded: {page.Error}");
-        Check(page.Model is { Device: "cpu", Weights: "float32", Context: 128, ThinkingDefault: null } && page.ModelText.Contains("loaded in", StringComparison.Ordinal)
-              && models.Loaded.Single().Host == ChatModelService.HostName, $"{page.Model}; {page.ModelText}");
-
-        string Answer(string question)
-        {
-            page.Draft = question;
-            Check(page.SendAsync().GetAwaiter().GetResult(), $"no answer: {page.Error}");
-            return page.Messages[^1].Footer;
-        }
-
-        // At most the 6 tokens asked for (fewer when the random weights sample the end of the turn), counted as they came.
-        static int Tokens(string footer) => int.Parse(footer.Split(' ')[0], System.Globalization.NumberStyles.AllowThousands, System.Globalization.CultureInfo.InvariantCulture);
-        string first = Answer("hello");
-        Check(Tokens(first) is >= 1 and <= 6 && first.EndsWith("cold", StringComparison.Ordinal) && page.History.Count == 2 && page.HasCold
-              && page.LiveText.StartsWith(first.Split(' ')[0] + " token", StringComparison.Ordinal), $"first answer: '{first}', '{page.ColdText}', '{page.LiveText}'");
-        string second = Answer("and then?");
-        Check(Tokens(second) is >= 1 and <= 6 && second.EndsWith("warm", StringComparison.Ordinal) && page.HasWarm, $"second answer: '{second}', '{page.WarmText}'");
-
-        // Memory pressure takes the model between answers: the next one loads it again and is cold again.
-        pressure.Raise(MemoryPressureLevel.Critical, "onLowMemory");
-        Check(models.Loaded.Count == 0, "the idle model stayed loaded under pressure");
-        string third = Answer("still there?");
-        Check(third.EndsWith("cold", StringComparison.Ordinal) && models.Loaded.Count == 1 && page.History.Count == 6, $"after the pressure: '{third}'");
-    }
-
     private static void ChatPageOpens()
     {
         using var services = new ServiceCollection().BuildServiceProvider();
-        var page = MobileFeatures.Open("chat", services);
+        var feature = new ChatFeature();
+        var page = feature.CreatePage(services, feature.CreateViewModel(services));
         Check(page is ChatPage { BindingContext: ChatViewModel { Copy: not null, OpenModels: not null } } && page.Title == "Chat", $"page {page.GetType().Name}, title {page.Title}");
-        Check(MobileFeatures.Origin("chat") == Overrides.Library && MobileFeatures.Get("chat") is ChatFeature { Order: 20, Needs: PhoneNeeds.Model }, "the library's chat feature");
+        Check(feature is { Name: MobileFeatures.Chat, Order: 20, Needs: PhoneNeeds.Model }, "the library's chat feature");
     }
 
     // A dictation that hears its words at once, then waits for Stop; or one with no speech model.

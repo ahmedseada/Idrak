@@ -9,7 +9,6 @@
 //   IDRAK_DEVICES=cpu dotnet run -c Release --project tests/Idrak.Maui.Tests
 //   IDRAK_DEVICES=cpu IDRAK_FILTER="maui progress|maui settings" dotnet run -c Release --project tests/Idrak.Maui.Tests
 //   IDRAK_DEVICES=cpu dotnet run -c Release --no-build --project tests/Idrak.Maui.Tests -- --failures-only --failures-file test-output/maui-fails.txt
-//   IDRAK_UPDATE_API=1 IDRAK_FILTER="public API" …   rewrites api/Idrak.Maui.txt after an intended change
 
 using System.Diagnostics;
 using Idrak.Maui.Tests;

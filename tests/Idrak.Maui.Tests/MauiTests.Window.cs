@@ -154,15 +154,5 @@ internal static partial class MauiTests
         Check(window.MinimumWidth == 640 && window.MinimumHeight == 400.5, $"the window's least {window.MinimumWidth} x {window.MinimumHeight}");
         width.Set(read, "");
         Check(read.WindowMinimumWidth == 360, "empty: the default");
-
-        // Found by the settings' search.
-        var startup = IdrakMauiStartup.Apply(new IdrakMauiOptions(), Temp("window-settings"));
-        var page = new SettingsViewModel(new IdrakMauiOptions(), new IdrakMauiSettings(new MemorySettingsStore(), new MemorySecretStore()), startup);
-        page.Query = "window";
-        var shown = page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).ToList();
-        Check(shown.Contains("window_keep") && shown.Contains("window_min_width_dp") && shown.Contains("window_min_height_dp"), string.Join(", ", shown));
-        page.Query = "least height";
-        Check(page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).SequenceEqual(["window_min_height_dp"]),
-            string.Join(", ", page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key)));
     }
 }
