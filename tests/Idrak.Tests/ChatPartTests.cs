@@ -3,7 +3,6 @@
 
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Testing;
 using Idrak.Cli.Commands.Run;
 using Idrak.Generation;
 using Idrak.Inference;
@@ -11,16 +10,14 @@ using Idrak.Text;
 using Idrak.Text.Generation;
 using Idrak.Text.Inference;
 
-// Plan 11, phase 1: message content as parts (ChatPart: text, images, kinds of one's own) registered in ChatParts, and
-// what a chat model or template takes (PartKinds), checked by one shared function before anything answers.
+// Plan 11, phase 1: message content as parts (ChatPart: text, images, kinds of one's own), and what a chat model or
+// template takes (PartKinds), checked by one shared function before anything answers.
 internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ChatPartGroup =
     [
         ("chat parts: ChatImage from bytes, files and data URLs (media types sniffed or given, SHA-256 hash, equality by bytes), bad data URLs refused", d => { CpuOnly(d); ChatImageFactories(); }),
         ("chat parts: ChatMessage holds ordered parts; text-only messages, Content, with { Content } and equality are as before", d => { CpuOnly(d); ChatMessageParts(); }),
-        ("chat parts: the registry (text and image as library defaults, Register/Unregister, Origin, versions, policies) and the JSON of parts and content", d => { CpuOnly(d); ChatPartRegistry(); }),
-        ("chat parts: the testing kit's ChatPartKindSuite passes the built-in kinds and catches a kind that loses data", d => { CpuOnly(d); ChatPartKit(); }),
         ("chat parts: text-only models (ChatGenerator, the engine's chat model, FakeChatModel, WithTools) and templates refuse an image with a clear message; text is unchanged", ChatPartModelsRefuse),
         ("chat parts: chat JSON (ChatJson, fine-tuning transcripts, the CLI's --history) round-trips images and keeps text-only content a string; /v1 reads image_url data URLs and refuses other parts", ChatPartJson),
     ];
@@ -100,99 +97,6 @@ internal abstract partial class DesktopTests : Tests
         var edited = mixed with { Content = "Shorter." };
         Check(edited.Parts is [ChatImage, ChatText { Text: "Shorter." }] && (mixed with { Content = "" }).Parts is [ChatImage], "with { Content } replaces the text, keeps the image");
         Check((text with { Parts = null! }).Parts.Count == 0, "null parts are none");
-    }
-
-    private static void ChatPartRegistry()
-    {
-        // "audio" is Idrak.Audio's library default (plan 21, S3), registered on the registry's first use; "video" is no one's.
-        Check(ChatParts.Names.Take(2).SequenceEqual(["text", "image"]) && ChatParts.Names.Contains("audio") && ChatParts.Origin("text") == Overrides.Library && ChatParts.DefaultVersion("image") == 1
-              && ChatParts.Default("image", 1) == ChatParts.Default("image") && ChatParts.Default("image", 2) is null && ChatParts.Default("video") is null
-              && ChatParts.Origin("audio") == Overrides.Library && ChatParts.TextOnly.SetEquals(["text"]), "text, image and audio are library defaults, version 1");
-        Throws<NotSupportedException>(() => ChatParts.Get("video"), "an unknown kind");
-        Check(ChatParts.Find("video") is null && ChatParts.Find("text") is not null, "Find");
-
-        var image = ChatImage.FromBytes(PngBytes);
-        var json = ChatParts.ToJson(image);
-        Check(json.ToJsonString() == $"{{\"type\":\"image\",\"media_type\":\"image/png\",\"data\":\"{Convert.ToBase64String(PngBytes)}\"}}", json.ToJsonString());
-        Check(ChatParts.FromJson(json) == image && ChatParts.FromJson(ChatParts.ToJson(new ChatText("x"))) == new ChatText("x")
-              && ChatParts.FromJson(JsonValue.Create("bare")) == new ChatText("bare"), "parts round-trip; a bare string is text");
-        Throws<FormatException>(() => ChatParts.FromJson(new JsonObject { ["text"] = "no type" }), "a part with no type");
-        Throws<FormatException>(() => ChatParts.FromJson(new JsonObject { ["type"] = "image", ["data"] = "***" }), "bad base64");
-        Throws<FormatException>(() => ChatParts.FromJson(new JsonObject { ["type"] = "text" }), "text with no text");
-        try
-        {
-            ChatParts.FromJson(new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject() });
-            Check(false, "an unregistered type is refused");
-        }
-        catch (NotSupportedException e)
-        {
-            Check(e.Message.Contains("'image_url'", StringComparison.Ordinal) && e.Message.Contains("ChatParts.Register", StringComparison.Ordinal), e.Message);
-        }
-
-        Check(ChatParts.ContentToJson([]).ToJsonString() == "\"\"" && ChatParts.ContentToJson([new ChatText("hi")]).ToJsonString() == "\"hi\""
-              && ChatParts.ContentToJson([image, new ChatText("hi")]) is JsonArray { Count: 2 } && ChatParts.ContentFromJson(null).Count == 0
-              && ChatParts.ContentFromJson(JsonValue.Create("")).Count == 0 && ChatParts.ContentFromJson(ChatParts.ContentToJson([image, new ChatText("hi")])) is [ChatImage, ChatText],
-            "content: a string when text alone, else parts");
-
-        // An app's image kind over the library's: it shadows the default, falls back under FallBack, and unregisters.
-        var library = ChatParts.Default("image")!;
-        int calls = 0;
-        ChatParts.Register(new BrokenImageKind(() => calls++));
-        try
-        {
-            Check(ChatParts.Origin("image") == typeof(DesktopTests).Assembly.GetName().Name && ReferenceEquals(ChatParts.Default("image"), library)
-                  && Overrides.Report().Any(o => o.Registry == "ChatParts" && o.Name == "image"), "the app's kind shadows the default and shows in the report");
-            Throws<InvalidDataException>(() => ChatParts.FromJson(json), "Throw: the app's failure reaches the caller");
-            ChatParts.SetPolicy("image", SlotPolicy.FallBack);
-            Check(ChatParts.FromJson(json) == image && ChatParts.ToJson(image).ToJsonString() == json.ToJsonString() && calls == 3, "FallBack: the library's kind answers");
-        }
-        finally
-        {
-            ChatParts.SetPolicy("image", SlotPolicy.Throw);
-            ChatParts.Unregister("image");
-        }
-
-        Check(ReferenceEquals(ChatParts.Get("image"), library) && ChatParts.Origin("image") == Overrides.Library && !ChatParts.Unregister("image"), "Unregister brings the default back");
-    }
-
-    private sealed class BrokenImageKind(Action called) : IChatPartKind
-    {
-        public string Name => "image";
-
-        public string Summary => "an image kind that fails";
-
-        public void Write(ChatPart part, JsonObject json)
-        {
-            called();
-            throw new InvalidDataException("the app's image kind broke");
-        }
-
-        public ChatPart Read(JsonObject json)
-        {
-            called();
-            throw new InvalidDataException("the app's image kind broke");
-        }
-    }
-
-    private static void ChatPartKit()
-    {
-        Conformance.CheckChatPartKind("text").ThrowIfFailed();
-        Conformance.CheckChatPartKind("image", options: new ContractCheckOptions { RandomCases = 10 }).ThrowIfFailed();
-        var report = Conformance.CheckChatPartKind("image", new ForgetfulImageKind());
-        Check(!report.Passed && report.Failures.Any(f => f.Check == "writes the JSON the library's kind writes"), report.ToString());
-        Throws<ArgumentException>(() => new ChatPartKindSuite("video"), "a kind of one's own needs samples");
-    }
-
-    // Drops the media type: still reads back equal (images compare by bytes), but not the library's JSON.
-    private sealed class ForgetfulImageKind : IChatPartKind
-    {
-        public string Name => "image";
-
-        public string Summary => "an image kind that drops the media type";
-
-        public void Write(ChatPart part, JsonObject json) => json["data"] = Convert.ToBase64String(((ChatImage)part).Data.Span);
-
-        public ChatPart Read(JsonObject json) => ChatParts.Default("image")!.Read(json);
     }
 
     private static void ChatPartModelsRefuse(Device device)
