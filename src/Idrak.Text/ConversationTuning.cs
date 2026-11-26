@@ -133,7 +133,7 @@ public sealed record ConversationTuningResult(string Folder, bool Stopped, TimeS
 /// </summary>
 /// <example>
 /// <code>
-/// using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = Device.Cuda(), BFloat16 = true });
+/// using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = Device.Cuda() });
 /// using var tuning = ConversationTuning.Prepare(model, ["train.json"], new ConversationTuningOptions
 /// {
 ///     Evaluation = "val.json", Images = "images.zip", Preparation = TuningImages.Parse("max_width=1024"), Metric = TuningMetrics.CharacterErrorRate,

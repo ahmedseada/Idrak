@@ -20,7 +20,7 @@ public static class PretrainedModelExtensions
         {
             if (cacheFormat is null)
             {
-                return model.CreateGenerator(KeyValueLayouts.Choose(null, model.ElementType.Type).Layout, contextLength);
+                return model.CreateGenerator(KeyValueLayouts.Choose(null).Layout, contextLength);
             }
 
             model.Network.Eval();

@@ -157,7 +157,7 @@ public sealed class Gemma3VisionFamily : IVisionFamily
 
 /// <summary>
 /// The vision part of a Gemma 3 checkpoint, as data: SigLIP's configuration, the image token ids, and the encoder's and
-/// projector's tensors under one naming whatever layout the checkpoint was saved in. <see cref="CreateEncoder(Device?, ImagePreprocessor?, Gemma3PanAndScan?, EncoderWeights)"/>
+/// projector's tensors under one naming whatever layout the checkpoint was saved in. <see cref="CreateEncoder(Device?, ImagePreprocessor?, Gemma3PanAndScan?)"/>
 /// builds the encoder and the projector from it.
 /// </summary>
 /// <remarks>
@@ -171,8 +171,7 @@ public sealed class Gemma3VisionFamily : IVisionFamily
 /// <para>
 /// For fine-tuning (<see cref="IVisionTuningPart"/>), Gemma 3 lets its projector and its SigLIP tower train (full weights,
 /// saved under the checkpoint's names: the tower's fused q, k, v projection split back into q_proj, k_proj and v_proj),
-/// each from an encoder that holds that part in float32 (<see cref="VisionEncoderOptions.TrainedParts"/>,
-/// <see cref="EncoderWeights.Float32"/>, or a float32 checkpoint as stored).
+/// each from an encoder that names that part (<see cref="VisionEncoderOptions.TrainedParts"/>).
 /// </para>
 /// </remarks>
 public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
@@ -260,34 +259,25 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
 
     /// <inheritdoc />
     /// <remarks>
-    /// The parts <see cref="VisionEncoderOptions.TrainedParts"/> names (projector, tower) are built with float32 weights,
-    /// the other as <see cref="VisionEncoderOptions.Weights"/> says: a trained projector over a bfloat16 checkpoint keeps
-    /// SigLIP's projections in bfloat16.
+    /// The parts <see cref="VisionEncoderOptions.TrainedParts"/> names (projector, tower) may train.
     /// </remarks>
     public override IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null)
     {
-        var weights = options?.Weights ?? EncoderWeights.AsStored;
-        EncoderWeights For(string part) => options?.Trains(part) == true ? EncoderWeights.Float32 : weights;
-        return Build(options?.Device, Preprocessor(options?.Grayscale ?? false), PanAndScan.With(options?.VisionOptions), For(VisionTuningParts.Tower),
-            For(VisionTuningParts.Projector));
+        return Build(options?.Device, Preprocessor(options?.Grayscale ?? false), PanAndScan.With(options?.VisionOptions));
     }
 
     /// <summary>
     /// Builds the vision encoder and the projector on <paramref name="device"/> from the checkpoint's tensors (read once):
-    /// a <see cref="Gemma3ImageEncoder"/> that turns images into the soft tokens' embeddings, computing in float32. Its
-    /// projection weights are kept as the checkpoint stores them unless <paramref name="weights"/> says otherwise (a
-    /// bfloat16 checkpoint's in bfloat16: 0.83 GB less for gemma-3-4b's 417 M encoder and projector weights, the same
-    /// features). Dispose it when done.
+    /// a <see cref="Gemma3ImageEncoder"/> that turns images into the soft tokens' embeddings. Dispose it when done.
     /// </summary>
     /// <param name="device">Where it runs (default <see cref="Device.Default"/>; pass the language model's device).</param>
     /// <param name="preprocessor">How images become pixel values (default <see cref="Preprocessor"/>).</param>
     /// <param name="panAndScan">Pan and scan for every image (default <see cref="PanAndScan"/>); a request's options go over it.</param>
-    /// <param name="weights">The projection weights' precision (<see cref="EncoderWeights.Float32"/> forces float32).</param>
-    public Gemma3ImageEncoder CreateEncoder(Device? device, ImagePreprocessor? preprocessor = null, Gemma3PanAndScan? panAndScan = null,
-        EncoderWeights weights = EncoderWeights.AsStored) => Build(device, preprocessor, panAndScan, weights, weights);
+    public Gemma3ImageEncoder CreateEncoder(Device? device, ImagePreprocessor? preprocessor = null, Gemma3PanAndScan? panAndScan = null) =>
+        Build(device, preprocessor, panAndScan);
 
-    // The encoder with the tower's and the projector's weights each as asked.
-    private Gemma3ImageEncoder Build(Device? device, ImagePreprocessor? preprocessor, Gemma3PanAndScan? panAndScan, EncoderWeights tower, EncoderWeights projectorWeights)
+    // The encoder.
+    private Gemma3ImageEncoder Build(Device? device, ImagePreprocessor? preprocessor, Gemma3PanAndScan? panAndScan)
     {
         device ??= Device.Default;
         using var tensors = OpenTensors();
@@ -296,10 +286,10 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
             throw new NotSupportedException("vision_config: vision_use_head (SigLIP's attention-pooling head) is not supported; vision-language models use the patch outputs.");
         }
 
-        var encoder = VisionTransformerEncoder.FromTensors(Encoder.ToTransformer(), tensors, "vision.", device, tower);
+        var encoder = VisionTransformerEncoder.FromTensors(Encoder.ToTransformer(), tensors, "vision.", device);
         try
         {
-            var projector = Gemma3Projector.FromTensors(tensors, Encoder.Dim, TextDim, PoolSize, ProjectorNormEpsilon, "projector.", device, projectorWeights);
+            var projector = Gemma3Projector.FromTensors(tensors, Encoder.Dim, TextDim, PoolSize, ProjectorNormEpsilon, "projector.", device);
             return new Gemma3ImageEncoder(this, encoder, projector, preprocessor ?? Preprocessor(), panAndScan ?? PanAndScan);
         }
         catch
@@ -328,12 +318,6 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
             VisionTuningParts.Tower => own.Encoder,
             _ => throw new NotSupportedException($"The vision family {Family} does not offer '{part}' for training; it offers: {string.Join(", ", TrainableParts)}."),
         };
-        if (module.Buffers().Any())
-        {
-            throw new InvalidOperationException($"Gemma 3's {part.Trim().ToLowerInvariant()} holds packed (bfloat16) weights in this encoder, which do not train; "
-                + "build the encoder with VisionEncoderOptions.Weights = EncoderWeights.Float32 to train it.");
-        }
-
         return [.. module.Parameters()];
     }
 
@@ -415,12 +399,6 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
                 continue;
             }
 
-            if (own.Projector.Buffers().Any())
-            {
-                throw new InvalidOperationException("Gemma 3's projector holds packed (bfloat16) weights in this encoder; build it with VisionEncoderOptions.TrainedParts naming the projector "
-                    + "(or Weights = EncoderWeights.Float32) to load trained values.");
-            }
-
             var target = read();
             if (!value.Shape.SequenceEqual(target.Shape))
             {
@@ -434,12 +412,6 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
         var tower = TowerTensorNames().Where(n => tensors.ContainsKey(Tensors[n].Stored)).ToList();
         if (tower.Count > 0)
         {
-            if (own.Encoder.Buffers().Any())
-            {
-                throw new InvalidOperationException("Gemma 3's tower holds packed (bfloat16) weights in this encoder; build it with VisionEncoderOptions.TrainedParts naming the tower "
-                    + "(or Weights = EncoderWeights.Float32) to load trained values.");
-            }
-
             foreach (string name in tower)
             {
                 var value = tensors[Tensors[name].Stored];

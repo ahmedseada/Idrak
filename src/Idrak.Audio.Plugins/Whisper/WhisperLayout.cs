@@ -34,7 +34,7 @@ internal sealed class WhisperLayout
     {
         _entries.Add(new Entry(name + ".weight", [layer.OutFeatures, layer.InFeatures],
             () => HostParallel.Transpose(((ILinearLayer)layer).WeightValues(), layer.InFeatures, layer.OutFeatures),
-            () => layer.PackedWeight is null && layer.TiedTo is null && layer.Weight.Grad is { } g ? HostParallel.Transpose(g.ToArray(), layer.InFeatures, layer.OutFeatures) : null));
+            () => layer.TiedTo is null && layer.Weight.Grad is { } g ? HostParallel.Transpose(g.ToArray(), layer.InFeatures, layer.OutFeatures) : null));
         if (layer.Bias is not null)
         {
             _entries.Add(new Entry(name + ".bias", [layer.OutFeatures], () => layer.Bias!.ToArray(), () => layer.Bias!.Grad?.ToArray()));
@@ -68,7 +68,7 @@ internal sealed class WhisperLayout
                 }
 
                 return weight;
-            }, () => packed.PackedWeight is null && packed.Weight.Grad is { } g ? Part(g.ToArray(), dim, part) : null));
+            }, () => packed.Weight.Grad is { } g ? Part(g.ToArray(), dim, part) : null));
             if (biases[p])
             {
                 _entries.Add(new Entry(prefix + parts[p] + ".bias", [dim], () => packed.Bias!.ToArray().AsSpan(part * dim, dim).ToArray(),

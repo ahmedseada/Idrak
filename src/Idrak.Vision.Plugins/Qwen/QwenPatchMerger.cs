@@ -24,7 +24,7 @@ public sealed class QwenPatchMerger : Module
     public QwenVisionConfig Config { get; }
 
     /// <summary>The merger from the vision part's tensors (<c>merger.ln_q</c>, <c>merger.mlp.0</c>, <c>merger.mlp.2</c>), on <paramref name="device"/>.</summary>
-    public static QwenPatchMerger FromTensors(QwenVisionConfig config, QwenVlVariant variant, ITensorStore tensors, Device device, EncoderWeights weights)
+    public static QwenPatchMerger FromTensors(QwenVisionConfig config, QwenVlVariant variant, ITensorStore tensors, Device device)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(tensors);
@@ -32,8 +32,8 @@ public sealed class QwenPatchMerger : Module
         Linear? fc1 = null;
         try
         {
-            fc1 = StoredWeights.Linear(tensors, "merger.mlp.0", weights, device);
-            return new QwenPatchMerger(config, norm, fc1, StoredWeights.Linear(tensors, "merger.mlp.2", weights, device));
+            fc1 = StoredWeights.Linear(tensors, "merger.mlp.0", device);
+            return new QwenPatchMerger(config, norm, fc1, StoredWeights.Linear(tensors, "merger.mlp.2", device));
         }
         catch
         {

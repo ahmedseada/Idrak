@@ -856,9 +856,8 @@ public sealed class PretrainedModel : IDisposable
     /// The family's vision encoder (<see cref="PretrainedVision.CreateEncoder"/>) on <paramref name="options"/>' device
     /// (the model's when not given), with the model's trained vision tensors put in (<see cref="TrainedVisionTensors"/>,
     /// through the family's <see cref="IVisionTuningPart.Import"/>). The parts those tensors belong to
-    /// (<see cref="IVisionTuningPart.PartsOf"/>) are built with float32 weights (<see cref="VisionEncoderOptions.TrainedParts"/>),
-    /// the others as <paramref name="options"/> say (a bfloat16 checkpoint's tower stays bfloat16 under a trained
-    /// projector); a family that cannot build them apart gets a float32 encoder (only then). Dispose it when done.
+    /// (<see cref="IVisionTuningPart.PartsOf"/>) are named in <see cref="VisionEncoderOptions.TrainedParts"/>. Dispose it
+    /// when done.
     /// </summary>
     /// <exception cref="InvalidOperationException">The model has no vision part.</exception>
     /// <exception cref="NotSupportedException">The vision family is no longer registered (the message names the registry).</exception>
@@ -873,9 +872,8 @@ public sealed class PretrainedModel : IDisposable
             options = options with { Device = Device };
         }
 
-        // The parts the trained tensors belong to take float32 weights; the rest keep the checkpoint's precision (a trained
-        // projector over a bfloat16 tower: the tower stays bfloat16).
-        if (_vision.Count > 0 && options.Weights != EncoderWeights.Float32 && vision is IVisionTuningPart parts)
+        // The parts the trained tensors belong to.
+        if (_vision.Count > 0 && vision is IVisionTuningPart parts)
         {
             options = options with { TrainedParts = [.. options.TrainedParts.Union(parts.PartsOf(_vision.Keys), StringComparer.OrdinalIgnoreCase)] };
         }
@@ -895,17 +893,7 @@ public sealed class PretrainedModel : IDisposable
         {
             var tuning = vision as IVisionTuningPart
                 ?? throw new InvalidDataException($"The model carries {_vision.Count} trained vision tensors, but the vision family {vision.Family} offers no trainable parts.");
-            try
-            {
-                ImportVision(tuning, encoder);
-            }
-            catch (InvalidOperationException) when (options.Weights != EncoderWeights.Float32)
-            {
-                encoder.Dispose();
-                encoder = vision.CreateEncoder(options with { Weights = EncoderWeights.Float32 });   // trained values need float32 weights
-                ImportVision(tuning, encoder);
-            }
-
+            ImportVision(tuning, encoder);
             return encoder;
         }
         catch

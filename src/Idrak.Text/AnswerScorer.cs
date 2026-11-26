@@ -22,7 +22,7 @@ public sealed record AnswerChoice(int Best, IReadOnlyList<double> Probabilities,
 /// </summary>
 /// <remarks>
 /// A pass takes up to <see cref="PromptsPerPass"/> prompts of similar length (and <see cref="PositionsPerPass"/> positions). Each prompt runs once for all its answers (a
-/// key/value cache, then only the answers' tokens; see <see cref="SharePrompts"/> and <see cref="Precision"/>), and the
+/// key/value cache, then only the answers' tokens; see <see cref="SharePrompts"/>), and the
 /// output layer and the log-softmax run on the device on the answer positions only (<see cref="Losses.TokenLogProbabilities"/>).
 /// A prompt too long for <see cref="MaxLength"/> has its last user message shortened (its start kept) until it fits with
 /// the longest answer, so every answer is scored on the same text.
@@ -77,30 +77,10 @@ public sealed class AnswerScorer
     public bool SharePrompts { get; init; } = true;
 
     /// <summary>
-    /// The precision of the matrix products and attention while scoring. Null (the default): bfloat16 tensor cores where
-    /// the model's GPU has them (the precision bfloat16 weights are multiplied in anyway, and what attention over rows of
-    /// different lengths needs to run each prompt once), else the thread's <see cref="MixedPrecision.Current"/>.
-    /// </summary>
-    public MatMulPrecision? Precision { get; init; }
-
-    /// <summary>The precision scoring uses (see <see cref="Precision"/>).</summary>
-    public MatMulPrecision EffectivePrecision => Precision
-        ?? (MixedPrecision.Current == MatMulPrecision.Float32 && MixedPrecision.TensorCoresUnavailable(_model.Device) is null
-            ? MatMulPrecision.BFloat16
-            : MixedPrecision.Current);
-
-    /// <summary>
     /// Whether each prompt runs once for all its answers (<see cref="SharePrompts"/> and a model whose attention batches
-    /// rows of different lengths from a cache at <see cref="EffectivePrecision"/>).
+    /// rows of different lengths from a cache).
     /// </summary>
-    public bool SharesPrompts
-    {
-        get
-        {
-            using var precision = MixedPrecision.Use(EffectivePrecision);
-            return SharePrompts && _batches.SupportsBatches;
-        }
-    }
+    public bool SharesPrompts => SharePrompts && _batches.SupportsBatches;
 
     /// <summary>
     /// <paramref name="prompt"/> as it is scored: its last user message shortened (its start kept) so that the prompt with
@@ -130,7 +110,6 @@ public sealed class AnswerScorer
 
         string longest = Longest(answers);
         bool share = SharesPrompts;
-        using var precision = MixedPrecision.Use(EffectivePrecision);
         var results = new double[prompts.Count][];
         var order = Enumerable.Range(0, prompts.Count).OrderBy(i => prompts[i].Sum(m => m.Content.Length)).ToArray();
         int perPass = Math.Max(1, PromptsPerPass), budget = Math.Max(1, PositionsPerPass), done = 0;

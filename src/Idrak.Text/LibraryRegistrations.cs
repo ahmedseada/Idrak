@@ -29,10 +29,6 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
         {
             ChatTemplates.Register(new JinjaTemplateReader());
         }
-        else if (registry == typeof(SettingAdvisors))
-        {
-            SettingAdvisors.Register(new Generation.ImageReaderAdvisor());
-        }
         else if (registry == typeof(FeatureCaches))
         {
             FeatureCaches.Register(new FeatureCacheKind(FeatureCaches.Memory, "in this process's memory, least recently used entries evicted to stay within a byte budget",

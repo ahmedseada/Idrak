@@ -49,10 +49,10 @@ public sealed class WhisperFamily : ISpeechFamily
         var features = AudioFeatureExtractors.Create("log-mel", featureOptions);
         var device = checkpoint.Options.Device ?? Device.Default;
         var layout = new WhisperLayout();                                     // where each tensor went, for Save
-        var encoder = WhisperEncoder.Read(checkpoint.Tensors, config, checkpoint.Options.Weights, device, "model.encoder.", layout);
+        var encoder = WhisperEncoder.Read(checkpoint.Tensors, config, device, "model.encoder.", layout);
         try
         {
-            var decoder = WhisperDecoder.Read(checkpoint.Tensors, config, checkpoint.Options.Weights, device, "model.decoder.", layout);
+            var decoder = WhisperDecoder.Read(checkpoint.Tensors, config, device, "model.decoder.", layout);
             var source = new WhisperSource(folder, checkpoint.Config, generation, layout);
             return new WhisperRecognizer(config, tokenizer, features, encoder, decoder, device, checkpoint.Options.Cache, [.. checkpoint.Notes], source,
                 checkpoint.Options.Language, checkpoint.Options.Task);

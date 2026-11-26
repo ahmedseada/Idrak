@@ -28,12 +28,6 @@ public sealed record PretrainingSource(string Kind, IReadOnlyList<string> Paths)
     /// <summary>Records: the folder or .zip their sounds are in, or null for beside each file.</summary>
     public string? Audios { get; init; }
 
-    /// <summary>
-    /// Tokens: the integer type ids are stored in in a raw token file (<see cref="TokenFileRecord.IsIdType"/>), or null for
-    /// what the file's record says (<see cref="TokenFileRecord"/>; a .npy file says it itself).
-    /// </summary>
-    public Idrak.Abstraction.ElementType? TokenType { get; init; }
-
     /// <summary>The source as JSON (<see cref="FromJson"/> reads it back).</summary>
     public JsonObject ToJson()
     {
@@ -53,11 +47,6 @@ public sealed record PretrainingSource(string Kind, IReadOnlyList<string> Paths)
             json["audios"] = Audios;
         }
 
-        if (TokenType is { } type)
-        {
-            json["token_type"] = type.Name;
-        }
-
         return json;
     }
 
@@ -69,26 +58,12 @@ public sealed record PretrainingSource(string Kind, IReadOnlyList<string> Paths)
         string kind = (string?)json["kind"] ?? throw new InvalidDataException("A pretraining source has no \"kind\" (tokens or records).");
         var paths = json["paths"] is JsonArray many ? many.Select(p => (string?)p ?? throw new InvalidDataException("A source path is not a string.")).ToList()
             : json["path"] is JsonValue one ? [(string)one!] : throw new InvalidDataException($"The {kind} source names no \"paths\".");
-        Idrak.Abstraction.ElementType? type = null;
-        if ((string?)json["token_type"] is { } t)
-        {
-            try
-            {
-                type = TokenFileRecord.Parse(t);
-            }
-            catch (ArgumentException e)
-            {
-                throw new InvalidDataException($"\"token_type\": {e.Message}", e);
-            }
-        }
-
         return new PretrainingSource(kind, paths)
         {
             Weight = (double?)json["weight"] ?? 1,
             Format = (string?)json["format"],
             Images = (string?)json["images"],
             Audios = (string?)json["audios"],
-            TokenType = type,
         };
     }
 }

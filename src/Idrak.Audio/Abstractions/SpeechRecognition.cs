@@ -83,9 +83,6 @@ public sealed record TranscriptionOptions
     /// <summary>Text given to the model before the first segment (names, spellings, style), where the family has a prompt token.</summary>
     public string? Prompt { get; init; }
 
-    /// <summary>Run the encoder in bfloat16 where the device has it (float32 otherwise).</summary>
-    public bool BFloat16 { get; init; } = true;
-
     /// <summary>Apply the family's lists of tokens never chosen (its suppress_tokens); off, the model's raw choices.</summary>
     public bool SuppressTokens { get; init; } = true;
 }
@@ -151,9 +148,6 @@ public sealed record SpeechModelOptions
 {
     /// <summary>The device the model lives on; null for the default.</summary>
     public Device? Device { get; init; }
-
-    /// <summary>How the projection weights are held (as stored, float32, bfloat16).</summary>
-    public EncoderWeights Weights { get; init; } = EncoderWeights.AsStored;
 
     /// <summary>The decoder's key/value cache format.</summary>
     public KeyValueFormat Cache { get; init; } = KeyValueFormat.Float32;

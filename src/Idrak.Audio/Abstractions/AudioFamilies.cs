@@ -21,9 +21,6 @@ public sealed record AudioEncoderOptions
     /// <summary>Where it runs (<see cref="Device.Default"/> when null; pass the language model's device).</summary>
     public Device? Device { get; init; }
 
-    /// <summary>How the encoder holds its weights: as the checkpoint stores them (the default), float32, or bfloat16.</summary>
-    public EncoderWeights Weights { get; init; }
-
     /// <summary>
     /// Trained tensors by their checkpoint names and in its layout (a training run's kept encoder and projector), read in
     /// place of the checkpoint's; none when null.

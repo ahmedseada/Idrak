@@ -22,7 +22,7 @@ namespace Idrak.Abstraction.Testing;
 /// <param name="device">Where the values put live and hits are asked for (the CPU when null).</param>
 public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<IFeatureCache>
 {
-    private static readonly string[] FieldNames = ["image", "transforms", "vision options", "family", "checkpoint", "dtype", "stage"];
+    private static readonly string[] FieldNames = ["image", "transforms", "vision options", "family", "checkpoint", "stage"];
 
     /// <summary>Where the values put live and hits are asked for.</summary>
     public override Device Device { get; } = device ?? Device.Cpu;
@@ -47,7 +47,7 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<IFe
         int rank = random.Next(1, 4), limit = large ? 64 : 9;
         int[] shape = [.. Enumerable.Range(0, rank).Select(_ => random.Next(1, limit))];
         string Text() => new([.. Enumerable.Range(0, random.Next(0, 12)).Select(_ => (char)(random.Next(3) == 0 ? random.Next(0x600, 0x6FF) : random.Next(0x20, 0x7F)))]);
-        var fields = new FeatureCacheKey(Convert.ToHexStringLower(BitConverter.GetBytes(random.NextInt64())), Text(), Text(), Text(), Text(), random.Next(2) == 0 ? "float32" : "bfloat16",
+        var fields = new FeatureCacheKey(Convert.ToHexStringLower(BitConverter.GetBytes(random.NextInt64())), Text(), Text(), Text(), Text(),
             random.Next(4) == 0 ? "features" : "tower");
         return Case($"random [{string.Join(", ", shape)}]", shape, random.Next(), fields, threads: random.Next(1, 5));
     }
@@ -161,7 +161,7 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<IFe
 
     private static FeatureCacheKey Fields(string image, string transforms, string options) =>
         new(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(image))), transforms, options,
-            "TinyFamilyForConditionalGeneration", "0123abcd", "float32", "tower");
+            "TinyFamilyForConditionalGeneration", "0123abcd", "tower");
 
     // The key with field `f` changed (a character added).
     private static FeatureCacheKey Change(FeatureCacheKey key, int f) => f switch
@@ -171,7 +171,6 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<IFe
         2 => key with { VisionOptions = key.VisionOptions + " " },
         3 => key with { Family = key.Family + "X" },
         4 => key with { Checkpoint = key.Checkpoint + "1" },
-        5 => key with { DType = key.DType == "float32" ? "bfloat16" : "float32" },
         _ => key with { Stage = key.Stage + "+" },
     };
 
@@ -189,11 +188,11 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<IFe
         ["fields"] = new JsonObject
         {
             ["image"] = fields.Image, ["transforms"] = fields.Transforms, ["vision_options"] = fields.VisionOptions, ["family"] = fields.Family,
-            ["checkpoint"] = fields.Checkpoint, ["dtype"] = fields.DType, ["stage"] = fields.Stage,
+            ["checkpoint"] = fields.Checkpoint, ["stage"] = fields.Stage,
         },
     });
 
     private static FeatureCacheKey ReadFields(JsonObject json) =>
         new((string)json["image"]!, (string)json["transforms"]!, (string)json["vision_options"]!, (string)json["family"]!, (string)json["checkpoint"]!,
-            (string)json["dtype"]!, (string)json["stage"]!);
+            (string)json["stage"]!);
 }

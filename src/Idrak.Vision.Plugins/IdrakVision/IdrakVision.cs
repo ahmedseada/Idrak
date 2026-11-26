@@ -211,7 +211,7 @@ public sealed class IdrakVisionPart : PretrainedVision, IVisionTuningPart
     {
         var device = options?.Device ?? Device.Default;
         using var store = _open();
-        var tower = VisionTransformerEncoder.FromTensors(Config.ToTransformer(), store, IdrakVisionFamily.TowerPrefix, device, EncoderWeights.Float32);
+        var tower = VisionTransformerEncoder.FromTensors(Config.ToTransformer(), store, IdrakVisionFamily.TowerPrefix, device);
         try
         {
             var projector = IdrakVisionProjector.FromTensors(Config, Width, store, IdrakVisionFamily.ProjectorPrefix, device);

@@ -353,7 +353,6 @@ public static partial class Pretrainer
             optimizer.ZeroGrad();
             var watch = Stopwatch.StartNew();
             using var recompute = options.RecomputeFeedForward == true ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null;
-            using var compress = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
             var result = pipe.Step(Math.Max(1, batches.Count),
                 m => Idrak.Generation.TokenIds.Of(data[m].Inputs, [batches[m].Rows.Length, batches[m].Length], pipe.Device),
                 (m, hidden) =>

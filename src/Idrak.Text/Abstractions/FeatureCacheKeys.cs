@@ -9,11 +9,11 @@ public static class FeatureCacheKeyExtensions
     extension(FeatureCacheKey)
     {
         /// <summary>The key of <paramref name="image"/> prepared by <paramref name="images"/> and encoded by the encoder described.</summary>
-        public static FeatureCacheKey For(ChatImage image, TuningImages images, string family, string checkpoint, string dtype, string stage = FeatureCacheKey.TowerStage)
+        public static FeatureCacheKey For(ChatImage image, TuningImages images, string family, string checkpoint, string stage = FeatureCacheKey.TowerStage)
         {
             ArgumentNullException.ThrowIfNull(image);
             ArgumentNullException.ThrowIfNull(images);
-            return new FeatureCacheKey(image.Hash, images.Pipeline.ToString(), images.VisionOptions.ToString(), family, checkpoint, dtype, stage);
+            return new FeatureCacheKey(image.Hash, images.Pipeline.ToString(), images.VisionOptions.ToString(), family, checkpoint, stage);
         }
     }
 }

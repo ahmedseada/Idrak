@@ -39,11 +39,11 @@ public sealed class WhisperEncoder : Module
     public int Dim => Config.Dim;
 
     /// <summary>Reads the encoder from the checkpoint's <c>model.encoder.*</c> tensors.</summary>
-    public static WhisperEncoder Read(ITensorStore store, WhisperConfig config, EncoderWeights weights, Device device, string prefix = "model.encoder.") =>
-        Read(store, config, weights, device, prefix, null);
+    public static WhisperEncoder Read(ITensorStore store, WhisperConfig config, Device device, string prefix = "model.encoder.") =>
+        Read(store, config, device, prefix, null);
 
     // The same, each tensor's layer recorded in `layout` (for writing the model back under the checkpoint's names).
-    internal static WhisperEncoder Read(ITensorStore store, WhisperConfig config, EncoderWeights weights, Device device, string prefix, WhisperLayout? layout)
+    internal static WhisperEncoder Read(ITensorStore store, WhisperConfig config, Device device, string prefix, WhisperLayout? layout)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(config);
@@ -64,12 +64,12 @@ public sealed class WhisperEncoder : Module
             for (int i = 0; i < layers.Length; i++)
             {
                 string layer = $"{prefix}layers.{i}.";
-                var attention = MultiHeadAttention.FromWeights(WhisperWeights.PackedQkv(store, layer + "self_attn.", d, weights, device, layout),
-                    WhisperWeights.Projection(store, layer + "self_attn.out_proj", d, d, weights, device, layout), config.EncoderHeads);
+                var attention = MultiHeadAttention.FromWeights(WhisperWeights.PackedQkv(store, layer + "self_attn.", d, device, layout),
+                    WhisperWeights.Projection(store, layer + "self_attn.out_proj", d, d, device, layout), config.EncoderHeads);
                 layers[i] = TransformerEncoderLayer.FromLayers(WhisperWeights.Norm(store, layer + "self_attn_layer_norm", d, config.NormEpsilon, device, layout), attention,
                     WhisperWeights.Norm(store, layer + "final_layer_norm", d, config.NormEpsilon, device, layout),
-                    WhisperWeights.Projection(store, layer + "fc1", d, config.EncoderFfDim, weights, device, layout),
-                    WhisperWeights.Projection(store, layer + "fc2", config.EncoderFfDim, d, weights, device, layout),
+                    WhisperWeights.Projection(store, layer + "fc1", d, config.EncoderFfDim, device, layout),
+                    WhisperWeights.Projection(store, layer + "fc2", config.EncoderFfDim, d, device, layout),
                     WhisperWeights.Activation(config.Activation));
                 created.Add(layers[i]);
             }

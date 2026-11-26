@@ -75,7 +75,6 @@ internal abstract class SpeechTrainee
     public virtual void Probe(ISpeechReader reader, SpeechTrainer.Prepared[] group, SpeechTrainingOptions options, SpeechForwardOptions forward)
     {
         using (var scope = new TensorScope())
-        using (var precision = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null)
         {
             var loss = Loss(reader, SpeechTrainer.Padded(group, this), group, forward);
             loss.Backward();
@@ -98,7 +97,6 @@ internal abstract class SpeechTrainee
         foreach (var group in groups)
         {
             using var scope = new TensorScope();
-            using var precision = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
             var loss = Loss(reader, SpeechTrainer.Padded(group, this), group, forward);
             var scaled = group.Length == total ? loss : loss * (group.Length / (float)total);
             scaled.Backward();

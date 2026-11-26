@@ -825,17 +825,6 @@ public sealed record FineTuningOptions
     /// </summary>
     public bool CudaGraphs { get; init; } = true;
 
-    /// <summary>
-    /// Forward products of the frozen base weights on FP8 (e4m3) tensor cores (compute capability 8.9 and newer): each
-    /// weight is quantized once per output column, activations per row as they are read; the backward pass stays in
-    /// bfloat16. Checked first: the loss of a sample of the training data with FP8 must be within
-    /// <see cref="Float8Tolerance"/> of the bfloat16 loss, otherwise training continues in bfloat16.
-    /// </summary>
-    public bool Float8 { get; init; }
-
-    /// <summary>Largest relative difference between the FP8 and the bfloat16 loss that <see cref="Float8"/> accepts.</summary>
-    public float Float8Tolerance { get; init; } = 0.02f;
-
     /// <summary>Batches whose gradients are added before each optimizer step.</summary>
     public int GradientAccumulation { get; init; } = 1;
 
@@ -884,17 +873,9 @@ public sealed record FineTuningOptions
     public bool? RecomputeFeedForward { get; init; }
 
     /// <summary>
-    /// Hold the activations the backward pass reads as bfloat16 between the passes (half their memory, one pack and one
-    /// unpack pass each; the inputs of tensor-core products lose nothing, see <see cref="ActivationMemory.CompressToBFloat16"/>).
-    /// Null (the default): off, and turned on when a step runs out of device memory with <see cref="RecomputeFeedForward"/>
-    /// on already, before <see cref="Checkpointing"/>.
-    /// </summary>
-    public bool? BFloat16Activations { get; init; }
-
-    /// <summary>
     /// Before the first step of each batch shape (rows × positions), estimate from the model's dimensions the device memory
-    /// each rung of the activation ladder needs (activations held, recomputed feed-forward, also bfloat16, checkpointing;
-    /// only the rungs the three settings above leave automatic) and start at the first whose estimate fits the memory the
+    /// each rung of the activation ladder needs (activations held, recomputed feed-forward, checkpointing; only the rungs
+    /// the settings above leave automatic) and start at the first whose estimate fits the memory the
     /// device reports available (within its configured limit), instead of finding it by running out of memory. A step that
     /// still runs out steps down as before and says the estimate was short. True by default; false starts from the settings
     /// as given, the out-of-memory ladder alone. IDRAK_ACTIVATION_ESTIMATE=0 sets the default to false.
@@ -1067,8 +1048,7 @@ public sealed record FineTuningProgress(int Step, int TotalSteps, int Epoch, flo
 }
 
 /// <summary>
-/// Fine-tunes a pretrained model with LoRA adapters: the base weights stay as loaded (float32, bfloat16, or the library's
-/// int4 or int8: QLoRA-style, a frozen quantized base, but not QLoRA's NF4 with double quantization) and frozen; only the adapters train, on the assistant tokens of chat transcripts (see
+/// Fine-tunes a pretrained model with LoRA adapters: the base weights stay as loaded and frozen; only the adapters train, on the assistant tokens of chat transcripts (see
 /// <see cref="ChatTranscriptEncoder"/>), or on preference pairs. By default AdamW with a linear warm-up and cosine decay,
 /// gradient accumulation and clipping, and a token loss that never stores the full logits
 /// (<see cref="Losses.TokenCrossEntropy"/>); the optimizer, the schedule and the loss can be replaced
@@ -1237,7 +1217,7 @@ public static class FineTuner
         [.. pairs.SelectMany(p => new[] { p.Chosen ?? throw new ArgumentException("A pair has no chosen answer."), p.Rejected ?? throw new ArgumentException("A pair has no rejected answer.") })];
 
     // A run over a session (FineTuningSession): the session holds what the run keeps across its steps (the adapters, the
-    // optimizer and its schedule, FP8 copies, the cluster's sync, the recorded step graphs); the run makes each epoch's
+    // optimizer and its schedule, the cluster's sync, the recorded step graphs); the run makes each epoch's
     // batches, steps the session through them, evaluates, scores answers and saves.
     private static IReadOnlyList<float> TrainCore(PretrainedModel model, IReadOnlyList<TrainingSequence> train, IReadOnlyList<TrainingSequence>? evaluation,
         bool pairs, CustomLoss? custom, FineTuningOptions options, string? outputFolder, IProgress<FineTuningProgress>? progress, CancellationToken cancellationToken,
@@ -1590,7 +1570,6 @@ public static class FineTuner
         private bool _toldImages;
 
         private readonly bool _automaticRecompute = options.RecomputeFeedForward is null && options.Checkpointing is null && !ComputeResources.OffloadToHostMemory;
-        private readonly bool _automaticBFloat16 = options.BFloat16Activations is null && options.Checkpointing is null && !ComputeResources.OffloadToHostMemory;
 
         /// <summary>Whether steps run with activation checkpointing (it can turn on during training, see <see cref="FineTuningOptions.Checkpointing"/>).</summary>
         public bool Checkpointing => _options.Checkpointing == true;
@@ -1600,9 +1579,8 @@ public static class FineTuner
             + (_recorded.Count > 0 ? $", {_recorded.Count} recorded step graph{(_recorded.Count == 1 ? "" : "s")}" : "");
 
         // Choosing by speed after the first out-of-memory step: the lightest setting that fits (recomputed feed-forward
-        // activations, then also bfloat16 ones) is timed over a step, then checkpointing is, and the faster is kept.
-        private readonly bool _choose = options.Checkpointing is null && options.RecomputeFeedForward is null && options.BFloat16Activations is null
-            && !ComputeResources.OffloadToHostMemory;
+        // activations) is timed over a step, then checkpointing is, and the faster is kept.
+        private readonly bool _choose = options.Checkpointing is null && options.RecomputeFeedForward is null && !ComputeResources.OffloadToHostMemory;
         private int _probe;                         // 0: not measuring; 1: the fitting setting; 2: checkpointing; 3: chosen
         private int _probeSteps;
         private double _lightSeconds;
@@ -1626,8 +1604,7 @@ public static class FineTuner
                 trace?.Invoke("steps with images run without graphs while a vision part trains (the features need gradients)");
             }
 
-            // Out of device memory: first recompute the feed-forward activations (cheap), then hold activations as
-            // bfloat16, then checkpoint every block (a third more compute); the step is run again each time and the graph,
+            // Out of device memory: first recompute the feed-forward activations (cheap), then checkpoint every block (a third more compute); the step is run again each time and the graph,
             // recorded without them, recorded again. Which of the setting that fits and checkpointing is faster is measured.
             // The first step also measures its bytes per position, so a run whose largest batch would not fit takes the
             // first rung before it fails (FirstRung). Before that, a shape not seen yet starts at the rung its estimate
@@ -1675,15 +1652,6 @@ public static class FineTuner
                     Recovered(ex, "feed-forward activations recomputed in the backward pass from this step");
                     trace?.Invoke($"out of device memory ({ex.Message.Split(':')[0]}{Short()}): feed-forward activations are recomputed in the backward pass "
                                   + "from this step (RecomputeFeedForward / --recompute to start with it)");
-                }
-                catch (Exception ex) when (OutOfMemoryPolicies.IsAllocationFailure(ex) && _automaticBFloat16 && _options.BFloat16Activations != true && !Checkpointing)
-                {
-                    _options = _options with { BFloat16Activations = true };
-                    Reset();
-                    StartProbe();
-                    Recovered(ex, "activations held as bfloat16 between the passes from this step");
-                    trace?.Invoke($"out of device memory ({ex.Message.Split(':')[0]}{Short()}): activations are held as bfloat16 between the passes "
-                                  + "from this step (BFloat16Activations / --bf16-activations to start with it)");
                 }
                 catch (Exception ex) when (OutOfMemoryPolicies.IsAllocationFailure(ex) && _automatic && !Checkpointing)
                 {
@@ -1774,14 +1742,12 @@ public static class FineTuner
         private ActivationRung? Next(ActivationRung rung) =>
             rung.Checkpointing ? null
             : _automaticRecompute && !rung.Recompute ? rung with { Recompute = true }
-            : _automaticBFloat16 && !rung.BFloat16 ? rung with { BFloat16 = true }
             : _automatic ? rung with { Checkpointing = true }
             : null;
 
         private FineTuningOptions Apply(ActivationRung rung) => _options with
         {
             RecomputeFeedForward = rung.Recompute ? true : _options.RecomputeFeedForward,
-            BFloat16Activations = rung.BFloat16 ? true : _options.BFloat16Activations,
             Checkpointing = rung.Checkpointing ? true : _options.Checkpointing,
         };
 
@@ -1792,8 +1758,7 @@ public static class FineTuner
         internal void StartAt(ActivationRung saved, string source)
         {
             var rung = ActivationRung.Of(_options);
-            var target = new ActivationRung(rung.Recompute || saved.Recompute && _automaticRecompute, rung.BFloat16 || saved.BFloat16 && _automaticBFloat16,
-                rung.Checkpointing || saved.Checkpointing && _automatic);
+            var target = new ActivationRung(rung.Recompute || saved.Recompute && _automaticRecompute, rung.Checkpointing || saved.Checkpointing && _automatic);
             if (target == rung)
             {
                 return;
@@ -1880,7 +1845,7 @@ public static class FineTuner
             if (_probe == 1)
             {
                 (_light, _lightSeconds) = (_options, secondsPerPosition);
-                _options = _options with { Checkpointing = true, RecomputeFeedForward = false, BFloat16Activations = false };
+                _options = _options with { Checkpointing = true, RecomputeFeedForward = false };
                 Reset();
                 (_probe, _probeSteps) = (2, 0);
                 trace?.Invoke($"measuring: {Describe(_light)} took {secondsPerPosition * 1e6:F2} µs per position; timing checkpointing next");
@@ -1903,8 +1868,7 @@ public static class FineTuner
             trace?.Invoke($"keeping {(checkpointing ? "checkpointing" : Describe(_light!))} for the rest of training ({why})");
         }
 
-        private static string Describe(FineTuningOptions options) =>
-            options.BFloat16Activations == true ? "recomputed feed-forward and bfloat16 activations" : "recomputed feed-forward activations";
+        private static string Describe(FineTuningOptions options) => "recomputed feed-forward activations";
 
         /// <summary>How many times the settings changed (out of memory, or a measured choice).</summary>
         public int Changes { get; private set; }
@@ -2030,45 +1994,6 @@ public static class FineTuner
         };
     }
 
-    // FP8 copies of the frozen weights of the layers with adapters (options.Float8), kept only when a sample's loss with
-    // them is within the tolerance of its bfloat16 loss. Disposing the result removes them again.
-    internal static IDisposable? PrepareFloat8(PretrainedModel model, IReadOnlyList<TrainingSequence> train, FineTuningOptions options, Action<string>? trace)
-    {
-        if (!options.Float8)
-        {
-            return null;
-        }
-
-        var layers = model.Network.Descendants().OfType<Linear>().Where(l => l.Adapter is not null).ToList();
-        var removal = new Float8Removal(layers);
-        int count = Math.Min(16, train.Count);
-        var sample = Enumerable.Range(0, count).Select(i => train[(int)((long)i * train.Count / count)]).ToList();
-        float reference = Evaluate(model, sample, options.BatchTokens, options.LossChunkRows, vision: options.Vision);
-        int attached = layers.Count(l => l.AttachFloat8());
-        if (attached == 0)
-        {
-            trace?.Invoke("FP8 products are not available here (CUDA, compute capability 8.9 or newer); training stays in bfloat16");
-            return removal;
-        }
-
-        float quantized = Evaluate(model, sample, options.BatchTokens, options.LossChunkRows, vision: options.Vision);
-        double difference = Math.Abs(quantized - reference) / Math.Max(1e-6, Math.Abs(reference));
-        trace?.Invoke($"FP8 check on {count} training sequences: loss {quantized:F4} with FP8 products of the frozen weights, {reference:F4} in bfloat16 "
-                      + $"({difference:P2} apart, {options.Float8Tolerance:P0} allowed); {attached} of {layers.Count} layers");
-        if (!(difference <= options.Float8Tolerance))
-        {
-            removal.Dispose();
-            trace?.Invoke("FP8 loss too far from bfloat16's: training stays in bfloat16");
-        }
-
-        return removal;
-    }
-
-    private sealed class Float8Removal(List<Linear> layers) : IDisposable
-    {
-        public void Dispose() => layers.ForEach(l => l.DetachFloat8());
-    }
-
     private static int MostTrained(IEnumerable<Batch> batches, IReadOnlyList<TrainingSequence> train) =>
         batches.Select(b => b.Sequences.Sum(i => train[i].TrainedTokens)).DefaultIfEmpty(0).Max();
 
@@ -2138,7 +2063,6 @@ public static class FineTuner
             using var packing = batch.Packed ? PackedSequences.Create([.. batch.Rows.Select(r => r.Select(i => train[i].Tokens.Length - 1).ToArray())], batch.Length, model.Device) : null;
             using var packed = packing?.Use();                                // forward and backward (checkpointed blocks run again)
             using var recompute = options.RecomputeFeedForward == true ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null;
-            using var compress = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
             long hits = options.Vision?.CacheHits ?? 0, encoded = options.Vision?.Encoded ?? 0;
             var (lossTensor, count) = BatchLoss(model, train, batch, normalizer, options.LossChunkRows, options.Checkpointing == true, custom, sequences, options.Vision, options.Parts);
             if (options.LoadBalancingWeight > 0f && LoadBalancing(network) is { } balance)
@@ -2210,7 +2134,6 @@ public static class FineTuner
             model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed, options.Dora);
         }
 
-        using var float8 = PrepareFloat8(model, train, options, trace);
         using var optimizer = CreateOptimizer(model.Network.TrainableParameters().Concat(vision?.Parameters ?? []).Concat(TrainedParts(options.Parts)).ToList(), options);
         var batches = MakeBatches(model, train, options, new Random(options.Seed));
         int accumulation = Math.Max(1, options.GradientAccumulation);
@@ -3115,7 +3038,6 @@ public static class FineTuner
                     using (var scope = new TensorScope())
                     using (graph._packing.Use())
                     using (options.RecomputeFeedForward == true ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null)
-                    using (options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null)
                     {
                         var loss = NetworkLoss(model, graph._tokens, (hidden, head) => Tensor.TokenCrossEntropyRows(hidden, h => head.Forward(h),
                             graph._rows, graph._targets, graph._weights, 1f, options.LossChunkRows), options.Checkpointing == true, images);

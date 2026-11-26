@@ -40,22 +40,6 @@ public sealed record ImageReaderOptions
     /// </summary>
     public bool ReuseDecoding { get; init; }
 
-    /// <summary>
-    /// The arithmetic of the vision encoder's matrix products (<see cref="ChatImages.EncoderPrecision"/>); null: the
-    /// caller's. <see cref="MatMulPrecision.BFloat16"/> runs the tower on tensor cores where the device has them (a page's
-    /// encoding several times faster), its features within bfloat16's rounding of float32: compare a model's answers
-    /// on the same pages before reading with it.
-    /// </summary>
-    public MatMulPrecision? EncoderPrecision { get; init; }
-
-    /// <summary>
-    /// The arithmetic of the prompt's pass (<see cref="TextGenerator.PrefillPrecision"/>: the page's image tokens and the
-    /// instruction through the language model); null: the caller's. <see cref="MatMulPrecision.BFloat16"/> runs the
-    /// prefill's products on tensor cores where the device has them; the answer's decoding steps are unaffected. Compare
-    /// a model's answers on the same pages before reading with it.
-    /// </summary>
-    public MatMulPrecision? PrefillPrecision { get; init; }
-
     /// <summary>Makes the vision encoder instead of the model's own (tests feed reference features with it).</summary>
     public Func<PretrainedModel, VisionEncoderOptions, IVisionEncoder>? EncoderFactory { get; init; }
 
@@ -219,11 +203,10 @@ public sealed class ImageReader : IDisposable
             var chat = model.CreateChat(options.CacheFormat, _contextLength);
             chat.Generator.KeepCache = options.KeepCache;
             chat.Generator.ReuseDecoding = options.ReuseDecoding;
-            chat.Generator.PrefillPrecision = options.PrefillPrecision;
             var images = _images.Images;
             _reading = new ChatImages(images.Encoder, images.Format, images.Attention)
             {
-                Decode = images.Decode, Transforms = images.Transforms, Owner = images.Owner, EncoderPrecision = options.EncoderPrecision,
+                Decode = images.Decode, Transforms = images.Transforms, Owner = images.Owner,
             };
             _chat = new ChatGenerator(chat.Generator, chat.Template) { Images = _reading };
             Publish();                                                      // what the device alone decides

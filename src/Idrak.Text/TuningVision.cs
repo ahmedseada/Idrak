@@ -49,9 +49,6 @@ public sealed class TuningVision : IDisposable
     private readonly bool _projects;                             // the projector runs each step on the cached tower output
     private readonly ITrainableVisionEncoder? _trainable;        // the encoder's training members, taken once (rule 75) when a part trains or was trained
     private readonly Lock _family = new();                       // the family's Blocks and Expand, one call at a time
-    private readonly string _weights;                            // the encoder's weight formats, for the cache's keys
-    private readonly Lazy<bool> _tensorCores;                    // whether the device runs reduced-precision products on tensor cores
-    private readonly string?[] _withProducts = new string?[Enum.GetValues<MatMulPrecision>().Length];
     private long _hits, _encoded, _prefetched;
 
     // Pixel values a coming step will compute, made on a worker while the device runs the step before (Prefetch); the
@@ -67,15 +64,12 @@ public sealed class TuningVision : IDisposable
         var projector = tuning ?? (model.TrainedVisionTensors.Count > 0 ? Vision as IVisionTuningPart : null);
         _projects = projector is not null;
         _trainable = projector is null ? null : VisionTuningParts.Trainable(projector, encoder);
-        _weights = WeightFormats(encoder);
-        _tensorCores = new Lazy<bool>(() => MixedPrecision.TensorCoresUnavailable(encoder.Device) is null);
     }
 
     /// <summary>
     /// The image side of fine-tuning <paramref name="model"/>: its family checked first (registered, the vision options
     /// it takes, the parts it offers), then its encoder built on the model's device (with the model's trained vision
-    /// tensors, <see cref="PretrainedModel.CreateVisionEncoder"/>; the trained parts with float32 weights, the rest as the
-    /// checkpoint stores them), every encoder parameter frozen but the trained parts', which are marked to receive gradients.
+    /// tensors, <see cref="PretrainedModel.CreateVisionEncoder"/>), every encoder parameter frozen but the trained parts', which are marked to receive gradients.
     /// </summary>
     /// <param name="model">A vision-language model (its family registered).</param>
     /// <param name="images">How every image is prepared (<see cref="TuningImages.None"/> when null).</param>
@@ -95,7 +89,7 @@ public sealed class TuningVision : IDisposable
         var asked = (parts ?? []).Select(p => p?.Trim().ToLowerInvariant() ?? "").Where(p => p.Length > 0).Distinct(StringComparer.Ordinal).ToList();
 
         // The encoder first: a family no longer registered fails here, with the registry's message.
-        var encoder = model.CreateVisionEncoder(new VisionEncoderOptions { Device = model.Device, Weights = EncoderWeights.AsStored, TrainedParts = asked });
+        var encoder = model.CreateVisionEncoder(new VisionEncoderOptions { Device = model.Device, TrainedParts = asked });
         try
         {
             images.ThrowIfUnknown(vision.Family, vision.VisionOptionKeys);
@@ -318,54 +312,10 @@ public sealed class TuningVision : IDisposable
 
     /// <summary>
     /// The cache key of <paramref name="image"/>'s output at <paramref name="stage"/> under <paramref name="preparation"/>,
-    /// for this encoder. Its precision is what the stage is computed in: the formats the encoder's matrix weights are kept
-    /// in ("float32"; "bfloat16" for a frozen tower over a bfloat16 checkpoint; several joined by '+', "bfloat16+float32"
-    /// under a float32 projector), with the precision of matrix products where the device runs them on tensor cores
-    /// (<see cref="MixedPrecision.Current"/>: "bfloat16+float32, bfloat16 products"); pixel values are "float32" (no
-    /// weights make them). Features computed in another precision are another key: a hit is what this encoder computes.
+    /// for this encoder.
     /// </summary>
     public FeatureCacheKey Key(ChatImage image, TuningImages preparation, string stage) =>
-        FeatureCacheKey.For(image, preparation, Vision.Family, Checkpoint, stage == FeatureCacheKey.PixelsStage ? "float32" : Precision(), stage);
-
-    // The precision of the encoder's outputs for the cache's keys (Key): the weights' formats, made once, and the products'
-    // precision read per call (one thread-static read; the device asked once, and only when products leave float32).
-    private string Precision()
-    {
-        var products = MixedPrecision.Current;
-        if (products == MatMulPrecision.Float32 || !_tensorCores.Value)
-        {
-            return _weights;
-        }
-
-        ref string? text = ref _withProducts[(int)products];
-        return text ??= $"{_weights}, {products.ToString().ToLowerInvariant()} products";
-    }
-
-    // The formats the encoder's matrix weights are kept in, distinct and in order of name; "float32" for an encoder that is
-    // not a module (its weights cannot be looked at: as before).
-    private static string WeightFormats(IVisionEncoder encoder)
-    {
-        if (encoder is not Module module)
-        {
-            return "float32";
-        }
-
-        var formats = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var layer in Idrak.Layers.ModuleExtensions.Descendants(module))
-        {
-            switch (layer)
-            {
-                case Idrak.Layers.Linear linear:
-                    formats.Add(linear.PackedWeight?.Name ?? "float32");
-                    break;
-                case Idrak.Layers.Embedding embedding:
-                    formats.Add(embedding.BFloat16 is not null ? "bfloat16" : "float32");
-                    break;
-            }
-        }
-
-        return formats.Count == 0 ? "float32" : string.Join('+', formats);
-    }
+        FeatureCacheKey.For(image, preparation, Vision.Family, Checkpoint, stage);
 
     /// <summary>Whether the vision tower trains (<see cref="VisionTuningParts.Tower"/> among <see cref="Parts"/>): it then runs in every step.</summary>
     public bool TrainsTower => Parts.Contains(VisionTuningParts.Tower);

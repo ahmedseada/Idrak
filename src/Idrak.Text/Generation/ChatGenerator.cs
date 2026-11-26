@@ -105,14 +105,6 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
     private (string Hash, string Transforms, ImageData Pixels)? _last;
 
     /// <summary>
-    /// The arithmetic of the encoder's matrix products (<see cref="MixedPrecision.Use"/> around the encoder only), or null
-    /// for the caller's (<see cref="MixedPrecision.Current"/>). <see cref="MatMulPrecision.BFloat16"/> runs a vision
-    /// tower on tensor cores where the device has them: several times faster, its features within bfloat16's rounding of
-    /// float32 (check a fine-tune's answers before relying on it). The language model's products are not affected.
-    /// </summary>
-    public MatMulPrecision? EncoderPrecision { get; init; }
-
-    /// <summary>
     /// What the encoder holds (its module, built on first use for example), or null: the inference engine disposes it
     /// when it unloads the chat model these images were made for (<see cref="Idrak.Text.Inference.GenerativeModelBuilder.Images"/>);
     /// otherwise whoever made them disposes it.
@@ -508,7 +500,6 @@ public sealed class ChatGenerator(TextGenerator generator, IChatTemplate? templa
         var features = new List<IReadOnlyList<ImageFeatures>>(requests.Count);
         try
         {
-            using (reader.EncoderPrecision is { } precision ? MixedPrecision.Use(precision) : default(MixedPrecision.Scope?))
             {
                 if (requests.All(r => ReferenceEquals(r.VisionOptions, requests[0].VisionOptions)))
                 {
@@ -694,7 +685,6 @@ public sealed class ChatGenerator(TextGenerator generator, IChatTemplate? templa
             var blocks = layouts.SelectMany(l => l).ToList();
             cancellationToken.ThrowIfCancellationRequested();                    // before the encoder, and after it below
             TensorOffloading.BeforeInference(Generator.Device, Generator.Model);  // with offloading: the encoder's room
-            using (reader.EncoderPrecision is { } precision ? MixedPrecision.Use(precision) : default(MixedPrecision.Scope?))
             {
                 features = EncodeImages(reader.Encoder, decoded, request.VisionOptions);
             }

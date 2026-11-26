@@ -221,15 +221,13 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
     /// </remarks>
     public override IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null)
     {
-        var weights = options?.Weights ?? EncoderWeights.AsStored;
-        EncoderWeights For(string part) => options?.Trains(part) == true ? EncoderWeights.Float32 : weights;
         var device = options?.Device ?? Device.Default;
         var processor = Processor(options?.Grayscale ?? false).With(options?.VisionOptions);
         using var tensors = OpenTensors();
-        var tower = QwenVisionTower.FromTensors(Config, Variant, tensors, device, For(VisionTuningParts.Tower));
+        var tower = QwenVisionTower.FromTensors(Config, Variant, tensors, device);
         try
         {
-            var merger = QwenPatchMerger.FromTensors(Config, Variant, tensors, device, For(VisionTuningParts.Projector));
+            var merger = QwenPatchMerger.FromTensors(Config, Variant, tensors, device);
             return new QwenImageEncoder(this, tower, merger, processor, device);
         }
         catch
@@ -250,12 +248,6 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
     {
         ArgumentNullException.ThrowIfNull(part);
         var module = Part(own, part);
-        if (module.Buffers().Any())
-        {
-            throw new InvalidOperationException($"Qwen-VL's {Normalized(part)} holds packed (bfloat16) weights in this encoder, which do not train; "
-                + "build the encoder with VisionEncoderOptions.TrainedParts naming it (or Weights = EncoderWeights.Float32).");
-        }
-
         return [.. module.Parameters()];
     }
 
@@ -310,12 +302,6 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
             if (values.Count == 0)
             {
                 continue;
-            }
-
-            if (Part(own, part).Buffers().Any())
-            {
-                throw new InvalidOperationException($"Qwen-VL's {part} holds packed (bfloat16) weights in this encoder; build it with VisionEncoderOptions.TrainedParts naming it "
-                    + "(or Weights = EncoderWeights.Float32) to load trained values.");
             }
 
             foreach (var (name, (target, transposed)) in values)

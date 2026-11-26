@@ -185,7 +185,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     public FeatureCacheKey Key(ChatAudio audio)
     {
         ArgumentNullException.ThrowIfNull(audio);
-        return new FeatureCacheKey(audio.Hash, "", _options, Audio.Family, Checkpoint, "float32", FeatureCacheKey.FeaturesStage);
+        return new FeatureCacheKey(audio.Hash, "", _options, Audio.Family, Checkpoint, FeatureCacheKey.FeaturesStage);
     }
 
     /// <summary>The sound decoded (<see cref="ChatAudio.Decode"/>), with the decode stage in the telemetry.</summary>

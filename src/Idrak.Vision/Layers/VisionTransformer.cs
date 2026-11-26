@@ -151,7 +151,7 @@ public sealed class VisionTransformerEncoder : Module
     /// embedding, the norms and every bias are float32. Every float32 tensor is a parameter.
     /// </summary>
     /// <exception cref="InvalidDataException">A tensor's shape disagrees with the configuration, or the activation is unknown.</exception>
-    public static VisionTransformerEncoder FromTensors(VisionTransformerConfig config, ITensorStore tensors, string prefix, Device? device = null, EncoderWeights weights = EncoderWeights.AsStored)
+    public static VisionTransformerEncoder FromTensors(VisionTransformerConfig config, ITensorStore tensors, string prefix, Device? device = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(tensors);
@@ -180,21 +180,7 @@ public sealed class VisionTransformerEncoder : Module
 
             Linear Dense(string name, int inputs, int outputs)
             {
-                string full = $"{prefix}{name}.weight";
-                if (!StoredWeights.KeepsBFloat16(tensors, weights, full))
-                {
-                    return Linear.FromWeights(Read($"{name}.weight", [inputs, outputs], transposed: true), Read($"{name}.bias", [outputs]));
-                }
-
-                var stored = tensors.ShapeOf(full);
-                if (!stored.SequenceEqual([outputs, inputs]))
-                {
-                    throw new InvalidDataException($"{full}: shape {Tensor.FormatShape(stored)}, expected {Tensor.FormatShape([outputs, inputs])} from vision_config.");
-                }
-
-                var layer = StoredWeights.Linear(tensors.ReadTransposed(full), inputs, outputs, Read($"{name}.bias", [outputs]), bfloat16: true, device);
-                built.Add(layer);
-                return layer;
+                return Linear.FromWeights(Read($"{name}.weight", [inputs, outputs], transposed: true), Read($"{name}.bias", [outputs]));
             }
 
             LayerNorm Norm(string name) => LayerNorm.FromWeights(Read($"{name}.weight", [dim]), Read($"{name}.bias", [dim]), config.LayerNormEpsilon);
@@ -232,8 +218,7 @@ public sealed class VisionTransformerEncoder : Module
 
                 var qkvB = Tensor.Persistent(qkvBias, [3 * dim], device, requiresGrad: true);
                 built.Add(qkvB);
-                var qkv = StoredWeights.Linear(qkvWeight, dim, 3 * dim, qkvB,
-                    StoredWeights.KeepsBFloat16(tensors, weights, parts.Select(part => $"{prefix}{l}.self_attn.{part}.weight")), device);
+                var qkv = StoredWeights.Linear(qkvWeight, dim, 3 * dim, qkvB, device);
                 built.Add(qkv);
                 var output = Dense($"{l}.self_attn.out_proj", dim, dim);
                 var attention = MultiHeadAttention.FromWeights(qkv, output, config.Heads);
@@ -341,7 +326,6 @@ public sealed class VisionTransformerEncoder : Module
     /// Sets the tensors named and laid out as <see cref="Tensors"/> gives them (q, k and v go into the fused projection,
     /// each where it lies; names absent from <paramref name="values"/> are left as they are); returns the names taken.
     /// </summary>
-    /// <exception cref="InvalidOperationException">A projection holds packed (bfloat16) weights, which cannot be set.</exception>
     public List<string> Load(string prefix, IReadOnlyDictionary<string, float[]> values)
     {
         ArgumentNullException.ThrowIfNull(prefix);

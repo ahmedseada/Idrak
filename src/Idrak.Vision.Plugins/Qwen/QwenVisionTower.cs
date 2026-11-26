@@ -41,7 +41,7 @@ public sealed class QwenVisionTower : Module
     /// <c>blocks.N.…</c>), read one at a time, on <paramref name="device"/>. Projections keep the precision
     /// <paramref name="weights"/> asks for (as stored by default); the patch embedding, norms and biases are float32.
     /// </summary>
-    public static QwenVisionTower FromTensors(QwenVisionConfig config, QwenVlVariant variant, ITensorStore tensors, Device device, EncoderWeights weights)
+    public static QwenVisionTower FromTensors(QwenVisionConfig config, QwenVlVariant variant, ITensorStore tensors, Device device)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(tensors);
@@ -56,7 +56,7 @@ public sealed class QwenVisionTower : Module
             var blocks = new QwenVisionBlock[config.Depth];
             for (int i = 0; i < blocks.Length; i++)
             {
-                blocks[i] = QwenVisionBlock.FromTensors(config, variant, tensors, $"blocks.{i}.", device, weights);
+                blocks[i] = QwenVisionBlock.FromTensors(config, variant, tensors, $"blocks.{i}.", device);
                 built.Add(blocks[i]);
             }
 
@@ -217,7 +217,7 @@ internal sealed class QwenVisionBlock : Module
     private QwenVisionBlock(QwenVisionConfig config, QwenVlVariant variant, Module norm1, Linear qkv, Linear proj, Module norm2, Linear[] mlp) =>
         (_config, _variant, _norm1, _qkv, _proj, _norm2, _mlp) = (config, variant, norm1, qkv, proj, norm2, mlp);
 
-    public static QwenVisionBlock FromTensors(QwenVisionConfig config, QwenVlVariant variant, ITensorStore tensors, string prefix, Device device, EncoderWeights weights)
+    public static QwenVisionBlock FromTensors(QwenVisionConfig config, QwenVlVariant variant, ITensorStore tensors, string prefix, Device device)
     {
         var built = new List<IDisposable>();
         try
@@ -228,7 +228,7 @@ internal sealed class QwenVisionBlock : Module
                 return item;
             }
 
-            Linear Dense(string name) => Add(StoredWeights.Linear(tensors, prefix + name, weights, device));
+            Linear Dense(string name) => Add(StoredWeights.Linear(tensors, prefix + name, device));
             var norm1 = Add(QwenNorm.Read(tensors, prefix + "norm1", variant, config.Dim, device));
             var norm2 = Add(QwenNorm.Read(tensors, prefix + "norm2", variant, config.Dim, device));
             Linear[] mlp = variant == QwenVlVariant.Qwen25Vl

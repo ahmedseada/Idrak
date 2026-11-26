@@ -76,9 +76,6 @@ public sealed record SpeechTrainingOptions
     /// <summary>The gradients' global norm is clipped to this before each step (0: no clipping).</summary>
     public float MaxGradientNorm { get; init; } = 1f;
 
-    /// <summary>Hold the activations the backward pass reads as bfloat16 between the passes (true); null or false: float32.</summary>
-    public bool? BFloat16Activations { get; init; }
-
     /// <summary>Recompute each block's activations in the backward pass instead of keeping them (activation checkpointing).</summary>
     public bool Checkpointing { get; init; } = true;
 
@@ -181,7 +178,7 @@ public sealed record SpeechTrainingOptions
         ["steps"] = Steps, ["batch_seconds"] = BatchSeconds, ["automatic_batch_share"] = AutomaticBatchShare, ["gradient_accumulation"] = GradientAccumulation, ["bucket_utterances"] = BucketUtterances,
         ["learning_rate"] = LearningRate, ["warmup_fraction"] = WarmupFraction, ["min_learning_rate"] = MinLearningRate, ["schedule"] = Schedule,
         ["optimizer"] = Optimizer, ["weight_decay"] = WeightDecay, ["momentum"] = Momentum, ["host_optimizer"] = HostOptimizer,
-        ["max_gradient_norm"] = MaxGradientNorm, ["bf16_activations"] = BFloat16Activations, ["checkpointing"] = Checkpointing,
+        ["max_gradient_norm"] = MaxGradientNorm, ["checkpointing"] = Checkpointing,
         ["save_every"] = SaveEvery, ["keep_checkpoints"] = KeepCheckpoints, ["evaluate_every"] = EvaluateEvery, ["metric"] = Metric,
         ["decoder"] = Decoder, ["beam_width"] = BeamWidth, ["augmentations"] = new JsonArray([.. Augmentations.Select(a => (JsonNode)a)]),
         ["augmentation_options"] = AugmentationOptions.ToJson(), ["cleaning"] = new JsonArray([.. Cleaning.Select(c => (JsonNode)c)]),
@@ -212,7 +209,6 @@ public sealed record SpeechTrainingOptions
             Momentum = (float?)json["momentum"] ?? d.Momentum,
             HostOptimizer = (bool?)json["host_optimizer"] ?? d.HostOptimizer,
             MaxGradientNorm = (float?)json["max_gradient_norm"] ?? d.MaxGradientNorm,
-            BFloat16Activations = (bool?)json["bf16_activations"],
             Checkpointing = (bool?)json["checkpointing"] ?? d.Checkpointing,
             SaveEvery = (int?)json["save_every"] ?? d.SaveEvery,
             KeepCheckpoints = (int?)json["keep_checkpoints"] ?? d.KeepCheckpoints,
@@ -1049,7 +1045,7 @@ public static class SpeechTrainer
 
             var bytes = reader.ReadBytes(utterance);
             FeatureCacheKey? key = cache is not null && !sound
-                ? new FeatureCacheKey(Convert.ToHexStringLower(SHA256.HashData(bytes)), _cleaning, _options, extractor.Name, "", "float32", FeatureStage) : null;
+                ? new FeatureCacheKey(Convert.ToHexStringLower(SHA256.HashData(bytes)), _cleaning, _options, extractor.Name, "", FeatureStage) : null;
             float[]? values = null;
             int frames = 0;
             if (key is not null && cache!.TryGet(key, Device.Cpu, out var hit))

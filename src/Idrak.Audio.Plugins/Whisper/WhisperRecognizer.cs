@@ -25,8 +25,7 @@ namespace Idrak.Audio.Plugins.Whisper;
 /// It is also a model the speech trainer fine-tunes with the "seq2seq" objective (<see cref="ISequenceSpeechModel"/>), as
 /// transformers trains <c>WhisperForConditionalGeneration</c>: the decoder starts from &lt;|startoftranscript|&gt;, the
 /// labels are the prompt's language, task and &lt;|notimestamps|&gt; tokens then the text's, and the end token is taught
-/// last; the encoder reads the segment the recognizer reads (the features padded to the checkpoint's 30 s). It trains in
-/// float32 (load it with <see cref="SpeechModelOptions.Weights"/> = <see cref="EncoderWeights.Float32"/>) and
+/// last; the encoder reads the segment the recognizer reads (the features padded to the checkpoint's 30 s), and
 /// <see cref="Save"/> writes a folder transformers and <c>SpeechModels.Load</c> both read.
 /// </remarks>
 public sealed class WhisperRecognizer : ISequenceSpeechModel
@@ -616,18 +615,11 @@ public sealed class WhisperRecognizer : ISequenceSpeechModel
     public string Architecture => WhisperFamily.Architecture;
 
     /// <inheritdoc />
-    /// <exception cref="InvalidOperationException">A projection holds packed weights (the checkpoint's float16 or bfloat16, kept as stored), which do not train.</exception>
     public Module Network
     {
         get
         {
             ThrowIfDisposed();
-            if (Encoder.Descendants().Concat(Decoder.Descendants()).OfType<IPackableLinear>().FirstOrDefault(l => l.PackedWeight is not null) is { } packed)
-            {
-                throw new InvalidOperationException($"This Whisper model holds its projections as the checkpoint stores them ({packed.PackedWeight!.Description}), which do not train: "
-                    + "load it with SpeechModelOptions.Weights = EncoderWeights.Float32 to fine-tune it.");
-            }
-
             return _network;
         }
     }

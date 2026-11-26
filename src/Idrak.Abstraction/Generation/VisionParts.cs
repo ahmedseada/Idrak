@@ -98,47 +98,13 @@ public sealed record VisionEncoderOptions
     public VisionOptions? VisionOptions { get; init; }
 
     /// <summary>
-    /// How the encoder holds its projection weights: as the checkpoint stores them (the default: a bfloat16 checkpoint's
-    /// weights stay bfloat16, half the memory of float32 for the same values, while inputs, outputs and sums stay
-    /// float32), all float32, or bfloat16 (rounded when stored wider). A family builds its layers with core's
-    /// <c>StoredWeights</c> to honour it.
-    /// </summary>
-    public EncoderWeights Weights { get; init; }
-
-    /// <summary>
-    /// The vision parts (<see cref="VisionTuningParts"/> names) that train, or take trained values, in this encoder: a
-    /// family builds them with float32 weights whatever <see cref="Weights"/> says, and the rest as <see cref="Weights"/>
-    /// says, so a trained projector over a bfloat16 checkpoint keeps its tower in bfloat16 (half the tower's weight
-    /// memory). Empty (the default): every part as <see cref="Weights"/> says. A family that cannot build its parts apart
-    /// may build the whole encoder in float32 when any is named.
+    /// The vision parts (<see cref="VisionTuningParts"/> names) that train, or take trained values, in this encoder. Empty
+    /// (the default): none.
     /// </summary>
     public IReadOnlyCollection<string> TrainedParts { get; init; } = [];
 
     /// <summary>Whether <see cref="TrainedParts"/> names <paramref name="part"/> (ignoring case).</summary>
     public bool Trains(string part) => TrainedParts.Contains(part, StringComparer.OrdinalIgnoreCase);
-}
-
-/// <summary>How an encoder built from a checkpoint holds its projection weights (<see cref="VisionEncoderOptions.Weights"/>).</summary>
-public enum EncoderWeights
-{
-    /// <summary>
-    /// As the checkpoint stores them (core's <c>ITensorStore.FormatOf</c>): bfloat16 weights as bfloat16, float16 ones as
-    /// float16 (widened exactly for each product), anything else as float32. The computation is the float32 one either
-    /// way (the same weight values, float32 activations and sums).
-    /// </summary>
-    AsStored,
-
-    /// <summary>Every weight in float32 (twice the memory of a bfloat16 checkpoint's, the same values).</summary>
-    Float32,
-
-    /// <summary>Projection weights in bfloat16, rounded to nearest when the checkpoint stores them wider.</summary>
-    BFloat16,
-
-    /// <summary>
-    /// Projection weights in IEEE half precision (exact for a float16 checkpoint, rounded to nearest from a wider one),
-    /// widened exactly for each product: the float32 computation in half the memory.
-    /// </summary>
-    Float16,
 }
 
 /// <summary>
@@ -188,7 +154,7 @@ public interface IVisionTuningPart : IPretrainedVision
 
     /// <summary>The encoder's <see cref="ITrainableVisionEncoder.ImportParts"/>.</summary>
     /// <exception cref="ArgumentException">The encoder is not one this family built, or a tensor's shape is not the part's.</exception>
-    /// <exception cref="InvalidOperationException">The part's weights are held packed in this encoder (build it with <see cref="EncoderWeights.Float32"/>).</exception>
+    /// <exception cref="InvalidOperationException">The part's weights are held packed in this encoder.</exception>
     IReadOnlyCollection<string> Import(IVisionEncoder encoder, IReadOnlyDictionary<string, Tensor> tensors) => VisionTuningParts.Trainable(this, encoder).ImportParts(tensors);
 
     /// <summary>
@@ -252,7 +218,7 @@ public interface ITrainableVisionEncoder : IVisionEncoder
     /// trainable parts, and returns the names it took; a name of no part the family offers is left for the caller to report.
     /// </summary>
     /// <exception cref="ArgumentException">A tensor's shape is not the part's.</exception>
-    /// <exception cref="InvalidOperationException">The part's weights are held packed in this encoder (build it with <see cref="EncoderWeights.Float32"/>).</exception>
+    /// <exception cref="InvalidOperationException">The part's weights are held packed in this encoder.</exception>
     IReadOnlyCollection<string> ImportParts(IReadOnlyDictionary<string, Tensor> tensors);
 }
 

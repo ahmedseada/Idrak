@@ -122,9 +122,6 @@ public sealed record PretrainingOptions
     /// <summary>Recompute the feed-forward activations; null: measured, as <see cref="FineTuningOptions.RecomputeFeedForward"/>.</summary>
     public bool? RecomputeFeedForward { get; init; }
 
-    /// <summary>Hold activations as bfloat16 between the passes; null: measured, as <see cref="FineTuningOptions.BFloat16Activations"/>.</summary>
-    public bool? BFloat16Activations { get; init; }
-
     /// <summary>Record steps as graphs where the device can (<see cref="FineTuningOptions.CudaGraphs"/>).</summary>
     public bool CudaGraphs { get; init; } = true;
 
@@ -208,7 +205,6 @@ public sealed record PretrainingOptions
         ["host_optimizer"] = HostOptimizer,
         ["checkpointing"] = Checkpointing,
         ["recompute"] = RecomputeFeedForward,
-        ["bf16_activations"] = BFloat16Activations,
         ["graphs"] = CudaGraphs,
         ["packing"] = Packing,
         ["seed"] = Seed,
@@ -258,7 +254,6 @@ public sealed record PretrainingOptions
             HostOptimizer = (bool?)json["host_optimizer"] ?? d.HostOptimizer,
             Checkpointing = (bool?)json["checkpointing"],
             RecomputeFeedForward = (bool?)json["recompute"],
-            BFloat16Activations = (bool?)json["bf16_activations"],
             CudaGraphs = (bool?)json["graphs"] ?? d.CudaGraphs,
             Packing = (bool?)json["packing"] ?? d.Packing,
             Seed = (int?)json["seed"] ?? d.Seed,
@@ -350,9 +345,9 @@ public static partial class Pretrainer
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputFolder);
         Check(options);
-        if (model.Network.Descendants().OfType<Idrak.Layers.Linear>().Any(l => l.PackedWeight is not null || l.Adapter is not null))
+        if (model.Network.Descendants().OfType<Idrak.Layers.Linear>().Any(l => l.Adapter is not null))
         {
-            throw new InvalidOperationException("Pretraining trains every weight: load the model with float32 weights and without adapters (merge them first).");
+            throw new InvalidOperationException("Pretraining trains every weight: load the model without adapters (merge them first).");
         }
 
         // Pipeline placement (plan 23, C7): each rank trains its stage of the model.
@@ -474,7 +469,6 @@ public static partial class Pretrainer
                 {
                     Checkpointing = options.Checkpointing,
                     RecomputeFeedForward = options.RecomputeFeedForward,
-                    BFloat16Activations = options.BFloat16Activations,
                     CudaGraphs = options.CudaGraphs,
                     GradientAccumulation = options.GradientAccumulation,
                     MaxGradientNorm = options.MaxGradientNorm,
@@ -1240,7 +1234,7 @@ internal sealed class TokenPretrainingSource : IPretrainingSource
                     throw new FileNotFoundException($"{path} not found.", path);
                 }
 
-                files.Add(new TokenFileSource(path, context.MaxLength, type: source.TokenType));
+                files.Add(new TokenFileSource(path, context.MaxLength));
             }
 
             return new Reader(files, context.MaxLength);

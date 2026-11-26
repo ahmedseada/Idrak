@@ -191,7 +191,6 @@ public static class AdversarialSynthesisTrainer
             var batch = new AdversarialSynthesisBatch(features, [.. group.Select(u => u.Frames)], [.. group.Select(u => u.Labels)], [.. group.Select(u => u.Utterance)],
                 1, run.Seed, group.Length, group.Sum(u => (long)u.Frames), group.Sum(u => (long)u.Labels.Length), forward.Checkpointing);
             using (var scope = new TensorScope())
-            using (var precision = run.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null)
             using (var step = model.Begin(batch, adversarial, adversarial.KeepGeneratorPass))
             {
                 step.Discriminate();
@@ -218,7 +217,6 @@ public static class AdversarialSynthesisTrainer
             var features = new Tensor?[groups.Count];
             var steps = new IAdversarialSynthesisStep?[groups.Count];
             using var outer = keep ? new TensorScope() : null;
-            using var precision = run.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
             try
             {
                 for (int i = 0; i < groups.Count; i++)

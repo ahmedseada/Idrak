@@ -39,11 +39,9 @@ public sealed class Gemma3Projector : Module
     /// <summary>
     /// Builds the projector from Gemma 3's tensors (<c>mm_soft_emb_norm.weight</c> [visionDim] and
     /// <c>mm_input_projection_weight</c> [visionDim, textDim]) under <paramref name="prefix"/>, as
-    /// <see cref="Gemma3Vision.OpenTensors"/> gives them with the prefix <c>projector.</c>. The projection keeps the
-    /// precision <paramref name="weights"/> asks for (by default as stored, <see cref="StoredWeights"/>); the norm is float32.
+    /// <see cref="Gemma3Vision.OpenTensors"/> gives them with the prefix <c>projector.</c>.
     /// </summary>
-    public static Gemma3Projector FromTensors(ITensorStore tensors, int visionDim, int textDim, int poolSize, float normEpsilon, string prefix = "projector.", Device? device = null,
-        EncoderWeights weights = EncoderWeights.AsStored)
+    public static Gemma3Projector FromTensors(ITensorStore tensors, int visionDim, int textDim, int poolSize, float normEpsilon, string prefix = "projector.", Device? device = null)
     {
         ArgumentNullException.ThrowIfNull(tensors);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(poolSize);
@@ -56,8 +54,7 @@ public sealed class Gemma3Projector : Module
         }
 
         var gain = Tensor.Persistent(tensors.Read(normName), [visionDim], device, requiresGrad: true);
-        var projection = StoredWeights.Linear(tensors.Read(projectionName), visionDim, textDim, null,              // x · W as stored
-            StoredWeights.KeepsBFloat16(tensors, weights, projectionName), device);
+        var projection = StoredWeights.Linear(tensors.Read(projectionName), visionDim, textDim, null, device);              // x · W as stored
         return new Gemma3Projector(RMSNorm.FromWeights(gain, normEpsilon, offset: 1f), projection, poolSize);
     }
 

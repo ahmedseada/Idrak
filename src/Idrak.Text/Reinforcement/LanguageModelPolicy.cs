@@ -195,7 +195,7 @@ public sealed class LanguageModelPolicy : IPreferencePolicy<ChatObservation, Cha
         Session = session;
         Options = options;
         _ownsSession = ownsSession;
-        var chat = session.Generator(KeyValueLayouts.Choose(options.CacheFormat, session.Model.ElementType.Type, LanguageModelPolicyOptions.CacheFormatVariable).Layout,
+        var chat = session.Generator(KeyValueLayouts.Choose(options.CacheFormat, LanguageModelPolicyOptions.CacheFormatVariable).Layout,
             options.ContextLength);
         Chat = options.ToolsInPrompt is null ? chat : new Generation.ChatGenerator(chat.Generator, chat.Template) { ToolsInPrompt = options.ToolsInPrompt };
     }

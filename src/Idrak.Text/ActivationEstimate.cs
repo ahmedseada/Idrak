@@ -9,30 +9,28 @@ namespace Idrak.Text;
 
 /// <summary>
 /// A rung of the tuner's activation ladder: what the training step keeps between its forward and backward passes. The
-/// ladder runs held → recomputed feed-forward → recomputed feed-forward and bfloat16 → checkpointing, each lighter on
+/// ladder runs held → recomputed feed-forward → checkpointing, each lighter on
 /// device memory than the one before.
 /// </summary>
-internal readonly record struct ActivationRung(bool Recompute, bool BFloat16, bool Checkpointing)
+internal readonly record struct ActivationRung(bool Recompute, bool Checkpointing)
 {
     /// <summary>The rung <paramref name="options"/> train with.</summary>
     public static ActivationRung Of(FineTuningOptions options) =>
-        new(options.RecomputeFeedForward == true, options.BFloat16Activations == true, options.Checkpointing == true);
+        new(options.RecomputeFeedForward == true, options.Checkpointing == true);
 
-    /// <summary>How far down the ladder (0: held, 3: checkpointing).</summary>
-    public int Depth => Checkpointing ? 3 : Recompute && BFloat16 ? 2 : Recompute || BFloat16 ? 1 : 0;
+    /// <summary>How far down the ladder (0: held, 2: checkpointing).</summary>
+    public int Depth => Checkpointing ? 2 : Recompute ? 1 : 0;
 
     /// <summary>The rung as a log line says it.</summary>
     public override string ToString() => Checkpointing ? "checkpointing"
-        : Recompute && BFloat16 ? "recomputed feed-forward and bfloat16 activations"
-        : Recompute ? "recomputed feed-forward activations"
-        : BFloat16 ? "bfloat16 activations" : "activations held";
+        : Recompute ? "recomputed feed-forward activations" : "activations held";
 
     /// <summary>The rung as the stop state writes it.</summary>
-    public JsonObject ToJson() => new() { ["recompute"] = Recompute, ["bfloat16"] = BFloat16, ["checkpointing"] = Checkpointing };
+    public JsonObject ToJson() => new() { ["recompute"] = Recompute, ["checkpointing"] = Checkpointing };
 
     /// <summary>The rung a stop state wrote, or null when it wrote none (a checkpoint from before rungs were kept).</summary>
     public static ActivationRung? FromJson(JsonNode? node) => node is JsonObject json
-        ? new ActivationRung((bool?)json["recompute"] ?? false, (bool?)json["bfloat16"] ?? false, (bool?)json["checkpointing"] ?? false)
+        ? new ActivationRung((bool?)json["recompute"] ?? false, (bool?)json["checkpointing"] ?? false)
         : null;
 }
 
@@ -40,8 +38,7 @@ internal readonly record struct ActivationRung(bool Recompute, bool BFloat16, bo
 /// The device memory a training step of a decoder needs at its peak on each rung of the activation ladder, from the
 /// model's own dimensions (<see cref="DecoderSpec"/>) and the batch's rows × positions: what each layer keeps between
 /// the passes (the normalized inputs of the projections, queries, keys, values, the attention's output before and after
-/// its heads are merged, the feed-forward gate, up and activation; float32, or bfloat16 where the rung compresses them,
-/// the activation dropped where it is recomputed; each norm's normalized values, float32 on every rung; only each
+/// its heads are merged, the feed-forward gate, up and activation; float32, the activation dropped where it is recomputed; each norm's normalized values, float32 on every rung; only each
 /// block's input with checkpointing, plus one block run again),
 /// one block's gradients while the backward pass runs through it, the residual stream and its gradient, the loss's
 /// chunk of logits and their gradient, the score matrices where the device composes attention instead of tiling it, and
@@ -83,7 +80,7 @@ internal static class ActivationEstimate
         long normalized = d * ((spec.ParallelBlocks ? 1 : 2) + (spec.PostNorms ? 2 : 0)) + (spec.QkNorm ? queries + keys : 0);
         long full = (compressible + ff + statistics + normalized) * sizeof(float);   // a block's every result, float32
         long kept = rung.Checkpointing ? d * sizeof(float)
-            : (compressible + (rung.Recompute ? 0 : ff)) * (rung.BFloat16 ? 2 : sizeof(float)) + (statistics + normalized) * sizeof(float);
+            : (compressible + (rung.Recompute ? 0 : ff)) * sizeof(float) + (statistics + normalized) * sizeof(float);
 
         // Attention composed from score matrices (the head size above what the device tiles): each layer keeps its
         // weights, and the backward pass holds the scores' gradient beside them.

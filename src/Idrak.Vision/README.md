@@ -17,8 +17,7 @@ which batches augmented samples on worker threads while the model trains.
 ## Layers
 
 `VisionTransformerEncoder` (plan 22): the vision transformer tower SigLIP, CLIP and towers trained from scratch share, built
-from a checkpoint's tensors under transformers' names (`FromTensors` with a prefix; the projections kept bfloat16 when the
-checkpoint stores them so, `EncoderWeights`), written back under them (`Tensors`, `Load`, `Expected`), each layer
+from a checkpoint's tensors under transformers' names (`FromTensors` with a prefix), written back under them (`Tensors`, `Load`, `Expected`), each layer
 checkpointed while a trainer's `ActivationMemory.CheckpointBlocks()` scope is on (`ForwardTraining`); its shape is a
 `VisionTransformerConfig`, every value a setting. `PatchGrid.AveragePool` pools the patch grid a projector reads. The
 Gemma 3 (`Idrak.Vision.Plugins`) and IdrakVision plug-ins build their towers from it.

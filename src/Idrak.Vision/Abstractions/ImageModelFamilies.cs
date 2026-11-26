@@ -111,13 +111,6 @@ public sealed record ImageModelOptions
     /// <summary>Where the network is created (the default device when null).</summary>
     public Device? Device { get; init; }
 
-    /// <summary>
-    /// The precision weights are kept in where the layers allow it: <see cref="EncoderWeights.AsStored"/> (the default)
-    /// keeps a bfloat16 checkpoint's projection weights as bfloat16 (the same values, half the memory); a layer with no
-    /// narrower form (a convolution, a norm) holds float32 copies of the stored values.
-    /// </summary>
-    public EncoderWeights Weights { get; init; } = EncoderWeights.AsStored;
-
     /// <summary>The architecture to read the checkpoint as, instead of the one its config.json (or ONNX metadata) names.</summary>
     public string? Architecture { get; init; }
 }

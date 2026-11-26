@@ -12,7 +12,7 @@ namespace Idrak.Abstraction.Generation;
 /// <summary>
 /// What a cached feature depends on, all of it: the part's bytes (their SHA-256, as <see cref="ChatImage.Hash"/> gives an
 /// image's), the transforms and the options it was prepared with (Idrak.Text's <c>TuningImages</c> for an image), and the
-/// encoder that made it (its family, a hash of its checkpoint, the precision of its weights), and which stage's output
+/// encoder that made it (its family, a hash of its checkpoint), and which stage's output
 /// it is. Change any and the cache misses: a cached feature is never one of another part, preparation or encoder. Idrak.Text
 /// keys an image's (<c>FeatureCacheKey.For</c>), Idrak.Audio a sound's.
 /// </summary>
@@ -21,9 +21,8 @@ namespace Idrak.Abstraction.Generation;
 /// <param name="VisionOptions">The vision options' text (<see cref="VisionOptions.ToString"/>; "none" for none).</param>
 /// <param name="Family">The vision family's name (the architecture name).</param>
 /// <param name="Checkpoint">A hash identifying the checkpoint's weights (any text that changes when they do).</param>
-/// <param name="DType">The precision the encoder computes and keeps its weights in ("float32", "bfloat16").</param>
 /// <param name="Stage">Which output is cached: <see cref="TowerStage"/> (the frozen tower's) unless another is named.</param>
-public sealed record FeatureCacheKey(string Image, string Transforms, string VisionOptions, string Family, string Checkpoint, string DType, string Stage = FeatureCacheKey.TowerStage)
+public sealed record FeatureCacheKey(string Image, string Transforms, string VisionOptions, string Family, string Checkpoint, string Stage = FeatureCacheKey.TowerStage)
 {
     /// <summary>The vision tower's output (before the projector): what a frozen tower lets the tuner keep.</summary>
     public const string TowerStage = "tower";
@@ -44,7 +43,7 @@ public sealed record FeatureCacheKey(string Image, string Transforms, string Vis
     public string Id => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(ToJson().ToJsonString())));
 
     /// <summary>The fields as a JSON array, in the order of the constructor.</summary>
-    public JsonArray ToJson() => [Image, Transforms, VisionOptions, Family, Checkpoint, DType, Stage];
+    public JsonArray ToJson() => [Image, Transforms, VisionOptions, Family, Checkpoint, Stage];
 }
 
 /// <summary>How a cache of <see cref="FeatureCaches"/> is made.</summary>
