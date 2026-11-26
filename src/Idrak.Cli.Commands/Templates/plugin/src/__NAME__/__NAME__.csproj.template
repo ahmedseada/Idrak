@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- An Idrak plug-in: load it with `idrak -P path/to/__NAME__.dll ...` (the plug-in option), or reference it and call
-       __NAMESPACE__.Plugin.Register() from your own code. It uses Idrak's public API only. -->
+  <!-- An Idrak plug-in: reference it and use __NAMESPACE__.Plugin from your own code. It uses Idrak's public API only. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

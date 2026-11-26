@@ -1,14 +1,13 @@
 # __NAME__
 
-An Idrak plug-in, written with Idrak's public API only. It registers:
+An Idrak plug-in, written with Idrak's public API only. It brings:
 
-- the network step `__FORMAT__-softplus` (`src/__NAME__/Plugin.cs`), usable from the network builder and from a
-  network JSON.
+- softplus as a differentiable function (`src/__NAME__/Plugin.cs`), applied in a network builder's lambda.
 
 ```
 dotnet build
 dotnet run --project tests/__NAME__.Tests            # the tests on the CPU; add -- vulkan:0 for another device
-idrak plugins list --plugin src/__NAME__/bin/Debug/net10.0/__NAME__.dll
 ```
 
-From your own code, reference the project (or its package) and call `__NAMESPACE__.Plugin.Register()` once.
+From your own code, reference the project (or its package) and use `__NAMESPACE__.Plugin.Softplus`. Registering a
+plug-in's parts by name is not on the new design yet.

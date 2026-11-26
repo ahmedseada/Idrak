@@ -6,20 +6,17 @@ using System.Runtime.CompilerServices;
 using Idrak;
 using Idrak.Abstraction;
 using Idrak.Abstraction.Generation;
-using Idrak.Abstraction.Plugins;
 using Idrak.Layers;
 using Idrak.Abstraction.Training;
 using Idrak.Optimizers;
 using __NAMESPACE__;
 
 var device = args.Length > 0 ? Device.Parse(args[0]) : Device.Cpu;
-Plugin.Register();
 int failed = 0;
 foreach (var (name, test) in new (string, Action)[]
 {
     ("public API only: Idrak grants this assembly no internal access", NoInternalAccess),
-    ("idrak --plugin finds the assembly's plug-in package, whose plug-in registers and takes back the step", DeclaredPackage),
-    ("the network step trains and replays from JSON", NetworkStep),
+    ("a network with softplus trains", NetworkStep),
 })
 {
     try
@@ -48,17 +45,6 @@ void NoInternalAccess()
     Check(!friends.Contains(self), $"Idrak lists {self} among its friends");
 }
 
-void DeclaredPackage()
-{
-    var package = IdrakPlugins.PackageOf(typeof(Plugin).Assembly);
-    Check(package is { All.Count: 1 } && ReferenceEquals(package, IdrakPlugins.PackageOf(typeof(Plugin).Assembly)), "one package, made once");
-    var plugin = package!.All[0];
-    Plugin.Unregister();
-    IdrakPlugins.Register(plugin);
-    Check(plugin.IsRegistered, "its plug-in registers the step");
-    IdrakPlugins.Unregister(plugin);
-    Plugin.Register();
-}
 
 void NetworkStep()
 {
@@ -68,7 +54,7 @@ void NetworkStep()
     var ys = Enumerable.Range(0, Samples).Select(i => MathF.Abs(xs[2 * i]) - 0.5f * xs[2 * i + 1]).ToArray();
     using var x = Tensor.From(xs, [Samples, 2], device);
     using var y = Tensor.From(ys, [Samples, 1], device);
-    var builder = Network.Input(2).Seed(6).Linear(16).Op(Plugin.StepName).Linear(1);
+    var builder = Network.Input(2).Seed(6).Linear(16).Lambda(t => Plugin.Softplus.Apply(t), "Softplus", [16]).Linear(1);
     using var model = builder.OnDevice(device).Build();
     using var optimizer = new Adam(model.Parameters(), learningRate: 0.01f);
     float first = 0f, last = 0f;
@@ -84,7 +70,6 @@ void NetworkStep()
     }
 
     Check(last < 0.2f * first, $"loss {first} -> {last}");
-    Check(Network.FromJson(builder.ToJson()).ToJson().ToJsonString() == builder.ToJson().ToJsonString(), "the step replays from JSON");
 }
 
 static void Check(bool condition, string message)

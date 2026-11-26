@@ -2,54 +2,13 @@ using Idrak;
 using Idrak.Abstraction;
 using Idrak.Abstraction.Generation;
 using Idrak.Abstraction.Modules;
-using Idrak.Abstraction.Plugins;
-using Idrak.Layers;
-using Idrak.Layers.Abstractions;
-
-[assembly: IdrakPluginPackage(typeof(__NAMESPACE__.PluginPackage))]
 
 namespace __NAMESPACE__;
 
-/// <summary>
-/// What this plug-in adds to Idrak: the network step "__FORMAT__-softplus". `idrak --plugin __NAME__.dll` registers the assembly's <see cref="PluginPackage"/>
-/// (named by its [assembly: IdrakPluginPackage]); your own code calls <see cref="Register"/>.
-/// </summary>
+/// <summary>What this plug-in brings to Idrak: softplus as a differentiable function.</summary>
 public static class Plugin
 {
-    /// <summary>The network step's name (`Network.Input(4).Linear(8).Op(Plugin.StepName)`, or "op": "__FORMAT__-softplus" in a network JSON).</summary>
-    public const string StepName = "__FORMAT__-softplus";
-
     /// <summary>softplus(x) = log(1 + e^x), with its derivative sigmoid(x) as the backward step.</summary>
     public static DifferentiableFunction Softplus { get; } =
         Autograd.Function("softplus", x => (x[0].Exp() + 1f).Log(), (x, y, g) => [g * x[0].Sigmoid()]);
-
-    /// <summary>Registers the step (registering again replaces it).</summary>
-    public static void Register()
-    {
-        NetworkOps.Register(StepName, (builder, arguments) => builder.Lambda(t => Softplus.Apply(t), "Softplus", [.. builder.CurrentShape]));
-    }
-
-    /// <summary>Removes the step again.</summary>
-    public static void Unregister()
-    {
-        NetworkOps.Unregister(StepName);
-    }
-}
-
-/// <summary>
-/// The package `idrak --plugin __NAME__.dll` finds through the assembly's [assembly: IdrakPluginPackage]: one plug-in,
-/// "__FORMAT__", that registers the step (<see cref="Plugin.Register"/>) and takes it back.
-/// </summary>
-public sealed class PluginPackage : IIdrakPluginPackage
-{
-    /// <summary>The package's name.</summary>
-    public string Name => "__NAME__";
-
-    /// <summary>Its plug-ins.</summary>
-    public IReadOnlyList<IIdrakPlugin> All { get; } = [new Registration()];
-
-    private sealed class Registration() : IdrakPlugin("__FORMAT__")
-    {
-        protected override void RegisterParts() => Part(Plugin.Register, Plugin.Unregister);
-    }
 }
