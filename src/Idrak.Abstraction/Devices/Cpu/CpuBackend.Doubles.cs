@@ -161,9 +161,9 @@ internal sealed unsafe partial class CpuBackend
         var zero = TD.All(0d);
         return op switch
         {
-            UnaryOp.Relu => TD.Select(TD.Less(x, zero), zero, x),
+            UnaryOp.Relu => TD.Select(TD.Less(zero, x), x, TD.Select(TD.Equal(x, x), zero, x)),
             UnaryOp.Square => TD.Mul(x, x),
-            UnaryOp.Abs => TD.Select(TD.Less(x, zero), TD.Sub(zero, x), x),
+            UnaryOp.Abs => TD.Select(TD.Less(x, zero), TD.Mul(TD.All(-1d), x), TD.Select(TD.Equal(x, zero), zero, x)),
             UnaryOp.Sqrt => TD.Sqrt(x),
             UnaryOp.Sign => PerLane<TV, TD>(x, &Sign64),
             UnaryOp.Exp => PerLane<TV, TD>(x, &CpuMath.ExpDouble),
@@ -178,16 +178,33 @@ internal sealed unsafe partial class CpuBackend
         };
     }
 
-    // c = op(a, b) in float64 (NaN kept by Maximum and Minimum, as the float32 lanes keep it).
-    private static TV Binary64<TV, TD>(BinaryOp op, TV a, TV b) where TV : unmanaged where TD : struct, IDoubles<TV> => op switch
+    // c = op(a, b) in float64 (Maximum and Minimum as Math.Max and Math.Min: NaN kept, +0 over -0 for the maximum and -0
+    // under +0 for the minimum, as the float32 lanes).
+    private static TV Binary64<TV, TD>(BinaryOp op, TV a, TV b) where TV : unmanaged where TD : struct, IDoubles<TV>
     {
-        BinaryOp.Add => TD.Add(a, b),
-        BinaryOp.Sub => TD.Sub(a, b),
-        BinaryOp.Mul => TD.Mul(a, b),
-        BinaryOp.Maximum => TD.Select(TD.Equal(a, a), TD.Select(TD.Equal(b, b), TD.Select(TD.Less(b, a), a, b), b), a),
-        BinaryOp.Minimum => TD.Select(TD.Equal(a, a), TD.Select(TD.Equal(b, b), TD.Select(TD.Less(a, b), a, b), b), a),
-        _ => throw new ArgumentOutOfRangeException(nameof(op), op, "Not a binary function."),
-    };
+        switch (op)
+        {
+            case BinaryOp.Add:
+                return TD.Add(a, b);
+            case BinaryOp.Sub:
+                return TD.Sub(a, b);
+            case BinaryOp.Mul:
+                return TD.Mul(a, b);
+        }
+
+        if (op is not (BinaryOp.Maximum or BinaryOp.Minimum))
+        {
+            throw new ArgumentOutOfRangeException(nameof(op), op, "Not a binary function.");
+        }
+
+        // Equal values: themselves, zeros by their signs (+0 + -0 = +0 for the maximum; -((-a) + (-b)) for the minimum).
+        var zero = TD.All(0d);
+        bool max = op == BinaryOp.Maximum;
+        var tie = max ? TD.Add(a, b) : TD.Mul(TD.All(-1d), TD.Add(TD.Mul(TD.All(-1d), a), TD.Mul(TD.All(-1d), b)));
+        var equal = TD.Select(TD.Equal(a, zero), tie, a);
+        var pick = max ? TD.Select(TD.Less(b, a), a, TD.Select(TD.Less(a, b), b, equal)) : TD.Select(TD.Less(a, b), a, TD.Select(TD.Less(b, a), b, equal));
+        return TD.Select(TD.Equal(a, a), TD.Select(TD.Equal(b, b), pick, b), a);
+    }
 
     // ------------------------------------------------------------------ reading and writing float64 chunks
 

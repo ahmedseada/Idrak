@@ -338,13 +338,16 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static TV Smaller(TV a, TV b) => TF.Select(TF.Less(a, b), a, b);
 
-        // max(a, b) with a NaN kept: NaN where either is, else the larger (+0 over -0 only as compared: equal keeps b).
+        // max(a, b) as MathF.Max: NaN where either is, else the larger, +0 over -0 (equal values' bits ANDed: a zero's sign
+        // kept only where both have it).
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static TV Max(TV a, TV b) => TF.Select(TF.Equal(a, a), TF.Select(TF.Equal(b, b), Larger(a, b), b), a);
+        public static TV Max(TV a, TV b) =>
+            TF.Select(TF.Equal(a, a), TF.Select(TF.Equal(b, b), TF.Select(TF.Less(b, a), a, TF.Select(TF.Less(a, b), b, TF.And(a, b))), b), a);
 
-        // min(a, b) with a NaN kept.
+        // min(a, b) as MathF.Min: NaN where either is, else the smaller, -0 under +0 (equal values' bits ORed).
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static TV Min(TV a, TV b) => TF.Select(TF.Equal(a, a), TF.Select(TF.Equal(b, b), Smaller(a, b), b), a);
+        public static TV Min(TV a, TV b) =>
+            TF.Select(TF.Equal(a, a), TF.Select(TF.Equal(b, b), TF.Select(TF.Less(a, b), a, TF.Select(TF.Less(b, a), b, TF.Or(a, b))), b), a);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static TV Abs(TV a) => TF.And(a, TF.All(Bits(int.MaxValue)));

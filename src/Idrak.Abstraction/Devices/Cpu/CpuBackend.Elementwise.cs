@@ -62,7 +62,8 @@ internal sealed unsafe partial class CpuBackend
 
     private struct ReluFn : IFn1, IFnBack
     {
-        public static TV Of<TV, TF>(TV x) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Select(TF.Less(x, TF.All(0f)), TF.All(0f), x);
+        // MathF.Max(x, 0): x where it is above 0 or NaN, else +0 (-0 too).
+        public static TV Of<TV, TF>(TV x) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Select(TF.Less(TF.All(0f), x), x, TF.Select(TF.Equal(x, x), TF.All(0f), x));
 
         public static TV Of<TV, TF>(TV x, TV y) where TV : unmanaged where TF : struct, IFloats<TV> => TF.And(TF.Less(TF.All(0f), x), TF.All(1f));
     }

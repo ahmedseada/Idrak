@@ -16,8 +16,10 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
 {
     // y = Σ_c e_c · v_c over keys [start, end) of a head (scores into `scores`), divided by Σ e_c; its log-sum-exp returned
     // (-∞ for an empty range, whose row gets zeros).
+    // Key c at keys + c · keyStep, its value at values + c · valueStep (dim for packed rows; a view's row steps otherwise).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float AttendRow<TV, TF>(float* q, float* keys, float* values, int start, int end, int dim, float scale, float cap, float* y, float* scores)
+    private static float AttendRow<TV, TF>(float* q, float* keys, float* values, int start, int end, int dim, float scale, float cap, float* y, float* scores,
+        long keyStep, long valueStep)
         where TV : unmanaged where TF : struct, IFloats<TV>
     {
         var output = new Span<float>(y, dim);
@@ -31,7 +33,7 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
         float max = float.NegativeInfinity;
         for (int c = 0; c < n; c++)
         {
-            var terms = new DotTerms(q, keys + (long)(start + c) * dim);
+            var terms = new DotTerms(q, keys + (start + c) * keyStep);
             float s = Reduce16<TV, TF, DotTerms>(ref terms, dim) * scale;
             if (cap > 0f)
             {
@@ -48,7 +50,7 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
         float sum = Reduce16<TV, TF, SumTerms>(ref sumTerms, n);
         for (int c = 0; c < n; c++)
         {
-            var axpy = new WeightedMap(values + (long)(start + c) * dim, y, scores[c]);
+            var axpy = new WeightedMap(values + (start + c) * valueStep, y, scores[c]);
             RowMap<TV, TF, WeightedMap>(ref axpy, dim);
         }
 
@@ -88,8 +90,10 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default) =>
         Causal(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant, "AttentionTiled");
 
+    // `at`: views' planes read where they lie (q, keys and values each from its element offset, steps by HeadSteps), or
+    // null for packed operands.
     private static void Causal(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale, AttentionVariant variant, string operation)
+        int steps, int capacity, int dim, float scale, AttentionVariant variant, string operation, (long Q, long K, long V, HeadSteps Steps)? at = null)
     {
         int rows = heads * rowsPerHead;
         if (rows <= 0 || dim <= 0)
@@ -100,14 +104,20 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
         fixed (float* pq = V(q), pk = V(keys), pv = V(values), pp = D(position), py = V(y), pl = logSumExp is null ? null : V(logSumExp))
         {
             long start = IndicesOf(position, pp)[0];
-            var kernel = new CausalRows(pq, pk, pv, py, pl, (int)start, rowsPerHead, Math.Max(1, steps), capacity, dim, scale, variant, rows, default, false, 1);
+            var (oq, ok, ov, layout) = at ?? (0, 0, 0, default);
+            var kernel = new CausalRows(pq + oq, pk + ok, pv + ov, py, pl, (int)start, rowsPerHead, Math.Max(1, steps), capacity, dim, scale, variant, rows, default, false, 1,
+                layout);
             Rows(operation, kernel, rows, dim * Math.Min(capacity, (int)start + Math.Max(1, steps)), 2);
         }
     }
 
+    // Where a head's rows lie: q's row i of head h at h · QHead + i · QRow, its keys' at h · KHead + c · KRow, its values'
+    // at h · VHead + c · VRow (a view's planes read where they are); all 0: packed ([heads, rows, dim] each).
+    private readonly record struct HeadSteps(long QHead, long QRow, long KHead, long KRow, long VHead, long VRow);
+
     // Row h · rowsPerHead + i sees cached positions up to position + i mod steps (from its window's first).
     private struct CausalRows(float* q, float* keys, float* values, float* y, float* lse, int position, int rowsPerHead, int steps, int capacity, int dim,
-        float scale, AttentionVariant variant, int rows, Indices starts, bool started, int headsPerRow) : IRowKernel
+        float scale, AttentionVariant variant, int rows, Indices starts, bool started, int headsPerRow, HeadSteps layout = default) : IRowKernel
     {
         private float* _y = y, _lse = lse;
 
@@ -122,9 +132,12 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
             var scores = ScoresBuffer(Math.Max(1, end - start));
             fixed (float* ps = scores)
             {
-                long head = (long)h * capacity * dim;
                 long outRow = variant.OutputRow(row, rowsPerHead, steps);
-                float l = AttendRow<TV, TF>(q + (long)row * dim, keys + head, values + head, start, end, dim, scale, variant.Softcap, _y + outRow * dim, ps);
+                var at = layout.QRow == 0 && layout.KRow == 0 && layout.VRow == 0
+                    ? new HeadSteps((long)rowsPerHead * dim, dim, (long)capacity * dim, dim, (long)capacity * dim, dim)
+                    : layout;
+                float l = AttendRow<TV, TF>(q + h * at.QHead + i * at.QRow, keys + h * at.KHead, values + h * at.VHead, start, end, dim, scale, variant.Softcap,
+                    _y + outRow * dim, ps, at.KRow, at.VRow);
                 if (_lse != null)
                 {
                     _lse[row] = l;
@@ -171,7 +184,7 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
             fixed (float* ps = scores)
             {
                 long head = (long)g * keyRows * dim;
-                float l = AttendRow<TV, TF>(q + (long)row * dim, keys + head, values + head, start, end, dim, scale, cap, _y + (long)row * dim, ps);
+                float l = AttendRow<TV, TF>(q + (long)row * dim, keys + head, values + head, start, end, dim, scale, cap, _y + (long)row * dim, ps, dim, dim);
                 if (_lse != null)
                 {
                     _lse[row] = l;

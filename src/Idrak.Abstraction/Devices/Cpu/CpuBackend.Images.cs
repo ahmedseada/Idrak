@@ -454,7 +454,8 @@ internal sealed unsafe partial class CpuBackend
         ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity) =>
         Ctc(logProbs, targets, null, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
 
-    // The forward (α) and, for the gradient, backward (β) variables in log space (double), a sequence a thread: the loss
+    // The forward (α) and, for the gradient, backward (β) variables in log space (float32, the log-probabilities' own kind:
+    // nothing widened), a sequence a thread: the loss
     // -log p, or dLogProbs += lossGrad · ∂(-log p)/∂lp = -lossGrad · e^(log Σ_s α β - lp - log p) over each class's places.
     private static void Ctc(Storage logProbs, Storage targets, Storage? losses, Storage? lossGrads, Storage? dLogProbs, ReadOnlySpan<int> inputLengths,
         ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
@@ -486,10 +487,10 @@ internal sealed unsafe partial class CpuBackend
                 int length = Math.Clamp(inLengths[n], 0, steps), labels = tLengths[n], states = 2 * labels + 1;
                 int Label(int s) => s % 2 == 0 ? blank : intTargets ? BitConverter.SingleToInt32Bits(tw[tOffsets[n] + s / 2]) : (int)tw[tOffsets[n] + s / 2];
                 long At(int t, int c) => batchFirst ? ((long)n * steps + t) * classes + c : ((long)t * batch + n) * classes + c;
-                var alpha = new double[Math.Max(1, length) * states];
+                var alpha = new float[Math.Max(1, length) * states];
                 for (int i = 0; i < alpha.Length; i++)
                 {
-                    alpha[i] = double.NegativeInfinity;
+                    alpha[i] = float.NegativeInfinity;
                 }
 
                 if (length > 0)
@@ -504,7 +505,7 @@ internal sealed unsafe partial class CpuBackend
                     {
                         for (int s = 0; s < states; s++)
                         {
-                            double a = alpha[(t - 1) * states + s];
+                            float a = alpha[(t - 1) * states + s];
                             if (s > 0)
                             {
                                 a = LogAdd(a, alpha[(t - 1) * states + s - 1]);
@@ -520,12 +521,12 @@ internal sealed unsafe partial class CpuBackend
                     }
                 }
 
-                double logP = length == 0 ? (labels == 0 ? 0 : double.NegativeInfinity)
+                float logP = length == 0 ? (labels == 0 ? 0 : float.NegativeInfinity)
                     : states > 1 ? LogAdd(alpha[(length - 1) * states + states - 1], alpha[(length - 1) * states + states - 2]) : alpha[(length - 1) * states];
-                bool infinite = double.IsNegativeInfinity(logP);
+                bool infinite = float.IsNegativeInfinity(logP);
                 if (loss is not null)
                 {
-                    loss[n] = infinite && zeroInfinity ? 0f : (float)-logP;
+                    loss[n] = infinite && zeroInfinity ? 0f : -logP;
                     continue;
                 }
 
@@ -534,10 +535,10 @@ internal sealed unsafe partial class CpuBackend
                     continue;
                 }
 
-                var beta = new double[length * states];
+                var beta = new float[length * states];
                 for (int i = 0; i < beta.Length; i++)
                 {
-                    beta[i] = double.NegativeInfinity;
+                    beta[i] = float.NegativeInfinity;
                 }
 
                 beta[(length - 1) * states + states - 1] = lp[At(length - 1, Label(states - 1))];
@@ -550,7 +551,7 @@ internal sealed unsafe partial class CpuBackend
                 {
                     for (int s = 0; s < states; s++)
                     {
-                        double b = beta[(t + 1) * states + s];
+                        float b = beta[(t + 1) * states + s];
                         if (s < states - 1)
                         {
                             b = LogAdd(b, beta[(t + 1) * states + s + 1]);
@@ -566,10 +567,10 @@ internal sealed unsafe partial class CpuBackend
                 }
 
                 float g = grads[n];
-                var byClass = new double[classes];
+                var byClass = new float[classes];
                 for (int t = 0; t < length; t++)
                 {
-                    Array.Fill(byClass, double.NegativeInfinity);
+                    Array.Fill(byClass, float.NegativeInfinity);
                     for (int s = 0; s < states; s++)
                     {
                         int c = Label(s);
@@ -578,10 +579,10 @@ internal sealed unsafe partial class CpuBackend
 
                     for (int c = 0; c < classes; c++)
                     {
-                        if (!double.IsNegativeInfinity(byClass[c]))
+                        if (!float.IsNegativeInfinity(byClass[c]))
                         {
                             long at = At(t, c);
-                            dlp[at] -= (float)(g * CpuMath.ExpDouble(byClass[c] - lp[at] - logP));
+                            dlp[at] -= g * Fn<float, F1>.Exp(byClass[c] - lp[at] - logP);
                         }
                     }
                 }
@@ -589,20 +590,20 @@ internal sealed unsafe partial class CpuBackend
         });
     }
 
-    // ln(e^a + e^b) in double.
-    private static double LogAdd(double a, double b)
+    // ln(e^a + e^b) in float32 (the lanes' own exp and log).
+    private static float LogAdd(float a, float b)
     {
-        if (double.IsNegativeInfinity(a))
+        if (float.IsNegativeInfinity(a))
         {
             return b;
         }
 
-        if (double.IsNegativeInfinity(b))
+        if (float.IsNegativeInfinity(b))
         {
             return a;
         }
 
-        double max = Math.Max(a, b);
-        return max + CpuMath.LogDouble(CpuMath.ExpDouble(a - max) + CpuMath.ExpDouble(b - max));
+        float max = MathF.Max(a, b);
+        return max + Fn<float, F1>.Log(Fn<float, F1>.Exp(a - max) + Fn<float, F1>.Exp(b - max));
     }
 }
