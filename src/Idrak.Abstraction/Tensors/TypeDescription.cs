@@ -411,7 +411,8 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
     public double ValueOf(ReadOnlySpan<byte> block, int v)
     {
         v %= UnitValues;
-        double value = Code.Value(CodeBits(block, v), v % Code.Width) + CodeOffset;
+        double value = Code.Value(CodeBits(block, v), v % Code.Width);
+        value = CodeOffset == 0 ? value : value + CodeOffset;                // a code's −0 kept (−0 + 0 is +0)
         foreach (var scale in Scales ?? [])
         {
             value *= scale.Value(block[ScaleBase(scale, v)..], ScaleIndex(scale, v), v % scale.Values);
@@ -1843,9 +1844,20 @@ internal sealed class DescribedEncoder
                 return last;
             }
 
-            double floor = Math.Floor(q), fraction = q - floor;
-            int r = (int)floor;
-            return fraction > 0.5 ? r + 1 : fraction < 0.5 ? r : Even(r, r + 1);
+            // The step's estimate, then the values themselves decide (q's own rounding may put a value near a midpoint on
+            // its wrong side: −0.5000000000000001 − (−2) is 1.5): Values[r] ≤ x < Values[r + 1], then the nearer.
+            int r = Math.Min((int)Math.Floor(q), last - 1);
+            while (r > 0 && x < Values[r])
+            {
+                r--;
+            }
+
+            while (r < last - 1 && x >= Values[r + 1])
+            {
+                r++;
+            }
+
+            return x > mids[r] ? r + 1 : x < mids[r] ? r : Even(r, r + 1);
         }
 
         private int Even(int a, int b) => (Codes[a] & 1) == 0 ? a : b;

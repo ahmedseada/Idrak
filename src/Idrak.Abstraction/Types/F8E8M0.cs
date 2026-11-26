@@ -11,7 +11,7 @@ public sealed class F8E8M0 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static F8E8M0 Type { get; } = new();
+    public static IElementType Type { get; } = new F8E8M0();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(1, 1, NumberType.Floating(8, 0, signed: false, bias: 127, subnormals: false, specials: FloatSpecials.AllOnesNaN), [new CodePlane(0, 8, 1)]);

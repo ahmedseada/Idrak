@@ -11,7 +11,7 @@ public sealed class Q5_1 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static Q5_1 Type { get; } = new();
+    public static IElementType Type { get; } = new Q5_1();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(32, 24, NumberType.Integer(5, false), [new CodePlane(8, 4, 32), new CodePlane(4, 1, 1, Stream: true)], Scales: [new BlockScale(NumberType.Floating(5, 10), 32, 0)], Mins: [new BlockScale(NumberType.Floating(5, 10), 32, 2)], MinsAdded: true);

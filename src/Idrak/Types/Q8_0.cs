@@ -11,7 +11,7 @@ public sealed class Q8_0 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static Q8_0 Type { get; } = new();
+    public static IElementType Type { get; } = new Q8_0();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(32, 34, NumberType.Integer(8, signed: true), [new CodePlane(2, 8, 1)], 0, [new BlockScale(NumberType.Floating(5, 10), 32, 0)]);

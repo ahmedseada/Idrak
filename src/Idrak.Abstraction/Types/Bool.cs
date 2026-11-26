@@ -11,7 +11,7 @@ public sealed class Bool : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static Bool Type { get; } = new();
+    public static IElementType Type { get; } = new Bool();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(1, 1, NumberType.Integer(1, signed: false), [new CodePlane(0, 1, 1, Places: [new FieldPlace(0, 0)])]);

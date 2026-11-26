@@ -11,7 +11,7 @@ public sealed class TQ1_0 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static TQ1_0 Type { get; } = new();
+    public static IElementType Type { get; } = new TQ1_0();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(256, 54, NumberType.Integer(2, false), [new CodePlane(0, 2, 1, Places: [.. Enumerable.Range(0, 256).Select(Digit)], Radix: 3)], -1, [new BlockScale(NumberType.Floating(5, 10), 256, 52)]);

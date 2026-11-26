@@ -11,7 +11,7 @@ public sealed class Q4_K : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static Q4_K Type { get; } = new();
+    public static IElementType Type { get; } = new Q4_K();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(256, 144, NumberType.Integer(4, false), [new CodePlane(16, 4, 64)], 0, [new BlockScale(NumberType.Floating(5, 10), 256, 0), new BlockScale(NumberType.Integer(6, false), 32, 0, [.. Enumerable.Range(0, 8).Select(Scale)])], [new BlockScale(NumberType.Floating(5, 10), 256, 2), new BlockScale(NumberType.Integer(6, false), 32, 0, [.. Enumerable.Range(0, 8).Select(Min)])]);

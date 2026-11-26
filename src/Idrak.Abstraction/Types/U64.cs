@@ -11,7 +11,7 @@ public sealed class U64 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static U64 Type { get; } = new();
+    public static IElementType Type { get; } = new U64();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(1, 8, NumberType.Integer(64, signed: false), [new CodePlane(0, 64, 1)]);

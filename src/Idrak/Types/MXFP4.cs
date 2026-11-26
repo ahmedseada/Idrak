@@ -11,7 +11,7 @@ public sealed class MXFP4 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static MXFP4 Type { get; } = new();
+    public static IElementType Type { get; } = new MXFP4();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(32, 17, NumberType.Floating(2, 1, bias: 1, specials: FloatSpecials.None), [new CodePlane(1, 4, 32)], Scales: [new BlockScale(NumberType.Floating(8, 0, signed: false, bias: 127, subnormals: false, specials: FloatSpecials.AllOnesNaN), 32, 0)]);

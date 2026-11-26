@@ -13,7 +13,7 @@ public sealed class IQ3_XXS : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static IQ3_XXS Type { get; } = new();
+    public static IElementType Type { get; } = new IQ3_XXS();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(256, 98, GgufGrids.Codebook(8, 4, GgufGrids.IQ3XXS, 0.5), [new CodePlane(2, 8, 1)], 0, [new BlockScale(NumberType.Floating(5, 10), 256, 0), new BlockScale(NumberType.Integer(4, false), 32, 0, [.. Enumerable.Range(0, 8).Select(j => ScalePiece.Run(66 + 4 * j, 28, 4))], 0.5), new BlockScale(GgufGrids.KSignVectors, 8, 0, [.. Enumerable.Range(0, 32).Select(s => ScalePiece.Run(66 + 4 * (s / 4), 7 * (s % 4), 7))])]);

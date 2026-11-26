@@ -11,7 +11,7 @@ public sealed class F8E5M2 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static F8E5M2 Type { get; } = new();
+    public static IElementType Type { get; } = new F8E5M2();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(1, 1, NumberType.Floating(5, 2), [new CodePlane(0, 8, 1)]);

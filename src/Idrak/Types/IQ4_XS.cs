@@ -13,7 +13,7 @@ public sealed class IQ4_XS : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static IQ4_XS Type { get; } = new();
+    public static IElementType Type { get; } = new IQ4_XS();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(256, 136, GgufGrids.Iq4Numbers, [new CodePlane(8, 4, 32)], Scales: [new BlockScale(NumberType.Floating(5, 10), 256, 0), new BlockScale(NumberType.Integer(6, false), 32, 0, [.. Enumerable.Range(0, 8).Select(ib => new[] { new ScalePiece(4 + ib / 2, 4 * (ib % 2), 4), new ScalePiece(2 + ib / 4, 2 * (ib % 4), 2) })], -32)]);

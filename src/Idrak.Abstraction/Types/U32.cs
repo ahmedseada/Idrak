@@ -11,7 +11,7 @@ public sealed class U32 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static U32 Type { get; } = new();
+    public static IElementType Type { get; } = new U32();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(1, 4, NumberType.Integer(32, signed: false), [new CodePlane(0, 32, 1)]);

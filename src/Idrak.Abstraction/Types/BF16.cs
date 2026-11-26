@@ -11,7 +11,7 @@ public sealed class BF16 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static BF16 Type { get; } = new();
+    public static IElementType Type { get; } = new BF16();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(1, 2, NumberType.Floating(8, 7), [new CodePlane(0, 16, 1)]);

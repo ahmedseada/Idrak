@@ -11,7 +11,7 @@ public sealed class I16 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static I16 Type { get; } = new();
+    public static IElementType Type { get; } = new I16();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(1, 2, NumberType.Integer(16, signed: true), [new CodePlane(0, 16, 1)]);

@@ -13,7 +13,7 @@ public sealed class IQ4_NL : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static IQ4_NL Type { get; } = new();
+    public static IElementType Type { get; } = new IQ4_NL();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(32, 18, GgufGrids.Iq4Numbers, [new CodePlane(2, 4, 32)], 0, [new BlockScale(NumberType.Floating(5, 10), 32, 0)]);

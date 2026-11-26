@@ -11,7 +11,7 @@ public sealed class I8 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static I8 Type { get; } = new();
+    public static IElementType Type { get; } = new I8();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(1, 1, NumberType.Integer(8, signed: true), [new CodePlane(0, 8, 1)]);

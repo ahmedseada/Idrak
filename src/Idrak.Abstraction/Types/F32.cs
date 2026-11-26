@@ -11,7 +11,7 @@ public sealed class F32 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static F32 Type { get; } = new();
+    public static IElementType Type { get; } = new F32();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(1, 4, NumberType.Floating(8, 23), [new CodePlane(0, 32, 1)]);

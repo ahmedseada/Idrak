@@ -13,7 +13,7 @@ public sealed class IQ1_S : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static IQ1_S Type { get; } = new();
+    public static IElementType Type { get; } = new IQ1_S();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(256, 50, GgufGrids.Iq1Codebook, [new CodePlane(2, 8, 1), new CodePlane(0, 3, 1, Places: [.. Enumerable.Range(0, 32).Select(i => new FieldPlace(34 + 2 * (i / 4) + 3 * (i % 4) / 8, 3 * (i % 4) % 8))]), new CodePlane(0, 1, 1, Places: [.. Enumerable.Range(0, 32).Select(i => new FieldPlace(35 + 2 * (i / 4), 7))])], Scales: [new BlockScale(NumberType.Floating(5, 10), 256, 0), new BlockScale(GgufGrids.Odd(3), 32, 0, [.. Enumerable.Range(0, 8).Select(ib => new[] { new ScalePiece(35 + 2 * ib, 4, 3) })])]);

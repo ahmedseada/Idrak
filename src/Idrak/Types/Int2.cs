@@ -11,7 +11,7 @@ public sealed class Int2 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static Int2 Type { get; } = new();
+    public static IElementType Type { get; } = new Int2();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(32, 10, NumberType.Integer(2, signed: true), [new CodePlane(2, 2, 4)], Scales: [new BlockScale(NumberType.Floating(5, 10), 32, 0)]);

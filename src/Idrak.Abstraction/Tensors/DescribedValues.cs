@@ -61,7 +61,7 @@ internal sealed class DescribedReader
             }
         }
 
-        // The codes' numbers, the code offset added (as ValueOf adds it), for codes of up to 16 bits.
+        // The codes' numbers, the code offset added as ValueOf adds it (a code's −0 kept), for codes of up to 16 bits.
         if (d.Code.Bits <= 16)
         {
             int codes = 1 << d.Code.Bits;
@@ -70,7 +70,8 @@ internal sealed class DescribedReader
             {
                 for (int i = 0; i < width; i++)
                 {
-                    codeNumbers[c * width + i] = d.Code.Value((ulong)c, i) + d.CodeOffset;
+                    double number = d.Code.Value((ulong)c, i);
+                    codeNumbers[c * width + i] = d.CodeOffset == 0 ? number : number + d.CodeOffset;
                 }
             }
         }
@@ -262,7 +263,8 @@ internal sealed class DescribedReader
                     }
 
                     int within = v % width;
-                    double value = codeNumbers is { } table ? table[(int)code * width + within] : d.Code.Value(code, within) + d.CodeOffset;
+                    double value = codeNumbers is { } table ? table[(int)code * width + within] : d.Code.Value(code, within);
+                    value = codeNumbers is not null || d.CodeOffset == 0 ? value : value + d.CodeOffset;
                     for (int f = 0; f < scales.Length; f++)
                     {
                         value *= scales[f].Number(unit, chunk, f * most, v);

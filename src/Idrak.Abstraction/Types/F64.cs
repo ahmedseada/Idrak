@@ -11,7 +11,7 @@ public sealed class F64 : IElementType
     }
 
     /// <summary>The type.</summary>
-    public static F64 Type { get; } = new();
+    public static IElementType Type { get; } = new F64();
 
     /// <inheritdoc />
     public TypeDescription Description { get; } = new(1, 8, NumberType.Floating(11, 52), [new CodePlane(0, 64, 1)]);
