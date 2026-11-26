@@ -321,23 +321,21 @@ internal static class ModelChoices
     /// <summary>The context window for generating with <paramref name="model"/>: <c>--context</c> or <see cref="DefaultContext"/>, at most the model's.</summary>
     public static int ContextLength(ModelChoice choice, PretrainedModel model) => Math.Min(choice.Context ?? DefaultContext, model.MaxPositions);
 
-    /// <summary>
-    /// The KV cache layout named by <c>--kv</c> (or the alias's "kv"): auto, float32 (f32) or any registered format; when
-    /// not given IDRAK_KV_CACHE_TYPE, else auto.
-    /// </summary>
+    /// <summary>The KV cache layout of <c>--kv</c> (or the alias's "kv"): float32 (<see cref="CacheLayout(string?, string)"/>).</summary>
     public static Idrak.Abstraction.Generation.IKeyValueLayout CacheLayout(ModelChoice choice)
     {
         ArgumentNullException.ThrowIfNull(choice);
-        try
-        {
-            return Idrak.Abstraction.Generation.KeyValueLayouts.Choose(choice.Kv).Layout;
-        }
-        catch (NotSupportedException e)
-        {
-            throw new UsageException($"{e.Message} Use auto, {string.Join(", ", Idrak.Abstraction.Generation.KeyValueLayouts.Names.Order(StringComparer.Ordinal))}, "
-                                     + "or load a plug-in that registers it (--plugin).");
-        }
+        return CacheLayout(choice.Kv, "--kv");
     }
+
+    /// <summary>
+    /// The built-in float32 layout, when <paramref name="name"/> is not given, auto or float32; any other name is refused,
+    /// naming <paramref name="option"/>: picking a format by its name is not on the new design yet.
+    /// </summary>
+    public static Idrak.Abstraction.Generation.IKeyValueLayout CacheLayout(string? name, string option) =>
+        string.IsNullOrWhiteSpace(name) || name.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase) || name.Trim().Equals("float32", StringComparison.OrdinalIgnoreCase)
+            ? Idrak.Abstraction.Generation.KeyValueLayouts.For(KeyValueFormat.Float32)
+            : throw new UsageException($"{option} {name}: the key/value cache is float32 only; picking another format by its name is not on the new design yet.");
 
     /// <summary>A text generator for <paramref name="model"/> with the chosen KV cache format and context window.</summary>
     public static Idrak.Generation.TextGenerator CreateGenerator(PretrainedModel model, ModelChoice choice) =>

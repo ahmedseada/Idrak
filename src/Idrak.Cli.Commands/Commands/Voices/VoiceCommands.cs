@@ -201,10 +201,6 @@ internal sealed class VoiceAddCommand : Command
                 return ExitCodes.Ok;
             }
         }
-        catch (NotRegisteredException e)
-        {
-            return ImageModelFiles.Refuse(context, e);
-        }
         catch (Exception e) when (e is ArgumentException or IOException)
         {
             context.Error(VoiceText.Options(e.Message));

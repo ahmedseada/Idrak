@@ -8,14 +8,15 @@ namespace Idrak.Cli.Commands.Data;
 
 /// <summary>
 /// The legacy font settings of the commands that read fonts (<c>data synth</c>, <c>data fonts</c>): <c>--font-map FILE</c>
-/// (again for more) registers a map tried before the library's, and <c>--font-maps KEY=VALUE,...</c> sets
-/// <see cref="FontMaps"/> and its <see cref="FontMapDrawing"/> for the command; both are put back when it ends.
+/// (a map tried before the library's: registering it is not on the new design yet), and <c>--font-maps KEY=VALUE,...</c>
+/// sets <see cref="FontMaps"/> and its <see cref="FontMapDrawing"/> for the command, put back when it ends.
 /// </summary>
 internal sealed class FontMapSettings : IDisposable
 {
     /// <summary>The options' help lines.</summary>
     public const string Help = """
-              --font-map FILE     a font map (JSON), again for more: tried before the library's maps
+              --font-map FILE     a font map (JSON), again for more: tried before the library's maps (registering
+                                  it is not on the new design yet)
               --font-maps SET     legacy font settings, KEY=VALUE,...: builtin (on: the library's maps), sidecars (on:
                                   FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them), letters (on: composed),
                                   blank-marks (on: a mark without ink is drawn), slant (0.15), wobble (0.012), seed (7),
@@ -36,7 +37,6 @@ internal sealed class FontMapSettings : IDisposable
     private readonly string _cacheFolder = FontCache.Folder;
     private bool _cacheFolderSet;
     private readonly FontMapDrawing _drawing = FontMaps.Drawing;
-    private readonly List<string> _added = [];
 
     private FontMapSettings()
     {
@@ -52,16 +52,14 @@ internal sealed class FontMapSettings : IDisposable
     /// <exception cref="UsageException">A map file that is not valid, or a setting that is not known or not valid.</exception>
     public static FontMapSettings Apply(CommandContext context)
     {
+        if (context.Options("--font-map") is { Count: > 0 } maps)
+        {
+            _ = NotOnTheNewDesign.Yet<FontMap>($"Registering the font map {maps[0]} (--font-map)");
+        }
+
         var settings = new FontMapSettings();
         try
         {
-            foreach (string file in context.Options("--font-map"))
-            {
-                var map = FontMap.Read(file);
-                FontMaps.Register(map);
-                settings._added.Add(map.Name);
-            }
-
             if (context.Option("--font-maps") is { } text)
             {
                 settings.Set(text);
@@ -140,15 +138,9 @@ internal sealed class FontMapSettings : IDisposable
         FontMaps.Drawing = drawing;
     }
 
-    /// <summary>Puts the settings back and removes the maps the command added.</summary>
+    /// <summary>Puts the settings back.</summary>
     public void Dispose()
     {
-        foreach (string name in _added)
-        {
-            FontMaps.Unregister(name);
-        }
-
-        _added.Clear();
         FontMaps.Builtin = _builtin;
         FontMaps.Sidecars = _sidecars;
         FontMaps.Drawing = _drawing;

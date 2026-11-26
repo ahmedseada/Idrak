@@ -38,7 +38,7 @@ internal static class DocumentBenchReadBack
         IDocument document;
         try
         {
-            document = DocumentFormats.Open(output, Path.GetFileName(file), read);
+            document = NotOnTheNewDesign.Yet<IDocument>($"Picking the document format of {file}");
         }
         catch (Exception e) when (e is InvalidDataException or NotSupportedException or IOException)
         {

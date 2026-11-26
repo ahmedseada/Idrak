@@ -85,14 +85,14 @@ internal sealed class DataRedactCommand : Command
         string temporary = output + ".partial";
         try
         {
-            using var document = DocumentFormats.Open(input, options);
+            using var document = NotOnTheNewDesign.Yet<IDocument>($"Picking the document format of {input}");
             if (boxes.Any(b => b.Page > document.PageCount))
             {
                 throw new UsageException($"{boxesFile}: an area is on page {boxes.Max(b => b.Page)}, and {input} has {document.PageCount} pages.");
             }
 
             using (var destination = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
-            using (var editor = DocumentWriters.Get("pdf").Edit(document, destination, new DocumentWriteOptions()))
+            using (var editor = NotOnTheNewDesign.Yet<IDocumentWriter>($"Picking the document writer 'pdf' by its name").Edit(document, destination, new DocumentWriteOptions()))
             {
                 int areas = 0;
                 using (var line = new ProgressLine(context, $"redacting {Path.GetFileName(input)}", document.PageCount, ProgressUnit.Items))

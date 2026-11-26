@@ -560,7 +560,7 @@ internal static class DocumentBench
                 {
                     using var document = Open(set, file, read);
                     using var destination = new CountingStream(w);
-                    using (var builder = DocumentWriters.Get(document.Format).Create(destination, writing))
+                    using (var builder = NotOnTheNewDesign.Yet<IDocumentWriter>($"Picking the document writer '{document.Format}' by its name").Create(destination, writing))
                     {
                         foreach (int page in PagesOf(document, options.Pages))
                         {
@@ -593,7 +593,7 @@ internal static class DocumentBench
                 {
                     using var document = Open(set, file, read);
                     using var destination = new CountingStream(w, keep: ReadsBack(document, w));
-                    using (var editor = DocumentWriters.Get(document.Format).Edit(document, destination, new DocumentWriteOptions()))
+                    using (var editor = NotOnTheNewDesign.Yet<IDocumentWriter>($"Picking the document writer '{document.Format}' by its name").Edit(document, destination, new DocumentWriteOptions()))
                     {
                         editor.SetInfo(document.Info with { Title = EditedTitle, Subject = EditedSubject });
                         editor.Save(mode);
@@ -617,7 +617,7 @@ internal static class DocumentBench
                     }
 
                     using var destination = new CountingStream(w, keep: ReadsBack(document, w));
-                    using (var editor = DocumentWriters.Get(document.Format).Edit(document, destination, new DocumentWriteOptions()))
+                    using (var editor = NotOnTheNewDesign.Yet<IDocumentWriter>($"Picking the document writer '{document.Format}' by its name").Edit(document, destination, new DocumentWriteOptions()))
                     {
                         foreach (var field in fields)
                         {
@@ -642,7 +642,7 @@ internal static class DocumentBench
                 {
                     using var document = Open(set, file, read);
                     using var destination = new MemoryStream();
-                    using (var editor = DocumentWriters.Get(document.Format).Edit(document, destination, new DocumentWriteOptions()))
+                    using (var editor = NotOnTheNewDesign.Yet<IDocumentWriter>($"Picking the document writer '{document.Format}' by its name").Edit(document, destination, new DocumentWriteOptions()))
                     {
                         editor.Sign(SignatureField, signing);
                         editor.Save(DocumentSaveMode.Incremental);
@@ -711,7 +711,7 @@ internal static class DocumentBench
     {
         try
         {
-            var document = DocumentFormats.Open(file, options);
+            var document = NotOnTheNewDesign.Yet<IDocument>($"Picking the document format of {file}");
             lock (set.Pages)
             {
                 set.Pages[file] = document.PageCount;
@@ -963,7 +963,7 @@ internal static class DocumentBench
                 var part = new DocumentBenchWork(work.Hashing);
                 try
                 {
-                    using var document = DocumentFormats.Open(bytes, Path.GetFileName(file), read);
+                    using var document = NotOnTheNewDesign.Yet<IDocument>($"Picking the document format of {file}");
                     CheckAll(document, check, part, progress);
                     work.Merge(file, part);
                 }

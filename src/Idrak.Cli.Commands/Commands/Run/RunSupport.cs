@@ -274,7 +274,13 @@ internal static class ChatHistory
         IReadOnlyList<ChatPart> content;
         try
         {
-            content = m["content"] is JsonValue c && !c.TryGetValue(out string? _) ? [] : ChatParts.ContentFromJson(m["content"]);   // null: no content
+            content = m["content"] switch                                   // null: no content
+            {
+                null => [],
+                JsonValue v when v.TryGetValue(out string? text) => text.Length == 0 ? [] : [new ChatText(text)],
+                JsonValue => [],
+                _ => NotOnTheNewDesign.Yet<IReadOnlyList<ChatPart>>("Reading a message's content parts by their kinds' names"),
+            };
         }
         catch (Exception e) when (e is FormatException or NotSupportedException)
         {

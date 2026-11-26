@@ -16,8 +16,8 @@ using Idrak.Text.Reinforcement.Abstractions;
 namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
-/// <c>idrak reinforce MODEL</c> (Plan 27, R5): reinforcement learning of a language model's adapters in a registered
-/// environment (<c>EnvironmentKinds</c>: <c>prompts</c>, the coding plug-in's <c>coding</c>, a plug-in's), by the library's
+/// <c>idrak reinforce MODEL</c> (Plan 27, R5): reinforcement learning of a language model's adapters in an environment
+/// (<c>prompts</c>, the coding plug-in's <c>coding</c>), by the library's
 /// trainer (<see cref="ReinforcementTrainer{TObservation, TAction}"/>) over Idrak.Text's language-model policy
 /// (<see cref="LanguageModelPolicy"/>), with a teacher term beside the reward when asked; <c>--algorithm distill</c> is
 /// on-policy distillation alone (Idrak.Text's <see cref="OnPolicyDistiller"/>, as <c>idrak distill --on-policy</c>). The
@@ -64,7 +64,6 @@ internal sealed class ReinforceCommand : Command
     public override string Usage => $$"""
         MODEL --env NAME [--data FILE | --suite DIR] -o DIR [options]
         --env NAME -o DIR [options]   (an environment of numbers: bandit, cartpole, pendulum, mountain-car; no MODEL)
-        --list
 
         The model's adapters (LoRA, as idrak tune trains them) learn from what the model does in an environment: each
         iteration plays episodes with the model's own sampled replies, scores them, estimates each one's advantage and
@@ -75,7 +74,7 @@ internal sealed class ReinforceCommand : Command
         (IDRAK_CLUSTER_CONTROL, in one process too) pauses the run there, resumes it as if nothing happened, or stops it
         there with its checkpoint; the dashboard shows the iterations, rewards and pass rate from DIR/log.jsonl.
 
-        Environments (--list shows the registered ones, a plug-in's among them):
+        Environments (picking one by its name is not on the new design yet):
           prompts     chat prompts with references (--data, conversations as idrak tune reads them: the last assistant
                       message is the reference), the reply scored by --reward (exact by default: a reward or metric name,
                       or weighted terms such as exact:1,length:0.1; a term's options with --env-option term.key=value)
@@ -90,10 +89,10 @@ internal sealed class ReinforceCommand : Command
               --suite DIR         the coding environment's task suite
               --reward EXPR       the reward expression (IDRAK_RL_REWARD; default: the environment's)
               --rounds N          the most replies of an episode (prompts 1, coding 40)
-              --sandbox NAME      where coding commands run: process (default) or container (CommandSandboxes; IDRAK_SANDBOX)
+              --sandbox NAME      where coding commands run: process (default) or container (IDRAK_SANDBOX)
               --env-option K=V    any option of the environment (repeatable), e.g. filter=csharp, refuse-test-edits=true,
                                   metric.metric=exact
-              --algorithm NAME    grpo, ppo, reinforce or a plug-in's (PolicyLosses), or distill: on-policy distillation
+              --algorithm NAME    grpo, ppo, reinforce, or distill: on-policy distillation
                                   alone, with --teacher, on prompts (default ppo; IDRAK_RL_ALGORITHM)
               --estimator NAME    the advantage estimator: gae, group, leave-one-out, returns (default: the algorithm's)
               --group N           episodes of a group, each the same situation played again (default: 8, 4 or 2)
@@ -106,7 +105,7 @@ internal sealed class ReinforceCommand : Command
               --environments N    environments stepped at once (default: the CPU threads)
               --temperature T     the temperature replies are sampled at (default 1)
               --max-new N         the longest reply in tokens (default 256; IDRAK_RL_MAX_NEW)
-              --kv FORMAT         the key/value cache replies are generated with (IDRAK_KV_CACHE_TYPE; IDRAK_RL_KV)
+              --kv FORMAT         the key/value cache replies are generated with: float32 (IDRAK_RL_KV)
               --no-think          replies without the template's reasoning
               --save-every N      a checkpoint after every N iterations (default: at the end only)
               --evaluate-every N  greedy evaluation episodes after every N iterations (default: none)
@@ -114,23 +113,21 @@ internal sealed class ReinforceCommand : Command
                                   replies, a term beside the reward (on-policy distillation; IDRAK_RL_TEACHER)
               --teacher-device D  the teacher's device (default: the model's; IDRAK_RL_TEACHER_DEVICE)
               --teacher-weight W  the teacher term's weight (default 1 with --teacher; IDRAK_RL_TEACHER_WEIGHT)
-              --divergence NAME   forward, reverse (default) or jsd (TeacherDivergences; IDRAK_RL_DIVERGENCE)
+              --divergence NAME   forward, reverse (default) or jsd (IDRAK_RL_DIVERGENCE)
               --beta B            jsd's weight, in (0, 1) (default 0.5)
               --mix L             with --algorithm distill: the share of a step's prompts trained on the data's answers
               --pairs NAME        preference rounds instead of a policy loss: each iteration's episodes become pairs by
-                                  the source NAME (PreferencePairSources: group, the best and the worst answer of each
+                                  the source NAME (group, the best and the worst answer of each
                                   group by reward; verdict, an answer the episode records as rejected against the text
                                   kept instead) and the adapters train on them with --loss (IDRAK_RL_PAIRS)
-              --loss NAME         the preference loss of --pairs: dpo (default), orpo, simpo or an app's
-                                  (PreferenceLosses; IDRAK_RL_PREFERENCE_LOSS)
+              --loss NAME         the preference loss of --pairs: dpo (default), orpo or simpo
+                                  (IDRAK_RL_PREFERENCE_LOSS)
               --pair-option K=V   an option of the pair source (repeatable), e.g. margin=0.5 (IDRAK_RL_PAIR_OPTIONS)
               --loss-option K=V   an option of the preference loss (repeatable), e.g. beta=0.2 (IDRAK_RL_PREFERENCE_LOSS_OPTIONS)
               --reference NAME    what the preference loss trains against: previous (the adapter as the iteration began,
                                   the default) or base (IDRAK_RL_PREFERENCE_REFERENCE)
               --resume            go on from the latest checkpoint in DIR/checkpoints (IDRAK_RL_RESUME: another one)
           -o, --out DIR           where the adapter and the checkpoints go
-              --list              the registered environments, rewards, algorithms, estimators, sandboxes, divergences,
-                                  pair sources and preference losses
               --shards N          the shards a rollout is cut into: a shard's episodes act together, and on a cluster each
                                   rank plays its shards' episodes; the same count gives the same episodes on any number
                                   of ranks (default 0: one per rank, so one in one process; IDRAK_RL_SHARDS)
@@ -141,7 +138,7 @@ internal sealed class ReinforceCommand : Command
                                   adapter's rank); --node NAME, --coordinator H:P and --world-size N as idrak tune has them
           and these options of idrak tune train: --rank, --alpha, --lr, --max-length, --batch-tokens, --accumulate,
           --targets, --optimizer, --weight-decay, --momentum, --schedule (default: IDRAK_RL_SCHEDULE's, constant),
-          --warmup (default: IDRAK_RL_WARMUP's, 0), --min-lr, --decay, --adapter-type, --adapter, --context,
+          --warmup (default: IDRAK_RL_WARMUP's, 0), --min-lr, --adapter-type, --adapter, --context,
           --gpu-memory, --no-packing, --checkpointing, --no-checkpointing, --recompute, --no-activation-estimate, --no-graphs,
           --cpu-optimizer, --offload. Every run setting also reads its IDRAK_RL_* variable (idrak help env); the
           command line wins. A JSON line per iteration goes to DIR/log.jsonl (IDRAK_RL_LOG: another file; the pass rate
@@ -163,13 +160,12 @@ internal sealed class ReinforceCommand : Command
           idrak reinforce Qwen/Qwen3-0.6B --env prompts --data chats.jsonl --algorithm distill --teacher Qwen/Qwen3-8B -o runs/d
           idrak cluster sim --topology two.json -- reinforce Qwen/Qwen3-0.6B --data m.jsonl --algorithm grpo --shards 4 -o rl
           idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --pairs group --loss dpo --group 4 -o runs/dpo
-          idrak reinforce --list
         {{ReinforceNumeric.UsageExamples}}
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = [.. OwnValues, .. TuneTool.SessionValueOptions, .. ClusterJoin.Options, .. ReinforceNumeric.ValueOptions];
 
-    public override IReadOnlyCollection<string> Flags { get; } = ["--list", "--resume", "--no-think", .. TuneTool.SessionFlags, .. ReinforceNumeric.Flags];
+    public override IReadOnlyCollection<string> Flags { get; } = ["--resume", "--no-think", .. TuneTool.SessionFlags, .. ReinforceNumeric.Flags];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>
     {
@@ -179,20 +175,28 @@ internal sealed class ReinforceCommand : Command
     public override int Run(CommandContext context)
     {
         using var cluster = ClusterJoin.Join(context, ownsRank: true);    // --cluster FILE: one rank of a real cluster; --rank is the adapter's
-        if (context.Flag("--list"))
+
+        // The environment.
+        string envName = context.Option("--env") ?? Text(EnvironmentVariable) ?? PromptsEnvironmentKind.KindName;
+        IEnvironmentKind kind;
+        try
         {
-            return List(context);
+            kind = NotOnTheNewDesign.Yet<IEnvironmentKind>($"Picking the environment kind '{envName}' by its name");
+        }
+        catch (NotSupportedException e)
+        {
+            throw new UsageException($"--env {envName}: {e.Message}");
         }
 
-        if (ReinforceNumeric.Kind(context) is { } numeric)
+        if (kind.ObservationType != typeof(ChatObservation))
         {
-            return ReinforceNumeric.Run(context, numeric);                   // an environment of numbers (R9): no model, a module policy or DQN
+            return ReinforceNumeric.Run(context, kind, envName);              // an environment of numbers (R9): no model, a module policy or DQN
         }
 
         // The model and the output.
         var positional = context.Positional.ToList();
         string model = context.Option("--base") ?? (positional.Count > 0 ? positional[0] : null)
-            ?? throw new UsageException("Give the model: idrak reinforce MODEL --env NAME -o DIR (or -b, --base MODEL); --list shows what can be chosen.");
+            ?? throw new UsageException("Give the model: idrak reinforce MODEL --env NAME -o DIR (or -b, --base MODEL).");
         if (positional.Count > (context.Option("--base") is null ? 1 : 0))
         {
             throw new UsageException($"reinforce takes one model ('{positional[^1]}' is extra): give the data with --data, a suite with --suite.");
@@ -204,31 +208,20 @@ internal sealed class ReinforceCommand : Command
         var options = Settings(context, output);
         bool distill = options.Algorithm.Equals(Distill, StringComparison.OrdinalIgnoreCase);
 
-        // The environment and its options.
-        string envName = context.Option("--env") ?? Text(EnvironmentVariable) ?? PromptsEnvironmentKind.KindName;
-        IEnvironmentKind kind;
-        try
+        // The environment's options.
+        if (kind.ActionType != typeof(ChatMessage))
         {
-            kind = EnvironmentKinds.Get(envName);
-        }
-        catch (NotSupportedException e)
-        {
-            throw new UsageException($"--env {envName}: {e.Message}");
-        }
-
-        if (kind.ObservationType != typeof(ChatObservation) || kind.ActionType != typeof(ChatMessage))
-        {
-            throw new UsageException($"--env {kind.Name}: its environments observe {kind.ObservationType.Name} and act with {kind.ActionType.Name}; a language model observes "
+            throw new UsageException($"--env {envName}: its environments observe {kind.ObservationType.Name} and act with {kind.ActionType.Name}; a language model observes "
                                      + "conversations and acts with replies (ChatObservation, ChatMessage).");
         }
 
         var promptData = kind as IPromptDataEnvironmentKind;                // its tasks are the prompts of --data
         bool prompts = promptData is not null;
         var data = context.Options("--data");
-        var environmentOptions = EnvironmentOptions(context, kind, prompts, data);
+        var environmentOptions = EnvironmentOptions(context, kind, envName, prompts, data);
         if (prompts && data.Count == 0)
         {
-            throw new UsageException($"The {kind.Name} environment answers the prompts of --data FILE (conversations, as idrak tune reads them).");
+            throw new UsageException($"The {envName} environment answers the prompts of --data FILE (conversations, as idrak tune reads them).");
         }
 
         if (distill && options.Pairs is not null)
@@ -238,7 +231,7 @@ internal sealed class ReinforceCommand : Command
 
         if (distill && !prompts)
         {
-            throw new UsageException($"--algorithm {Distill} is on-policy distillation alone, over the prompts of --data (--env prompts); in the {kind.Name} environment "
+            throw new UsageException($"--algorithm {Distill} is on-policy distillation alone, over the prompts of --data (--env prompts); in the {envName} environment "
                                      + "give a policy loss (grpo, ppo, reinforce) with --teacher: the teacher's term then goes beside the reward.");
         }
 
@@ -300,7 +293,7 @@ internal sealed class ReinforceCommand : Command
                 return code;
             }
 
-            (code, result) = Train(context, console, tool, loaded, tuning, source, kind, prompts, options with { EnvironmentOptions = environmentOptions }, policyOptions, output);
+            (code, result) = Train(context, console, tool, loaded, tuning, source, kind, envName, prompts, options with { EnvironmentOptions = environmentOptions }, policyOptions, output);
             return code;
         };
 
@@ -326,7 +319,7 @@ internal sealed class ReinforceCommand : Command
             var json = new JsonObject
             {
                 ["model"] = choice.Model,
-                ["environment"] = kind.Name,
+                ["environment"] = envName,
                 ["algorithm"] = options.Algorithm,
                 ["pairs"] = options.Pairs,
                 ["loss"] = options.Pairs is null ? null : options.PreferenceLoss,
@@ -367,7 +360,7 @@ internal sealed class ReinforceCommand : Command
     // The run: a session on the loaded model (with the teacher), the policy over it, the trainer in the environment; the
     // adapter written to `output` at the end, also after a stop.
     private static (int Code, ReinforcementResult Result) Train(CommandContext context, ToolConsole console, TuneTool tool, PretrainedModel model, FineTuningOptions tuning,
-        IDistillationTeacher? teacher, IEnvironmentKind kind, bool prompts, ReinforcementOptions options, LanguageModelPolicyOptions policyOptions, string output)
+        IDistillationTeacher? teacher, IEnvironmentKind kind, string kindName, bool prompts, ReinforcementOptions options, LanguageModelPolicyOptions policyOptions, string output)
     {
         // The prompts environment over the data as idrak tune reads it, counting each answer's tokens for a length reward.
         string tasks = "";
@@ -389,7 +382,7 @@ internal sealed class ReinforceCommand : Command
         int totalSteps = Math.Max(1, options.Iterations * epochs * (pairs ? 1 : (options.EpisodesPerIteration + miniBatch - 1) / miniBatch));
         string algorithm = pairs ? $"{options.PreferenceLoss} on {options.Pairs} pairs against the {options.PreferenceReference} adapter" : options.Algorithm;
         console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"reinforce: {algorithm} in {kind.Name}{tasks}, {options.EpisodesPerIteration} episodes an iteration{(options.GroupSize > 0 ? $" in groups of {options.GroupSize}" : "")}, "
+            $"reinforce: {algorithm} in {kindName}{tasks}, {options.EpisodesPerIteration} episodes an iteration{(options.GroupSize > 0 ? $" in groups of {options.GroupSize}" : "")}, "
             + $"{options.Iterations} iterations, replies of at most {policyOptions.MaxNewTokens} tokens at temperature {options.Temperature}"
             + $"{(teacher is null ? "" : FormattableString.Invariant($"; teacher term {policyOptions.TeacherWeight} ({policyOptions.Divergence})"))}"
             + $"{(options.Resume is { } resume ? $"; resuming from {resume}" : "")}"));
@@ -409,7 +402,7 @@ internal sealed class ReinforceCommand : Command
         {
             using var stop = new StopKey(context, console.Log, "stopping after the current iteration and saving the adapter (Ctrl+C again to quit now)…");
             // On a cluster rank 0 shows the progress (the other ranks' lines would only be kept as their error text).
-            using var progress = new ProgressLine(context, $"reinforce {kind.Name}", options.Iterations, enabled: ClusterSession.Current is { Rank: > 0 } ? false : null);
+            using var progress = new ProgressLine(context, $"reinforce {kindName}",options.Iterations, enabled: ClusterSession.Current is { Rank: > 0 } ? false : null);
             var trainer = new ReinforcementTrainer<ChatObservation, ChatMessage>(kind, policy, options)
             {
                 Progress = progress,
@@ -443,18 +436,14 @@ internal sealed class ReinforceCommand : Command
     /// <summary>
     /// The run's control point at its boundaries (Plan 27, R11): the dashboard's in-process control of this cluster rank, or
     /// the control file a launcher set (IDRAK_CLUSTER_CONTROL; in one process too); null when nothing steers the run.
+    /// Picking the way it is steered is not on the new design yet: a run that could be steered stops.
     /// </summary>
     internal static global::Idrak.Abstraction.Cluster.IRunSteering? Steering()
     {
         var rank = ClusterSession.Current;
-        try
-        {
-            return global::Idrak.Abstraction.Cluster.RunSteerings.For(rank?.Collectives, rank?.Context.Options ?? global::Idrak.Abstraction.Cluster.ClusterOptions.FromEnvironment());
-        }
-        catch (ArgumentException e)
-        {
-            throw new UsageException(e.Message);
-        }
+        var options = rank?.Context.Options ?? global::Idrak.Abstraction.Cluster.ClusterOptions.FromEnvironment();
+        return rank is null && options.Simulation.Control is null ? null
+            : NotOnTheNewDesign.Yet<global::Idrak.Abstraction.Cluster.IRunSteering>("Picking the way the run is steered (the dashboard's control, a launcher's control file)");
     }
 
     // The run's settings: ReinforcementOptions.FromEnvironment, then each option given on the command line in its place.
@@ -498,39 +487,6 @@ internal sealed class ReinforceCommand : Command
             throw new UsageException("--loss, --reference, --pair-option and --loss-option set the preference rounds of --pairs NAME: give --pairs (group, verdict).");
         }
 
-        if (o.Pairs is { } source)
-        {
-            var sourceKind = PreferencePairSources.Find(source) ?? throw new UsageException(
-                $"{(context.Option("--pairs") is null ? "IDRAK_RL_PAIRS=" : "--pairs ")}{source}: use {string.Join(", ", PreferencePairSources.Names)} (PreferencePairSources).");
-            var loss = PreferenceLosses.Find(o.PreferenceLoss) ?? throw new UsageException(
-                $"{(context.Option("--loss") is null ? "IDRAK_RL_PREFERENCE_LOSS=" : "--loss ")}{o.PreferenceLoss}: use {string.Join(", ", PreferenceLosses.Names)} (PreferenceLosses).");
-            try
-            {
-                _ = sourceKind.Options.Parse(o.PairOptions);
-                _ = loss.Options.Parse(o.PreferenceLossOptions);
-            }
-            catch (ArgumentException e)
-            {
-                throw new UsageException(e.Message);
-            }
-        }
-
-        // The names, checked by their registries before anything loads.
-        if (o.Pairs is null && !o.Algorithm.Equals(Distill, StringComparison.OrdinalIgnoreCase) && PolicyLosses.Find(o.Algorithm) is null)
-        {
-            throw new UsageException($"{(context.Option("--algorithm") is null ? "IDRAK_RL_ALGORITHM=" : "--algorithm ")}{o.Algorithm}: use {string.Join(", ", PolicyLosses.Names)} (PolicyLosses), or {Distill} (on-policy distillation alone).");
-        }
-
-        if (o.Estimator is { } named && AdvantageEstimators.Find(named) is null)
-        {
-            throw new UsageException($"{(context.Option("--estimator") is null ? "IDRAK_RL_ESTIMATOR=" : "--estimator ")}{named}: use {string.Join(", ", AdvantageEstimators.Names)} (AdvantageEstimators).");
-        }
-
-        if (LearningRateSchedules.Find(o.Schedule) is null)
-        {
-            throw new UsageException($"IDRAK_RL_SCHEDULE={o.Schedule}: use {string.Join(", ", LearningRateSchedules.Names)}.");
-        }
-
         if (o.GroupSize > 0 && o.EpisodesPerIteration % o.GroupSize != 0)
         {
             throw new UsageException(string.Create(CultureInfo.InvariantCulture,
@@ -548,9 +504,8 @@ internal sealed class ReinforceCommand : Command
 
     // The environment's options: --reward, --rounds and --no-think (under the keys a rewarded kind declares,
     // IRewardedEnvironmentKind), --suite and --sandbox (a suite kind's, ISuiteEnvironmentKind), --data (for a kind that
-    // reads a data file itself) and every --env-option, each checked against the kind's keys (a reward term's options hold
-    // a dot). A kind that does not declare a key gets the flag under its usual name, which its keys then refuse.
-    private static Dictionary<string, string> EnvironmentOptions(CommandContext context, IEnvironmentKind kind, bool prompts, IReadOnlyList<string> data)
+    // reads a data file itself) and every --env-option. A kind that does not declare a key gets the flag under its usual name.
+    private static Dictionary<string, string> EnvironmentOptions(CommandContext context, IEnvironmentKind kind, string kindName, bool prompts, IReadOnlyList<string> data)
     {
         var rewarded = kind as IRewardedEnvironmentKind;
         var suites = kind as ISuiteEnvironmentKind;
@@ -560,7 +515,7 @@ internal sealed class ReinforceCommand : Command
             int equals = item.IndexOf('=', StringComparison.Ordinal);
             if (equals <= 0)
             {
-                throw new UsageException($"--env-option {item}: give KEY=VALUE (the {kind.Name} environment's keys: {string.Join(", ", kind.Keys)}).");
+                throw new UsageException($"--env-option {item}: give KEY=VALUE.");
             }
 
             options[item[..equals].Trim()] = item[(equals + 1)..];
@@ -584,7 +539,7 @@ internal sealed class ReinforceCommand : Command
 
         if (context.Option("--sandbox") is { } sandbox)
         {
-            options[suites?.SandboxKey ?? "sandbox"] = CommandSandboxes.Find(sandbox)?.Name ?? throw new UsageException($"--sandbox {sandbox}: use {string.Join(", ", CommandSandboxes.Names)} (CommandSandboxes).");
+            options[suites?.SandboxKey ?? "sandbox"] = sandbox.Trim();
         }
 
         if (context.Flag("--no-think") && rewarded?.ThinkKey is { } think)
@@ -594,24 +549,12 @@ internal sealed class ReinforceCommand : Command
 
         if (!prompts && data.Count > 0)
         {
-            options["data"] = data.Count == 1 ? data[0] : throw new UsageException($"The {kind.Name} environment reads one data file: give --data once.");
-        }
-
-        // The prompts environment's tasks are the data as idrak tune reads it (not its own data option).
-        string? ownData = (kind as IPromptDataEnvironmentKind)?.DataKey;
-        var keys = prompts ? kind.Keys.Where(k => k != ownData).ToList() : [.. kind.Keys];
-        foreach (string key in options.Keys)
-        {
-            if (!key.Contains('.', StringComparison.Ordinal) && !keys.Contains(key))
-            {
-                throw new UsageException($"The {kind.Name} environment does not take '{key}'{(prompts && key == ownData ? " as an option: give --data FILE" : "")}; it takes: "
-                                         + $"{string.Join(", ", keys)}, and a reward term's options as term.key.");
-            }
+            options["data"] = data.Count == 1 ? data[0] : throw new UsageException($"The {kindName} environment reads one data file: give --data once.");
         }
 
         if (suites?.SuiteKey is { } suiteKey && !options.ContainsKey(suiteKey))
         {
-            throw new UsageException($"The {kind.Name} environment plays the tasks of a suite: give --suite DIR (folders with task.json).");
+            throw new UsageException($"The {kindName} environment plays the tasks of a suite: give --suite DIR (folders with task.json).");
         }
 
         return options;
@@ -653,26 +596,21 @@ internal sealed class ReinforceCommand : Command
             throw new UsageException("--beta is between 0 and 1 (both left out).");
         }
 
-        string? cacheFormat = context.Option("--kv") ?? o.CacheFormat;   // null or auto: the model's element type
-        if (cacheFormat is not null && !cacheFormat.Trim().Equals(KeyValueLayouts.Auto, StringComparison.OrdinalIgnoreCase)
-            && !KeyValueLayouts.Names.Contains(cacheFormat, StringComparer.OrdinalIgnoreCase))
-        {
-            throw new UsageException($"--kv {cacheFormat}: unknown key/value cache format ({string.Join(", ", KeyValueLayouts.Names)}; IDRAK_RL_KV).");
-        }
-
+        string? cacheFormat = context.Option("--kv") ?? o.CacheFormat;   // null or auto: float32
+        _ = ModelChoices.CacheLayout(cacheFormat, context.Option("--kv") is null ? "IDRAK_RL_KV" : "--kv");
         return o with
         {
             CacheFormat = cacheFormat,
             MaxNewTokens = maxNew,
             Think = context.Flag("--no-think") ? false : o.Think,
             TeacherWeight = weight,
-            Divergence = TeacherDivergences.Find(divergence)?.Name ?? throw new UsageException($"--divergence {divergence}: use {string.Join(", ", TeacherDivergences.Names)}."),
+            Divergence = divergence,
             Beta = beta,
         };
     }
 
     // The session's schedule: --schedule as idrak tune reads it, else the run's (IDRAK_RL_SCHEDULE, constant by default,
-    // with IDRAK_RL_WARMUP's warm-up unless --warmup is given).
+    // with IDRAK_RL_WARMUP's warm-up unless --warmup is given), whose picking by its name is not on the new design yet.
     private static FineTuningOptions RunSchedule(CommandContext context, ReinforcementOptions options, FineTuningOptions tuning)
     {
         if (context.Option("--schedule") is not null)
@@ -681,60 +619,11 @@ internal sealed class ReinforceCommand : Command
         }
 
         float warmup = context.Option("--warmup") is null ? options.ScheduleSettings.WarmupFraction : tuning.WarmupFraction;
-        float decay = Float(context, "--decay", 0f, 1f) ?? options.ScheduleSettings.DecayFraction;
         return tuning with
         {
             WarmupFraction = warmup,
-            Scheduler = LearningRateSchedules.Factory(options.Schedule, new LearningRateScheduleSettings(warmup, tuning.MinLearningRate, decay)),
+            Scheduler = NotOnTheNewDesign.Yet<Func<Optimizer, int, ILearningRateScheduler>>($"Picking the learning-rate schedule '{options.Schedule}' (IDRAK_RL_SCHEDULE) by its name"),
         };
-    }
-
-    // --list: every registry's entries, with their summaries (and the options each takes).
-    private static int List(CommandContext context)
-    {
-        var sections = new (string Name, string Registry, IReadOnlyList<(string Name, string Summary, IReadOnlyCollection<string> Keys)> Entries)[]
-        {
-            ("environments", nameof(EnvironmentKinds), [.. EnvironmentKinds.Names.Select(n => EnvironmentKinds.Get(n)).Select(k => (k.Name, k.Summary, k.Keys))]),
-            ("rewards", nameof(RewardFunctions), [.. RewardFunctions.Names.Select(n => RewardFunctions.Get(n)).Select(r => (r.Name, r.Summary, r.Keys))]),
-            ("algorithms", nameof(PolicyLosses), [.. PolicyLosses.Names.Select(n => PolicyLosses.Get(n)).Select(l => (l.Name, l.Summary, l.Keys)),
-                (Distill, "on-policy distillation alone: the model's own replies to the prompts, the teacher's distributions on them (--teacher; --env prompts)", (IReadOnlyCollection<string>)[])]),
-            ("off-policy", nameof(Idrak.Reinforcement.Abstractions.QLosses), [.. Idrak.Reinforcement.Abstractions.QLosses.Names.Select(n => Idrak.Reinforcement.Abstractions.QLosses.Get(n)).Select(l => (l.Name, l.Summary, l.Keys))]),
-            ("estimators", nameof(AdvantageEstimators), [.. AdvantageEstimators.Names.Select(n => AdvantageEstimators.Get(n)).Select(e => (e.Name, e.Summary, e.Keys))]),
-            ("sandboxes", nameof(CommandSandboxes), [.. CommandSandboxes.Names.Select(n => CommandSandboxes.Get(n)).Select(s => (s.Name, s.Summary, (IReadOnlyCollection<string>)[]))]),
-            ("divergences", nameof(TeacherDivergences), [.. TeacherDivergences.Names.Select(n => TeacherDivergences.Get(n)).Select(d => (d.Name, d.Summary, (IReadOnlyCollection<string>)[]))]),
-            ("pairs", nameof(PreferencePairSources), [.. PreferencePairSources.Names.Select(n => PreferencePairSources.Get(n)).Select(p => (p.Name, p.Summary, p.Keys))]),
-            ("preference-losses", nameof(PreferenceLosses), [.. PreferenceLosses.Names.Select(n => PreferenceLosses.Get(n)).Select(l => (l.Name, l.Summary, l.Keys))]),
-        };
-        if (context.Json)
-        {
-            var json = new JsonObject();
-            foreach (var (name, _, entries) in sections)
-            {
-                json[name] = new JsonArray([.. entries.Select(e => (JsonNode)new JsonObject
-                {
-                    ["name"] = e.Name,
-                    ["summary"] = e.Summary,
-                    ["keys"] = new JsonArray([.. e.Keys.Select(k => (JsonNode)k)]),
-                })]);
-            }
-
-            context.WriteJson(json);
-            return ExitCodes.Ok;
-        }
-
-        foreach (var (name, registry, entries) in sections)
-        {
-            context.Write($"{name} ({registry}):");
-            int width = entries.Count == 0 ? 0 : entries.Max(e => e.Name.Length);
-            foreach (var e in entries)
-            {
-                context.Write($"  {e.Name.PadRight(width)}  {e.Summary}{(e.Keys.Count > 0 ? $" [{string.Join(", ", e.Keys)}]" : "")}");
-            }
-
-            context.Write("");
-        }
-
-        return ExitCodes.Ok;
     }
 
     // --reference: a PreferenceReferences name.

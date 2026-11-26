@@ -28,7 +28,7 @@ internal sealed class ProgressLine : IProgressReporter
     /// <param name="total">The amount when known; null shows the amount and rate without a share or time left.</param>
     /// <param name="unit">How amounts are shown.</param>
     /// <param name="enabled">Tests: draw in place (true) or not (false) whatever the terminal; null decides as described above.</param>
-    /// <exception cref="UsageException"><c>IDRAK_PROGRESS</c> names no registered reporter.</exception>
+    /// <exception cref="UsageException"><c>IDRAK_PROGRESS</c> names no reporter.</exception>
     public ProgressLine(CommandContext context, string label, long? total = null, ProgressUnit unit = ProgressUnit.Items, bool? enabled = null)
     {
         var writer = context.ErrorOutput;
@@ -36,11 +36,11 @@ internal sealed class ProgressLine : IProgressReporter
             : context.Quiet ? ProgressReporters.QuietReporter
             : context.Host.ProgressReporter ?? Chosen()
               ?? (!context.Json && !context.Plain && Terminal.IsTerminal(writer) ? ProgressReporters.ConsoleReporter : ProgressReporters.QuietReporter);
-        _reporter = ProgressReporters.Get(reporter).Create(new ProgressRequest(label, total, unit, writer, null));
+        _reporter = ProgressReporters.Start(label, total, unit, new ProgressOptions { Reporter = reporter, Output = writer });
     }
 
     /// <summary>The reporter <c>IDRAK_PROGRESS</c> names, or null when it is not set.</summary>
-    /// <exception cref="UsageException">It names no registered reporter.</exception>
+    /// <exception cref="UsageException">It names no reporter.</exception>
     public static string? Chosen()
     {
         try

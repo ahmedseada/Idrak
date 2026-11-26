@@ -14,11 +14,11 @@ namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
 /// <c>idrak reinforce --env cartpole</c> (Plan 27, R9): reinforcement learning in an environment whose observations are
-/// numbers (the classic plug-in's bandit, cartpole, pendulum, mountain-car, or any registered kind of float observations),
-/// with no model to load. On-policy (<c>--algorithm reinforce|ppo|grpo</c>, a <c>PolicyLosses</c> name) the library's
+/// numbers (the classic plug-in's bandit, cartpole, pendulum, mountain-car), with no model to load. On-policy
+/// (<c>--algorithm reinforce|ppo|grpo</c>) the library's
 /// <see cref="ReinforcementTrainer{TObservation, TAction}"/> trains a <see cref="ModulePolicy{TAction}"/> that
 /// <see cref="PolicyNetworks"/> builds from the options (categorical for discrete actions, Gaussian for a box); off-policy
-/// (<c>--algorithm dqn</c>, a <c>QLosses</c> name) <see cref="OffPolicyTrainer"/> trains a Q-network built the same way
+/// (<c>--algorithm dqn</c>) <see cref="OffPolicyTrainer"/> trains a Q-network built the same way
 /// (discrete actions only). Every option reads its <c>IDRAK_RL_*</c> or <c>IDRAK_RL_DQN_*</c> variable underneath
 /// (<see cref="ReinforcementOptions.FromEnvironment"/>, <see cref="OffPolicyOptions.FromEnvironment"/>,
 /// <see cref="ModulePolicyOptions.FromEnvironment"/>); the command line wins. <c>--out DIR</c> receives the policy (or the
@@ -68,10 +68,9 @@ internal static class ReinforceNumeric
     /// <summary>The usage's lines of this path, in the command's Options section.</summary>
     public const string UsageOptions = """
 
-        Options of an environment of numbers (--env bandit, cartpole, pendulum, mountain-car or a plug-in's: no MODEL):
-              --algorithm NAME    on-policy: ppo (default), reinforce, grpo (PolicyLosses: a categorical policy for
-                                  discrete actions, a Gaussian one for a box); off-policy: dqn (QLosses: a Q-network,
-                                  discrete actions only)
+        Options of an environment of numbers (--env bandit, cartpole, pendulum, mountain-car: no MODEL):
+              --algorithm NAME    on-policy: ppo (default), reinforce, grpo (a categorical policy for discrete actions,
+                                  a Gaussian one for a box); off-policy: dqn (a Q-network, discrete actions only)
               --hidden W,W        the hidden widths of the networks (default 64,64; none: one linear layer; IDRAK_RL_HIDDEN)
               --activation NAME   tanh (default), relu, gelu or sigmoid (IDRAK_RL_ACTIVATION)
               --value-head        a critic beside the actor; --no-value-head: none (default: ppo, gae or a value baseline
@@ -109,37 +108,30 @@ internal static class ReinforceNumeric
           idrak reinforce --env pendulum --algorithm ppo --hidden 64,64 --iterations 200 -o runs/pendulum --resume
         """;
 
-    /// <summary>The kind <c>--env</c> (or <c>IDRAK_RL_ENV</c>) names when it is registered and does not observe conversations; null otherwise (the language-model path).</summary>
-    public static IEnvironmentKind? Kind(CommandContext context)
-    {
-        string? name = context.Option("--env") ?? ReinforceCommand.Text(ReinforceCommand.EnvironmentVariable);
-        return name is not null && EnvironmentKinds.Find(name) is { } kind && kind.ObservationType != typeof(ChatObservation) ? kind : null;
-    }
-
-    /// <summary>Trains in <paramref name="kind"/>'s environments, on-policy or off-policy as <c>--algorithm</c> says.</summary>
-    public static int Run(CommandContext context, IEnvironmentKind kind)
+    /// <summary>Trains in <paramref name="kind"/>'s environments (<paramref name="name"/>), on-policy or off-policy as <c>--algorithm</c> says.</summary>
+    public static int Run(CommandContext context, IEnvironmentKind kind, string name)
     {
         if (kind.ObservationType != typeof(float[]) || (kind.ActionType != typeof(int) && kind.ActionType != typeof(float[])))
         {
-            throw new UsageException($"--env {kind.Name}: its environments observe {kind.ObservationType.Name} and act with {kind.ActionType.Name}; idrak reinforce trains a "
+            throw new UsageException($"--env {name}: its environments observe {kind.ObservationType.Name} and act with {kind.ActionType.Name}; idrak reinforce trains a "
                                      + "language model on conversations, or a policy of its own on float observations (float[]) with discrete (int) or box (float[]) actions.");
         }
 
         if (ClusterSession.Current is not null)
         {
-            throw new UsageException($"--env {kind.Name} trains in one process: a policy of numbers is not spread over a cluster's ranks (only a language model's "
+            throw new UsageException($"--env {name} trains in one process: a policy of numbers is not spread over a cluster's ranks (only a language model's "
                                      + "rollouts are). Run it without cluster sim or --cluster.");
         }
 
         if (context.Positional.Count > 0)
         {
-            throw new UsageException($"--env {kind.Name} observes numbers: no model is loaded ('{context.Positional[0]}' is not wanted); the policy is built from --hidden, "
+            throw new UsageException($"--env {name} observes numbers: no model is loaded ('{context.Positional[0]}' is not wanted); the policy is built from --hidden, "
                                      + "--activation and --value-head.");
         }
 
-        Refuse(context, LanguageModelOnly, $"--env {kind.Name} trains a policy of numbers, not a language model's adapters");
+        Refuse(context, LanguageModelOnly, $"--env {name} trains a policy of numbers, not a language model's adapters");
         string output = context.Option("--out") ?? throw new UsageException("Give -o, --out DIR for the policy and the checkpoints.");
-        var environmentOptions = EnvironmentOptions(context, kind);
+        var environmentOptions = EnvironmentOptions(context);
         Space observations, actions;
         try
         {
@@ -147,30 +139,24 @@ internal static class ReinforceNumeric
         }
         catch (ArgumentException e)
         {
-            throw new UsageException($"--env {kind.Name}: {e.Message}");
+            throw new UsageException($"--env {name}: {e.Message}");
         }
 
         if (observations.Kind != SpaceKind.Box)
         {
-            throw new UsageException($"--env {kind.Name}: its observations are {observations}; a policy of numbers reads a box of floats.");
+            throw new UsageException($"--env {name}: its observations are {observations}; a policy of numbers reads a box of floats.");
         }
 
-        // The algorithm: a policy loss (on-policy) or a Q-learning loss (off-policy), by its registry.
+        // The algorithm: a policy loss (on-policy) or a Q-learning loss (off-policy); picking it by its name is not on the new design yet.
         string algorithm = context.Option("--algorithm") ?? ReinforceCommand.Text("IDRAK_RL_ALGORITHM") ?? ReinforcementNames.Ppo;
-        bool offPolicy = PolicyLosses.Find(algorithm) is null && QLosses.Find(algorithm) is not null;
-        if (!offPolicy && PolicyLosses.Find(algorithm) is null)
-        {
-            throw new UsageException($"{(context.Option("--algorithm") is null ? "IDRAK_RL_ALGORITHM=" : "--algorithm ")}{algorithm}: in the {kind.Name} environment use "
-                                     + $"{string.Join(", ", PolicyLosses.Names)} (PolicyLosses, on-policy) or {string.Join(", ", QLosses.Names)} (QLosses, off-policy)"
-                                     + $"{(algorithm.Equals(ReinforceCommand.Distill, StringComparison.OrdinalIgnoreCase) ? "; distill is a language model's" : "")}.");
-        }
+        bool offPolicy = NotOnTheNewDesign.Yet<bool>($"Picking the algorithm '{algorithm}' (a policy loss or a Q-learning loss) by its name");
 
         var network = NetworkOptions(context);
         var lines = context.Json ? new StringWriter() : null;
         var writer = lines ?? (context.Quiet ? TextWriter.Null : context.Output);
         var json = new JsonObject
         {
-            ["environment"] = kind.Name,
+            ["environment"] = name,
             ["algorithm"] = algorithm,
             ["observations"] = observations.ToString(),
             ["actions"] = actions.ToString(),
@@ -183,11 +169,11 @@ internal static class ReinforceNumeric
             Refuse(context, OnPolicyOnly, $"--algorithm {algorithm} trains off-policy (it runs --steps)");
             if (actions.Kind != SpaceKind.Discrete)
             {
-                throw new UsageException($"--algorithm {algorithm} values each of a discrete set of actions; the {kind.Name} environment acts in {actions} (a box): train it "
-                                         + $"on-policy with {string.Join(", ", PolicyLosses.Names)} (a Gaussian policy).");
+                throw new UsageException($"--algorithm {algorithm} values each of a discrete set of actions; the {name} environment acts in {actions} (a box): train it "
+                                         + "on-policy (a Gaussian policy).");
             }
 
-            exit = OffPolicy(context, writer, kind, observations, actions, OffPolicySettings(context, output, algorithm, environmentOptions), network, output, json);
+            exit = OffPolicy(context, writer, kind, name, observations, actions, OffPolicySettings(context, output, algorithm, environmentOptions), network, output, json);
         }
         else
         {
@@ -195,9 +181,9 @@ internal static class ReinforceNumeric
             var options = ReinforceCommand.Settings(context, output);
             options = OnPolicySettings(context, options) with { EnvironmentOptions = environmentOptions };
             exit = actions.Kind == SpaceKind.Discrete
-                ? OnPolicy(context, writer, kind, observations, actions, options, network, output, json,
+                ? OnPolicy(context, writer, kind, name, observations, actions, options, network, output, json,
                     () => PolicyNetworks.Categorical(observations, actions, network, network.ValueHeadFor(options), context.Device, options.Seed, options.KlWeight > 0))
-                : OnPolicy(context, writer, kind, observations, actions, options, network, output, json,
+                : OnPolicy(context, writer, kind, name, observations, actions, options, network, output, json,
                     () => PolicyNetworks.Gaussian(observations, actions, network, network.ValueHeadFor(options), context.Device, options.Seed, options.KlWeight > 0));
         }
 
@@ -213,7 +199,7 @@ internal static class ReinforceNumeric
 
     // An on-policy run: the module policy (made, or loaded from the checkpoint by the trainer), the trainer, the policy and
     // its settings written to `output` at the end (also after a stop).
-    private static int OnPolicy<TAction>(CommandContext context, TextWriter lines, IEnvironmentKind kind, Space observations, Space actions, ReinforcementOptions options,
+    private static int OnPolicy<TAction>(CommandContext context, TextWriter lines, IEnvironmentKind kind, string name, Space observations, Space actions, ReinforcementOptions options,
         ModulePolicyOptions network, string output, JsonObject json, Func<ModulePolicy<TAction>> make)
     {
         ModulePolicy<TAction> policy;
@@ -230,11 +216,11 @@ internal static class ReinforceNumeric
         {
             bool gaussian = actions.Kind == SpaceKind.Box;
             lines.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                $"reinforce: {options.Algorithm} in {kind.Name} (observations {observations}, actions {actions}), a {(gaussian ? "Gaussian" : "categorical")} policy of "
+                $"reinforce: {options.Algorithm} in {name} (observations {observations}, actions {actions}), a {(gaussian ? "Gaussian" : "categorical")} policy of "
                 + $"{Shape(network)}{(policy.Critic is null ? "" : " with a value head")}, {options.EpisodesPerIteration} episodes an iteration, {options.Iterations} iterations"
                 + $"{(options.Resume is { } resume ? $"; resuming from {resume}" : "")}"));
             using var stop = new StopKey(context, context.ErrorOutput.WriteLine, "stopping after the current iteration and saving the policy (Ctrl+C again to quit now)…");
-            using var progress = new ProgressLine(context, $"reinforce {kind.Name}", options.Iterations);
+            using var progress = new ProgressLine(context, $"reinforce {name}", options.Iterations);
             var trainer = new ReinforcementTrainer<float[], TAction>(kind, policy, options)
             {
                 Progress = progress,
@@ -260,7 +246,7 @@ internal static class ReinforceNumeric
             }
 
             policy.Save(output);
-            WriteSettings(output, kind, options.EnvironmentOptions, options.Algorithm, gaussian ? "gaussian" : "categorical", observations, actions, network,
+            WriteSettings(output, name, options.EnvironmentOptions, options.Algorithm, gaussian ? "gaussian" : "categorical", observations, actions, network,
                 policy.Critic is not null, options.Seed, new JsonObject { ["iterations"] = result.Iterations, ["checkpoint"] = result.Checkpoint });
             var history = result.History;
             lines.WriteLine(string.Create(CultureInfo.InvariantCulture,
@@ -288,15 +274,15 @@ internal static class ReinforceNumeric
 
     // An off-policy run: the Q-network and its target, the trainer (which owns them), the online network and its settings
     // written to `output` at the end (also after a stop).
-    private static int OffPolicy(CommandContext context, TextWriter lines, IEnvironmentKind kind, Space observations, Space actions, OffPolicyOptions options,
+    private static int OffPolicy(CommandContext context, TextWriter lines, IEnvironmentKind kind, string name, Space observations, Space actions, OffPolicyOptions options,
         ModulePolicyOptions network, string output, JsonObject json)
     {
         lines.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"reinforce: {options.Algorithm} in {kind.Name} (observations {observations}, actions {actions}), a Q-network of {Shape(network)}, {options.Steps} steps, "
+            $"reinforce: {options.Algorithm} in {name} (observations {observations}, actions {actions}), a Q-network of {Shape(network)}, {options.Steps} steps, "
             + $"{options.Environments} environment{(options.Environments == 1 ? "" : "s")} side by side, a replay of {options.ReplayCapacity} transitions"
             + $"{(options.Resume is { } resume ? $"; resuming from {resume}" : "")}"));
         using var stop = new StopKey(context, context.ErrorOutput.WriteLine, "stopping after the current round and saving the network (Ctrl+C again to quit now)…");
-        using var progress = new ProgressLine(context, $"reinforce {kind.Name}", options.Steps);
+        using var progress = new ProgressLine(context, $"reinforce {name}", options.Steps);
         OffPolicyTrainer trainer;
         try
         {
@@ -335,7 +321,7 @@ internal static class ReinforceNumeric
 
             Directory.CreateDirectory(output);
             trainer.Network.Save(Path.Combine(output, NetworkFile));
-            WriteSettings(output, kind, options.EnvironmentOptions, options.Algorithm, "q-network", observations, actions, network, false, options.Seed,
+            WriteSettings(output, name, options.EnvironmentOptions, options.Algorithm, "q-network", observations, actions, network, false, options.Seed,
                 new JsonObject { ["steps"] = result.Steps, ["updates"] = result.Updates, ["checkpoint"] = result.Checkpoint });
             var last = result.History.Count > 0 ? result.History[^1] : null;
             lines.WriteLine(string.Create(CultureInfo.InvariantCulture,
@@ -370,7 +356,7 @@ internal static class ReinforceNumeric
         o = ReinforceCommand.Float(context, "--max-grad-norm", 0f) is { } norm ? o with { MaxGradientNorm = norm } : o;
         o = ReinforceCommand.Int(context, "--max-steps", 0) is { } maxSteps ? o with { MaxEpisodeSteps = maxSteps } : o;
         o = ReinforceCommand.Int(context, "--evaluation-episodes", 1) is { } evaluationEpisodes ? o with { EvaluationEpisodes = evaluationEpisodes } : o;
-        o = context.Option("--schedule") is { } schedule ? o with { Schedule = Schedule(schedule) } : o;
+        o = context.Option("--schedule") is { } schedule ? o with { Schedule = schedule } : o;
         return o with { ScheduleSettings = ScheduleSettings(context, o.ScheduleSettings) };
     }
 
@@ -387,7 +373,7 @@ internal static class ReinforceNumeric
             throw new UsageException(e.Message);
         }
 
-        o = o with { Algorithm = QLosses.Find(algorithm)!.Name, EnvironmentOptions = environmentOptions };
+        o = o with { Algorithm = algorithm, EnvironmentOptions = environmentOptions };
         o = Long(context, "--steps", 1) is { } steps ? o with { Steps = steps } : o;
         o = ReinforceCommand.Int(context, "--environments", 1) is { } environments ? o with { Environments = environments } : o;
         o = ReinforceCommand.Int(context, "--replay", 1) is { } replay ? o with { ReplayCapacity = replay } : o;
@@ -407,7 +393,7 @@ internal static class ReinforceNumeric
         o = ReinforceCommand.Float(context, "--lr", 0f) is { } rate ? o with { LearningRate = rate } : o;
         o = ReinforceCommand.Float(context, "--weight-decay", 0f) is { } decay ? o with { WeightDecay = decay } : o;
         o = ReinforceCommand.Float(context, "--max-grad-norm", 0f) is { } norm ? o with { MaxGradientNorm = norm } : o;
-        o = context.Option("--schedule") is { } schedule ? o with { Schedule = Schedule(schedule) } : o with { Schedule = Schedule(o.Schedule) };
+        o = context.Option("--schedule") is { } schedule ? o with { Schedule = schedule } : o;
         o = o with { ScheduleSettings = ScheduleSettings(context, o.ScheduleSettings) };
         o = ReinforceCommand.Int(context, "--max-steps", 0) is { } maxSteps ? o with { MaxEpisodeSteps = maxSteps } : o;
         o = context.Seed is { } seed ? o with { Seed = seed } : o;
@@ -472,8 +458,8 @@ internal static class ReinforceNumeric
         return o;
     }
 
-    // --env-option KEY=VALUE, each key checked against the kind's before anything is made.
-    private static Dictionary<string, string> EnvironmentOptions(CommandContext context, IEnvironmentKind kind)
+    // --env-option KEY=VALUE.
+    private static Dictionary<string, string> EnvironmentOptions(CommandContext context)
     {
         var options = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (string item in context.Options("--env-option"))
@@ -481,16 +467,10 @@ internal static class ReinforceNumeric
             int equals = item.IndexOf('=', StringComparison.Ordinal);
             if (equals <= 0)
             {
-                throw new UsageException($"--env-option {item}: give KEY=VALUE (the {kind.Name} environment's keys: {string.Join(", ", kind.Keys)}).");
+                throw new UsageException($"--env-option {item}: give KEY=VALUE.");
             }
 
-            string key = item[..equals].Trim();
-            if (!kind.Keys.Contains(key))
-            {
-                throw new UsageException($"The {kind.Name} environment does not take '{key}'; it takes: {string.Join(", ", kind.Keys)}.");
-            }
-
-            options[key] = item[(equals + 1)..];
+            options[item[..equals].Trim()] = item[(equals + 1)..];
         }
 
         return options;
@@ -504,8 +484,6 @@ internal static class ReinforceNumeric
         return ReinforceCommand.Float(context, "--decay", 0f, 1f) is { } decay ? settings with { DecayFraction = decay } : settings;
     }
 
-    private static string Schedule(string name) => LearningRateSchedules.Find(name) is not null ? name
-        : throw new UsageException($"The schedule {name}: use {string.Join(", ", LearningRateSchedules.Names)} (LearningRateSchedules).");
 
     private static string Optimizer(string name) => throw new UsageException($"The optimizer {name}: picking an optimizer by its name is not on the new design yet.");
 
@@ -537,14 +515,14 @@ internal static class ReinforceNumeric
     private static double? Finite(double value) => double.IsFinite(value) ? value : null;
 
     // idrak-reinforce.json in the output folder: what the networks are and how they were trained, to build them again.
-    private static void WriteSettings(string output, IEnvironmentKind kind, IReadOnlyDictionary<string, string>? environmentOptions, string algorithm, string policy,
+    private static void WriteSettings(string output, string name, IReadOnlyDictionary<string, string>? environmentOptions, string algorithm, string policy,
         Space observations, Space actions, ModulePolicyOptions network, bool valueHead, int seed, JsonObject done)
     {
         Directory.CreateDirectory(output);
         var settings = new JsonObject
         {
             ["format"] = "idrak-reinforce/1",
-            ["environment"] = kind.Name,
+            ["environment"] = name,
             ["environmentOptions"] = new JsonObject([.. (environmentOptions ?? new Dictionary<string, string>()).OrderBy(p => p.Key, StringComparer.Ordinal)
                 .Select(p => KeyValuePair.Create(p.Key, (JsonNode?)p.Value))]),
             ["algorithm"] = algorithm,

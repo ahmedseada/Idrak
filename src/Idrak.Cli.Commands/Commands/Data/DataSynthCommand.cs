@@ -207,7 +207,7 @@ internal sealed class DataSynthCommand : Command
             };
             if (pageOutput != SyntheticPageOutput.Images)
             {
-                _ = DocumentWriters.Get(options.Writer);
+                _ = NotOnTheNewDesign.Yet<IDocumentWriter>($"Picking the document writer '{options.Writer}' by its name");
                 if (options.PagesPerDocument < 1)
                 {
                     throw new UsageException($"--pdf-pages needs a number of pages from 1, not {options.PagesPerDocument}.");

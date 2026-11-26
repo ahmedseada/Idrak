@@ -147,14 +147,7 @@ internal static class ImageTraining
     /// <summary>Runs <paramref name="settings"/> in <paramref name="folder"/>; continues from <paramref name="resume"/> weights after <paramref name="epochsDone"/> epochs.</summary>
     public static int Run(CommandContext context, RunSettings settings, string folder, string? resume = null, int epochsDone = 0, int? epochs = null)
     {
-        try
-        {
-            return Train(context, settings, folder, resume, epochsDone, epochs);
-        }
-        catch (NotRegisteredException e)
-        {
-            return ImageModelFiles.Refuse(context, e);
-        }
+        return Train(context, settings, folder, resume, epochsDone, epochs);
     }
 
     private static int Train(CommandContext context, RunSettings settings, string folder, string? resume, int epochsDone, int? epochs)
@@ -269,11 +262,12 @@ internal static class ImageTraining
         IReadOnlyList<IAugmentation> pipeline;
         try
         {
-            pipeline = Augmentations.Parse(options.Augment);
+            pipeline = string.IsNullOrWhiteSpace(options.Augment) || options.Augment.Trim().Equals("none", StringComparison.OrdinalIgnoreCase) ? []
+                : NotOnTheNewDesign.Yet<IReadOnlyList<IAugmentation>>($"Picking the augmentations '{options.Augment}' by their names");
         }
-        catch (Exception e) when (e is ArgumentException or NotSupportedException)
+        catch (NotSupportedException e)
         {
-            throw new UsageException($"--augment: {e.Message} (registered: {string.Join(", ", Augmentations.Names)})");
+            throw new UsageException($"--augment: {e.Message}");
         }
 
         if (task == ImageTask.Classification && pipeline.FirstOrDefault(a => a.Name is "mosaic" or "mixup") is { } combining)
@@ -731,7 +725,7 @@ internal static class ImageTraining
             Classes = segment ? ["background", .. dataset.Classes] : dataset.Classes,
             Read = i =>
             {
-                var sample = dataset.Images[i].ToSample(ImageCodecs.Decode(dataset.PathOf(i)), masks: segment);
+                var sample = dataset.Images[i].ToSample(NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {dataset.PathOf(i)}"), masks: segment);
                 if (!segment)
                 {
                     return sample;
@@ -770,7 +764,7 @@ internal static class ImageTraining
         var classes = new List<int>();
         for (int c = 0; c < folders.Count; c++)
         {
-            foreach (string file in Directory.EnumerateFiles(folders[c], "*", SearchOption.AllDirectories).Where(ImageCodecs.CanDecode).Order(StringComparer.Ordinal))
+            foreach (string file in Directory.EnumerateFiles(folders[c], "*", SearchOption.AllDirectories).Where(ImageFiles.IsDecoded).Order(StringComparer.Ordinal))
             {
                 files.Add(file);
                 classes.Add(c);
@@ -785,7 +779,7 @@ internal static class ImageTraining
         return new ImageSet
         {
             Source = path, Layout = "class folders", Files = files, Classes = [.. folders.Select(Path.GetFileName).OfType<string>()],
-            Read = i => new AnnotatedImage(ImageCodecs.Decode(files[i])), ImageClasses = [.. classes],
+            Read = i => new AnnotatedImage(NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {files[i]}")), ImageClasses = [.. classes],
         };
     }
 
@@ -793,8 +787,8 @@ internal static class ImageTraining
     // folder/classes.txt (one a line), else the network's outputs numbered.
     private static ImageSet MaskFolders(string path, int? outputs, string option)
     {
-        var images = Directory.EnumerateFiles(Path.Combine(path, "images")).Where(ImageCodecs.CanDecode).Order(StringComparer.Ordinal).ToList();
-        var masks = Directory.EnumerateFiles(Path.Combine(path, "masks")).Where(ImageCodecs.CanDecode)
+        var images = Directory.EnumerateFiles(Path.Combine(path, "images")).Where(ImageFiles.IsDecoded).Order(StringComparer.Ordinal).ToList();
+        var masks = Directory.EnumerateFiles(Path.Combine(path, "masks")).Where(ImageFiles.IsDecoded)
             .GroupBy(f => Path.GetFileNameWithoutExtension(f), StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.OrderBy(f => f.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? 0 : 1).First(), StringComparer.Ordinal);
         string? missing = images.FirstOrDefault(f => !masks.ContainsKey(Path.GetFileNameWithoutExtension(f)));
@@ -817,9 +811,9 @@ internal static class ImageTraining
             Source = path, Layout = "image and mask folders", Files = images, Classes = classes,
             Read = i =>
             {
-                var image = ImageCodecs.Decode(images[i]);
+                var image = NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {images[i]}");
                 string maskFile = masks[Path.GetFileNameWithoutExtension(images[i])];
-                var mask = ImageCodecs.Decode(maskFile);
+                var mask = NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {maskFile}");
                 if (mask.Width != image.Width || mask.Height != image.Height)
                 {
                     throw new InvalidDataException($"{maskFile} is {mask.Width} x {mask.Height}; its image is {image.Width} x {image.Height}.");

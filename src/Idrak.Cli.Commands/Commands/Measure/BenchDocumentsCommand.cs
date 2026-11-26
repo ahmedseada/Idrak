@@ -326,7 +326,7 @@ internal sealed class BenchDocumentsCommand : Command
         {
             try
             {
-                font = FontFormats.Read(fontFile.Text) is { Count: > 0 } faces ? faces[0] : throw new UsageException($"{fontFile.From}: {fontFile.Text} holds no font.");
+                font = NotOnTheNewDesign.Yet<IReadOnlyList<IFontFace>>($"Picking the font format of {fontFile.Text}") is { Count: > 0 } faces ? faces[0] : throw new UsageException($"{fontFile.From}: {fontFile.Text} holds no font.");
             }
             catch (Exception e) when (e is IOException or InvalidDataException or NotSupportedException or UnauthorizedAccessException or ArgumentException)
             {

@@ -29,7 +29,7 @@ internal sealed class McpServeCommand : Command
     public const string TransportHelp = """
               --transport NAME       how clients connect: stdio (default: the client starts this command and talks
                                      over its input and output) or http (streamable HTTP on this machine, for a
-                                     client that connects to a running server); or a registered one
+                                     client that connects to a running server)
               --mcp-address H:P      where http listens (default 127.0.0.1:0: a port the system picks, printed)
               --mcp-token TOKEN      the bearer token http requires (default: a random one, printed); none: no token
               --mcp-allow-remote     let http listen on an address other machines reach (off: loopback only)
@@ -169,9 +169,9 @@ internal sealed class McpServeCommand : Command
         {
             host = McpHost.StartAsync(transport, registry, options, interrupt.Token).GetAwaiter().GetResult();
         }
-        catch (Exception e) when (e is ArgumentException or NotRegisteredException)
+        catch (ArgumentException e)
         {
-            throw new UsageException(e.Message);                 // a bad address, a host off this machine, a transport not registered
+            throw new UsageException(e.Message);                 // a bad address, a host off this machine
         }
 
         try

@@ -18,9 +18,8 @@ namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
 /// What <c>idrak predict</c> and <c>idrak train</c> share for image models: telling a checkpoint from a package or a
-/// builder JSON, loading it through its family (<see cref="ImageModels.Load"/>, the family from a plug-in), a package of
-/// <c>idrak train</c> as the same description, the image files of the arguments, and the refusal of a name no registry
-/// holds.
+/// builder JSON, loading it through its family (<see cref="ImageModels.Load"/>), a package of <c>idrak train</c> as the
+/// same description, and the image files of the arguments.
 /// </summary>
 internal static class ImageModelFiles
 {
@@ -34,8 +33,7 @@ internal static class ImageModelFiles
                                  || Path.GetFileName(path).Equals("config.json", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
-    /// The image model at <paramref name="path"/> on the command's device, through the family its checkpoint names (a
-    /// plug-in's).
+    /// The image model at <paramref name="path"/> on the command's device, through the family its checkpoint names.
     /// </summary>
     public static ImageModel Load(CommandContext context, string path)
     {
@@ -100,16 +98,10 @@ internal static class ImageModelFiles
         ConvertRgb = channels != 1,
     };
 
-    /// <summary>Prints a registry's refusal with the remedy on the command line, and gives the failure's exit code.</summary>
-    public static int Refuse(CommandContext context, NotRegisteredException e)
-    {
-        context.Error(Messages.T("{0} Load its plug-in with -P (--plugin).", e.Message));
-        return ExitCodes.Failed;
-    }
 
     /// <summary>
     /// The image files <paramref name="inputs"/> name: files as they are, folders searched (with their subfolders) for the
-    /// extensions of the registered codecs, and file names with * or ? matched in their folder; in that order, each once.
+    /// images whose pixels are decoded (ImageFiles.IsDecoded), and file names with * or ? matched in their folder; in that order, each once.
     /// </summary>
     public static IReadOnlyList<string> Expand(IEnumerable<string> inputs)
     {

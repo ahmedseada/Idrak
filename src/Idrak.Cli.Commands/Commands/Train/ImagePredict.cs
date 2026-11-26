@@ -81,7 +81,7 @@ internal static class ImagePredict
         var results = new Result[files.Count];
         for (int i = 0; i < files.Count; i++)
         {
-            var info = ImageCodecs.ReadInfo(files[i]) ?? throw new InvalidDataException($"{files[i]}: not an image format of the registered codecs ({string.Join(", ", ImageCodecs.Names)}).");
+            var info = NotOnTheNewDesign.Yet<ImageInfo>($"Picking the image codec of {files[i]}");
             sizes[i] = model.Preprocessor.OutputSize(info.Height, info.Width);
             results[i] = new Result(files[i], info.Width, info.Height);
         }
@@ -96,7 +96,7 @@ internal static class ImagePredict
                 batches.Run(members.Length, (start, count) =>
                 {
                     var chunk = members.AsSpan(start, count).ToArray();
-                    var images = chunk.Select(i => ImageCodecs.Decode(files[i])).ToList();
+                    var images = chunk.Select(i => NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {files[i]}")).ToList();
                     switch (model.Task)
                     {
                         case ImageTask.Detection:
@@ -169,16 +169,12 @@ internal static class ImagePredict
     /// <summary>The task's name in output: classification, detection, segmentation, features or line-recognition.</summary>
     public static string Task(ImageTask task) => ImageModelPredictors.TaskName(task);
 
-    // A line recognizer: each file one line, read with a CTC decoder (--decoder, greedy by default). The lines' sizes come
-    // from their headers, widest first, so a batch pads little; each batch is decoded and prepared when it runs.
+    // A line recognizer: each file one line, read with a CTC decoder (--decoder; picking it by its name is not on the new
+    // design yet). The lines' sizes come from their headers, widest first, so a batch pads little; each batch is decoded
+    // and prepared when it runs.
     private static int ReadLines(CommandContext context, string modelPath, ImageModel model, IReadOnlyList<string> files, IReadOnlyList<string> inputs)
     {
-        string decoder = context.Option("--decoder") ?? CtcDecoders.Greedy;
-        if (!CtcDecoders.Names.Contains(decoder))
-        {
-            throw new UsageException($"--decoder {decoder}: a line recognizer reads with a CTC decoder ({string.Join(", ", CtcDecoders.Names)}).");
-        }
-
+        string decoder = NotOnTheNewDesign.Yet<string>($"Picking the CTC decoder '{context.Option("--decoder") ?? "greedy"}' by its name");
         int? ceiling = context.Option("--batch") is null ? null : context.IntOption("--batch", 1);
         if (ceiling is <= 0)
         {
@@ -191,7 +187,7 @@ internal static class ImagePredict
         var widths = new int[files.Count];
         for (int i = 0; i < files.Count; i++)
         {
-            var info = ImageCodecs.ReadInfo(files[i]) ?? throw new InvalidDataException($"{files[i]}: not an image format of the registered codecs ({string.Join(", ", ImageCodecs.Names)}).");
+            var info = NotOnTheNewDesign.Yet<ImageInfo>($"Picking the image codec of {files[i]}");
             widths[i] = Math.Max(lines.Stride, (int)Math.Round(info.Width * (double)lines.Height / info.Height));
         }
 
@@ -205,7 +201,7 @@ internal static class ImagePredict
             {
                 var chunk = order.AsSpan(start, count).ToArray();
                 var prepared = new PreparedLine[chunk.Length];
-                Parallel.For(0, chunk.Length, ComputeResources.ParallelOptions, k => prepared[k] = reader.Prepare(ImageCodecs.Decode(files[chunk[k]])));
+                Parallel.For(0, chunk.Length, ComputeResources.ParallelOptions, k => prepared[k] = reader.Prepare(NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {files[chunk[k]]}")));
                 var read = reader.Read(prepared);
                 for (int k = 0; k < chunk.Length; k++)
                 {
@@ -346,7 +342,7 @@ internal static class ImagePredict
                     levels[i] = labels[i] / 255f;
                 }
 
-                ImageEncoders.Save(path, new ImageData(levels, 1, mask.Height, mask.Width));
+                File.WriteAllBytes(path, NotOnTheNewDesign.Yet<IImageEncoder>($"Picking the image encoder of {path}").Encode(new ImageData(levels, 1, mask.Height, mask.Width)));
                 result.Written = path;
             }
             else if (result.Features is { } features)

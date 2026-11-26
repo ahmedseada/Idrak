@@ -170,85 +170,78 @@ internal sealed partial class TranscribeCommand : Command
         var modelOptions = new SpeechModelOptions { Device = context.Device, Cache = Cache(context.Option("--kv")) };
         var choice = ModelChoices.Choose(context, name);
         string folder = ModelChoices.Resolve(context, choice.Model);
-        try
+        ISpeechRecognizer recognizer;
+        using (var loading = new ProgressLine(context, $"loading {choice.Model} on {context.Device}", unit: ProgressUnit.Elapsed))
         {
-            ISpeechRecognizer recognizer;
-            using (var loading = new ProgressLine(context, $"loading {choice.Model} on {context.Device}", unit: ProgressUnit.Elapsed))
-            {
-                recognizer = SpeechModels.Load(folder, modelOptions);
-                loading.Clear();
-            }
-
-            using (recognizer)
-            {
-                context.Detail($"loaded {choice.Model} on {recognizer.Device}: {recognizer.Languages.Count} language(s)");
-                var results = new JsonArray();
-                var printed = new StringBuilder();
-                for (int i = 0; i < files.Count; i++)
-                {
-                    string file = files[i];
-                    var audio = Clean(context, AudioFiles.Decode(file), clean, cleanSource, Display(file));
-                    var result = Transcribe(context, recognizer, audio, options, $"{i + 1}/{files.Count} {Display(file)}");
-                    if (context.Verbose && !context.Json)
-                    {
-                        context.ErrorOutput.WriteLine(StageLine(i == 0 ? "cold" : "warm", Display(file), result.Stats));
-                    }
-
-                    if (i == 0 && files.Count == 1 && context.Verbose && !context.Flag("--no-warm"))
-                    {
-                        var warm = Transcribe(context, recognizer, audio, options, $"again (warm) {Display(file)}");
-                        if (!context.Json)
-                        {
-                            context.ErrorOutput.WriteLine(StageLine("warm", Display(file), warm.Stats));
-                        }
-                    }
-
-                    var json = TranscriptionJson(file, result);
-                    results.Add((JsonNode)json);
-                    string content = Render(format, result, json);
-                    if (output is not null)
-                    {
-                        string path = toFolder ? Path.Combine(output, $"{(file == AudioFiles.StandardInputName ? "stdin" : Path.GetFileNameWithoutExtension(file))}.{Extension(format)}") : output;
-                        Write(path, content);
-                        json["out"] = path;
-                        context.Write($"wrote {path} ({AudioFiles.Seconds(result.Stats.AudioDuration.TotalSeconds)} of sound, {result.Segments.Count} segment(s){(result.Language is null ? "" : $", {result.Language}")})");
-                    }
-                    else if (!context.Json)
-                    {
-                        if (files.Count > 1 && format == "text")
-                        {
-                            printed.Append("# ").Append(Display(file)).Append('\n');
-                        }
-
-                        printed.Append(content);
-                        context.Output.Write(content);
-                        if (!content.EndsWith('\n'))
-                        {
-                            context.Output.WriteLine();
-                        }
-                    }
-                }
-
-                context.Log(printed.ToString());
-                var document = new JsonObject { ["model"] = choice.Model, ["device"] = recognizer.Device.ToString(), ["files"] = results };
-                if (!clean.IsEmpty)
-                {
-                    document["audio_clean"] = clean.ToString();
-                }
-
-                if (results.Count == 1)
-                {
-                    document["text"] = results[0]!["text"]?.DeepClone();
-                    document["language"] = results[0]!["language"]?.DeepClone();
-                }
-
-                context.WriteJson(document);
-                return ExitCodes.Ok;
-            }
+            recognizer = SpeechModels.Load(folder, modelOptions);
+            loading.Clear();
         }
-        catch (NotRegisteredException e)
+
+        using (recognizer)
         {
-            return ImageModelFiles.Refuse(context, e);
+            context.Detail($"loaded {choice.Model} on {recognizer.Device}: {recognizer.Languages.Count} language(s)");
+            var results = new JsonArray();
+            var printed = new StringBuilder();
+            for (int i = 0; i < files.Count; i++)
+            {
+                string file = files[i];
+                var audio = Clean(context, AudioFiles.Decode(file), clean, cleanSource, Display(file));
+                var result = Transcribe(context, recognizer, audio, options, $"{i + 1}/{files.Count} {Display(file)}");
+                if (context.Verbose && !context.Json)
+                {
+                    context.ErrorOutput.WriteLine(StageLine(i == 0 ? "cold" : "warm", Display(file), result.Stats));
+                }
+
+                if (i == 0 && files.Count == 1 && context.Verbose && !context.Flag("--no-warm"))
+                {
+                    var warm = Transcribe(context, recognizer, audio, options, $"again (warm) {Display(file)}");
+                    if (!context.Json)
+                    {
+                        context.ErrorOutput.WriteLine(StageLine("warm", Display(file), warm.Stats));
+                    }
+                }
+
+                var json = TranscriptionJson(file, result);
+                results.Add((JsonNode)json);
+                string content = Render(format, result, json);
+                if (output is not null)
+                {
+                    string path = toFolder ? Path.Combine(output, $"{(file == AudioFiles.StandardInputName ? "stdin" : Path.GetFileNameWithoutExtension(file))}.{Extension(format)}") : output;
+                    Write(path, content);
+                    json["out"] = path;
+                    context.Write($"wrote {path} ({AudioFiles.Seconds(result.Stats.AudioDuration.TotalSeconds)} of sound, {result.Segments.Count} segment(s){(result.Language is null ? "" : $", {result.Language}")})");
+                }
+                else if (!context.Json)
+                {
+                    if (files.Count > 1 && format == "text")
+                    {
+                        printed.Append("# ").Append(Display(file)).Append('\n');
+                    }
+
+                    printed.Append(content);
+                    context.Output.Write(content);
+                    if (!content.EndsWith('\n'))
+                    {
+                        context.Output.WriteLine();
+                    }
+                }
+            }
+
+            context.Log(printed.ToString());
+            var document = new JsonObject { ["model"] = choice.Model, ["device"] = recognizer.Device.ToString(), ["files"] = results };
+            if (!clean.IsEmpty)
+            {
+                document["audio_clean"] = clean.ToString();
+            }
+
+            if (results.Count == 1)
+            {
+                document["text"] = results[0]!["text"]?.DeepClone();
+                document["language"] = results[0]!["language"]?.DeepClone();
+            }
+
+            context.WriteJson(document);
+            return ExitCodes.Ok;
         }
     }
 

@@ -25,7 +25,7 @@ internal sealed class MemoryCommand : Command
           MODEL  a cached Hugging Face id, a folder, a .gguf file or an alias
 
         Options:
-          -k, --kv F       KV cache formats (repeatable or comma-separated)
+          -k, --kv F       KV cache formats (repeatable or comma-separated): float32
               --context N  the context length (default the model's longest)
               --batch N    sequences decoded together (default 1)
               --memory SIZE also compare with this much memory (e.g. 8G, 512M)
@@ -59,14 +59,14 @@ internal sealed class MemoryCommand : Command
             throw new UsageException("--context and --batch need positive numbers.");
         }
 
-        var kvFormats = List(context.Options("--kv"), alias.Kv, [.. KeyValueLayouts.Names]);
+        var kvFormats = List(context.Options("--kv"), alias.Kv, ["float32"]);
 
         var devices = Devices(context);
         long? given = context.Option("--memory") is { } size ? ParseSize(size) : null;
         var rows = new List<(string Kv, long KvBytes)>();
         foreach (string kv in kvFormats)
         {
-            var layout = KeyValueLayouts.Get(kv);
+            var layout = Shared.ModelChoices.CacheLayout(kv, "--kv");
             long perPosition = (long)spec.Layers * spec.KvHeads * 2 * (layout.RowWidth(spec.HeadDim) * 4L + (layout is IScaledLayout ? 4 : 0));
             rows.Add((kv, perPosition * contextLength * batch));
         }
@@ -108,7 +108,7 @@ internal sealed class MemoryCommand : Command
         return percent < 0.1 ? "<0.1%" : percent < 10 ? string.Create(CultureInfo.InvariantCulture, $"{percent:0.0}%") : string.Create(CultureInfo.InvariantCulture, $"{percent:0}%");
     }
 
-    // The formats asked for (repeated or comma-separated), else the alias's, else all.
+    // The formats asked for (repeated or comma-separated), else the alias's, else float32.
     private static List<string> List(IReadOnlyList<string> given, string? fromAlias, IReadOnlyList<string> all)
     {
         var asked = given.SelectMany(g => g.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).ToList();

@@ -8,39 +8,31 @@ namespace Idrak.Cli.Shared;
 
 /// <summary>
 /// Image files for every command that reads them (<c>idrak suggest</c> and the data it prepares, <c>idrak train</c> and
-/// <c>idrak predict</c> on image folders). The pixels are decoded by the library (<see cref="ImageCodecs"/>: PNG, BMP,
-/// JPEG, PGM and PPM built in, and any registered codec, through <see cref="ImageFolderSource"/>); this class adds the size and
-/// channels of a JPEG file from its header when no codec answers for it (a fallback since the library decodes JPEG).
+/// <c>idrak predict</c> on image folders). The pixels are decoded by the library's codecs, through
+/// <see cref="ImageFolderSource"/>; picking a codec by a file's extension or header is not on the new design yet, so this
+/// class knows no codec: it reads the size and channels of a JPEG file from its header.
 /// </summary>
 internal static class ImageFiles
 {
     private static readonly string[] HeaderOnly = [".jpg", ".jpeg"];
 
-    /// <summary>The extensions read as images: those of the registered codecs and JPEG.</summary>
-    public static IReadOnlyCollection<string> Extensions => [.. ImageCodecs.Extensions.Concat(HeaderOnly).Distinct()];
+    /// <summary>The extensions read as images: JPEG's (picking a codec by its extension is not on the new design yet).</summary>
+    public static IReadOnlyCollection<string> Extensions => HeaderOnly;
 
     /// <summary>Whether <paramref name="path"/> has an image extension.</summary>
     public static bool IsImage(string path) => Extensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The extensions whose pixels are decoded (training and prediction read these).</summary>
-    public static IReadOnlyCollection<string> DecodedExtensions => ImageCodecs.Extensions;
+    /// <summary>The extensions whose pixels are decoded (training and prediction read these): none, no codec being picked by its extension.</summary>
+    public static IReadOnlyCollection<string> DecodedExtensions => [];
 
-    /// <summary>Whether <paramref name="path"/> has the extension of an image whose pixels are decoded.</summary>
-    public static bool IsDecoded(string path) => ImageCodecs.CanDecode(path);
+    /// <summary>Whether <paramref name="path"/> has the extension of an image whose pixels are decoded: picking its codec by its extension is not on the new design yet.</summary>
+    public static bool IsDecoded(string path) => NotOnTheNewDesign.Yet<bool>($"Picking the image codec of {path}");
 
     /// <summary>What an image header says.</summary>
     public readonly record struct ImageInfo(int Width, int Height, int Channels, string Format, bool Decodable);
 
     /// <summary>The size and channels of an image, or null when the file is not one of the formats above.</summary>
-    public static ImageInfo? ReadHeader(string path)
-    {
-        if (ImageCodecs.ReadInfo(path) is { } info)
-        {
-            return new ImageInfo(info.Width, info.Height, info.Channels, info.Format, true);
-        }
-
-        return Jpeg(path);
-    }
+    public static ImageInfo? ReadHeader(string path) => Jpeg(path);
 
     // The frame header (SOF0..SOF15 but DHT, JPG and DAC) holds the size and the number of components.
     private static ImageInfo? Jpeg(string path)

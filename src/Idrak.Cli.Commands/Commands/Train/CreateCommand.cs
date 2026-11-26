@@ -154,10 +154,6 @@ internal sealed class CreateCommand : Command
                 Decoder = PathOf("--decoder", "decoder"),
             });
         }
-        catch (NotRegisteredException e)
-        {
-            return ImageModelFiles.Refuse(context, e);
-        }
         catch (Exception e) when (e is NotSupportedException or ArgumentException or IOException or InvalidDataException)
         {
             context.Error(e.Message);
@@ -212,10 +208,6 @@ internal sealed class CreateCommand : Command
                 model = Idrak.Audio.SpeechModels.Create(output, spec, tokenizer, options);
                 synthesizer = false;
             }
-        }
-        catch (NotRegisteredException e)
-        {
-            return ImageModelFiles.Refuse(context, e);
         }
         catch (Exception e) when (e is NotSupportedException or ArgumentException or IOException or InvalidDataException)
         {

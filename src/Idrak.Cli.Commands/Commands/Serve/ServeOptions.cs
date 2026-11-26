@@ -382,7 +382,7 @@ internal static class ServeOptions
             var choice = ModelChoices.Choose(context, source);
             if (choice.Kv is { } kv)
             {
-                _ = KeyValueLayouts.Get(kv);                    // an unknown format fails now, not on the first request
+                _ = ModelChoices.CacheLayout(kv, "--kv");       // an unknown format fails now, not on the first request
             }
 
             string path = ModelChoices.Resolve(context, choice.Model);

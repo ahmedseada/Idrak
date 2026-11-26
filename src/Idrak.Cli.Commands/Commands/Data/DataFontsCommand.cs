@@ -78,7 +78,7 @@ internal sealed class DataFontsCommand : Command
         {
             lines = context.Option("--lines") is { } file
                 ? [.. File.ReadLines(file, Encoding.UTF8).Select(l => l.Trim()).Where(l => l.Length > 0 && l != "---")]
-                : [.. RandomText.Documents(RandomTextSources.Get(language), new RandomTextOptions { Unit = RandomTextUnit.Lines, Count = 200, Diacritics = 0.3, LineWords = (3, 10) })];
+                : [.. RandomText.Documents(NotOnTheNewDesign.Yet<IRandomTextSource>($"Picking the random text source of '{language}'"), new RandomTextOptions { Unit = RandomTextUnit.Lines, Count = 200, Diacritics = 0.3, LineWords = (3, 10) })];
         }
         catch (Exception e) when (e is IOException or NotSupportedException or ArgumentException)
         {
@@ -100,18 +100,18 @@ internal sealed class DataFontsCommand : Command
         var references = context.Option("--harfbuzz") is { } hb ? Read(hb) : null;
         var needed = new SortedSet<int>(lines.SelectMany(l => l.EnumerateRunes()).Where(r => !Rune.IsWhiteSpace(r) && !Rune.IsControl(r)
             && Rune.GetUnicodeCategory(r) != UnicodeCategory.Format).Select(r => r.Value));
-        bool joining = TextShapers.Get(script).Name == "arabic";
+        bool joining = NotOnTheNewDesign.Yet<ITextShaper>($"Picking the text shaper of the script '{script}'").Name == "arabic";
 
         var reports = new JsonArray();
         int problems = 0;
-        var extensions = FontFormats.Extensions;                       // the registered formats' (a plug-in's .woff too)
+        IReadOnlyCollection<string> extensions = [];                   // picking a font format by its extension is not on the new design yet
         foreach (var (root, path) in context.Positional.SelectMany(target => Files(target, extensions)))
         {
             string relative = Path.GetRelativePath(root, path).Replace('\\', '/');
             IReadOnlyList<IFontFace> faces;
             try
             {
-                faces = FontFormats.Read(path);
+                faces = NotOnTheNewDesign.Yet<IReadOnlyList<IFontFace>>($"Picking the font format of {path}");
             }
             catch (Exception e) when (e is InvalidDataException or NotSupportedException or IOException)
             {
@@ -184,7 +184,7 @@ internal sealed class DataFontsCommand : Command
         return problems == 0 ? ExitCodes.Ok : ExitCodes.Failed;
     }
 
-    // The font files a target names: the file itself, or every file under the folder whose extension a registered format lists.
+    // The font files a target names: the file itself, or every file under the folder whose extension is one of `extensions`.
     private static IEnumerable<(string Root, string Path)> Files(string target, IReadOnlyCollection<string> extensions)
     {
         if (File.Exists(target))
@@ -233,7 +233,7 @@ internal sealed class DataFontsCommand : Command
             {
                 Clusters = (string?)reference["clusters"] == "characters" ? TextClusters.Characters : TextClusters.Graphemes,
             };
-            var ours = TextShapers.Shape(face, text, run);
+            var ours = NotOnTheNewDesign.Yet<ITextShaper>($"Picking the text shaper of the script '{run.Script}'").Shape(face, text, run);
             var theirs = reference["glyphs"]!.AsArray().Select(g => new ShapedGlyph((int)g![0]!, (int)g[1]!, (int)g[2]!, (int)g[3]!, (int)g[4]!, (int)g[5]!)).ToArray();
             total++;
             if (ours.SequenceEqual(theirs))

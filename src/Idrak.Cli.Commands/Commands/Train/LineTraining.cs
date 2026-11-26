@@ -86,10 +86,6 @@ internal static class LineTraining
             classes = shape[1];
         }
 
-        if (lines.ReadingOrder is { } order && ReadingOrders.Find(order) is null)
-        {
-            throw new UsageException($"--reading-order {order}: use {string.Join(", ", ReadingOrders.Names)}.");
-        }
 
         // ---------------------------------------------------------------- the data
         var watch = Stopwatch.StartNew();
@@ -122,7 +118,7 @@ internal static class LineTraining
             train = shuffled[held..];
         }
 
-        var reader = new ModelLineReader(network, labels, lines, channels, CtcDecoders.Greedy, device: device);
+        var reader = new ModelLineReader(network, labels, lines, channels, device: device);
         var unknown = new SortedDictionary<string, int>(StringComparer.Ordinal);
         int[][] Encode(IReadOnlyList<LineSample> samples) => [.. samples.Select(s =>
         {
@@ -150,11 +146,12 @@ internal static class LineTraining
         IReadOnlyList<IAugmentation> pipeline;
         try
         {
-            pipeline = Augmentations.Parse(options.Augment);
+            pipeline = string.IsNullOrWhiteSpace(options.Augment) || options.Augment.Trim().Equals("none", StringComparison.OrdinalIgnoreCase) ? []
+                : NotOnTheNewDesign.Yet<IReadOnlyList<IAugmentation>>($"Picking the augmentations '{options.Augment}' by their names");
         }
-        catch (Exception e) when (e is ArgumentException or NotSupportedException)
+        catch (NotSupportedException e)
         {
-            throw new UsageException($"--augment: {e.Message} (registered: {string.Join(", ", Augmentations.Names)})");
+            throw new UsageException($"--augment: {e.Message}");
         }
 
         // ---------------------------------------------------------------- optimizer and run folder
@@ -422,11 +419,10 @@ internal static class LineTraining
         }
 
         network.Train();
-        var pairs = texts.Zip(samples.Select(s => s.Text)).ToArray();
         return (sum / Math.Max(1, lines.Length), new Dictionary<string, double>
         {
-            [TuningMetrics.CharacterErrorRate] = TuningMetrics.Score(TuningMetrics.CharacterErrorRate, pairs).Value,
-            [TuningMetrics.WordErrorRate] = TuningMetrics.Score(TuningMetrics.WordErrorRate, pairs).Value,
+            [TuningMetrics.CharacterErrorRate] = NotOnTheNewDesign.Yet<double>($"Picking the metric '{TuningMetrics.CharacterErrorRate}' by its name"),
+            [TuningMetrics.WordErrorRate] = NotOnTheNewDesign.Yet<double>($"Picking the metric '{TuningMetrics.WordErrorRate}' by its name"),
         });
     }
 
@@ -440,7 +436,7 @@ internal static class LineTraining
         }
 
         var samples = new List<LineSample>();
-        foreach (string image in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).Where(ImageCodecs.CanDecode).Order(StringComparer.Ordinal))
+        foreach (string image in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).Where(ImageFiles.IsDecoded).Order(StringComparer.Ordinal))
         {
             string text = Path.Combine(Path.GetDirectoryName(image)!, Path.GetFileNameWithoutExtension(image) + ".txt");
             if (File.Exists(text) && AnswerTexts.Normalize(File.ReadAllText(text)) is { Length: > 0 } transcription)
@@ -459,7 +455,7 @@ internal static class LineTraining
         var lines = new StoredLine[samples.Count];
         Parallel.For(0, samples.Count, ComputeResources.ParallelOptions, i =>
         {
-            var prepared = reader.Prepare(ImageCodecs.Decode(samples[i].Image));
+            var prepared = reader.Prepare(NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {samples[i].Image}"));
             var bytes = new byte[prepared.Pixels.Length];
             for (int k = 0; k < bytes.Length; k++)
             {

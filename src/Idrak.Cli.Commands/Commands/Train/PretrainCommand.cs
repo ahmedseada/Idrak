@@ -231,16 +231,9 @@ internal sealed class PretrainCommand : Command
         }
 
         PretrainedModel model;
-        try
-        {
-            // A rank holding part of the model (a pipeline stage, a parameters shard) reads only its own tensors (plan 23, C8b).
-            bool part = rank?.Context.Options is { OwnTensorsOnly: true } cluster && (cluster.Pipelined || cluster.Shard == ShardMode.Parameters);
-            model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = device, Deferred = part });
-        }
-        catch (NotRegisteredException e)
-        {
-            return ImageModelFiles.Refuse(context, e);
-        }
+        // A rank holding part of the model (a pipeline stage, a parameters shard) reads only its own tensors (plan 23, C8b).
+        bool part = rank?.Context.Options is { OwnTensorsOnly: true } cluster && (cluster.Pipelined || cluster.Shard == ShardMode.Parameters);
+        model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = device, Deferred = part });
 
         using (model)
         {
@@ -310,11 +303,6 @@ internal sealed class PretrainCommand : Command
                 {
                     line.Erase();
                     throw new UsageException(e.Message);
-                }
-                catch (NotRegisteredException e)
-                {
-                    line.Erase();
-                    return ImageModelFiles.Refuse(context, e);
                 }
 
                 line.Finish();

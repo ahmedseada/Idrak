@@ -63,27 +63,28 @@ internal sealed class TuneTool(ToolConsole console)
                    --adapter DIR (continue training an adapter), --time-steps (time a few steps instead of training),
                    --cpu-optimizer (the optimizer's update on the CPU, its state in system memory),
                    --optimizer adamw|adam|sgd, --weight-decay 0, --momentum 0.9 (sgd),
-                   --schedule cosine|linear|constant|wsd, --warmup 0.03 (fraction of the steps), --min-lr 0, --decay 0.2 (wsd),
+                   --schedule cosine (picking another schedule by its name is not on the new design yet), --warmup 0.03
+                   (fraction of the steps), --min-lr 0,
                    --loss sft|dpo|orpo|simpo (dpo, orpo, simpo: preference rows with prompt, chosen and rejected), --beta B
                    (dpo 0.1, orpo's lambda 0.1, simpo 2), --margin G (simpo 1), --adapter-type lora|dora
-        Images:    a vision-language model (its family registered by a plug-in, -P) tunes on conversations with images: messages
+        Images:    a vision-language model tunes on conversations with images: messages
                    or ShareGPT files (JSON or JSON Lines; LlamaFactory's "images" list and <image> placeholders), --data-format
                    auto|messages|sharegpt (default: told from the first record), --images DIR|ZIP (where relative image paths are
                    found; default: the data file's folder; a zip is read in place), --image-transform P (as run's), --vision
                    K=V[,K=V] (the family's options, as run's --vision-option), --grayscale, --train-projector or --parts projector
-                   (the projector trains beside the adapters and is saved with them), --feature-cache memory|disk (the frozen
-                   tower's output kept between steps and epochs; disk: under --cache). The adapter keeps tuning_images.json,
+                   (the projector trains beside the adapters and is saved with them), --feature-cache NAME (the frozen tower's
+                   output kept between steps and epochs; picking the cache by its name is not on the new design yet). The adapter keeps tuning_images.json,
                    which run, chat and serve apply with --adapter; -v shows the images, blocks, image tokens, cache hits and memory
-        Audio:     an audio-language model (its family registered by a plug-in, -P) tunes on conversations with sounds (messages
+        Audio:     an audio-language model tunes on conversations with sounds (messages
                    audio parts, ShareGPT <audio> markers with an "audios" list) or speech transcripts ({"audio", "text"} rows,
                    --data-format transcripts), --audio DIR|ZIP (where relative sound paths are found), --audio-prompt TEXT
                    (a transcript's prompt after the sound; "Transcribe."), --parts audio-projector (or audio-encoder: the
                    model's audio part trains beside the adapters and is saved with them; frozen otherwise)
-        Scores:    --metric cer|wer (answers generated on the evaluation data and scored against the references; any metric a
-                   plug-in registers in TuningMetrics), --metric-every N (steps; default: each epoch), --metric-samples K (the first
+        Scores:    --metric cer|wer (answers generated on the evaluation data and scored against the references),
+                   --metric-every N (steps; default: each epoch), --metric-samples K (the first
                    K; 0: all)
         Evaluate:  --adapter DIR, --samples 100 (0: all), --batch 8, --max-new 512, --metric auto|number|exact|contains|f1|cer|wer
-                   (auto: number for "#### n" references, else f1; or any registered metric), --out F.jsonl,
+                   (auto: number for "#### n" references, else f1), --out F.jsonl,
                    --choices a,b,c | auto (the answer is one of these: each is scored as the model's answer, the most likely one
                    taken, nothing generated; auto: the distinct answers in the data; accuracy and recall per answer)
         Chat:      --system S, --max-new N, --temperature T (0: greedy)
@@ -104,7 +105,7 @@ internal sealed class TuneTool(ToolConsole console)
     [
         "--device", "--kv", "--context", "--out", "--eval", "--adapter", "--rank", "--alpha", "--lr", "--epochs", "--max-length", "--batch-tokens",
         "--accumulate", "--save-every", "--eval-every", "--targets", "--optimizer", "--weight-decay", "--momentum", "--schedule", "--warmup",
-        "--min-lr", "--decay", "--loss", "--beta", "--margin", "--adapter-type", "--gpu-memory", "--samples", "--batch", "--max-new",
+        "--min-lr", "--loss", "--beta", "--margin", "--adapter-type", "--gpu-memory", "--samples", "--batch", "--max-new",
         "--metric", "--choices", "--temperature", "--eval-fraction", "--system", "--kind", "--max-rows", "--seed", "--min-chars", "--max-chars",
         "--balance", "--data-format", "--images", "--image-transform", "--vision", "--vision-option", "--parts", "--feature-cache", "--metric-every",
         "--metric-samples", "--audio", "--audio-prompt", "--resume-from", "--device-layers", "--moe-experts",
@@ -127,7 +128,7 @@ internal sealed class TuneTool(ToolConsole console)
     public static readonly string[] SessionValueOptions =
     [
         "--rank", "--alpha", "--lr", "--max-length", "--batch-tokens", "--accumulate", "--targets", "--optimizer", "--weight-decay", "--momentum", "--schedule",
-        "--warmup", "--min-lr", "--decay", "--adapter-type", "--adapter", "--context", "--gpu-memory",
+        "--warmup", "--min-lr", "--adapter-type", "--adapter", "--context", "--gpu-memory",
     ];
 
     /// <summary>The flags of train that set up a fine-tuning session (the activations' memory, the packing, the optimizer's place, offloading).</summary>
@@ -155,7 +156,7 @@ internal sealed class TuneTool(ToolConsole console)
     private RowKind rowKind = RowKind.Auto;
     private FineTuningOptions tuning = new();
     private string optimizerName = "adamw", scheduleName = "cosine", lossName = "sft", adapterType = "lora";
-    private float weightDecay, momentum = 0.9f, decayFraction = 0.2f;
+    private float weightDecay, momentum = 0.9f;
     private float? beta, margin;
     private Device device = Device.Default;                                    // the best GPU found, else the CPU
 
@@ -228,8 +229,8 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--cpu": device = Device.Cpu; break;
                 case "--kv":
                     string kvName = Next();
-                    kvLayout = KeyValueLayouts.Names.Contains(kvName, StringComparer.OrdinalIgnoreCase) ? KeyValueLayouts.Get(kvName)
-                        : throw new ArgumentException($"--kv {kvName}: unknown format ({string.Join(", ", KeyValueLayouts.Names)}).");
+                    kvLayout = kvName.Trim().Equals("float32", StringComparison.OrdinalIgnoreCase) ? KeyValueLayouts.For(KeyValueFormat.Float32)
+                        : throw new ArgumentException($"--kv {kvName}: the key/value cache is float32 only; picking another format by its name is not on the new design yet.");
                     break;
                 case "--no-think": noThink = true; break;
                 case "--context": context = NextInt(); break;
@@ -264,7 +265,7 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--schedule": scheduleName = Next().ToLowerInvariant(); break;
                 case "--warmup": tuning = tuning with { WarmupFraction = NextFloat() }; break;
                 case "--min-lr": tuning = tuning with { MinLearningRate = NextFloat() }; break;
-                case "--decay": decayFraction = NextFloat(); break;
+
                 case "--loss": lossName = Next().ToLowerInvariant(); break;
                 case "--beta": beta = NextFloat(); break;
                 case "--margin": margin = NextFloat(); break;
@@ -274,13 +275,11 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--batch": evaluationBatch = NextInt(); break;
                 case "--max-new": maxNew = NextInt(); break;
                 case "--metric":
-                    // auto and the answer metrics score the answers of held-out rows (ChatEvaluation); any other registered
-                    // metric scores generated text on conversation files, while training and in evaluate.
+                    // auto and the answer metrics score the answers of held-out rows (ChatEvaluation); any other metric
+                    // scores generated text on conversation files, while training and in evaluate.
                     string metricName = Next();
                     string named = metricName.Equals(ChatEvaluation.Auto, StringComparison.OrdinalIgnoreCase) ? ChatEvaluation.Auto
-                        : TuningMetrics.Find(metricName)?.Name ?? throw new ArgumentException(
-                            $"--metric {metricName}: use auto or a registered metric: {string.Join(", ", TuningMetrics.Names)} ({string.Join(", ", AnswerMetrics)} "
-                            + "score answers to questions, the others generated text against the reference).");
+                        : AnswerMetrics.FirstOrDefault(m => m.Equals(metricName, StringComparison.OrdinalIgnoreCase)) ?? metricName;
                     if (named == ChatEvaluation.Auto || AnswerMetrics.Contains(named, StringComparer.Ordinal))
                     {
                         metric = named;
@@ -331,9 +330,8 @@ internal sealed class TuneTool(ToolConsole console)
             WeightDecay = weightDecay,
             Optimizer = optimizerName == "adamw" ? null
                 : throw new ArgumentException($"--optimizer {optimizerName}: picking an optimizer other than the default (adamw) by its name is not on the new design yet."),
-            Scheduler = scheduleName == "cosine" ? null : LearningRateSchedules.Find(scheduleName) is not null
-                ? LearningRateSchedules.Factory(scheduleName, new LearningRateScheduleSettings(tuning.WarmupFraction, tuning.MinLearningRate, decayFraction))
-                : throw new ArgumentException($"--schedule {scheduleName}: use {string.Join(", ", LearningRateSchedules.Names)}."),
+            Scheduler = scheduleName == "cosine" ? null
+                : throw new ArgumentException($"--schedule {scheduleName}: picking a schedule other than the default (cosine) by its name is not on the new design yet."),
             Loss = lossName switch
             {
                 "sft" => null,
@@ -354,18 +352,8 @@ internal sealed class TuneTool(ToolConsole console)
             rowKind = RowKind.Preference;                                       // rows as prompt, chosen and rejected
         }
 
-        // The images' preparation, the data format and the feature cache, checked by name before anything loads.
+        // The images' preparation.
         preparation = TuningImages.Parse(imageTransform, visionItems, grayscale);
-        if (dataFormat is not null && !dataFormat.Equals("auto", StringComparison.OrdinalIgnoreCase) && TuningDataFormats.Find(dataFormat) is null)
-        {
-            throw new ArgumentException($"--data-format {dataFormat}: use auto, {string.Join(", ", TuningDataFormats.Names)}.");
-        }
-
-        if (featureCache is not null && !FeatureCaches.Names.Contains(featureCache, StringComparer.OrdinalIgnoreCase))
-        {
-            throw new ArgumentException($"--feature-cache {featureCache}: use {string.Join(", ", FeatureCaches.Names)}.");
-        }
-
         if (metricEvery < 0 || metricSamples < 0)
         {
             throw new ArgumentException("--metric-every and --metric-samples are 0 or more.");
@@ -805,7 +793,7 @@ internal sealed class TuneTool(ToolConsole console)
         {
             return files ? true : throw new ArgumentException(
                 "Conversations with images or sounds (--images, --image-transform, --vision, --train-projector, --audio, --audio-prompt, --parts, --data-format, --metric "
-                + $"{string.Join("|", TuningMetrics.Names.Except(AnswerMetrics))}) are read from local .json or .jsonl files ({TuningDataFormats.Describe().Replace("\n", "; ", StringComparison.Ordinal)}); "
+                + $"{TuningMetrics.CharacterErrorRate}|{TuningMetrics.WordErrorRate}) are read from local .json or .jsonl files; "
                 + $"not {string.Join(", ", specs.Where(s => !File.Exists(s)).DefaultIfEmpty(string.Join(", ", specs)))}.");
         }
 
@@ -857,7 +845,7 @@ internal sealed class TuneTool(ToolConsole console)
                 : (null, null);
         }
 
-        var cache = FeatureCaches.Create(featureCache ?? FeatureCaches.Memory, new FeatureCacheOptions { Folder = FeatureFolder });
+        var cache = NotOnTheNewDesign.Yet<IFeatureCache>($"Picking the feature cache '{featureCache ?? "memory"}' by its name");
         try
         {
             return (TuningVision.Create(model, images, trained, cache), cache);
@@ -879,7 +867,7 @@ internal sealed class TuneTool(ToolConsole console)
         var options = new TuningDataOptions { Images = imagesRoot, Audios = audiosRoot, Prompt = audioPrompt };
         foreach (string file in files)
         {
-            var format = DataFormat is { } name ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(file);
+            var format = NotOnTheNewDesign.Yet<ITuningDataFormat>(DataFormat is { } name ? $"Picking the data format '{name}' by its name" : $"Picking the data format of {file}");
             using var pending = format.ReadPending(file, options);
             int taking = limit > 0 ? Math.Clamp(limit - transcripts.Count, 0, pending.Count) : pending.Count;
             for (int i = 0; i < taking; i++)

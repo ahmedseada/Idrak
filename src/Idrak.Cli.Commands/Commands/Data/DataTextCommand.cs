@@ -65,7 +65,7 @@ internal sealed class DataTextCommand : Command
         {
             source = context.Option("--pools") is { } pools ? Rename(PooledTextSource.Read(pools), language)
                 : context.Option("--words") is { } words ? PooledTextSource.FromWords(language, File.ReadLines(words, Encoding.UTF8))
-                : RandomTextSources.Get(language);
+                : NotOnTheNewDesign.Yet<IRandomTextSource>($"Picking the random text source of '{language}'");
             var defaults = new RandomTextOptions();
             options = defaults with
             {

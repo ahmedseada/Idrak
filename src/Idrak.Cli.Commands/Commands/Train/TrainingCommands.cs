@@ -644,15 +644,8 @@ internal sealed class PredictCommand : Command
                 throw new UsageException("Give the images to predict: files, folders or patterns after the model (or -i).");
             }
 
-            try
-            {
-                using var imageModel = ImageModelFiles.Load(context, modelPath);
-                return ImagePredict.Run(context, modelPath, imageModel, images);
-            }
-            catch (NotRegisteredException e)
-            {
-                return ImageModelFiles.Refuse(context, e);
-            }
+            using var imageModel = ImageModelFiles.Load(context, modelPath);
+            return ImagePredict.Run(context, modelPath, imageModel, images);
         }
 
         string input = context.Option("--input") ?? (context.Positional.Count > 1 ? context.Positional[1] : throw new UsageException("Give -i, --input FILE with the rows to predict."));
@@ -667,15 +660,8 @@ internal sealed class PredictCommand : Command
         if ((string?)meta?["task"] is "detection" or "segmentation" or "features" or "line-recognition")
         {
             // A detector, segmenter, backbone or line recognizer idrak train wrote: the image path, with the package's resize.
-            try
-            {
-                using var imageModel = ImageModelFiles.FromPackage(package, meta!, context.Device);
-                return ImagePredict.Run(context, modelPath, imageModel, [.. context.Positional.Skip(1), .. context.Options("--input")]);
-            }
-            catch (NotRegisteredException e)
-            {
-                return ImageModelFiles.Refuse(context, e);
-            }
+            using var imageModel = ImageModelFiles.FromPackage(package, meta!, context.Device);
+            return ImagePredict.Run(context, modelPath, imageModel, [.. context.Positional.Skip(1), .. context.Options("--input")]);
         }
         // A package saved by Predictor.Save has no training entry; its predictor entry names the classes (and its
         // softmax setting matches what the classification output below applies).

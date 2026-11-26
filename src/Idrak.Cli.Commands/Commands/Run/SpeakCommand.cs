@@ -176,10 +176,6 @@ internal sealed class SpeakCommand : Command
             context.WriteJson(json);
             return ExitCodes.Ok;
         }
-        catch (NotRegisteredException e)
-        {
-            return ImageModelFiles.Refuse(context, e);
-        }
         catch (ArgumentException e) when (e.ParamName is "options" or "voice")
         {
             context.Error(e.Message.Split(" (Parameter", 2)[0]);                 // an unknown voice: its speakers and the installed voices
