@@ -202,71 +202,9 @@ public sealed record DecoderBuildOptions
     /// </summary>
     public bool LazyExperts { get; init; }
 
-    /// <summary>
-    /// Keep float projections whose weights the source stores in a format of their own (a GGUF block format, F8 or I8 with
-    /// scales) in that format (plan 37, Q0: <see cref="IWeightSource.ReadStored"/>, frozen <c>StoredWeight</c>s whose
-    /// products equal the float32 weights' bit for bit), where the device multiplies it; off, they are expanded to float32
-    /// as before. Default: <see cref="WeightStorage.DefaultKeep"/> (IDRAK_KEEP_PACKED, on).
-    /// </summary>
-    public bool KeepPacked { get; init; } = WeightStorage.DefaultKeep;
-
-    /// <summary>
-    /// Whether a projection's weights are read in place from the checkpoint's file mapping (plan 37, W3,
-    /// <see cref="WeightMappings"/>: <see cref="IWeightSource.ReadMapped"/>, frozen <c>StoredWeight</c>s whose products
-    /// equal the float32 weights' bit for bit, with no second copy in memory) or copied into memory. Null (the default) takes
-    /// <see cref="WeightMappings.DefaultName"/> (IDRAK_WEIGHT_MAPPING; map: a split's CPU layers and lazily built layers
-    /// read in place on the CPU).
-    /// </summary>
-    public IWeightMapping? WeightMapping { get; init; }
-
     // The placement the layers follow the memory with at step boundaries, with its request at load (PretrainedModel.Load
     // sets it when the placement may move layers), or null: they stay where they are built.
     internal (IWeightPlacement Placement, WeightPlacementRequest Request)? FollowMemory { get; init; }
-
-    /// <summary>
-    /// Store every Linear layer (attention, feed-forward and output head) as int8: each weight is quantized on the host as
-    /// it is read, so a large model never exists as float32 on the device.
-    /// </summary>
-    public bool Int8 { get; init; }
-
-    /// <summary>
-    /// Store the projections as bfloat16 (half the float32 memory, values to about 3 significant digits; exact for
-    /// checkpoints stored in bfloat16). <see cref="Int8"/> takes precedence.
-    /// </summary>
-    public bool BFloat16 { get; init; }
-
-    /// <summary>
-    /// Store the projections as 4-bit weights (see <see cref="Int4Weight"/>): about 5 bits per weight, quantized on the host
-    /// as they are read. <see cref="Int8"/> takes precedence; this over <see cref="BFloat16"/>.
-    /// </summary>
-    public bool Int4 { get; init; }
-
-    /// <summary>
-    /// Store the projections in the packed format registered under this name (see <see cref="PackedWeightFormats.Names"/>:
-    /// "int8", "int4", "bfloat16", or a format of your own added with <see cref="PackedWeightFormats.Register"/>), packed on the
-    /// host as they are read. Takes precedence over <see cref="Int8"/>, <see cref="Int4"/> and <see cref="BFloat16"/>.
-    /// </summary>
-    public string? PackedFormatName { get; init; }
-
-    /// <summary>
-    /// Store the output head in the packed format registered under this name ("bfloat16", "int8", "int4", or one's own)
-    /// instead of the projections' format; null packs it as the projections. Only for builds whose projections are packed.
-    /// A tied head packed as bfloat16 is the model's only vocabulary table (the embedding reads its columns): with int8 or
-    /// int4 projections that keeps the checkpoint's own next-token scores and lookups (exact for a bfloat16 checkpoint) in
-    /// less memory than a packed head beside a separate bfloat16 table, at the cost of reading twice (int8) or about three
-    /// times (int4) the head's bytes per generated token.
-    /// </summary>
-    public string? HeadFormatName { get; init; }
-
-    /// <summary>
-    /// Where a frozen build's separate token table lives (one beside a head of another format; a bfloat16 head is the
-    /// table itself and stays with the head) on a device that can keep it in system memory: null takes
-    /// <see cref="ComputeResources.LookupTables"/> (IDRAK_LOOKUP_TABLES; automatic by default).
-    /// </summary>
-    public LookupTablePlacement? LookupTables { get; init; }
-
-    // The packed weights a load keeps between loads (PretrainedOptions.PackedCache), or null: set by PretrainedModel.Load.
-    internal PackedWeightCache? PackedCache { get; init; }
 
     /// <summary>
     /// Standard deviation of a normal initialization of every weight matrix and embedding table (biases zero, norm gains

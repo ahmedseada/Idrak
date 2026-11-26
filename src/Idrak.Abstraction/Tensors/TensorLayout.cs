@@ -284,9 +284,7 @@ public static class TensorViews
     /// <summary>
     /// Whether permutes, transposes, narrows, selects and expands return views sharing their input's storage where the
     /// device reads strides: on unless <see cref="EnvironmentVariable"/> turns it off (today's copies, to check against).
-    /// Results are the same either way. While recorded activations are kept as bfloat16
-    /// (<see cref="ActivationMemory.CompressToBFloat16"/>) these operations copy: a copy is packed to half its size, where a
-    /// view would keep its source's float values.
+    /// Results are the same either way.
     /// </summary>
     public static bool Enabled { get; set; } =
         Environment.GetEnvironmentVariable(EnvironmentVariable)?.Trim().ToLowerInvariant() is not ("0" or "false" or "off" or "no");

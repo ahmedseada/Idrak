@@ -37,51 +37,6 @@ public sealed class Embedding : Module, INamedWeights, IOffloadableLayer
         Weight = weight;
     }
 
-    private Embedding(BFloat16Weight packed)
-    {
-        Vocabulary = packed.Rows;
-        Dim = packed.Columns;
-        BFloat16 = packed;
-    }
-
-    private Embedding(Linear head)
-    {
-        Vocabulary = head.OutFeatures;
-        Dim = head.InFeatures;
-        _head = head;
-        head.SharedTable = this;
-    }
-
-    /// <summary>
-    /// A lookup table that reads the columns of a tied output head's bfloat16 weights [dim, vocabulary]: id i is column
-    /// i, so the model holds one copy of the table, the head's (a decoder whose embeddings are tied to a packed
-    /// bfloat16 head: half the table memory of a separate embedding). The head owns the weights; the table is fixed. When
-    /// the head's weights change format (<c>ToFloat32</c>, quantizing), the embedding takes its own bfloat16 copy first,
-    /// so its values never change.
-    /// </summary>
-    /// <exception cref="ArgumentException">The head does not hold bfloat16 weights, or already serves an embedding.</exception>
-    public static Embedding FromHead(Linear head)
-    {
-        ArgumentNullException.ThrowIfNull(head);
-        if (head.BFloat16 is null || head.SharedTable is not null)
-        {
-            throw new ArgumentException($"{head} must hold bfloat16 weights [dim, vocabulary] and serve no other embedding.", nameof(head));
-        }
-
-        return new Embedding(head);
-    }
-
-    /// <summary>The output head whose bfloat16 weights this table reads (see <see cref="FromHead"/>), else null.</summary>
-    public Linear? Head => _head;
-
-    private Linear? _head;
-
-    /// <summary>
-    /// A lookup table around existing bfloat16 weights [vocabulary, dim] (half the memory of float32; lossless for tables
-    /// stored in bfloat16, as most checkpoints are); the layer takes ownership. The table is fixed (not trained).
-    /// </summary>
-    public static Embedding FromBFloat16(BFloat16Weight weight) => new(weight);
-
     /// <summary>A lookup table around existing weights [vocabulary, dim]; the layer takes ownership.</summary>
     public static Embedding FromWeights(Tensor weight) =>
         weight.Rank == 2 ? new Embedding(weight) : throw new ArgumentException($"Embedding weights must be [vocabulary, dim], got {Tensor.FormatShape(weight.Shape)}.");
@@ -95,108 +50,25 @@ public sealed class Embedding : Module, INamedWeights, IOffloadableLayer
     /// <summary>The [vocabulary, dim] table.</summary>
     public Tensor Weight
     {
-        get => _weight ?? throw new InvalidOperationException($"{this} holds a bfloat16 table (see BFloat16); call ToFloat32() on the model to get float weights back.");
+        get => _weight!;
         private set => _weight = value;
     }
 
     private Tensor? _weight;
 
-    /// <summary>The bfloat16 table when the layer holds one (see <see cref="FromBFloat16"/>), else null.</summary>
-    public BFloat16Weight? BFloat16 { get; private set; }
-
     /// <inheritdoc />
-    protected override Tensor ForwardCore(Tensor input) =>
-        _head is { } head ? Tensor.EmbeddingLookupColumns(head.BFloat16!, input)
-        : BFloat16 is { } h ? Tensor.EmbeddingLookup(h, input) : Weight.EmbeddingLookup(input);
+    protected override Tensor ForwardCore(Tensor input) => Weight.EmbeddingLookup(input);
 
     /// <inheritdoc />
     public override IEnumerable<Tensor> Parameters() => _weight is null ? [] : [_weight];
 
-    /// <inheritdoc />
-    public override IEnumerable<Tensor> Buffers() => BFloat16 is { } h ? [h.Packed] : [];
-
-    internal Device Device => _head?.Device ?? (_weight ?? BFloat16!.Packed).Device;
+    internal Device Device => Weight.Device;
 
     // The table's values [vocabulary, dim] on the host.
-    internal float[] WeightValues()
-    {
-        if (_head is { } head)
-        {
-            using var columns = head.BFloat16!.Dequantize();                          // [dim, vocabulary]
-            return HostParallel.Transpose(columns.ToArray(), Dim, Vocabulary);
-        }
-
-        if (_weight is not null)
-        {
-            return _weight.ToArray();
-        }
-
-        using var w = BFloat16!.Dequantize();
-        return w.ToArray();
-    }
-
-    internal void ToBFloat16()
-    {
-        if (_weight is null)
-        {
-            return;
-        }
-
-        BFloat16 = BFloat16Weight.Convert(_weight);
-        _weight.Dispose();
-        _weight = null;
-    }
-
-    // Loading a bfloat16 table (Module.Load): room for it, without rounding the current values the file replaces.
-    internal void LoadAsBFloat16()
-    {
-        if (_weight is null)
-        {
-            return;
-        }
-
-        BFloat16 = BFloat16Weight.Empty(Vocabulary, Dim, _weight.Device);
-        _weight.Dispose();
-        _weight = null;
-    }
-
-    // Stops reading the head's weights: the table becomes a bfloat16 copy of its own (the same values), before the head
-    // changes its weights' format.
-    internal void TakeOwnTable()
-    {
-        if (_head is not { } head)
-        {
-            return;
-        }
-
-        BFloat16 = BFloat16Weight.FromValues(WeightValues(), Vocabulary, Dim, head.Device);
-        head.SharedTable = null;
-        _head = null;
-    }
-
-    internal void ToFloat32(bool trainable)
-    {
-        TakeOwnTable();
-        if (BFloat16 is not { } h)
-        {
-            return;
-        }
-
-        using (var w = h.Dequantize())
-        {
-            _weight = Tensor.Persistent(w.ToArray(), [Vocabulary, Dim], w.Device, trainable);
-        }
-
-        h.Dispose();
-        BFloat16 = null;
-    }
+    internal float[] WeightValues() => Weight.ToArray();
 
     /// <inheritdoc />
-    protected override void MoveTo(Device device)
-    {
-        _weight = _weight is null ? null : MoveTensor(_weight, device);
-        BFloat16?.MoveWeights(device, MoveTensor);
-    }
+    protected override void MoveTo(Device device) => _weight = _weight is null ? null : MoveTensor(_weight, device);
 
     /// <inheritdoc />
     /// <remarks>"weight", the [vocabulary, dim] table.</remarks>
@@ -210,5 +82,5 @@ public sealed class Embedding : Module, INamedWeights, IOffloadableLayer
     IEnumerable<Tensor> IOffloadableLayer.StagedBuffers() => [];
 
     /// <inheritdoc />
-    public override string ToString() => $"Embedding({Vocabulary} -> {Dim}{(_head is not null ? ", bf16, the head's columns" : BFloat16 is null ? "" : ", bf16")})";
+    public override string ToString() => $"Embedding({Vocabulary} -> {Dim})";
 }

@@ -443,51 +443,11 @@ public sealed partial class Tensor
     }
 
     /// <summary>
-    /// <see cref="GatedActivation(Tensor, Tensor, Generation.FeedForwardActivation)"/> for training under <see cref="ActivationMemory.CompressToBFloat16"/>:
-    /// the one kernel also writes gate and up as bfloat16 words, and evicts them to those (the backward kernel reads the
-    /// words as they are, unpacking nothing), and with <paramref name="packOutput"/> writes the output's words too, for the
-    /// caller to evict the output to (<see cref="EvictToPacked"/>) once its forward uses are done. Null when gate and up
-    /// share memory (views of one product).
-    /// </summary>
-    public static Tensor? GatedActivationCompressed(Tensor gate, Tensor up, Generation.FeedForwardActivation activation, bool packOutput, out Storage? packedOutput)
-    {
-        int kind = (int)activation;
-        packedOutput = null;
-        gate.ThrowIfDisposed();
-        up.ThrowIfDisposed();
-        int n = gate.Size;
-        if (!gate._shape.AsSpan().SequenceEqual(up._shape) || ReferenceEquals(gate.Storage, up.Storage) || gate.Device != up.Device
-            || gate.Storage.Length != n || up.Storage.Length != n || gate.Storage.Evicted || up.Storage.Evicted || n < 2)
-        {
-            return null;
-        }
-
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        var backend = gate.Backend;
-        var y = Empty(gate._shape, gate.Device);
-        var (packedGate, packedUp) = (backend.Allocate((n + 1) / 2, zeroed: false), backend.Allocate((n + 1) / 2, zeroed: false));
-        packedOutput = packOutput ? backend.Allocate((n + 1) / 2, zeroed: false) : null;
-        backend.GatedActivationPacked(gate.Storage, up.Storage, packedGate, packedUp, y.Storage, packedOutput ?? y.Storage, n, kind, 2 | 4 | (packOutput ? 8 : 0));
-        RecordGatedActivation(gate, up, y, kind);
-        gate.EvictToPacked(packedGate);                                  // read again only by the backward kernel, as words
-        up.EvictToPacked(packedUp);
-        return Traced("gated_activation", y, start);
-    }
-
-    /// <summary>
-    /// Recomputes act(gate) · up into <paramref name="y"/> for <see cref="Evict"/>: from the bfloat16 words when gate and up
-    /// were evicted to them, else from their values.
+    /// Recomputes act(gate) · up into <paramref name="y"/> for <see cref="Evict"/> from their values.
     /// </summary>
     public static void RecomputeGatedActivation(Tensor gate, Tensor up, Tensor y, Generation.FeedForwardActivation activation)
     {
         int kind = (int)activation;
-        var (gs, us) = (gate.Storage, up.Storage);
-        if (gs is { Evicted: true, Packed: { } packedGate } && us is { Evicted: true, Packed: { } packedUp })
-        {
-            y.Backend.GatedActivationPacked(y.Storage, y.Storage, packedGate, packedUp, y.Storage, y.Storage, y.Size, kind, 1 | 4);
-            return;
-        }
-
         WithValues([gate, up], () => y.Backend.GatedActivation(gate.Storage, up.Storage, y.Storage, y.Size, kind));
     }
 
@@ -506,12 +466,6 @@ public sealed partial class Tensor
             var dgate = gate.RequiresGrad ? gate.GradientTarget(out betaGate) : g.Storage;
             var dup = up.RequiresGrad ? up.GradientTarget(out betaUp) : g.Storage;
             flags |= (betaGate == 0f ? 4 : 0) | (betaUp == 0f ? 8 : 0);
-            if (gate.Storage is { Evicted: true, Packed: { } packedGate } && up.Storage is { Evicted: true, Packed: { } packedUp })
-            {
-                gate.Backend.GatedActivationBackwardPacked(packedGate, packedUp, g.Storage, dgate, dup, gate.Size, kind, flags);   // read as words
-                return;
-            }
-
             WithValues([gate, up], () => gate.Backend.GatedActivationBackward(gate.Storage, up.Storage, g.Storage, dgate, dup, gate.Size, kind, flags));
         }, gate, up);
     }

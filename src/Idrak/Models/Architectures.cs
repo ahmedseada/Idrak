@@ -369,8 +369,8 @@ public static class PretrainedFamilies
 }
 
 /// <summary>
-/// Reads a model's weights from a safetensors checkpoint through an architecture's name mapping; bfloat16 weights of
-/// bfloat16 tensors as their stored bits (<see cref="ReadBFloat16"/>). Keeps the time spent reading and merging, for
+/// Reads a model's weights from a safetensors checkpoint through an architecture's name mapping. Keeps the time spent
+/// reading and merging, for
 /// <see cref="PretrainedModel.LoadTimes"/>.
 /// </summary>
 internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitecture architecture) : IWeightSource
@@ -391,7 +391,7 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
     /// <summary>The time spent adding the adapter's updates to the weights so far.</summary>
     public TimeSpan MergeTime => Stopwatch.GetElapsedTime(0, _mergeTicks);
 
-    /// <summary>The time spent putting bfloat16 weights read as their bits on the device so far (memory and upload).</summary>
+    /// <summary>The time spent putting weights on the device so far (memory and upload).</summary>
     public TimeSpan UploadTime => Stopwatch.GetElapsedTime(0, _uploadTicks);
 
     /// <summary>
@@ -470,243 +470,12 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
         return read;
     }
 
-    public bool ReadOutputBFloat16(string name, IReadOnlyList<int> shape, Span<ushort> destination)
-    {
-        if (reader is not IBFloat16TensorStore bits16 || AsOutputRows(name, shape) is not { } stored || reader.FormatOf(stored) != WeightFormat.BFloat16)
-        {
-            return false;
-        }
-
-        if (destination.IsEmpty)
-        {
-            return true;
-        }
-
-        long start = Stopwatch.GetTimestamp();
-        bool read = bits16.ReadBFloat16(stored, false, destination, shape[0]);   // as stored: a row of inputs an output
-        _readTicks += Stopwatch.GetTimestamp() - start;
-        return read;
-    }
-
     public string? IdentityOf(string name, IReadOnlyList<int> shape) =>
         !Deferred && Stored(name, shape) is { } stored
         && (Adapter is null || !stored.EndsWith(".weight", StringComparison.Ordinal) || !Adapter.Updates(stored[..^".weight".Length]))
         && reader.IdentityOf(stored) is { } identity
             ? $"{identity}|{(architecture.Transposed(name) ? "transposed" : "as stored")}"
             : null;
-
-    // What the stored matrices became (plan 37, Q0): kept as stored, or expanded to float32 and why.
-    private int _kept, _expanded;
-    private long _keptBytes, _expandedBytes;
-    private readonly SortedSet<string> _storedFormats = new(StringComparer.Ordinal);
-    private string? _expandedWhy;
-
-    /// <summary>What the build did with the matrices stored in a format of their own: kept or expanded; null when there were none.</summary>
-    public Abstraction.Generation.StoredWeightsSummary? StoredSummary => _kept + _expanded == 0 ? null
-        : new(_kept, _keptBytes, _expanded, _expandedBytes, [.. _storedFormats], _expandedWhy);
-
-    public Abstraction.Generation.IPackedWeight? ReadStored(string name, IReadOnlyList<int> shape, Device device, bool keep)
-    {
-        // As stored only: [outputs, inputs] in the file (blocks along the inputs), nothing added on reading (an adapter).
-        if (Deferred || shape.Count != 2 || reader is not IStoredWeightStore store || !architecture.Transposed(name)
-            || architecture.TensorName(name) is not { } storedName || !reader.Contains(storedName) || store.StoredTypeOf(storedName) is not { } type
-            || Adapter is not null && storedName.EndsWith(".weight", StringComparison.Ordinal) && Adapter.Updates(storedName[..^".weight".Length]))
-        {
-            return null;
-        }
-
-        int k = shape[0], n = shape[1];
-        string? why = !keep ? $"kept packed off ({Abstraction.Generation.WeightStorage.EnvironmentVariable}, PretrainedOptions.KeepPacked)"
-            : !Abstraction.Generation.WeightStorage.Multiplies(device.Backend, type) ? $"{device} has no {type.Name} product of its own"
-            : k % type.BlockSize != 0 ? $"rows of {k} are not whole {type.Name} blocks"
-            : null;
-        _storedFormats.Add(type.Name);
-        if (why is not null)
-        {
-            _expanded++;
-            _expandedBytes += (long)k * n * sizeof(float);
-            _expandedWhy ??= why;
-            return null;
-        }
-
-        if (Stored(name, shape) is not { } stored)
-        {
-            return null;
-        }
-
-        var bytes = GC.AllocateUninitializedArray<byte>(checked((int)type.ByteCount((long)k * n)));
-        long start = Stopwatch.GetTimestamp();
-        bool read = store.ReadStored(stored, bytes);
-        _readTicks += Stopwatch.GetTimestamp() - start;
-        if (!read)
-        {
-            return null;
-        }
-
-        long begun = Stopwatch.GetTimestamp();
-        var weight = Abstraction.Generation.StoredWeight.FromStored(type, bytes, k, n, store.ScalingOf(stored), device);
-        _uploadTicks += Stopwatch.GetTimestamp() - begun;
-        _kept++;
-        _keptBytes += weight.Bytes;
-        return weight;
-    }
-
-    // What the build read in place from the file's mapping and what it copied instead (plan 37, W3).
-    private int _mapped, _copied;
-    private long _mappedBytes, _copiedBytes;
-    private string? _copiedWhy;
-
-    /// <summary>"weights mapped: 14 read in place from the file (1.2 MB); 2 copied (0.1 MB): why"; null when the build asked for none.</summary>
-    public string? MappedSummary => _mapped + _copied == 0 ? null
-        : string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"weights mapped: {_mapped} matrices read in place from the file ({_mappedBytes / 1e6:0.##} MB); {_copied} copied into memory ({_copiedBytes / 1e6:0.##} MB){(_copiedWhy is null ? "" : ": " + _copiedWhy)}");
-
-    public Abstraction.Generation.IPackedWeight? ReadMapped(string name, IReadOnlyList<int> shape, Device device, bool keep)
-    {
-        if (Deferred || shape.Count != 2 || device.Backend is not IMappedStorageBackend || architecture.TensorName(name) is not { } storedName
-            || !reader.Contains(storedName))
-        {
-            return null;
-        }
-
-        // As the product reads it: [outputs, inputs] in the file (rows of inputs), nothing added on reading (an adapter).
-        int k = shape[0], n = shape[1];
-        var storedType = (reader as IStoredWeightStore)?.StoredTypeOf(storedName);
-        StoredLocation? at = null;
-        string? why = reader is not IMappedTensorStore ? "the checkpoint's format is not read in place"
-            : !architecture.Transposed(name) ? "stored [inputs, outputs], transposed on reading"
-            : Adapter is not null && storedName.EndsWith(".weight", StringComparison.Ordinal) && Adapter.Updates(storedName[..^".weight".Length]) ? "an adapter is merged into it"
-            : null;
-        if (why is null)
-        {
-            at = ((IMappedTensorStore)reader).Locate(storedName, out why);
-        }
-
-        if (at is not null && !ReferenceEquals(at.Type, ElementType.Float32))
-        {
-            // A format of its own: read in place only where it is kept (as ReadStored keeps it), else expanded at load.
-            why = !keep ? $"kept packed off ({Abstraction.Generation.WeightStorage.EnvironmentVariable}, PretrainedOptions.KeepPacked)"
-                : !Abstraction.Generation.WeightStorage.Multiplies(device.Backend, at.Type) ? $"{device} has no {at.Type.Name} product of its own"
-                : k % at.Type.BlockSize != 0 ? $"rows of {k} are not whole {at.Type.Name} blocks"
-                : null;
-        }
-
-        if (why is not null || at is null)
-        {
-            // Copied as before: kept as stored where ReadStored keeps it (its rows put back in order), else float32.
-            bool kept = storedType is not null && keep && Abstraction.Generation.WeightStorage.Multiplies(device.Backend, storedType) && k % storedType.BlockSize == 0;
-            long bytes = kept ? storedType!.ByteCount((long)k * n) : (long)k * n * sizeof(float);
-            Copied(bytes, why ?? "not located in the file");
-            return null;
-        }
-
-        if (Stored(name, shape) is not { } stored)
-        {
-            return null;
-        }
-
-        FileMapping mapping;
-        long start = Stopwatch.GetTimestamp();
-        try
-        {
-            mapping = FileMapping.Map(at.File, at.Offset, at.Length);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
-        {
-            Copied(ReferenceEquals(at.Type, ElementType.Float32) ? (long)k * n * sizeof(float) : at.Length, $"the file could not be mapped ({e.Message})");
-            return null;
-        }
-
-        var scaling = ReferenceEquals(at.Type, ElementType.Float32) ? null : (reader as IStoredWeightStore)?.ScalingOf(stored);
-        var weight = Abstraction.Generation.StoredWeight.FromMapped(at.Type, mapping, k, n, scaling, device);
-        _readTicks += Stopwatch.GetTimestamp() - start;
-        _mapped++;
-        _mappedBytes += at.Length;
-        if (!ReferenceEquals(at.Type, ElementType.Float32))
-        {
-            _storedFormats.Add(at.Type.Name);                               // kept as stored (plan 37, Q0), in place
-            _kept++;
-            _keptBytes += weight.Bytes;
-        }
-
-        return weight;
-    }
-
-    // A weight the build copied into memory where it asked for the file's mapping, counted with why.
-    private void Copied(long bytes, string why)
-    {
-        _copied++;
-        _copiedBytes += bytes;
-        _copiedWhy ??= why;
-        MappedWeights.CountCopied(bytes, "at load: " + why);
-    }
-
-    public BFloat16Weight? ReadBFloat16(string name, IReadOnlyList<int> shape, Device device, bool transposed = false)
-    {
-        if (Stored(name, shape) is not { } stored)
-        {
-            return null;
-        }
-
-        // A bfloat16 tensor's bits are the weights' bits (FromValues rounds each float32 copy back to itself), so they go
-        // to the device as 16-bit values, transposed as such where the layout needs it. Not when the adapter updates the
-        // tensor: its values change, so they are merged in float32 and rounded, as Read and the interface's default do.
-        bool storedTransposed = architecture.Transposed(name);
-        bool merged = storedTransposed && Adapter is not null && stored.EndsWith(".weight", StringComparison.Ordinal)
-            && Adapter.Updates(stored[..^".weight".Length]);
-        if (!merged && shape.Count == 2 && reader is IBFloat16TensorStore bits16 && reader.FormatOf(stored) == WeightFormat.BFloat16)
-        {
-            // On a device: a block of the stored rows at a time, transposed there where the layout needs it (FromStoredRows), so
-            // the weights are never whole in host memory.
-            var storedShape = reader.ShapeOf(stored);
-            if (device.IsGpu && storedShape.Length == 2)
-            {
-                long begun16 = Stopwatch.GetTimestamp(), reading16 = 0;
-                var streamed = BFloat16Weight.FromStoredRows(storedShape[0], storedShape[1], device, (first, count, bits) =>
-                {
-                    long start = Stopwatch.GetTimestamp();
-                    bool read = bits16.ReadBFloat16Rows(stored, first, count, bits);
-                    reading16 += Stopwatch.GetTimestamp() - start;
-                    return read;
-                }, storedTransposed != transposed);
-                _readTicks += reading16;
-                _uploadTicks += Stopwatch.GetTimestamp() - begun16 - reading16;       // the device memory, uploads and transposes
-                if (streamed is not null)
-                {
-                    return streamed;
-                }
-            }
-
-            int rows = transposed ? shape[1] : shape[0], columns = transposed ? shape[0] : shape[1];
-            long begun = Stopwatch.GetTimestamp(), reading = 0;
-            var weight = BFloat16Weight.FromBits(rows, columns, device, (Span<ushort> bits, int stride) =>
-            {
-                long start = Stopwatch.GetTimestamp();
-                bool copied = bits16.ReadBFloat16(stored, storedTransposed != transposed, bits, stride);
-                reading = Stopwatch.GetTimestamp() - start;
-                return copied;
-            });
-            _readTicks += reading;
-            _uploadTicks += Stopwatch.GetTimestamp() - begun - reading;     // the weights' device memory and upload
-            if (weight is not null)
-            {
-                return weight;
-            }
-        }
-
-        // A float32 or float16 matrix as stored (an embedding table, or its transpose for a tied head): rounded a block of
-        // rows at a time, never held as float32 whole or transposed.
-        if (shape.Count == 2 && AsStored(name, stored)
-            && BFloat16Weight.FromRows(shape[0], shape[1], device, (first, count, destination) => ReadRows(name, shape, first, count, destination), transposed) is { } rounded)
-        {
-            return rounded;
-        }
-
-        var values = Read(name, shape)!;
-        return transposed
-            ? BFloat16Weight.FromValues(HostParallel.Transpose(values, shape[0], shape[1]), shape[1], shape[0], device)
-            : BFloat16Weight.FromValues(values, shape[0], shape[1], device);
-    }
 
     // The stored name of the weight `name` [shape] (marked used), or null when the checkpoint does not have it.
     private string? Stored(string name, IReadOnlyList<int> shape)

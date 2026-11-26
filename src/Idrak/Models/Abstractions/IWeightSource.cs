@@ -44,17 +44,6 @@ public interface IWeightSource
     bool ReadOutputRows(string name, IReadOnlyList<int> shape, int first, int count, Span<float> destination) => false;
 
     /// <summary>
-    /// The bfloat16 bits of the weight matrix <paramref name="name"/> [inputs, outputs] as its output rows (outputs rows of
-    /// inputs values) into <paramref name="destination"/>, where the source holds the matrix as bfloat16 (its bits copied:
-    /// no float32 and no transposition); with an empty <paramref name="destination"/>, only whether it can. False, having
-    /// written nothing, otherwise (the default).
-    /// </summary>
-    /// <param name="name">The tensor's name.</param>
-    /// <param name="shape">Its shape, [inputs, outputs].</param>
-    /// <param name="destination">Inputs × outputs bits, or empty to ask.</param>
-    bool ReadOutputBFloat16(string name, IReadOnlyList<int> shape, Span<ushort> destination) => false;
-
-    /// <summary>
     /// A text that changes whenever the values <see cref="Read"/> gives for <paramref name="name"/> [<paramref name="shape"/>]
     /// may change (where the stored tensor is, its file's size and time of change), for a cache of what is made from them
     /// (packed weights): the tensor counts as used, as a read would make it. Null when the source cannot say (the default,
@@ -63,57 +52,4 @@ public interface IWeightSource
     /// <param name="name">The tensor's name.</param>
     /// <param name="shape">Its shape.</param>
     string? IdentityOf(string name, IReadOnlyList<int> shape) => null;
-
-    /// <summary>
-    /// The matrix <paramref name="name"/> [rows, columns] (<paramref name="shape"/>) kept in its file's format on
-    /// <paramref name="device"/> (plan 37, Q0: a <see cref="Abstraction.Generation.StoredWeight"/>, whose products equal the
-    /// float32 weights' bit for bit), when the source stores it so, <paramref name="keep"/> allows it and the device
-    /// multiplies that format; null otherwise (the default), and the caller reads float32 values. A source that tallies
-    /// what it kept and expanded counts the weight either way.
-    /// </summary>
-    /// <param name="name">The tensor's name.</param>
-    /// <param name="shape">Its shape, [rows, columns] (inputs, outputs).</param>
-    /// <param name="device">Where the weights are created.</param>
-    /// <param name="keep">Whether weights may be kept as stored (<c>DecoderBuildOptions.KeepPacked</c>).</param>
-    Abstraction.Generation.IPackedWeight? ReadStored(string name, IReadOnlyList<int> shape, Device device, bool keep) => null;
-
-    /// <summary>
-    /// The matrix <paramref name="name"/> [rows, columns] (<paramref name="shape"/>) read in place from the checkpoint's file
-    /// mapping on <paramref name="device"/> (plan 37, W3: a <see cref="Abstraction.Generation.StoredWeight"/> over the
-    /// mapped bytes, whose products equal the float32 weights' bit for bit, with no second copy in memory), when the file
-    /// holds it as the product reads it (float32, or a format of its own <paramref name="keep"/> allows and the device
-    /// multiplies, as <see cref="ReadStored"/>) and the device reads a mapping in place
-    /// (<see cref="IMappedStorageBackend"/>); null otherwise (the default), and the caller reads it as before. A source that
-    /// counts copies counts the weight's then (<see cref="MappedWeights"/>), with why.
-    /// </summary>
-    /// <param name="name">The tensor's name.</param>
-    /// <param name="shape">Its shape, [rows, columns] (inputs, outputs).</param>
-    /// <param name="device">Where the weights are created.</param>
-    /// <param name="keep">Whether weights stored in a format of their own may be kept in it (<c>DecoderBuildOptions.KeepPacked</c>).</param>
-    Abstraction.Generation.IPackedWeight? ReadMapped(string name, IReadOnlyList<int> shape, Device device, bool keep) => null;
-
-    /// <summary>
-    /// The matrix <paramref name="name"/> [rows, columns] (<paramref name="shape"/>, as <see cref="Read"/> takes it), or its
-    /// transpose [columns, rows] when <paramref name="transposed"/>, as bfloat16 weights on <paramref name="device"/>; null
-    /// when the source does not have it. Always the weights <see cref="BFloat16Weight.FromValues(ReadOnlySpan{float}, int, int, Device)"/>
-    /// makes from <see cref="Read"/>'s values, bit for bit; the default makes exactly those. A source that holds the values
-    /// as bfloat16 (a checkpoint's stored bits) copies them instead (<see cref="BFloat16Weight.FromBits"/>), so the build
-    /// never holds a float32 copy of the matrix: <c>DecoderSpec.Build</c> reads its bfloat16 projections, head and
-    /// embedding table through this.
-    /// </summary>
-    /// <param name="name">The tensor's name.</param>
-    /// <param name="shape">Its shape, [rows, columns].</param>
-    /// <param name="device">Where the weights are created.</param>
-    /// <param name="transposed">Make the weights of the transpose, [columns, rows] (a tied head from the embedding table).</param>
-    BFloat16Weight? ReadBFloat16(string name, IReadOnlyList<int> shape, Device device, bool transposed = false)
-    {
-        if (Read(name, shape) is not { } values)
-        {
-            return null;
-        }
-
-        return transposed
-            ? BFloat16Weight.FromValues(HostParallel.Transpose(values, shape[0], shape[1]), shape[1], shape[0], device)
-            : BFloat16Weight.FromValues(values, shape[0], shape[1], device);
-    }
 }

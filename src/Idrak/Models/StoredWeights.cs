@@ -7,93 +7,21 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Models;
 
 /// <summary>
-/// Building layers from a checkpoint's tensors in the precision they are stored in (family-neutral: any encoder a vision
-/// family builds from an <see cref="ITensorStore"/>). A bfloat16 checkpoint's projection weights can stay bfloat16: the
-/// values are the same as float32 copies of them, and the products read them into float32 sums, so the layer computes
-/// what a float32 layer holding those values computes, in half the memory.
+/// Building layers from a checkpoint's tensors (family-neutral: any encoder a vision family builds from an
+/// <see cref="ITensorStore"/>): float32 layers of the values the checkpoint stores.
 /// </summary>
 public static class StoredWeights
 {
     /// <summary>
-    /// Whether projection weights read from <paramref name="names"/> are kept as bfloat16 under
-    /// <paramref name="weights"/>: <see cref="EncoderWeights.BFloat16"/> always, <see cref="EncoderWeights.AsStored"/>
-    /// when every one of them is stored as bfloat16 (<see cref="ITensorStore.FormatOf"/>), <see cref="EncoderWeights.Float32"/> never.
-    /// </summary>
-    /// <param name="store">The checkpoint's tensors.</param>
-    /// <param name="weights">What the caller asked for.</param>
-    /// <param name="names">The stored tensors the layer's weight is made of (several when they are joined, as q, k and v).</param>
-    public static bool KeepsBFloat16(ITensorStore store, EncoderWeights weights, params IEnumerable<string> names)
-    {
-        ArgumentNullException.ThrowIfNull(store);
-        ArgumentNullException.ThrowIfNull(names);
-        return weights switch
-        {
-            EncoderWeights.BFloat16 => true,
-            EncoderWeights.AsStored => names.All(n => store.FormatOf(n) == WeightFormat.BFloat16),
-            _ => false,
-        };
-    }
-
-    /// <summary>
-    /// Whether projection weights read from <paramref name="names"/> are kept as IEEE half precision under
-    /// <paramref name="weights"/>: <see cref="EncoderWeights.Float16"/> always, <see cref="EncoderWeights.AsStored"/>
-    /// when every one of them is stored as float16, otherwise never.
-    /// </summary>
-    public static bool KeepsFloat16(ITensorStore store, EncoderWeights weights, params IEnumerable<string> names)
-    {
-        ArgumentNullException.ThrowIfNull(store);
-        ArgumentNullException.ThrowIfNull(names);
-        return weights switch
-        {
-            EncoderWeights.Float16 => true,
-            EncoderWeights.AsStored => names.All(n => store.FormatOf(n) == WeightFormat.Float16),
-            _ => false,
-        };
-    }
-
-    /// <summary>
-    /// The precision projection weights read from <paramref name="names"/> keep under <paramref name="weights"/>:
-    /// bfloat16 (<see cref="KeepsBFloat16"/>), float16 (<see cref="KeepsFloat16"/>) or float32.
-    /// </summary>
-    public static WeightFormat Kept(ITensorStore store, EncoderWeights weights, params IEnumerable<string> names)
-    {
-        var list = names as IReadOnlyCollection<string> ?? [.. names];
-        return KeepsBFloat16(store, weights, list) ? WeightFormat.BFloat16 : KeepsFloat16(store, weights, list) ? WeightFormat.Float16 : WeightFormat.Float32;
-    }
-
-    /// <summary>
-    /// A <see cref="Layers.Linear"/> layer y = x · W (+ b) from host values W [<paramref name="inputs"/>, <paramref name="outputs"/>]
-    /// kept in <paramref name="kept"/>: bfloat16 or float16 weights (fixed; rounded to nearest, exact for the values a
-    /// checkpoint of that precision stores), else float32 weights that train. The bias stays as given.
-    /// </summary>
-    public static Linear Linear(float[] values, int inputs, int outputs, Tensor? bias, WeightFormat kept, Device device)
-    {
-        ArgumentNullException.ThrowIfNull(values);
-        ArgumentNullException.ThrowIfNull(device);
-        if (values.Length != inputs * outputs)
-        {
-            throw new ArgumentException($"{values.Length} values do not fill [{inputs}, {outputs}].", nameof(values));
-        }
-
-        return kept switch
-        {
-            WeightFormat.BFloat16 => Layers.Linear.FromBFloat16(BFloat16Weight.FromValues(values, inputs, outputs, device), bias),
-            WeightFormat.Float16 => Layers.Linear.FromPacked(Float16Weight.FromValues(values, inputs, outputs, device), bias),
-            _ => Layers.Linear.FromWeights(Tensor.Persistent(values, [inputs, outputs], device, requiresGrad: true), bias),
-        };
-    }
-
-    /// <summary>
     /// A <see cref="Layers.Linear"/> layer y = x · W (+ b) from host values W [<paramref name="inputs"/>, <paramref name="outputs"/>]:
-    /// bfloat16 weights (fixed) when <paramref name="bfloat16"/>, else float32 weights that train. The bias stays as given.
+    /// float32 weights that train. The bias stays as given.
     /// </summary>
     /// <param name="values">W, row-major [inputs, outputs].</param>
     /// <param name="inputs">Input features.</param>
     /// <param name="outputs">Output features.</param>
     /// <param name="bias">The bias [outputs], or null; the layer takes ownership.</param>
-    /// <param name="bfloat16">Keep W as bfloat16 (rounded to nearest; exact for values a bfloat16 checkpoint stores).</param>
     /// <param name="device">Where the layer lives.</param>
-    public static Linear Linear(float[] values, int inputs, int outputs, Tensor? bias, bool bfloat16, Device device)
+    public static Linear Linear(float[] values, int inputs, int outputs, Tensor? bias, Device device)
     {
         ArgumentNullException.ThrowIfNull(values);
         ArgumentNullException.ThrowIfNull(device);
@@ -102,9 +30,7 @@ public static class StoredWeights
             throw new ArgumentException($"{values.Length} values do not fill [{inputs}, {outputs}].", nameof(values));
         }
 
-        return bfloat16
-            ? Layers.Linear.FromBFloat16(BFloat16Weight.FromValues(values, inputs, outputs, device), bias)
-            : Layers.Linear.FromWeights(Tensor.Persistent(values, [inputs, outputs], device, requiresGrad: true), bias);
+        return Layers.Linear.FromWeights(Tensor.Persistent(values, [inputs, outputs], device, requiresGrad: true), bias);
     }
 
     /// <summary>
@@ -222,11 +148,10 @@ public static class StoredWeights
 
     /// <summary>
     /// A <see cref="Layers.Linear"/> from PyTorch's <c>{name}.weight</c> [out, in] (transposed while it is read) and, when
-    /// the checkpoint has it, <c>{name}.bias</c> [out]; the weight kept as bfloat16 when <see cref="KeepsBFloat16"/> says so
-    /// for <paramref name="weights"/>.
+    /// the checkpoint has it, <c>{name}.bias</c> [out].
     /// </summary>
     /// <exception cref="InvalidDataException">The weight is missing or not 2-D, or the bias does not match it.</exception>
-    public static Linear Linear(ITensorStore store, string name, EncoderWeights weights = EncoderWeights.AsStored, Device? device = null)
+    public static Linear Linear(ITensorStore store, string name, Device? device = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentException.ThrowIfNullOrEmpty(name);
@@ -235,17 +160,7 @@ public static class StoredWeights
         var bias = Optional(store, name + ".bias", shape[0], device);
         try
         {
-            // A bfloat16 tensor kept as bfloat16 goes to the device as its stored bits, transposed as such: the weights
-            // its float32 copy would round to, without that copy (IBFloat16TensorStore.ReadBFloat16).
-            string weight = name + ".weight";
-            bool bfloat16 = KeepsBFloat16(store, weights, weight);
-            if (bfloat16 && store is IBFloat16TensorStore bits16 && store.FormatOf(weight) == WeightFormat.BFloat16
-                && BFloat16Weight.FromBits(shape[1], shape[0], device, (Span<ushort> bits, int stride) => bits16.ReadBFloat16(weight, transposed: true, bits, stride)) is { } stored)
-            {
-                return Layers.Linear.FromBFloat16(stored, bias);
-            }
-
-            return Linear(store.ReadTransposed(weight), shape[1], shape[0], bias, bfloat16 ? WeightFormat.BFloat16 : Kept(store, weights, weight), device);
+            return Linear(store.ReadTransposed(name + ".weight"), shape[1], shape[0], bias, device);
         }
         catch
         {

@@ -377,23 +377,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
 
             var (iq, ik, iv) = Project(input, rotary?.Index ?? packing?.Positions ?? Positions(t), packed: packing is not null || rotary is not null, rotary: rotary);
             var attendedImages = AttendSpans(iq, ik!, iv!, images, offset: 0, rowStarts: null);
-            ActivationMemory.Compress(iq, ik!, iv!);
             return Merge(attendedImages, n, t);
-        }
-
-        if (packing is null && !composed && Rope is null && QueryNorm is null && KeyNorm is null && FusedTraining.Enabled && input.Backend.MatrixUnitAttention(HeadDim)
-            && MixedPrecision.UsesTensorCores
-            && Linear.PlainFloat(Query) && Linear.PlainFloat(Key) && Linear.PlainFloat(Value)
-            && Linear.ProjectPacked(input, _projections) is { } packed)
-        {
-            // Queries, keys and values side by side per position, read in place by the attention kernels, which write
-            // [n, t, heads·dim] for the output projection: no head rearrangement either way.
-            if (Tensor.CausalAttentionPacked(packed, Heads, KvHeads, HeadDim, scale) is { } attended)
-            {
-                return Output.Forward(attended);
-            }
-
-            packed.Dispose();
         }
 
         var positions = packing?.Positions ?? Positions(t);
@@ -404,7 +388,6 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
             // Several sequences per row: each position attends within its own sequence only.
             var segmented = PackedSequences.CausalAttentionSegmented(q, k, v, packing, KvHeads, scale, Variant)
                 ?? throw new NotSupportedException($"Packed sequences need attention within each sequence, which {input.Device} does not provide for head size {HeadDim}{(PlainCausal ? "" : " with a sliding window or soft-capped scores")} (on CUDA: bfloat16 tensor cores, head size 64 or 128, plain causal attention only).");
-            ActivationMemory.Compress(q, k, v);
             return Merge(segmented, n, t);
         }
 
@@ -413,7 +396,6 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
             // Tiled attention, forward and backward: no [t, t] weights stored (positions[0] = 0 is the causal offset); a
             // window that masks and a cap go to the kernels with it.
             var attended = Tensor.CausalAttention(q, k, v, positions, t, scale, composed ? Variant : default);
-            ActivationMemory.Compress(q, k, v);
             return Merge(attended, n, t);
         }
 
@@ -726,7 +708,6 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
     {
         var merged = MergeHeads(context, n, t);
         var output = Output.Forward(merged);
-        ActivationMemory.Compress(context, merged);                  // read again only by the attention's and projection's backward
         return output;
     }
 
@@ -873,44 +854,16 @@ public sealed class FeedForward : Module
     protected override Tensor ForwardCore(Tensor input)
     {
         Tensor hidden;
-        if (Gate is null && Activation == FeedForwardActivation.Gelu && FusedTraining.Enabled && Linear.PlainFloat(Up) && Linear.PlainFloat(Down)
-            && input.Backend.MatrixUnits && MixedPrecision.UsesTensorCores
-            && Linear.FeedForwardGelu(input, Up, Down) is { } geluBlock)
-        {
-            return geluBlock;                                       // GELU inside the products (tensor cores)
-        }
-
         if (Gate is null)
         {
             hidden = Activate(Up.Forward(input));
         }
-        else if (!Autograd.IsEnabled && Down.KernelWeight is not { ActivationInDownProjection: true } && Linear.MatMulPackedGatedPair(input, Gate, Up, (int)Activation) is { } pair)
-        {
-            hidden = pair;                                          // act(gate) · up written by the gate/up product
-        }
         else
         {
             var projected = Linear.ForwardMany(input, _gateUp);
-            if (!Autograd.IsEnabled && Down.Adapter is null && Activation is FeedForwardActivation.Silu or FeedForwardActivation.Gelu
-                && Linear.MatMulPackedGated(projected[0], projected[1], (int)Activation, Down) is { } fused)
-            {
-                return Down.Bias is null ? fused : fused + Down.Bias;                        // activation read by the down projection
-            }
-
             var (gate, up, kind) = (projected[0], projected[1], Activation);
             bool recompute = ActivationMemory.RecomputeFeedForward && Autograd.IsEnabled;
-            Abstraction.Devices.Storage? packedHidden = null;
-            if (ActivationMemory.BFloat16 && Autograd.IsEnabled
-                && Tensor.GatedActivationCompressed(gate, up, kind, packOutput: !recompute, out packedHidden) is { } compressed)
-            {
-                hidden = compressed;                                        // gate, up (and the result) kept as bfloat16 by the kernel
-            }
-            else
-            {
-                hidden = Tensor.GatedActivation(gate, up, kind);           // act(gate) · up in one kernel
-                ActivationMemory.Compress(gate, up);                        // read again only by its backward
-            }
-
+            hidden = Tensor.GatedActivation(gate, up, kind);               // act(gate) · up in one kernel
             if (recompute)
             {
                 // Released after the down projection reads it, recomputed from gate and up when a backward step needs it.
@@ -919,28 +872,10 @@ public sealed class FeedForward : Module
                 return down;
             }
 
-            var result = Down.Forward(hidden);
-            if (packedHidden is not null)
-            {
-                hidden.EvictToPacked(packedHidden);
-            }
-            else
-            {
-                ActivationMemory.Compress(hidden);
-            }
-
-            return result;
+            return Down.Forward(hidden);
         }
         return Down.Forward(hidden);
     }
-
-    /// <summary>
-    /// Whether <see cref="DownInput"/> and a fused down projection (packed weights, no bias or adapter) can stand in for
-    /// <see cref="Module.Forward"/> at inference (formats whose down projection reads the activation keep that product). A
-    /// format of one's own qualifies too: its down projection is its own product, and the residual addition and the next
-    /// normalization after it still run as one pass.
-    /// </summary>
-    internal bool DownFusable => Down.KernelWeight is { ActivationInDownProjection: false } && Down.Bias is null && Down.Adapter is null;
 
     // The down projection's input at inference: act(gate) · up, or act(up).
     internal Tensor DownInput(Tensor input)
@@ -948,11 +883,6 @@ public sealed class FeedForward : Module
         if (Gate is null)
         {
             return Activate(Up.Forward(input));
-        }
-
-        if (Linear.MatMulPackedGatedPair(input, Gate, Up, (int)Activation) is { } pair)
-        {
-            return pair;                                            // act(gate) · up written by the gate/up product
         }
 
         var projected = Linear.ForwardMany(input, _gateUp);
@@ -1152,7 +1082,6 @@ public sealed class DecoderBlock : Module, ICachedModule, IDecoderBlock
     private Tensor Run(Tensor input, DecodingContext? context)
     {
         var normalized = AttentionNorm.Forward(input);
-        using var compressNormalized = new CompressAfter(normalized);
         bool inference = !Autograd.IsEnabled && !Dropping;
         Tensor x, fed;
         if (!Parallel && inference && Cross is null && FeedForwardNorm is RMSNorm norm)
@@ -1163,13 +1092,6 @@ public sealed class DecoderBlock : Module, ICachedModule, IDecoderBlock
                 ? AddProjected(Attention.HeadsCached(normalized, context), Attention.Output, input, norm, PostAttentionNorm as RMSNorm)
                 : Tensor.AddRmsNormAffine(input, Attend(normalized, context), norm.Gain, norm.Epsilon, norm.Offset);   // one pass
             x = sum;
-            if (PostFeedForwardNorm is null or RMSNorm && NextNorm is { } following && FeedForward is Layers.FeedForward { DownFusable: true } dense)
-            {
-                var (output, nextInput) = AddProjected(dense.DownInput(fedInput), dense.Down, x, following, PostFeedForwardNorm as RMSNorm);
-                RMSNorm.HandOff(following, output, nextInput);
-                return output;
-            }
-
             fed = FeedForward.Forward(fedInput);
         }
         else
@@ -1197,7 +1119,6 @@ public sealed class DecoderBlock : Module, ICachedModule, IDecoderBlock
 
             var fedInput = FeedForwardNorm!.Forward(x);
             fed = FeedForward.Forward(fedInput);
-            ActivationMemory.Compress(fedInput);
         }
 
         if (PostFeedForwardNorm is not null)
@@ -1241,15 +1162,10 @@ public sealed class DecoderBlock : Module, ICachedModule, IDecoderBlock
         return normed;
     }
 
-    // residual + projection(h) and its normalization: one pass for packed weights and few rows, else the projection
-    // followed by the fused addition and normalization. With `after` (the norm after the projection in a sandwich block),
-    // residual + after(projection(h)): one pass too, else the projection, that norm, then the addition and normalization.
+    // residual + projection(h) and its normalization: the projection followed by the fused addition and normalization.
+    // With `after` (the norm after the projection in a sandwich block), residual + after(projection(h)).
     private static (Tensor Sum, Tensor Normalized) AddProjected(Tensor h, Linear projection, Tensor residual, RMSNorm norm, RMSNorm? after = null) =>
-        after is null
-            ? Linear.MatMulPackedAddRmsNorm(h, projection, residual, norm)
-              ?? Tensor.AddRmsNormAffine(residual, projection.Forward(h), norm.Gain, norm.Epsilon, norm.Offset)
-            : Linear.MatMulPackedNormAddRmsNorm(h, projection, after, residual, norm)
-              ?? Tensor.AddRmsNormAffine(residual, after.Forward(projection.Forward(h)), norm.Gain, norm.Epsilon, norm.Offset);
+        Tensor.AddRmsNormAffine(residual, after is null ? projection.Forward(h) : after.Forward(projection.Forward(h)), norm.Gain, norm.Epsilon, norm.Offset);
 
     /// <inheritdoc />
     public override string ToString() => $"DecoderBlock({(Parallel ? "parallel" : "sequential")}{(Cross is null ? "" : ", cross-attention")})";
@@ -1321,12 +1237,6 @@ public sealed class PositionEmbedding : Module, ICachedModule, INamedWeights, IP
 
     /// <inheritdoc />
     public override string ToString() => $"PositionEmbedding({MaxPositions} x {Weight.Shape[1]})";
-}
-
-/// <summary>Switch for the fused tensor-core training paths of the decoder layers (tests compare them with the composed ones).</summary>
-internal static class FusedTraining
-{
-    public static bool Enabled = true;
 }
 
 /// <summary>Multiplies its input by a constant (for example the √dim embedding scale of some models).</summary>

@@ -773,13 +773,9 @@ public sealed partial class Tensor : IDisposable
     // restored for them.
     private static readonly HashSet<string> OwnValuesUnread =
     [
-        "reshape", "permute", "add_bias", "add_dropout", "rope", "group_affine", "lora", "lora_fused", "gated_activation",
-        "matmul", "matmul_bias", "matmul_frozen", "matmul_bf16", "matmul_int8", "matmul_int4", "matmul_packed", "embedding",
+        "reshape", "permute", "add_bias", "add_dropout", "rope", "group_affine", "lora", "gated_activation", "matmul", "matmul_bias",
+        "matmul_frozen", "embedding",
     ];
-
-    // Operations whose backward step reads its inputs' bfloat16 words (Storage.Packed) itself: an input evicted with a
-    // packed copy is not unpacked for them.
-    private static readonly HashSet<string> ReadsPackedInputs = ["gated_activation"];
 
     // The storages a node's backward step may read (its own and its inputs'), into reads.
     private static void Reads(Tensor node, List<Storage> reads)
@@ -795,49 +791,10 @@ public sealed partial class Tensor : IDisposable
             reads.Add(node._storage);
         }
 
-        bool packedInputs = ReadsPackedInputs.Contains(node._operation ?? "");
         foreach (var parent in node._parents ?? [])
         {
-            if (!(packedInputs && parent._storage.Evicted && parent._storage.Packed is not null))
-            {
-                reads.Add(parent._storage);
-            }
+            reads.Add(parent._storage);
         }
-    }
-
-    /// <summary>
-    /// Keeps this tensor's values as bfloat16 until a backward step reads them: a packed copy (half the memory) replaces
-    /// the float values, which are unpacked when needed (<see cref="Evict"/>). For activations that only backward steps
-    /// read, and whose precision bfloat16 keeps (inputs of tensor-core products, which round them to bfloat16 anyway).
-    /// </summary>
-    internal void CompressToBFloat16()
-    {
-        if (_disposed != 0 || Storage.Evicted || Storage.Packed is not null || Size < 2)
-        {
-            return;
-        }
-
-        var packed = Backend.Allocate((Size + 1) / 2, zeroed: false);
-        Backend.PackBFloat16(Storage, packed, Size);
-        EvictToPacked(packed);
-    }
-
-    /// <summary>
-    /// Releases the values, keeping <paramref name="packed"/> (their bfloat16 words, which this tensor now owns) to unpack
-    /// them from when a backward step needs them, or for kernels that read the words themselves (<see cref="Storage.Packed"/>).
-    /// </summary>
-    public void EvictToPacked(Storage packed)
-    {
-        if (_disposed != 0 || Storage.Evicted || Storage.Packed is not null)
-        {
-            packed.Release();
-            return;
-        }
-
-        int n = Size;
-        Backend.Evict(Storage, s => s.Backend.BFloat16Dequantize(packed, s, 1, n));
-        Storage.Packed = packed;
-        Storage.Released = packed.Release;
     }
 
     /// <summary>Runs <paramref name="action"/> with the values of <paramref name="tensors"/> in memory (evicted ones restored, then evicted again).</summary>

@@ -10,7 +10,7 @@ namespace Idrak.Layers;
 /// (any leading dimensions, e.g. [batch, time, features] for sequences).
 /// Weights start Xavier/Glorot-uniform and the bias starts at zero.
 /// </summary>
-public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, ITiedWeights, INamedWeights, IOffloadableLayer
+public sealed partial class Linear : Module, IAdaptableLinear, ITiedWeights, INamedWeights, IOffloadableLayer
 {
     /// <summary>Creates the layer on <paramref name="device"/> (default: <see cref="Device.Default"/>).</summary>
     /// <param name="inFeatures">Size of each input row.</param>
@@ -32,12 +32,11 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
         Bias = bias ? CreateParameter(new float[outFeatures], [outFeatures], device) : null;
     }
 
-    private Linear(int inFeatures, int outFeatures, Tensor? weight, IPackedWeight? packed, Tensor? bias)
+    private Linear(int inFeatures, int outFeatures, Tensor? weight, Tensor? bias)
     {
         InFeatures = inFeatures;
         OutFeatures = outFeatures;
         _weight = weight;
-        SetPacked(packed);
         Bias = bias;
     }
 
@@ -52,28 +51,16 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
             throw new ArgumentException($"Linear weights must be [in, out] with a bias [out]; got {Tensor.FormatShape(weight.Shape)} and {(bias is null ? "no bias" : Tensor.FormatShape(bias.Shape))}.");
         }
 
-        return new Linear(weight.Shape[0], weight.Shape[1], weight, null, bias);
+        return new Linear(weight.Shape[0], weight.Shape[1], weight, bias);
     }
 
     /// <summary>
-    /// A layer around existing packed weights (int8, 4-bit, bfloat16, or a format of your own, an
-    /// <see cref="IPackedWeight"/>); the layer takes ownership.
-    /// </summary>
-    public static Linear FromPacked(IPackedWeight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
-
-    /// <summary>A layer around existing int8 weights (see <see cref="ModuleExtensions.QuantizeInt8"/>); the layer takes ownership.</summary>
-    public static Linear FromInt8(Int8Weight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
-
-    /// <summary>A layer around existing bfloat16 weights (see <see cref="ModuleExtensions.ToBFloat16"/>); the layer takes ownership.</summary>
-    public static Linear FromBFloat16(BFloat16Weight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
-
-    /// <summary>
     /// An output layer tied to <paramref name="embedding"/>: y = x · Eᵀ (+ b) with the embedding's [vocabulary, dim] table,
-    /// read in place (one copy of the table; gradients reach the shared table, as in tied language models). Converting
-    /// the layer (int8, int4, bfloat16) or merging an adapter gives it its own copy first.
+    /// read in place (one copy of the table; gradients reach the shared table, as in tied language models). Merging an
+    /// adapter gives the layer its own copy first.
     /// </summary>
     public static Linear Tied(Embedding embedding, Tensor? bias = null) =>
-        new(embedding.Dim, embedding.Vocabulary, null, null, bias) { _tiedTo = embedding };
+        new(embedding.Dim, embedding.Vocabulary, null, bias) { _tiedTo = embedding };
 
     /// <summary>The embedding this layer reads its weights from (see <see cref="Tied"/>), else null.</summary>
     public Embedding? TiedTo => _tiedTo;
@@ -81,16 +68,7 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
     /// <inheritdoc />
     Module? ITiedWeights.WeightsOf => _tiedTo;
 
-    /// <summary>
-    /// The embedding that reads this layer's bfloat16 weights as its table (<see cref="Embedding.FromHead"/>), else null.
-    /// Before the weights change format the embedding is given its own copy.
-    /// </summary>
-    public Embedding? SharedTable { get; internal set; }
-
     private Embedding? _tiedTo;
-
-    /// <summary>A layer around existing 4-bit weights (see <see cref="ModuleExtensions.QuantizeInt4"/>); the layer takes ownership.</summary>
-    public static Linear FromInt4(Int4Weight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
 
     /// <summary>Number of input features.</summary>
     public int InFeatures { get; }
@@ -99,35 +77,7 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
     public int OutFeatures { get; }
 
     /// <summary>The [inFeatures, outFeatures] weight matrix.</summary>
-    public Tensor Weight => _weight ?? throw new InvalidOperationException(_tiedTo is not null
-        ? $"{this} reads the embedding table of {_tiedTo} (transposed); use TiedTo.Weight."
-        : $"{this} holds {_packed!.Description} weights (see {_packed.GetType().Name}); call {_packed.FloatMethod} on the model to get float weights back.");
-
-    /// <summary>The packed weights (int8, int4, bfloat16 or a format of your own) when the layer holds them, else null (float weights).</summary>
-    public IPackedWeight? PackedWeight => _packed;
-
-    /// <summary>
-    /// The packed weights when they are in a built-in format the device kernels read (int8, int4, bfloat16), else null
-    /// (float weights, or a format of one's own, which runs its own product).
-    /// </summary>
-    public IKernelPackedWeight? KernelWeight => _kernel;
-
-    // The packed weights, and what they can do, tested once when the layer takes them (SetPacked).
-    private IPackedWeight? _packed;
-    private IKernelPackedWeight? _kernel;
-    private bool _recordable;
-
-    /// <summary>The 4-bit weights when the layer holds them (see <see cref="ModuleExtensions.QuantizeInt4"/>), else null.</summary>
-    public Int4Weight? Int4 => _packed as Int4Weight;
-
-    // Whether the weights are packed (int8, int4 or bfloat16) rather than a float tensor.
-    internal bool Packed => _packed is not null;
-
-    /// <summary>The bfloat16 weights when the layer holds them (see <see cref="ModuleExtensions.ToBFloat16"/>), else null.</summary>
-    public BFloat16Weight? BFloat16 => _packed as BFloat16Weight;
-
-    /// <summary>The int8 weights when the layer was quantized with <see cref="ModuleExtensions.QuantizeInt8"/>, else null.</summary>
-    public Int8Weight? Int8 => _packed as Int8Weight;
+    public Tensor Weight => _weight ?? throw new InvalidOperationException($"{this} reads the embedding table of {_tiedTo} (transposed); use TiedTo.Weight.");
 
     private Tensor? _weight;
 
@@ -143,7 +93,7 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
     /// </summary>
     public ILinearAdapter? Adapter { get; set; }
 
-    /// <summary>The adapter when it is a plain LoRA adapter (the fused LoRA products read only those), else null.</summary>
+    /// <summary>The adapter when it is a plain LoRA adapter, else null.</summary>
     public LoraAdapter? Lora => Adapter as LoraAdapter;
 
     /// <summary>
@@ -177,11 +127,6 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
             return Tensor.MatMulBias(input, _weight, Bias);                 // one pass on tensor cores
         }
 
-        if (Bias is { RequiresGrad: false } && Lora is not null && Linear.LoraProducts(input, Alone) is [var withBias])
-        {
-            return withBias;                                            // the frozen bias added inside the fused product
-        }
-
         var product = ProjectWithoutBias(input);
         if (Bias is null)
         {
@@ -195,7 +140,7 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
 
     /// <summary>
     /// The outputs of several layers applied to the same input. When nothing needs gradients and the layers are plain
-    /// float projections (no adapter, not int8) with few input rows, they run as one device pass over the input
+    /// float projections (no adapter) with few input rows, they run as one device pass over the input
     /// (token-by-token decoding: query/key/value, gate/up); otherwise each layer runs on its own.
     /// </summary>
     internal static Tensor[] ForwardMany(Tensor input, params Linear[] layers)
@@ -218,45 +163,6 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
             }
 
             return Tensor.MatMulMany(input, weights, biases);
-        }
-
-        // Stored weights of one type (ProductRoutes: the file's layout): the few-row products in one device pass where the
-        // device has one (StoredMatMulManyKernel), each output as its own product computes it.
-        if (!Autograd.IsEnabled && layers.Length is > 1 and <= 3 && input.Backend.StoredMatMulManyAvailable(rows) && Linear.MatMulStoredMany(input, layers) is { } stored)
-        {
-            return stored;
-        }
-
-        // Packed weights of one built-in kind (int8, int4, bfloat16): one pass where the device has one (few rows; for
-        // prompts, one tensor-core launch over all the layers' columns). Formats of one's own have no Format and no such
-        // pass: each layer runs its own product.
-        var format = layers[0]._kernel?.Format;
-        bool packed = format is not null && !Autograd.IsEnabled && layers.Length is > 1 and <= 3
-            && (rows <= capabilities.FewRows || AllWithoutBias(layers))                            // prompts: one launch
-            && AllPacked(layers, k, format, withoutAdapters: true);
-        if (packed && Linear.MatMulPackedMany(input, format!.Value, layers) is { } outputs)
-        {
-            return outputs;
-        }
-
-        // Adapters on every layer (LoRA / QLoRA, training or evaluation): one pass with each low-rank term inside its product.
-        if (AllLora(layers) && Linear.LoraProducts(input, layers) is { } lora)
-        {
-            return lora;
-        }
-
-        // Training over frozen packed layers (LoRA / QLoRA): the base products still run as one pass, recorded, and each
-        // layer's adapter adds its low-rank term into its output.
-        bool training = format is not null && Autograd.IsEnabled && layers.Length is > 1 and <= 3 && fusedKernels
-            && AllWithoutBias(layers) && AllPacked(layers, k, format, withoutAdapters: false);
-        if (training && Linear.MatMulPackedManyRecorded(input, format!.Value, layers) is { } products)
-        {
-            for (int j = 0; j < products.Length; j++)
-            {
-                products[j] = layers[j].Adapter is { } a ? a.Forward(layers[j], input, products[j]) : products[j];
-            }
-
-            return products;
         }
 
         var results = new Tensor[layers.Length];
@@ -288,7 +194,7 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
     {
         foreach (var l in layers)
         {
-            if (l.Packed || l.TiedTo is not null || l.Adapter is not null || l.InFeatures != k || (long)l.OutFeatures * k < 1 << 16)
+            if (l.TiedTo is not null || l.Adapter is not null || l.InFeatures != k || (long)l.OutFeatures * k < 1 << 16)
             {
                 return false;
             }
@@ -297,89 +203,23 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
         return true;
     }
 
-    private static bool AllWithoutBias(Linear[] layers)
-    {
-        foreach (var l in layers)
-        {
-            if (l.Bias is not null)
-            {
-                return false;
-            }
-        }
+    /// <summary>gelu(x·W + b) for inference (a feed-forward block's first projection): x·W then <see cref="Tensor.BiasGelu"/> (without a bias, the layer then gelu).</summary>
+    internal Tensor ProjectGelu(Tensor input) => Bias is { } bias ? ProjectWithoutBias(input).BiasGelu(bias) : Forward(input).Gelu();
 
-        return true;
-    }
+    /// <summary>x·W + b for inference: the layer.</summary>
+    internal Tensor ProjectBiased(Tensor input) => Forward(input);
 
-    // Packed weights of `format` reading k features (and no adapter, when asked).
-    private static bool AllPacked(Linear[] layers, int k, PackedFormat? format, bool withoutAdapters)
-    {
-        foreach (var l in layers)
-        {
-            if (withoutAdapters && l.Adapter is not null || l.InFeatures != k || l._kernel?.Format != format)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    // A LoRA adapter on every layer, and no bias that trains.
-    private static bool AllLora(Linear[] layers)
-    {
-        foreach (var l in layers)
-        {
-            if (l.Lora is null || l.Bias is { RequiresGrad: true })
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    // This layer as a list of one, for the products over several layers: made once, not on every adapted forward.
-    private Linear[] Alone => _alone ??= [this];
-
-    private Linear[]? _alone;
-
-    /// <summary>
-    /// gelu(x·W + b) for inference (a feed-forward block's first projection): in the product's epilogue where the layer can
-    /// (<see cref="EpilogueReady"/>), else x·W then <see cref="Tensor.BiasGelu"/> (without a bias, the layer then gelu).
-    /// </summary>
-    internal Tensor ProjectGelu(Tensor input) =>
-        EpilogueReady(input, null) ? Tensor.MatMulPackedEpilogue(input, _packed!, Bias, gelu: true)
-        : Bias is { } bias ? ProjectWithoutBias(input).BiasGelu(bias) : Forward(input).Gelu();
-
-    /// <summary>x·W + b for inference: the bias in the product's epilogue where the layer can (<see cref="EpilogueReady"/>), else the layer.</summary>
-    internal Tensor ProjectBiased(Tensor input) => EpilogueReady(input, null) ? Tensor.MatMulPackedEpilogue(input, _packed!, Bias) : Forward(input);
-
-    /// <summary>
-    /// residual + (x·W + b) for inference (an output projection and its residual): in the product's epilogue where the layer
-    /// can (<see cref="EpilogueReady"/>), else the layer, then the sum.
-    /// </summary>
-    internal Tensor ProjectAdding(Tensor input, Tensor residual) =>
-        EpilogueReady(input, residual) ? Tensor.MatMulPackedEpilogue(input, _packed!, Bias, residual: residual) : residual + Forward(input);
-
-    // Bfloat16 or 4-bit weights of its own (their products are Backend.BFloat16MatMul / Int4MatMul, which the epilogue's
-    // default runs too; int8's tensor product chooses among several), a bias, nothing else in the layer, and no gradient.
-    private bool EpilogueReady(Tensor input, Tensor? residual) =>
-        _kernel is { Format: PackedFormat.BFloat16 or PackedFormat.Int4 } && Bias is not null && Adapter is null && _tiedTo is null && _softcap is null
-        && input.Rank >= 2 && !(Autograd.IsEnabled && (input.RequiresGrad || Bias.RequiresGrad || residual is { RequiresGrad: true }));
+    /// <summary>residual + (x·W + b) for inference (an output projection and its residual): the layer, then the sum.</summary>
+    internal Tensor ProjectAdding(Tensor input, Tensor residual) => residual + Forward(input);
 
     /// <summary>x·W, adapted by the adapter when one is attached.</summary>
     internal Tensor ProjectWithoutBias(Tensor input)
     {
-        if (Lora is not null && Linear.LoraProducts(input, Alone, withBias: false) is [var fused])
-        {
-            return fused;
-        }
-
         var product = BaseProduct(input);
         return Adapter is { } a ? a.Forward(this, input, product) : product;
     }
 
-    /// <summary>x·W with the layer's own weights (float, packed or tied), without bias or adapter.</summary>
+    /// <summary>x·W with the layer's own weights (float or tied), without bias or adapter.</summary>
     /// <inheritdoc cref="ILinearLayer.BaseProduct"/>
     Tensor ILinearLayer.BaseProduct(Tensor input) => BaseProduct(input);
 
@@ -393,57 +233,6 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
     void IAdaptableLinear.MergeAdapter() => MergeAdapter();
 
     /// <inheritdoc />
-    void IPackableLinear.Pack(PackedFormat format)
-    {
-        switch (format)
-        {
-            case PackedFormat.Int8:
-                QuantizeInt8();
-                break;
-            case PackedFormat.Int4:
-                QuantizeInt4();
-                break;
-            case PackedFormat.BFloat16:
-                ToBFloat16();
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(format), format, "Not a packed format.");
-        }
-    }
-
-    /// <inheritdoc />
-    void IPackableLinear.Unpack(bool trainable)
-    {
-        if (Int8 is not null)
-        {
-            DequantizeInt8(trainable);
-        }
-        else
-        {
-            ToFloat32(trainable);
-        }
-    }
-
-    /// <inheritdoc />
-    void IPackableLinear.Reserve(PackedFormat format)
-    {
-        switch (format)
-        {
-            case PackedFormat.Int8:
-                LoadAsInt8();
-                break;
-            case PackedFormat.Int4:
-                LoadAsInt4();
-                break;
-            case PackedFormat.BFloat16:
-                LoadAsBFloat16();
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(format), format, "Not a packed format.");
-        }
-    }
-
-    /// <inheritdoc />
     /// <remarks>"weight" [in, out] and "bias" when the layer has one; nothing for a tied layer (the embedding stores the table).</remarks>
     IEnumerable<(string Name, Tensor Tensor)> INamedWeights.NamedWeights() =>
         _tiedTo is not null ? [] : Bias is { } bias ? [("weight", Weight), ("bias", bias)] : [("weight", Weight)];
@@ -452,76 +241,17 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
     IEnumerable<Tensor> IOffloadableLayer.StagedParameters() => Parameters();
 
     /// <inheritdoc />
-    /// <remarks>The int8, int4, bfloat16 or other packed weights.</remarks>
     IEnumerable<Tensor> IOffloadableLayer.StagedBuffers() => Buffers();
 
-    internal Tensor BaseProduct(Tensor input) =>
-        _packed is { } packed ? PackedProduct(packed, input) : _tiedTo is { } e ? TiedProduct(input, e.Weight) : input.MatMul(Weight);
+    internal Tensor BaseProduct(Tensor input) => _tiedTo is { } e ? TiedProduct(input, e.Weight) : input.MatMul(Weight);
 
-    // The packed weights' own product; while a step is recorded as a device graph, only one that queues device work alone
-    // (IRecordable), so a step with any other is run as it is.
-    private Tensor PackedProduct(IPackedWeight packed, Tensor input) => _recordable || !ComputeGraph.IsCapturing ? packed.MatMul(input)
-        : throw new NotSupportedException($"{packed.Name} weights are not recordable (IRecordable), so the step is not recorded as a graph.");
-
-    // The tied head (x · Eᵀ). While the table is frozen, large products read a transposed bfloat16 copy made once (the
-    // tensor-core kernels would otherwise copy the whole table transposed on every call; bfloat16 is what they multiply in
-    // anyway, at half the memory of a float copy: 0.45 GB instead of 0.9 GB for a 152k × 1536 table). The input's gradient
-    // reads the table as stored.
-    private Tensor TiedProduct(Tensor input, Tensor table)
-    {
-        int rows = input.Size / Math.Max(1, InFeatures);
-        if (table.RequiresGrad || rows < 64 || !table.Backend.MatrixUnits || !MixedPrecision.UsesTensorCores)
-        {
-            _tiedTransposed?.Dispose();
-            _tiedTransposed = null;
-            return input.MatMul(table, transposeB: true);
-        }
-
-        _tiedTransposed ??= BFloat16Weight.FromValues(HostParallel.Transpose(table.ToArray(), OutFeatures, InFeatures), InFeatures, OutFeatures, table.Device);
-        return Tensor.MatMulFrozenTransposed(input, table, _tiedTransposed);
-    }
-
-    private BFloat16Weight? _tiedTransposed;
-
-    /// <summary>An FP8 copy of the frozen weight used for forward products (see <see cref="AttachFloat8"/>), else null.</summary>
-    internal Float8Weight? Float8 { get; private set; }
-
-    /// <summary>
-    /// Gives the layer an FP8 (e4m3) copy of its frozen weight, used for its forward products with an adapter (the
-    /// backward pass keeps the layer's own weights). False when the weight trains, the layer is tied or int8, or the
-    /// device has no FP8 products.
-    /// </summary>
-    internal bool AttachFloat8()
-    {
-        if (Float8 is not null)
-        {
-            return true;
-        }
-
-        if (_tiedTo is not null || _packed is not null && _kernel is not { Float8Copy: true } || _weight is { RequiresGrad: true })
-        {
-            return false;
-        }
-
-        using var dense = _weight is null ? _packed!.Dequantize() : null;
-        Float8 = Float8Weight.Create(dense ?? _weight!);
-        return Float8 is not null;
-    }
-
-    /// <summary>Removes the FP8 copy (<see cref="AttachFloat8"/>).</summary>
-    internal void DetachFloat8()
-    {
-        Float8?.Dispose();
-        Float8 = null;
-    }
+    // The tied head (x · Eᵀ), the table read as stored.
+    private static Tensor TiedProduct(Tensor input, Tensor table) => input.MatMul(table, transposeB: true);
 
     /// <inheritdoc />
     public override void Dispose()
     {
         (Adapter as IDisposable)?.Dispose();
-        _tiedTransposed?.Dispose();
-        _tiedTransposed = null;
-        DetachFloat8();
         base.Dispose();
     }
 
@@ -538,28 +268,10 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
         return Adapter is { } a ? own.Concat(a.Parameters) : own;
     }
 
-    /// <summary>Folds the adapter into the weight (<c>W += A·B·scale</c>) and removes it; the outputs stay the same.</summary>
-    /// <inheritdoc />
-    public override IEnumerable<Tensor> Buffers() => _packed?.Buffers() ?? [];
+    // The float weight values.
+    internal float[] WeightValues() => _tiedTo is not null ? TiedValues() : Weight.ToArray();
 
-    // The float weight values (expanded when the layer holds packed weights).
-    internal float[] WeightValues()
-    {
-        if (_tiedTo is not null)
-        {
-            return TiedValues();
-        }
-
-        if (!Packed)
-        {
-            return Weight.ToArray();
-        }
-
-        using var w = _packed!.Dequantize();
-        return w.ToArray();
-    }
-
-    internal Device Device => _tiedTo?.Device ?? _weight?.Device ?? _packed!.Device;
+    internal Device Device => _tiedTo?.Device ?? _weight!.Device;
 
     // The tied table transposed to [in, out] on the host.
     private float[] TiedValues() => HostParallel.Transpose(_tiedTo!.WeightValues(), OutFeatures, InFeatures);
@@ -571,137 +283,7 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
         {
             _weight = Tensor.Persistent(TiedValues(), [InFeatures, OutFeatures], e.Device, requiresGrad: false);
             _tiedTo = null;
-            _tiedTransposed?.Dispose();
-            _tiedTransposed = null;
         }
-    }
-
-    internal void ToBFloat16()
-    {
-        if (BFloat16 is not null)
-        {
-            return;
-        }
-
-        Untie();
-        DequantizeInt8(trainable: false);
-        ToFloat32(trainable: false);
-        SetPacked(BFloat16Weight.Convert(Weight));
-        _weight!.Dispose();
-        _weight = null;
-    }
-
-    // Back to float weights from bfloat16, 4-bit or other packed ones (formats of one's own).
-    internal void ToFloat32(bool trainable)
-    {
-        if (_packed is null or Int8Weight)
-        {
-            return;                                                        // float already, or int8 (DequantizeInt8)
-        }
-
-        SharedTable?.TakeOwnTable();
-
-        using (var w = _packed.Dequantize())
-        {
-            _weight = Tensor.Persistent(w.ToArray(), [InFeatures, OutFeatures], w.Device, trainable);
-        }
-
-        _packed.Dispose();
-        SetPacked(null);
-    }
-
-    // Loading packed weights (Module.Load): room for them, allocated without quantizing the current weights that the
-    // file's values replace anyway. The layer drops its float / tied / other packed weights, as the conversions do.
-    internal void LoadAsInt8()
-    {
-        if (Int8 is null)
-        {
-            SetPacked(Int8Weight.Empty(InFeatures, OutFeatures, ReleaseWeights()));
-        }
-    }
-
-    internal void LoadAsInt4()
-    {
-        if (Int4 is null)
-        {
-            SetPacked(Int4Weight.Empty(InFeatures, OutFeatures, ReleaseWeights()));
-        }
-    }
-
-    internal void LoadAsBFloat16()
-    {
-        if (BFloat16 is null)
-        {
-            SetPacked(BFloat16Weight.Empty(InFeatures, OutFeatures, ReleaseWeights()));
-        }
-    }
-
-    // Takes packed weights (or none), testing once what they can do.
-    private void SetPacked(IPackedWeight? packed)
-    {
-        _packed = packed;
-        _kernel = packed as IKernelPackedWeight;
-        _recordable = packed is IRecordable;
-    }
-
-    // Releases the weights (a tied layer only lets go of the table) and returns their device.
-    private Device ReleaseWeights()
-    {
-        SharedTable?.TakeOwnTable();
-        var device = Device;
-        _tiedTo = null;
-        _tiedTransposed?.Dispose();
-        _tiedTransposed = null;
-        _weight?.Dispose();
-        _weight = null;
-        _packed?.Dispose();
-        SetPacked(null);
-        return device;
-    }
-
-    internal void QuantizeInt4()
-    {
-        if (Int4 is not null)
-        {
-            return;
-        }
-
-        Untie();
-        DequantizeInt8(trainable: false);
-        ToFloat32(trainable: false);
-        SetPacked(Int4Weight.Quantize(Weight));
-        _weight!.Dispose();
-        _weight = null;
-    }
-
-    internal void QuantizeInt8()
-    {
-        if (Int8 is not null)
-        {
-            return;
-        }
-
-        Untie();
-        ToFloat32(trainable: false);
-        SetPacked(Int8Weight.Quantize(Weight));
-        _weight!.Dispose();
-        _weight = null;
-    }
-
-    internal void DequantizeInt8(bool trainable)
-    {
-        if (Int8 is not { } q)
-        {
-            return;
-        }
-
-        using (var w = q.Dequantize())
-        {
-            _weight = Tensor.Persistent(w.ToArray(), [InFeatures, OutFeatures], w.Device, trainable);
-        }
-
-        q.Dispose();
-        SetPacked(null);
     }
 
     internal void MergeAdapter()
@@ -709,11 +291,6 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
         if (Adapter is not { } a)
         {
             return;
-        }
-
-        if (Packed)
-        {
-            throw new InvalidOperationException($"{this}: merging an adapter into {_packed!.Description} weights would lose precision; call {_packed.FloatMethod} first, or keep the adapter.");
         }
 
         Untie();
@@ -737,25 +314,6 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
     protected override void MoveTo(Device device)
     {
         _weight = _weight is null ? null : MoveTensor(_weight, device);
-        if (_packed is StoredWeight { Mapping: not null } mapped && ReferenceEquals(mapped.Type, ElementType.Float32) && device != mapped.Device
-            && !WeightStorage.Multiplies(device.Backend, mapped.Type))
-        {
-            // A float32 weight read in place from the file (plan 37, W3) going to a device that does not multiply stored
-            // float32 (a CPU layer moving to the GPU, W2): the layer's own float weights there, expanded once (counted in
-            // MappedWeights), so the device runs its float product; the mapping is closed.
-            using (var expanded = mapped.Dequantize())
-            {
-                _weight = Tensor.Persistent(expanded.ToArray(), [InFeatures, OutFeatures], device);
-            }
-
-            mapped.Dispose();
-            SetPacked(null);
-        }
-        else
-        {
-            _packed?.MoveWeights(device, MoveTensor);
-        }
-
         Bias = Bias is null ? null : MoveTensor(Bias, device);
         if (Adapter is { } a)
         {
@@ -765,5 +323,5 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
 
     /// <inheritdoc />
     public override string ToString() =>
-        $"Linear({InFeatures} -> {OutFeatures}{(Bias is null ? ", no bias" : "")}{(_packed is null ? "" : $", {_packed.ShortName}")}{(_tiedTo is null ? "" : ", tied")}{Adapter switch { null => "", LoraAdapter a => $", LoRA rank {a.Rank}", DoraAdapter d => $", DoRA rank {d.Rank}", var other => $", {other.GetType().Name}" }}{(_softcap is { } c ? $", softcap {c}" : "")})";
+        $"Linear({InFeatures} -> {OutFeatures}{(Bias is null ? ", no bias" : "")}{(_tiedTo is null ? "" : ", tied")}{Adapter switch { null => "", LoraAdapter a => $", LoRA rank {a.Rank}", DoraAdapter d => $", DoRA rank {d.Rank}", var other => $", {other.GetType().Name}" }}{(_softcap is { } c ? $", softcap {c}" : "")})";
 }

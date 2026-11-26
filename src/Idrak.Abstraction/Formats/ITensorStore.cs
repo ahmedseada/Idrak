@@ -6,8 +6,7 @@ using Idrak.Abstraction.Devices;
 namespace Idrak.Abstraction.Formats;
 
 /// <summary>
-/// Tensors by name (Hugging Face names), read as float32 (and bfloat16 ones also as their stored bits, where the store
-/// copies them: <see cref="IBFloat16TensorStore"/>): a safetensors checkpoint, a GGUF file, or whatever an
+/// Tensors by name (Hugging Face names), read as float32: a safetensors checkpoint, a GGUF file, or whatever an
 /// <see cref="ICheckpointFormat"/> opens.
 /// </summary>
 public interface ITensorStore : IDisposable
@@ -23,13 +22,6 @@ public interface ITensorStore : IDisposable
 
     /// <summary>The tensor <paramref name="name"/> as float32 values (row-major, as stored).</summary>
     float[] Read(string name);
-
-    /// <summary>
-    /// The format the tensor <paramref name="name"/> is stored in (float32, float16, bfloat16), or null when the store
-    /// does not say (quantized GGUF types, a store of one's own). <see cref="Read"/> gives float32 values whatever it is;
-    /// this tells a reader whether a narrower copy would hold the same values (a bfloat16 tensor kept as bfloat16).
-    /// </summary>
-    WeightFormat? FormatOf(string name) => null;
 
     /// <summary>
     /// Whether the tensors <paramref name="first"/> and <paramref name="second"/> have the same shape and the same float32
@@ -82,38 +74,4 @@ public interface ITensorStore : IDisposable
     /// rank that loads only its own tensors (plan 23, C8b) shows what it read against the whole checkpoint.
     /// </summary>
     long? BytesRead => null;
-}
-
-/// <summary>
-/// A tensor store that copies bfloat16 tensors as their stored 16-bit values, so a bfloat16 weight is made without a
-/// float32 copy of the tensor (a safetensors checkpoint does). A store that is not one is read as float32 values.
-/// </summary>
-public interface IBFloat16TensorStore : ITensorStore
-{
-    /// <summary>
-    /// Copies the 2-D tensor <paramref name="name"/> [rows, columns], stored as bfloat16, as its 16-bit values (transposed
-    /// to [columns, rows] when <paramref name="transposed"/>) into <paramref name="destination"/>, row r of the result at
-    /// [r · <paramref name="stride"/>], the values after each row's end left as they are; each value as
-    /// <c>BFloat16Weight.FromValues</c> rounds its float32 copy (<c>BFloat16Weight.CopyStoredBits</c>). So a bfloat16
-    /// weight is made without a float32 copy of the tensor. Returns false, having written nothing, when the store does not
-    /// hold the tensor as bfloat16 or cannot copy its values: the caller reads float32 values then.
-    /// </summary>
-    /// <param name="name">The tensor.</param>
-    /// <param name="transposed">Whether the result is the tensor's transpose.</param>
-    /// <param name="destination">At least (result rows - 1) · stride + result columns values.</param>
-    /// <param name="stride">The distance between the starts of the result's rows, at least its columns.</param>
-    bool ReadBFloat16(string name, bool transposed, Span<ushort> destination, int stride);
-
-    /// <summary>
-    /// Copies rows [<paramref name="first"/>, <paramref name="first"/> + <paramref name="count"/>) of the 2-D tensor
-    /// <paramref name="name"/> [rows, columns], stored as bfloat16, as their 16-bit values (as stored: rows of columns
-    /// values, each as <c>BFloat16Weight.CopyStoredBits</c> gives it) into <paramref name="destination"/>, so a weight is
-    /// made a block of rows at a time (<c>BFloat16Weight.FromStoredRows</c>) without the whole matrix in host memory.
-    /// Returns false, having written nothing, when the store cannot (the default).
-    /// </summary>
-    /// <param name="name">The tensor.</param>
-    /// <param name="first">The first row.</param>
-    /// <param name="count">The rows.</param>
-    /// <param name="destination">At least <paramref name="count"/> rows of the tensor's columns.</param>
-    bool ReadBFloat16Rows(string name, int first, int count, Span<ushort> destination) => false;
 }

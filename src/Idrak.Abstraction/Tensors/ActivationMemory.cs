@@ -26,9 +26,6 @@ public static class ActivationMemory
     private static int t_recompute;
 
     [ThreadStatic]
-    private static int t_compress;
-
-    [ThreadStatic]
     private static int t_checkpoint;
 
     /// <summary>Release results no backward step reads during the forward pass (default true; false keeps every result until the step ends).</summary>
@@ -42,21 +39,6 @@ public static class ActivationMemory
     {
         t_recompute++;
         return new Scope(0);
-    }
-
-    /// <summary>Whether kept activations are held as bfloat16 until the backward pass on this thread (see <see cref="CompressToBFloat16"/>).</summary>
-    public static bool BFloat16 => t_compress > 0;
-
-    /// <summary>
-    /// Holds the activations the backward pass reads as bfloat16 between the passes on this thread until the returned
-    /// scope is disposed: half their memory, one pack and one unpack pass each. The decoder compresses the inputs of its
-    /// tensor-core products and attention (queries, keys, values, the attention output, the normalized inputs of the
-    /// projections, the feed-forward gate, up and activation), which those products round to bfloat16 anyway.
-    /// </summary>
-    public static Scope CompressToBFloat16()
-    {
-        t_compress++;
-        return new Scope(1);
     }
 
     /// <summary>Whether modules that run their own blocks checkpoint them on this thread (see <see cref="CheckpointBlocks"/>).</summary>
@@ -73,20 +55,6 @@ public static class ActivationMemory
     {
         t_checkpoint++;
         return new Scope(2);
-    }
-
-    /// <summary>Holds the values as bfloat16 until the backward pass reads them, while <see cref="CompressToBFloat16"/> is in effect.</summary>
-    public static void Compress(params Tensor?[] tensors)
-    {
-        if (t_compress == 0 || !Autograd.IsEnabled)
-        {
-            return;
-        }
-
-        foreach (var tensor in tensors)
-        {
-            tensor?.CompressToBFloat16();
-        }
     }
 
     /// <summary>Releases the values of results no backward step reads, while gradients are recorded.</summary>
@@ -128,7 +96,7 @@ public static class ActivationMemory
         }
     }
 
-    /// <summary>Ends <see cref="Recompute"/>, <see cref="CompressToBFloat16"/> or <see cref="CheckpointBlocks"/>.</summary>
+    /// <summary>Ends <see cref="Recompute"/> or <see cref="CheckpointBlocks"/>.</summary>
     public readonly struct Scope : IDisposable
     {
         private readonly int _kind;
@@ -142,21 +110,10 @@ public static class ActivationMemory
             {
                 t_recompute--;
             }
-            else if (_kind == 1)
-            {
-                t_compress--;
-            }
             else
             {
                 t_checkpoint--;
             }
         }
     }
-}
-
-/// <summary>Compresses a tensor (<see cref="ActivationMemory.CompressToBFloat16"/>) when disposed: at the end of the block that last reads it.</summary>
-public readonly struct CompressAfter(Tensor tensor) : IDisposable
-{
-    /// <inheritdoc />
-    public void Dispose() => ActivationMemory.Compress(tensor);
 }

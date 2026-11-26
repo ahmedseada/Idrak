@@ -14,12 +14,11 @@ namespace Idrak.Layers;
 public static class DecoderBuilder
 {
     /// <summary>
-    /// Creates the model: with <paramref name="weights"/>, every layer is made from the named weights (and quantized to
-    /// int8 on the host when <see cref="DecoderBuildOptions.Int8"/>); without, from a seeded random initialization.
+    /// Creates the model: with <paramref name="weights"/>, every layer is made from the named weights; without, from a seeded random initialization.
     /// </summary>
     /// <param name="spec">The model to create.</param>
     /// <param name="weights">The named weights to read, or null for a random initialization.</param>
-    /// <param name="options">Device, packed weight format, context length and initialization.</param>
+    /// <param name="options">Device, context length and initialization.</param>
     public static Sequential Build(this DecoderSpec spec, IWeightSource? weights = null, DecoderBuildOptions? options = null)
     {
         options ??= new DecoderBuildOptions();
@@ -47,7 +46,6 @@ public static class DecoderBuilder
         int maxPositions = options.MaxPositions ?? spec.MaxPositions;
         // Whether a layer's projections are read in place from the checkpoint's file mapping (plan 37, W3): asked per
         // projection, for the layer being made (a split's CPU layer, a lazy build's) on the device it is made on.
-        var weightMapping = weights is null ? null : options.WeightMapping ?? WeightMappings.Get(WeightMappings.DefaultName);
         bool inLayer = false, cpuLayer = false;
         var random = new Random(options.Seed);
         var created = new List<Module>();
@@ -76,31 +74,9 @@ public static class DecoderBuilder
 
             float[] Initial(int count, float uniformBound) => options.InitStd is { } std ? Normal(count, std) : Uniform(count, uniformBound);
 
-            // The format the projections are packed in (frozen weights), or null for trainable float32 ones; a format named
-            // in the options is looked up before anything is read.
-            PackedFormat? packed = options.Int8 ? PackedFormat.Int8 : options.Int4 ? PackedFormat.Int4 : options.BFloat16 ? PackedFormat.BFloat16 : null;
-            string? packedName = options.PackedFormatName;
-            var factory = packedName is null ? null : PackedWeightFormats.Get(packedName);
-            // The head's own format (a bfloat16 head beside int8 or int4 projections keeps the checkpoint's scores).
-            string? headName = options.HeadFormatName;
-            if (headName is not null && packed is null && factory is null)
-            {
-                throw new ArgumentException($"HeadFormatName '{headName}' packs the head of a build whose projections are packed (Int8, Int4, BFloat16 or PackedFormatName); this build keeps float32 weights.", nameof(options));
-            }
-
-            var headFactory = headName is null ? null : PackedWeightFormats.Get(headName);
-
-            // Whether weights packed as `format` (by name) are the library's bfloat16 ones: those are read through
-            // IWeightSource.ReadBFloat16, which a bfloat16 checkpoint answers with its stored bits (the same weights, with
-            // no float32 copy of the matrix). A format an app registered under that name packs float values itself.
-            static bool LibraryBFloat16(string format) =>
-                string.Equals(format, "bfloat16", StringComparison.OrdinalIgnoreCase) && PackedWeightFormats.Origin(format) == Overrides.Library;
-            bool headBFloat16 = headName is not null ? LibraryBFloat16(headName) : packedName is not null ? LibraryBFloat16(packedName) : packed == PackedFormat.BFloat16;
-            bool projectionsBFloat16 = packedName is not null ? LibraryBFloat16(packedName) : packed == PackedFormat.BFloat16;
-
             // A tied head's weights are the embedding table's transpose, [dim, vocabulary]: `tiedTable` gives the table's
-            // float values (read once, for a head packed from floats).
-            Linear Projection(string name, int inputs, int outputs, bool bias, Func<float[]>? tiedTable = null, bool isHead = false)
+            // float values (read once).
+            Linear Projection(string name, int inputs, int outputs, bool bias, Func<float[]>? tiedTable = null)
             {
                 int[] shape = [inputs, outputs];
                 float[] Values() => tiedTable is not null ? Transpose(tiedTable(), outputs, inputs)
@@ -108,134 +84,7 @@ public static class DecoderBuilder
                         ? Initial(inputs * outputs, MathF.Sqrt(6f / (inputs + outputs)))
                         : throw new InvalidDataException($"The weights have no '{name}.weight' [{inputs}, {outputs}]."));
                 var b = bias ? Tensor($"{name}.bias", [outputs], () => new float[outputs]) : null;
-
-                // The generic and measured routes (ProductRoutes): the library's int8 and bfloat16 weights stored in the file's
-                // layout (PackedWeightFormats.Pack keeps them so), not read into today's packed layouts.
-                string? routed = ProductRoutes.Current == ProductRoute.Name ? null
-                    : (isHead && headName is not null ? headName : packedName)?.ToLowerInvariant() switch
-                    {
-                        "int8" => "int8",
-                        "bf16" or "bfloat16" => "bfloat16",
-                        null => (isHead && headName is not null) ? null : packed switch { PackedFormat.Int8 => "int8", PackedFormat.BFloat16 => "bfloat16", _ => null },
-                        _ => null,
-                    };
-                // A tied bfloat16 head stays today's bfloat16 head under the routes too (the embedding's bits, read transposed
-                // once): the embedding then reads its columns (Embedding.FromHead), one copy of the table, where a stored
-                // copy of the head would hold the table twice; its products take the routed bfloat16 lanes all the same.
-                if (routed == "bfloat16" && tiedTable is not null && weights is not null && headBFloat16)
-                {
-                    routed = null;
-                }
-
-                if (routed is not null)
-                {
-                    // Each type through its own lane, one rounding, never a float32 matrix: a bfloat16
-                    // checkpoint's bits kept as they are, else a block of the file's rows at a time encoded.
-                    if (routed == "bfloat16" && weights is not null && tiedTable is null && weights.ReadOutputBFloat16($"{name}.weight", shape, [])
-                        && Idrak.Abstraction.Generation.StoredWeight.FromFill(Idrak.Abstraction.ElementType.BFloat16, inputs, outputs, null, device,
-                            stored => weights.ReadOutputBFloat16($"{name}.weight", shape, System.Runtime.InteropServices.MemoryMarshal.Cast<byte, ushort>(stored))) is { } bits16)
-                    {
-                        return Linear.FromPacked(bits16, b);
-                    }
-
-                    return Linear.FromPacked((weights is not null ? PackedWeightFormats.PackRows(routed, OutputRows, inputs, outputs, device) : null)
-                        ?? PackedWeightFormats.Pack(routed, Values(), inputs, outputs, device), b);
-                }
-
-                if (weights is not null && (isHead ? headBFloat16 : projectionsBFloat16))
-                {
-                    var bits = tiedTable is not null
-                        ? weights.ReadBFloat16("embed.weight", [outputs, inputs], device, transposed: true)
-                        : weights.ReadBFloat16($"{name}.weight", shape, device);
-                    return Linear.FromPacked(bits ?? throw new InvalidDataException($"The weights have no '{(tiedTable is not null ? "embed" : name)}.weight'."), b);
-                }
-
-                if (packed is null && factory is null)
-                {
-                    // A layer's weight the file holds as the product reads it (float32, or a format kept as stored) is read
-                    // there in place where the mapping asks (plan 37, W3): the same products bit for bit, no second copy.
-                    if (weights is not null && tiedTable is null && inLayer && weightMapping!.Maps(new WeightMappingRequest(device, cpuLayer, options.LazyLayers))
-                        && weights.ReadMapped($"{name}.weight", shape, device, options.KeepPacked) is { } mapped)
-                    {
-                        return Linear.FromPacked(mapped, b);
-                    }
-
-                    // A weight the source stores in a format of its own stays in it where the device multiplies it (plan 37,
-                    // Q0): the float32 product's bits, about the file's size in memory. The source counts it either way.
-                    if (weights is not null && tiedTable is null && weights.ReadStored($"{name}.weight", shape, device, options.KeepPacked) is { } kept)
-                    {
-                        return Linear.FromPacked(kept, b);
-                    }
-
-                    return Linear.FromWeights(Idrak.Abstraction.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
-                }
-
-                // Packed weights a load keeps (PretrainedOptions.PackedCache): read back when kept for the same stored tensor,
-                // shape, format and packing version; otherwise packed, then kept. Only a format whose layout comes from where
-                // the format itself does (the library's for the built-in ones), so kept bits are always that format's.
-                bool named = isHead && headFactory is not null || factory is not null;
-                string format = isHead && headFactory is not null ? headName! : factory is not null ? packedName! : packed!.Value switch
-                {
-                    PackedFormat.Int8 => "int8",
-                    PackedFormat.Int4 => "int4",
-                    _ => "bfloat16",
-                };
-                var cache = weights is not null ? options.PackedCache : null;
-                string tensor = tiedTable is not null ? "embed.weight" : $"{name}.weight", role = tiedTable is not null ? "tied head" : "weight";
-                IPackedWeightLayout? layout = null;
-                string? identity = null;
-                if (cache is not null && PackedWeightLayouts.Find(format) is { } found
-                    && PackedWeightLayouts.Origin(format) == (named ? PackedWeightFormats.Origin(format) : Overrides.Library)
-                    && weights!.IdentityOf(tensor, tiedTable is not null ? [outputs, inputs] : shape) is { } stored)
-                {
-                    (layout, identity) = (found, stored);
-                    if (cache.TryRead(tensor, role, identity, layout, inputs, outputs, device) is { } kept)
-                    {
-                        return Linear.FromPacked(kept, b);
-                    }
-                }
-
-                var weight = Pack();
-                if (layout is not null && weight is IKernelPackedWeight made && layout.Keeps(made))
-                {
-                    cache!.Write(tensor, role, identity!, layout, made);
-                }
-
-                return Linear.FromPacked(weight, b);
-
-                IPackedWeight Pack()
-                {
-                    if (tiedTable is not null && !named && packed is PackedFormat.Int8 or PackedFormat.Int4)
-                    {
-                        // A tied head's column j is the table's row j: packed from blocks of the table's rows, read a block at a
-                        // time where the weights can (TableRows), so neither the table nor its transpose is held as float32.
-                        return packed == PackedFormat.Int4 ? Int4Weight.QuantizeColumns(inputs, outputs, device, TableRows)
-                            : Int8Weight.QuantizeColumns(inputs, outputs, device, TableRows);
-                    }
-
-                    // A format packing from rows (the element types' stored formats) reads a block of the file's rows at a time.
-                    var byRows = isHead && headFactory is not null ? headFactory : factory;
-                    if (byRows is not null && weights is not null && PackedWeightFormats.PackRows(byRows, OutputRows, inputs, outputs, device) is { } fromRows)
-                    {
-                        return fromRows;
-                    }
-
-                    return isHead && headFactory is not null ? PackedWeightFormats.Pack(headFactory, Values(), inputs, outputs, device)
-                        : factory is not null ? PackedWeightFormats.Pack(factory, Values(), inputs, outputs, device)
-                        : PackedWeightFormats.Pack(packed!.Value, Values(), inputs, outputs, device);
-                }
-
-                // The weight's output rows as the file holds them (a tied head's: the table's rows), a block at a time.
-                bool OutputRows(int first, int count, Span<float> destination)
-                {
-                    if (tiedTable is not null)
-                    {
-                        TableRows(first, count, destination);
-                        return true;
-                    }
-
-                    return weights!.ReadOutputRows($"{name}.weight", shape, first, count, destination);
-                }
+                return Linear.FromWeights(Idrak.Abstraction.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
             }
 
             Module Normalization(string name, int features)
@@ -247,62 +96,16 @@ public static class DecoderBuilder
             }
 
             // The table's float values: drawn now for a random build (so the draws keep their order), read when first needed
-            // from weights (a frozen build with a bfloat16 head or table may never need them).
+            // from weights.
             float[]? embeddingValues = weights is null
                 ? (options.InitStd is { } embedStd ? Normal(spec.Vocabulary * spec.Dim, embedStd) : [.. Enumerable.Range(0, spec.Vocabulary * spec.Dim).Select(_ => (float)(random.NextDouble() * 2 - 1) * 0.02f)])
                 : null;
             float[] EmbeddingValues() => embeddingValues ??= weights!.Read("embed.weight", [spec.Vocabulary, spec.Dim])
                 ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{spec.Vocabulary}, {spec.Dim}].");
 
-            // Rows [first, first + count) of the table into `destination`: from its values when they are held (a random build),
-            // else read as a block where the weights can (ITensorStore.ReadRows), else from the table read whole once.
-            void TableRows(int first, int count, Span<float> destination)
-            {
-                if (embeddingValues is null && weights is not null && weights.ReadRows("embed.weight", [spec.Vocabulary, spec.Dim], first, count, destination))
-                {
-                    return;
-                }
-
-                EmbeddingValues().AsSpan(first * spec.Dim, count * spec.Dim).CopyTo(destination);
-            }
-            // Frozen-weight builds keep the table as bfloat16 (half the memory; lossless for bfloat16 checkpoints).
-            bool frozen = packed is not null || factory is not null;
-            // A packed tied head gets its own copy of the table: made now, so the table's float values are not kept alive
-            // while every layer is read (a float tied head reads the embedding in place; see below); an int8 or int4 one is
-            // packed from blocks of the table's rows (TableRows), with no float32 table or transpose. When that
-            // copy is bfloat16, it is the only one: the embedding reads its columns (the same bfloat16 values the table
-            // would hold, so lookups are unchanged bit for bit), which saves the table's memory once more. Heads in
-            // other formats (int8, int4, one's own) keep a separate bfloat16 table, since the head's values differ from it;
-            // HeadFormatName "bfloat16" keeps one table beside int8 or int4 projections. A bfloat16 head and table from
-            // weights are read as bfloat16 (IWeightSource.ReadBFloat16): a bfloat16 checkpoint's table is then never held
-            // as float32, whole or transposed.
-            if (spec.TieEmbeddings && frozen)
-            {
-                head = Projection("head", spec.Dim, spec.Vocabulary, spec.HeadBias, EmbeddingValues, isHead: true);
-            }
-
-            var embedding = head is { BFloat16: not null } ? Embedding.FromHead(head)
-                : frozen ? Embedding.FromBFloat16(embeddingValues is not null || weights is null
-                    ? BFloat16Weight.FromValues(EmbeddingValues(), spec.Vocabulary, spec.Dim, device)
-                    : weights.ReadBFloat16("embed.weight", [spec.Vocabulary, spec.Dim], device)
-                        ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{spec.Vocabulary}, {spec.Dim}]."))
-                : Embedding.FromWeights(Idrak.Abstraction.Tensor.Persistent(EmbeddingValues(), [spec.Vocabulary, spec.Dim], device, requiresGrad: true));
+            var embedding = Embedding.FromWeights(Idrak.Abstraction.Tensor.Persistent(EmbeddingValues(), [spec.Vocabulary, spec.Dim], device, requiresGrad: true));
             embedding.Name = "embed";
             created.Add(embedding);
-            if (embedding.BFloat16 is { } table && device.Backend.Offload is { } offload)
-            {
-                // A separate table (beside a head of another format) is only looked up: a few rows a token, which the device
-                // reads in place from system memory, so it is the first thing to leave a full device.
-                switch (options.LookupTables ?? ComputeResources.LookupTables)
-                {
-                    case LookupTablePlacement.Automatic:
-                        offload.MarkLookupTable(table.Packed.Storage);
-                        break;
-                    case LookupTablePlacement.HostMemory:
-                        offload.PlaceOnHost(table.Packed.Storage);
-                        break;
-                }
-            }
 
             embeddingValues = null;
             if (spec.EmbeddingScale is { } scale)
@@ -368,8 +171,7 @@ public static class DecoderBuilder
                     Projection($"{name}.down", hidden, spec.Dim, spec.FeedForwardBias),
                     spec.Activation);
 
-                // The router and the shared expert's gate stay float32 in every build: they are small, and a packed
-                // router's rounding could change which experts a token goes to.
+                // The router and the shared expert's gate stay float32 in every build: they are small.
                 Linear Float(string name, int outputs) => Linear.FromWeights(Tensor($"{name}.weight", [spec.Dim, outputs],
                     () => Initial(spec.Dim * outputs, MathF.Sqrt(6f / (spec.Dim + outputs)))));
 
@@ -458,10 +260,10 @@ public static class DecoderBuilder
             var norm = Normalization("norm", spec.Dim);
             norm.Name = "norm";
             created.Add(norm);
-            // A float tied head reads the embedding table in place; packed tied heads were made with the embedding.
+            // A tied head reads the embedding table in place.
             head ??= spec.TieEmbeddings
                 ? Linear.Tied(embedding, spec.HeadBias ? Tensor("head.bias", [spec.Vocabulary], () => new float[spec.Vocabulary]) : null)
-                : Projection("head", spec.Dim, spec.Vocabulary, spec.HeadBias, isHead: true);
+                : Projection("head", spec.Dim, spec.Vocabulary, spec.HeadBias);
             head.Name = "head";
             head.OutputSoftcap = spec.LogitSoftcap;
             created.Add(head);
