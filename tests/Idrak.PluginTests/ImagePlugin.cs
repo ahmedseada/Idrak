@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Plugins;
 using Idrak.Data;
 using Idrak.Imaging;
 using Idrak.Models.Abstractions;
@@ -11,10 +10,8 @@ using Idrak.Vision.Abstractions;
 namespace Idrak.PluginTests;
 
 /// <summary>
-/// This assembly as a command-line plug-in for image models (<c>idrak predict -P</c>, <c>idrak train -P</c>, plan 13 step 7):
-/// <see cref="Plugin"/> ("outside-image", in this assembly's <see cref="PluginTestsPackage"/>) registers the two families
-/// of <see cref="ImageFamilyPluginTests"/>, an ONNX segmenter family, an ONNX backbone family (features), the grid
-/// detector's decoder and its training head. The library registers none of them.
+/// The architecture names of this assembly's ONNX image families of its own: a segmenter (<see cref="OnnxSegmenterFamily"/>)
+/// and a backbone (<see cref="OnnxBackboneFamily"/>, features).
 /// </summary>
 public static class ImageFamilyPlugin
 {
@@ -23,30 +20,6 @@ public static class ImageFamilyPlugin
 
     /// <summary>The backbone family's architecture name.</summary>
     public const string Backbone = "OutsideOnnxBackbone";
-
-    /// <summary>The plug-in: the families, the decoder and the head, one part each (what <c>-P</c> registers through the package).</summary>
-    public static IIdrakPlugin Plugin { get; } = new ImageRegistration();
-
-    /// <summary>Whether the plug-in is registered.</summary>
-    public static bool IsRegistered => Plugin.IsRegistered;
-
-    /// <summary>Registers the families, the decoder and the head (through <see cref="IdrakPlugins"/>); once.</summary>
-    public static void Register() => IdrakPlugins.Register(Plugin);
-
-    /// <summary>Removes everything <see cref="Register"/> registered (tests leave the registries as they found them).</summary>
-    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
-
-    private sealed class ImageRegistration() : IdrakPlugin("outside-image")
-    {
-        protected override void RegisterParts()
-        {
-            Part(() => ImageModelFamilies.Register(new TinyResNetFamily()), () => ImageModelFamilies.Unregister(ImageFamilyPluginTests.Classifier));
-            Part(() => ImageModelFamilies.Register(new GridDetectorFamily()), () => ImageModelFamilies.Unregister(ImageFamilyPluginTests.Detector));
-            Part(() => ImageModelFamilies.Register(new OnnxSegmenterFamily()), () => ImageModelFamilies.Unregister(Segmenter));
-            Part(() => ImageModelFamilies.Register(new OnnxBackboneFamily()), () => ImageModelFamilies.Unregister(Backbone));
-            Part(() => DetectionDecoders.Register(GridDecoder.Kind(ImageFamilyPluginTests.Decoder)), () => DetectionDecoders.Unregister(ImageFamilyPluginTests.Decoder));
-        }
-    }
 }
 
 /// <summary>
@@ -100,7 +73,7 @@ public sealed class OnnxBackboneFamily : IImageModelFamily
 }
 
 /// <summary>
-/// The grid detector's training head (<see cref="IDetectionHeadKind.CreateHead"/>, of its decoder's kind): the outputs [N, 5 + C, rows,
+/// The grid detector's training head: the outputs [N, 5 + C, rows,
 /// columns] read as <see cref="GridDecoder"/> reads them, as tensors: each cell's box centre ((g + σ(t)) · stride), size
 /// (e^t · stride) as corners, its objectness logit and its class logits.
 /// </summary>

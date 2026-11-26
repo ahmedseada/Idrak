@@ -16,17 +16,15 @@ using Idrak.Vision.Abstractions;
 namespace Idrak.PluginTests;
 
 /// <summary>
-/// Two image model families registered from outside the library (plan 13, step 6), checked against PyTorch
-/// (tests/Idrak.Tests/data/image-families, written by tools/pytorch/image_families_reference.py):
+/// The names of two image model families written outside the library (plan 13, step 6), whose checkpoints are
+/// tests/Idrak.Tests/data/image-families (written by tools/pytorch/image_families_reference.py):
 /// <list type="bullet">
 /// <item><see cref="TinyResNetFamily"/>: a ResNet-style classifier read from safetensors and config.json with torchvision's
 /// tensor names, its layers built here (basic residual blocks are this assembly's own module), the weights read one tensor at
 /// a time;</item>
 /// <item><see cref="GridDetectorFamily"/>: an anchor-free grid detector read from ONNX through Idrak's importer, with its own
-/// decoder (<see cref="GridDecoder"/>, registered in <see cref="DetectionDecoders"/>) and the library's non-maximum
-/// suppression.</item>
+/// decoder (<see cref="GridDecoder"/>) and the library's non-maximum suppression.</item>
 /// </list>
-/// The library registers neither: unregistered, their checkpoints are refused naming the registry.
 /// </summary>
 public static class ImageFamilyPluginTests
 {
@@ -38,267 +36,6 @@ public static class ImageFamilyPluginTests
 
     /// <summary>The detector's decoder name.</summary>
     public const string Decoder = "outside-grid";
-
-    private static readonly string[] ImageNames = ["a.png", "b.png", "c.png"];
-
-    /// <summary>
-    /// The classifier family: refused unregistered; registered, it loads (pixel values and logits as PyTorch's), classifies through a predictor and a region classifier, and passes the testing kit.
-    /// </summary>
-    public static void TinyResNet(Device device)
-    {
-        string folder = Path.Combine(DataFolder(), "tiny-resnet");
-        var reference = Reference()["classifier"]!.AsObject();
-        var images = ImageNames.Select(n => ImageCodecs.Decode(Path.Combine(DataFolder(), "images", n))).ToList();
-        var options = new ImageModelOptions { Device = device };
-        Refused(() => ImageModels.Load(folder, options), Classifier);
-
-        ImageModelFamilies.Register(new TinyResNetFamily());
-        try
-        {
-            Check(ImageModelFamilies.Origin(Classifier) == typeof(TinyResNetFamily).Assembly.GetName().Name && ImageModelFamilies.Default(Classifier) is null,
-                "registered from this assembly, with no library default");
-            using var model = ImageModels.Load(folder, options);
-            Check(model.Task == ImageTask.Classification && model.Labels!.SequenceEqual(["circle", "square", "triangle", "star", "ring"])
-                  && model.InputShape!.SequenceEqual([3, 32, 32]) && model.Preprocessor is { ShortestEdge: 36, CenterCrop: true, Resampling: ImageResampling.Bicubic },
-                $"the description: {model.Task}, [{string.Join(", ", model.Labels ?? [])}], [{string.Join(", ", model.InputShape ?? [])}]");
-            var fc = model.Network.Children().OfType<Linear>().Single();
-
-            for (int i = 0; i < images.Count; i++)
-            {
-                CheckClose(Floats(reference[ImageNames[i]]!["pixel_values"]!), model.Preprocessor.Pixels(images[i]), 1e-6f, $"{ImageNames[i]}: pixel values");
-            }
-
-            using var outputs = model.Outputs().Build();
-            var logits = outputs.Predict(images);
-            for (int i = 0; i < images.Count; i++)
-            {
-                CheckClose(Floats(reference[ImageNames[i]]!["logits"]!), logits[i], 1e-4f, $"{ImageNames[i]}: logits");
-            }
-
-            using var classifier = model.Classifier().Build();
-            var predictions = classifier.Predict(images);
-            for (int i = 0; i < images.Count; i++)
-            {
-                var expected = Floats(reference[ImageNames[i]]!["logits"]!);
-                int best = Array.IndexOf(expected, expected.Max());
-                Check(predictions[i].Index == best && predictions[i].Class == model.Labels![best] && MathF.Abs(predictions[i].Scores.Sum(s => s.Score) - 1f) < 1e-5f,
-                    $"{ImageNames[i]}: classified as {predictions[i].Class}, PyTorch's best is {model.Labels![best]}");
-            }
-
-            // The region classifier frames regions in the model's square input, rescaled and normalized as its preprocessing.
-            using (var regions = RegionClassifier.For(model).Build())
-            {
-                var found = regions.Classify(regions.Foreground(images[0]), [new PixelBox(4, 4, 20, 16), new PixelBox(0, 0, 48, 40)]);
-                Check(found.Count == 2 && found.Classes.SequenceEqual(model.Labels!)
-                      && Enumerable.Range(0, 2).All(r => MathF.Abs(found.Probabilities(r).ToArray().Sum() - 1f) < 1e-5f), "the region classifier's probabilities");
-            }
-
-            // The testing kit: the reference's logits, consistency over random images; a wrong config and an unregistered name refused.
-            string broken = CopyWith(folder, c => c["hidden_sizes"] = new JsonArray(8, 32));
-            string unknown = CopyWith(folder, c => c["architectures"] = new JsonArray("NobodysResNet"));
-            try
-            {
-                var samples = new[]
-                {
-                    new ImageFamilySample(folder, images, [.. ImageNames.Select(n => Floats(reference[n]!["logits"]!))]),
-                    new ImageFamilySample(broken, Error: "layer2.0.conv1.weight"),
-                    new ImageFamilySample(unknown, Error: "Image model family 'NobodysResNet' is not registered"),
-                };
-                Conformance.CheckImageModelFamily(path =>
-                {
-                    var loaded = ImageModels.Load(path, options);
-                    var predictor = loaded.Outputs().Build();
-                    return new ImageModelUnderTest("classification", loaded.Labels, predictor.Predict, loaded);
-                }, samples).ThrowIfFailed();
-            }
-            finally
-            {
-                Directory.Delete(broken, recursive: true);
-                Directory.Delete(unknown, recursive: true);
-            }
-        }
-        finally
-        {
-            ImageModelFamilies.Unregister(Classifier);
-        }
-
-        Refused(() => ImageModels.Load(folder, options), Classifier);
-    }
-
-    /// <summary>
-    /// The detector family: refused unregistered; registered, it imports the ONNX network (outputs as PyTorch's), refuses to
-    /// detect until its decoder is registered, then gives PyTorch's decoded and suppressed boxes, from the folder and from
-    /// the bare .onnx file (architecture from its metadata), and passes the testing kit.
-    /// </summary>
-    public static void GridDetector(Device device)
-    {
-        string folder = Path.Combine(DataFolder(), "tiny-detector");
-        var reference = Reference()["detector"]!.AsObject();
-        var images = ImageNames.Select(n => ImageCodecs.Decode(Path.Combine(DataFolder(), "images", n))).ToList();
-        var options = new ImageModelOptions { Device = device };
-        var filter = new DetectorOptions { MinScore = 0.3f, IouThreshold = 0.5f };
-        Refused(() => ImageModels.Load(folder, options), Detector);
-
-        ImageModelFamilies.Register(new GridDetectorFamily());
-        string bare = Path.Combine(Path.GetTempPath(), $"idrak-outside-detector-{Guid.NewGuid():N}");
-        try
-        {
-            using var model = ImageModels.Load(folder, options);
-            Check(model.Task == ImageTask.Detection && model.Decoder == Decoder && model.Labels!.SequenceEqual(["square", "disc", "bar"])
-                  && model.InputShape!.SequenceEqual([3, 64, 64]), "the description");
-            using (var outputs = model.Outputs().Build())
-            {
-                var raw = outputs.Predict(images);
-                for (int i = 0; i < images.Count; i++)
-                {
-                    CheckClose(Floats(reference[ImageNames[i]]!["outputs"]!), raw[i], 1e-4f, $"{ImageNames[i]}: the network's outputs");
-                }
-            }
-
-            try
-            {
-                model.Detector(filter);
-                Check(false, "a detector whose decoder is not registered is refused");
-            }
-            catch (NotSupportedException e)
-            {
-                Check(e.Message.Contains($"Detection decoder '{Decoder}' is not registered", StringComparison.Ordinal) && e.Message.Contains("DetectionDecoders.Register", StringComparison.Ordinal),
-                    $"refused naming the registry: {e.Message}");
-            }
-
-            DetectionDecoders.Register(GridDecoder.Kind(Decoder));
-            Check(DetectionDecoders.Origin(Decoder) == typeof(GridDecoder).Assembly.GetName().Name && DetectionDecoders.Default(Decoder) is null, "the decoder is this assembly's");
-            var detector = model.Detector(filter);
-            var found = detector.Detect(images);
-            for (int i = 0; i < images.Count; i++)
-            {
-                CheckDetections(reference[ImageNames[i]]!, found[i], ImageNames[i]);
-                Check(found[i].All(d => d.Label == model.Labels![d.Class]), $"{ImageNames[i]}: labelled by the model's labels");
-                CheckDetections(reference[ImageNames[i]]!, detector.Detect(images[i]), $"{ImageNames[i]} alone");
-            }
-
-            // The .onnx file alone: its "architecture" metadata finds the family, which falls back on its own defaults.
-            Directory.CreateDirectory(bare);
-            File.Copy(Path.Combine(folder, "model.onnx"), Path.Combine(bare, "model.onnx"));
-            using (var alone = ImageModels.Load(Path.Combine(bare, "model.onnx"), options))
-            {
-                Check(alone.Labels is null && alone.InputShape!.SequenceEqual([3, 64, 64]), "the bare file: no labels, the family's default preprocessing");
-                var bareFound = alone.Detector(filter).Detect(images);
-                for (int i = 0; i < images.Count; i++)
-                {
-                    CheckDetections(reference[ImageNames[i]]!, bareFound[i], $"{ImageNames[i]} from the bare .onnx file");
-                }
-            }
-
-            string unknown = CopyWith(folder, c => c["architectures"] = new JsonArray("NobodysDetector"));
-            try
-            {
-                var samples = new[]
-                {
-                    new ImageFamilySample(folder, images, [.. ImageNames.Select(n => Floats(reference[n]!["detections"]!))]),
-                    new ImageFamilySample(unknown, Error: "Image model family 'NobodysDetector' is not registered"),
-                };
-                Conformance.CheckImageModelFamily(path =>
-                {
-                    var loaded = ImageModels.Load(path, options);
-                    var boxes = loaded.Detector(filter);
-                    return new ImageModelUnderTest("detection", loaded.Labels, batch => [.. boxes.Detect(batch).Select(Flatten)], loaded);
-                }, samples).ThrowIfFailed();
-            }
-            finally
-            {
-                Directory.Delete(unknown, recursive: true);
-            }
-        }
-        finally
-        {
-            DetectionDecoders.Unregister(Decoder);
-            ImageModelFamilies.Unregister(Detector);
-            if (Directory.Exists(bare))
-            {
-                Directory.Delete(bare, recursive: true);
-            }
-        }
-
-        Refused(() => ImageModels.Load(folder, options), Detector);
-    }
-
-    // Detections as PyTorch's rows: [x, y, width, height, class, score] each.
-    private static float[] Flatten(IReadOnlyList<Detection> detections) =>
-        [.. detections.SelectMany(d => new[] { d.Box.X, d.Box.Y, d.Box.Width, d.Box.Height, d.Class, d.Score })];
-
-    private static void CheckDetections(JsonNode expected, IReadOnlyList<Detection> found, string what)
-    {
-        int count = (int)expected["count"]!;
-        Check(found.Count == count, $"{what}: {found.Count} detections, PyTorch keeps {count}");
-        CheckClose(Floats(expected["detections"]!), Flatten(found), 1e-4f, $"{what}: detections");
-    }
-
-    private static void Refused(Func<ImageModel> load, string architecture)
-    {
-        try
-        {
-            load().Dispose();
-            Check(false, $"an unregistered image model family ({architecture}) is refused");
-        }
-        catch (NotSupportedException e)
-        {
-            Check(e.Message.Contains($"Image model family '{architecture}' is not registered", StringComparison.Ordinal)
-                  && e.Message.Contains("ImageModelFamilies.Register", StringComparison.Ordinal) && e.Message.Contains("the library registers none", StringComparison.Ordinal),
-                $"refused naming the registry: {e.Message}");
-        }
-    }
-
-    // A copy of a checkpoint folder with its config.json changed.
-    private static string CopyWith(string source, Action<JsonObject> change)
-    {
-        string folder = Path.Combine(Path.GetTempPath(), $"idrak-image-family-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(folder);
-        foreach (string file in Directory.GetFiles(source))
-        {
-            File.Copy(file, Path.Combine(folder, Path.GetFileName(file)));
-        }
-
-        var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))!.AsObject();
-        change(config);
-        File.WriteAllText(Path.Combine(folder, "config.json"), config.ToJsonString());
-        return folder;
-    }
-
-    private static JsonObject Reference() => JsonNode.Parse(File.ReadAllText(Path.Combine(DataFolder(), "reference.json")))!.AsObject();
-
-    private static float[] Floats(JsonNode node) => [.. node.AsArray().Select(v => (float)v!)];
-
-    // tests/Idrak.Tests/data/image-families, found from the build output folder.
-    private static string DataFolder()
-    {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
-        {
-            string data = Path.Combine(directory.FullName, "tests", "Idrak.Tests", "data", "image-families");
-            if (Directory.Exists(data))
-            {
-                return data;
-            }
-        }
-
-        throw new DirectoryNotFoundException("tests/Idrak.Tests/data/image-families");
-    }
-
-    private static void Check(bool condition, string message)
-    {
-        if (!condition)
-        {
-            throw new InvalidOperationException(message);
-        }
-    }
-
-    private static void CheckClose(float[] expected, float[] actual, float tolerance, string what)
-    {
-        if (Comparisons.Difference(expected, actual, tolerance) is { } difference)
-        {
-            throw new InvalidOperationException($"{what}: {difference}");
-        }
-    }
 }
 
 /// <summary>
@@ -435,7 +172,7 @@ public sealed class TinyResNetFamily : IImageModelFamily
 /// <summary>
 /// An anchor-free grid detector family read from ONNX: the network is imported as it is, and its config.json (or, for a bare
 /// .onnx file, the family's defaults) gives the labels, the grid's stride and the preprocessing; its outputs are read by
-/// <see cref="GridDecoder"/>, registered under <see cref="ImageFamilyPluginTests.Decoder"/>.
+/// <see cref="GridDecoder"/>, named <see cref="ImageFamilyPluginTests.Decoder"/>.
 /// </summary>
 public sealed class GridDetectorFamily : IImageModelFamily
 {
@@ -475,9 +212,6 @@ public sealed class GridDetectorFamily : IImageModelFamily
 /// </summary>
 public static class GridDecoder
 {
-    /// <summary>The grid decoder as a kind registered as <paramref name="name"/>, with its training head (<see cref="GridHead"/>); its setting: "stride".</summary>
-    public static IDetectionHeadKind Kind(string name) => new GridKind(name);
-
     /// <summary>The decoder for one detector.</summary>
     public static DetectionDecoder Create(DetectionDecoderRequest context)
     {
@@ -529,16 +263,3 @@ public static class GridDecoder
     }
 }
 
-// The grid decoder and its head, one kind.
-internal sealed class GridKind(string name) : IDetectionHeadKind
-{
-    public string Name => name;
-
-    public string Summary => "the grid detector's outputs [5 + C, rows, columns] (setting: stride)";
-
-    public IReadOnlySet<string> Keys { get; } = new OptionKeys("stride");
-
-    public DetectionDecoder Create(DetectionDecoderRequest request) => GridDecoder.Create(request);
-
-    public DetectionHead CreateHead(DetectionDecoderRequest request) => GridHead.Create(request);
-}

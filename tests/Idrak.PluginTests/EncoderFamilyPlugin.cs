@@ -27,15 +27,15 @@ public sealed record ToySizes(int Vocabulary = 40, int Width = 16, int Heads = 2
     int Labels = 3, string PositionBias = "none", int DecoderVocabulary = 24, int DecoderLayers = 2, int DecoderMaxPositions = 16, int Seed = 1);
 
 /// <summary>
-/// An encoder family and a text encoder-decoder family of their own, registered from outside the library with its public
-/// API alone (plan 26, P8): a toy encoder (token, type and learned position embeddings, pre-norm blocks of
+/// An encoder family and a text encoder-decoder family of their own, written outside the library with its public API alone
+/// (plan 26, P8): a toy encoder (token, type and learned position embeddings, pre-norm blocks of
 /// <see cref="MultiHeadAttention"/> with an optional position bias shared by the blocks, a final norm) with a classifier and
 /// a masked-language-model head from <see cref="EncoderHeads"/>, read by <see cref="PretrainedEncoderModel.Load"/>; and a
 /// toy encoder-decoder (that encoder and a decoder of <see cref="DecoderBlock"/>s with <see cref="CrossAttention"/>, the
 /// self-attention with an optional one-way position bias) read by <see cref="PretrainedSeq2SeqModel.Load"/>. The
 /// checkpoints are safetensors files of random tensors under the family's own names (in Idrak's layout), written by
-/// <see cref="WriteEncoder"/> and <see cref="WriteSeq2Seq"/>. A position bias kind of its own,
-/// <see cref="DistanceBias"/>, derives from the library's <see cref="AttentionPositionBias"/>.
+/// <see cref="WriteEncoder"/> and <see cref="WriteSeq2Seq"/>. A position bias of its own, <see cref="DistanceBias"/>,
+/// derives from the library's <see cref="AttentionPositionBias"/>.
 /// </summary>
 public static class ToyEncoderPlugin
 {
@@ -45,27 +45,11 @@ public static class ToyEncoderPlugin
     /// <summary>The encoder-decoder family's architecture name.</summary>
     public const string Seq2SeqArchitecture = "OutsideToySeq2Seq";
 
-    /// <summary>The position bias kind of its own: a slope per head times the distance, no parameters.</summary>
+    /// <summary>The position bias of its own: a slope per head times the distance, no parameters.</summary>
     public const string DistanceBias = "outside-distance";
 
     private static readonly EncoderFamily Encoders = new();
     private static readonly Seq2SeqFamily Seq2Seq = new();
-
-    /// <summary>Registers both families and the bias kind (registering twice registers once).</summary>
-    public static void Register()
-    {
-        PretrainedEncoders.Register(Encoders);
-        PretrainedSeq2Seq.Register(Seq2Seq);
-        AttentionPositionBiases.Register(DistanceKind.Instance);
-    }
-
-    /// <summary>Removes both families and the bias kind.</summary>
-    public static void Unregister()
-    {
-        PretrainedEncoders.Unregister(Architecture);
-        PretrainedSeq2Seq.Unregister(Seq2SeqArchitecture);
-        AttentionPositionBiases.Unregister(DistanceBias);
-    }
 
     /// <summary>Writes a toy encoder checkpoint (config.json and model.safetensors) into <paramref name="folder"/>.</summary>
     public static string WriteEncoder(string folder, ToySizes sizes)
@@ -204,18 +188,29 @@ public static class ToyEncoderPlugin
     private static LayerNorm LayerNormOf(ITensorStore store, string name, Device device) =>
         LayerNorm.FromWeights(Parameter(store, $"{name}.weight", device), Parameter(store, $"{name}.bias", device), 1e-5f);
 
-    // The family's position bias for `heads` heads (null for "none"), its tensors read from the store under `prefix`.
+    // The family's position bias (null for "none"), made directly: the library's "relative" (max distance 8, its table read
+    // from the store under `prefix`) or its own distance bias.
     private static IAttentionPositionBias? Bias(JsonObject config, ITensorStore store, string prefix, bool bidirectional, Device device)
     {
         string kind = (string?)config["position_bias"] ?? "none";
-        if (kind == "none")
+        int heads = Int(config, "heads");
+        switch (kind)
         {
-            return null;
-        }
+            case "none":
+                return null;
+            case DistanceBias:
+                return new Distance(heads);
+            case RelativePositionBias.KindName:
+                var relative = new RelativePositionBias(heads, maxDistance: 8, bidirectional, device);
+                if (store.Contains($"{prefix}.table"))
+                {
+                    relative.Table.CopyFrom(store.Read($"{prefix}.table"));
+                }
 
-        var settings = new JsonObject { ["max_distance"] = 8, ["bidirectional"] = bidirectional };
-        return AttentionPositionBiases.Create(kind, new PositionBiasRequest(Int(config, "heads"), settings, device, 0,
-            (name, shape) => store.Contains($"{prefix}.{name}") ? store.Read($"{prefix}.{name}") : null));
+                return relative;
+            default:
+                throw new InvalidDataException($"The toy checkpoint's position bias '{kind}' is none, {RelativePositionBias.KindName} or {DistanceBias}.");
+        }
     }
 
     // The encoder: words, types, positions, embedding norm, pre-norm blocks over a shared bias, final norm.
@@ -242,7 +237,7 @@ public static class ToyEncoderPlugin
             LayerNormOf(store, "enc.embedding_norm", device), LayerNormOf(store, "enc.final_norm", device));
     }
 
-    // The head tensors under `prefix` ("cls", "mlm"), by the names EncoderHeads' kinds read.
+    // The head tensors under `prefix` ("cls", "mlm"), by the names EncoderHead's factories read.
     private static Func<string, IReadOnlyList<int>, float[]?> Reader(ITensorStore store, string prefix) =>
         (name, _) => store.Contains($"{prefix}.{name}") ? store.Read($"{prefix}.{name}") : null;
 
@@ -257,9 +252,9 @@ public static class ToyEncoderPlugin
             var config = checkpoint.Config;
             return
             [
-                EncoderHeads.Create(EncoderHeads.SequenceClassification, new EncoderHeadRequest(encoder.Width, Int(config, "labels"),
+                EncoderHead.Classification(new EncoderHeadRequest(encoder.Width, Int(config, "labels"),
                     new JsonObject { ["dense"] = true }, checkpoint.Device, 0, Reader(checkpoint.Tensors, "cls"))),
-                EncoderHeads.Create(EncoderHeads.MaskedLanguageModel, new EncoderHeadRequest(encoder.Width, encoder.Vocabulary,
+                EncoderHead.MaskedLanguageModel(new EncoderHeadRequest(encoder.Width, encoder.Vocabulary,
                     new JsonObject { ["transform"] = true, ["norm_epsilon"] = 1e-5 }, checkpoint.Device, 0, Reader(checkpoint.Tensors, "mlm"))),
             ];
         }
@@ -303,23 +298,7 @@ public static class ToyEncoderPlugin
         }
     }
 
-    // The bias kind of its own: no settings, no trained tensors.
-    private sealed class DistanceKind : IPositionBiasKind
-    {
-        public static readonly DistanceKind Instance = new();
-
-        public string Name => DistanceBias;
-
-        public string Summary => "a slope per head times the distance";
-
-        public IReadOnlySet<string> Keys => OptionKeys.None;
-
-        public IReadOnlyList<string> Weights => [];
-
-        public IAttentionPositionBias Create(PositionBiasRequest request) => new Distance(request.Heads);
-    }
-
-    // -slope(h) · |key - query|, slope(h) = 0.5 / (h + 1): computed by position, no parameters (a kind of its own on the
+    // -slope(h) · |key - query|, slope(h) = 0.5 / (h + 1): computed by position, no parameters (a bias of its own on the
     // library's base, which keeps it per shape).
     private sealed class Distance(int heads) : AttentionPositionBias(heads)
     {

@@ -6,7 +6,7 @@ using System.Text;
 
 namespace Idrak.PluginTests;
 
-/// <summary>How a toy document format or writer misbehaves, to prove the registries' guards.</summary>
+/// <summary>How a toy document format or writer misbehaves.</summary>
 public enum ToyBehaviour
 {
     /// <summary>As written.</summary>
@@ -26,8 +26,8 @@ public enum ToyBehaviour
 /// <see cref="InvalidDataException"/>, and the options' limits are kept (each image's bytes within
 /// <see cref="DocumentOptions.MaxStreamBytes"/>, its lines within <see cref="DocumentOptions.MaxObjects"/>).
 /// </summary>
-/// <param name="name">The name it registers under.</param>
-/// <param name="behaviour">How it misbehaves (the guards' proof).</param>
+/// <param name="name">Its name.</param>
+/// <param name="behaviour">How it misbehaves.</param>
 public sealed class ToyDocumentFormat(string name = ToyDocumentFormat.DefaultName, ToyBehaviour behaviour = ToyBehaviour.Plain) : IDocumentFormat
 {
     /// <summary>The toy's name.</summary>
@@ -153,7 +153,8 @@ internal sealed class ToyDocument : IDocument
 
     public string? PageLabel(int index) => null;
 
-    public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) => DocumentPageDrawers.DrawPage(this, index, options);
+    public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) =>
+        throw new NotSupportedException($"Page {index}: drawing through the page drawers by name (DocumentPageDrawers) is not on the new design yet.");
 
     public DocumentPage ReadPage(int index, DocumentParts parts)
     {
@@ -269,7 +270,10 @@ internal sealed class ToyDocument : IDocument
             }
         }
 
-        var arranged = (parts & DocumentParts.Text) != 0 ? DocumentTextLayouts.Arrange(runs, width, height, _options) : DocumentText.Empty;
+        // The text layouts were picked by the options' name: not on the new design yet.
+        var arranged = (parts & DocumentParts.Text) != 0
+            ? throw new NotSupportedException($"The text layout '{_options.Layout}' by name is not on the new design yet.")
+            : DocumentText.Empty;
         return new DocumentPage(index, width, height)
         {
             Runs = runs, Lines = arranged.Lines, Text = arranged.Text, Images = images, Paths = paths, Clips = clips,
@@ -333,8 +337,8 @@ internal sealed class ToyDocument : IDocument
 /// input writes the same bytes. It writes no forms, bookmarks, labels, links, annotations, encryption or signatures, and
 /// edits nothing (each a <see cref="NotSupportedException"/> saying so).
 /// </summary>
-/// <param name="name">The name it registers under.</param>
-/// <param name="behaviour">How it misbehaves (the guards' proof).</param>
+/// <param name="name">Its name.</param>
+/// <param name="behaviour">How it misbehaves.</param>
 public sealed class ToyDocumentWriter(string name = ToyDocumentFormat.DefaultName, ToyBehaviour behaviour = ToyBehaviour.Plain) : IDocumentWriter
 {
     /// <inheritdoc />
@@ -560,285 +564,3 @@ public sealed class ToyDocumentWriter(string name = ToyDocumentFormat.DefaultNam
     private static string Field(string? text) => text is null ? "-" : Convert.ToBase64String(Encoding.UTF8.GetBytes(text));
 }
 
-/// <summary>
-/// The proofs of the document contract from outside (plan 28, D0): <see cref="ToyDocumentFormat"/> and
-/// <see cref="ToyDocumentWriter"/> registered, used by name, extension and first bytes, checked by the conformance kit,
-/// and put over a library format and writer of the same name to fall back and be compared.
-/// </summary>
-public static class DocumentPluginTests
-{
-    /// <summary>The name the proof's library default and app registration share.</summary>
-    public const string ProofName = "outside-proof";
-
-    private static readonly Lock Gate = new();
-    private static bool s_defaults;
-
-    /// <summary>A toy format and writer of one's own register, write and open files, pass the suites and unregister; an unknown name is refused naming the registered ones.</summary>
-    public static void RegistersAndConforms(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;                                                          // documents are read on the host: checked once
-        }
-
-        var format = new ToyDocumentFormat();
-        var writer = new ToyDocumentWriter();
-        string folder = Path.Combine(Path.GetTempPath(), "idrak-outside-documents", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(folder);
-        DocumentFormats.Register(format);
-        DocumentWriters.Register(writer);
-        try
-        {
-            string origin = typeof(DocumentPluginTests).Assembly.GetName().Name!;
-            Check(DocumentFormats.Names.Contains(ToyDocumentFormat.DefaultName) && DocumentFormats.Origin(ToyDocumentFormat.DefaultName) == origin
-                  && DocumentFormats.Default(ToyDocumentFormat.DefaultName) is null && DocumentFormats.Extensions.Contains(".toydoc"),
-                $"the format registered from outside: {string.Join(", ", DocumentFormats.Names)}, origin {DocumentFormats.Origin(ToyDocumentFormat.DefaultName)}");
-            Check(DocumentWriters.Names.Contains(ToyDocumentFormat.DefaultName) && DocumentWriters.Origin(ToyDocumentFormat.DefaultName) == origin
-                  && ReferenceEquals(DocumentWriters.For("a.TOYDOC"), writer), $"the writer registered from outside: {string.Join(", ", DocumentWriters.Names)}");
-
-            // Written by extension to a file, then opened by its first bytes from the file, a stream and memory.
-            string path = Path.Combine(folder, "letter.toydoc");
-            using (var builder = DocumentWriters.Create(path))
-            {
-                builder.Info = new DocumentInfo { Title = "A letter", Author = "A sender" };
-                var page = builder.AddPage(612f, 792f);
-                page.Path(DocumentPath.Rectangle(new DocumentBox(72f, 72f, 200f, 100f)));
-                page.Image(new ImageData([0f, 1f, 0.2f, 0.6f], 1, 2, 2), new DocumentBox(300f, 72f, 40f, 40f), DocumentImageEncoding.Flate);
-                builder.Attach("notes.txt", "text/plain", new MemoryStream("Notes for the letter."u8.ToArray()));
-                builder.Finish();
-            }
-
-            byte[] bytes = File.ReadAllBytes(path);
-            Check(DocumentFormats.CanOpen(path) && ReferenceEquals(DocumentFormats.Detect(bytes), format) && !ReferenceEquals(DocumentFormats.Detect("%PDF-1.7\n"u8), format),
-                "found by extension and first bytes, and not taken for another format's file (a PDF's start)");
-            using (var document = DocumentFormats.Open(path))
-            {
-                var page = document.ReadPage(0, DocumentParts.All);
-                Check(document.Format == ToyDocumentFormat.DefaultName && document.PageCount == 1 && document.Info.Title == "A letter" && page.Paths.Count == 1
-                      && page.Images.Count == 1 && page.Images[0].Decode().Pixels[2] == 0.2f && document.Attachments.Single().Size == 21,
-                    $"opened from the file: {document.PageCount} pages, {document.Info.Title}");
-            }
-
-            using (var stream = File.OpenRead(path))
-            using (var document = DocumentFormats.Open(stream, "letter"))
-            {
-                Check(document.PageCount == 1, "opened from a stream");
-            }
-
-            using (var document = DocumentFormats.Open(bytes, "letter"))
-            {
-                Check(document.PageCount == 1, "opened from memory");
-            }
-
-            try
-            {
-                DocumentFormats.Open("not a document of any format"u8.ToArray(), "plain");
-                Check(false, "a file of no registered format opened");
-            }
-            catch (InvalidDataException e)
-            {
-                Check(e.Message.Contains(ToyDocumentFormat.DefaultName, StringComparison.Ordinal), $"refusal names the formats: {e.Message}");
-            }
-
-            // The conformance kit on the toy: files the writer made (one with text in a font, when the test data is here).
-            var face = TestFace();
-            var samples = new List<Abstraction.Testing.DocumentSample> { new(path, Pages: 1) };
-            string text = Path.Combine(folder, "report.toydoc");
-            using (var builder = DocumentWriters.Create(path: text))
-            {
-                var page = builder.AddPage(612f, 792f);
-                if (face is not null)
-                {
-                    WriteLine(page, face, "A plain line of text.", 72f, 100f, DocumentTextMode.Fill);
-                    WriteLine(page, face, "A line under the scan.", 72f, 130f, DocumentTextMode.Hidden);
-                }
-
-                builder.AddPage(300f, 200f).Path(new DocumentPath([OutlineVerb.Move, OutlineVerb.Cubic], [10f, 10f, 50f, 0f, 90f, 90f, 120f, 40f]) { Fill = DocumentFill.None, Stroke = 1f });
-                builder.Finish();
-            }
-
-            samples.Add(new(text, Pages: 2, Texts: face is null ? null : ["A plain line of text.\nA line under the scan.", ""]));
-            string cut = Path.Combine(folder, "cut.toydoc");
-            File.WriteAllBytes(cut, bytes[..(bytes.Length / 2)]);
-            samples.Add(new(cut, Error: "cut"));
-            Abstraction.Testing.Conformance.CheckDocumentFormat(format, samples, options: new Abstraction.Testing.ContractCheckOptions { RandomCases = 16 }).ThrowIfFailed();
-            Abstraction.Testing.Conformance.CheckDocumentWriter(writer, face: face).ThrowIfFailed();
-        }
-        finally
-        {
-            Check(DocumentFormats.Unregister(ToyDocumentFormat.DefaultName) && DocumentWriters.Unregister(ToyDocumentFormat.DefaultName)
-                  && DocumentFormats.Find(ToyDocumentFormat.DefaultName) is null, "unregistered");
-            Directory.Delete(folder, recursive: true);
-        }
-
-        try
-        {
-            DocumentFormats.Get(ToyDocumentFormat.DefaultName);
-            Check(false, "an unregistered format was found");
-        }
-        catch (NotRegisteredException e)
-        {
-            Check(e.Registry == nameof(DocumentFormats) && e.Name == ToyDocumentFormat.DefaultName && e.Registered.SequenceEqual(DocumentFormats.Names)
-                  && e.Message.Contains("DocumentFormats.Register", StringComparison.Ordinal), $"the refusal: {e.Message}");
-        }
-
-        try
-        {
-            DocumentWriters.Get(ToyDocumentFormat.DefaultName);
-            Check(false, "an unregistered writer was found");
-        }
-        catch (NotRegisteredException e)
-        {
-            Check(e.Registry == nameof(DocumentWriters) && e.Registered.SequenceEqual(DocumentWriters.Names) && e.Message.Contains("DocumentWriters.Register", StringComparison.Ordinal),
-                $"the refusal: {e.Message}");
-        }
-    }
-
-    /// <summary>
-    /// A toy format and writer over a library one of the same name (a stand-in for the library's, registered as its default
-    /// for the process): the app's answers by default and its failure reaches the caller; under FallBack the library's
-    /// answers the failing call; under Shadow the library's answers and the app's is compared; unregistered, the
-    /// library's is back.
-    /// </summary>
-    public static void OverridesFallsBackAndShadows(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;
-        }
-
-        lock (Gate)
-        {
-            if (!s_defaults)
-            {
-                // Library defaults stay for the process: the stand-in for a format the library ships.
-                Overrides.AsLibraryDefaults(() =>
-                {
-                    DocumentFormats.Register(new ToyDocumentFormat(ProofName));
-                    DocumentWriters.Register(new ToyDocumentWriter(ProofName));
-                });
-                s_defaults = true;
-            }
-        }
-
-        Check(DocumentFormats.Origin(ProofName) == Overrides.Library && DocumentWriters.Origin(ProofName) == Overrides.Library, "the stand-ins are library defaults");
-        byte[] library = Write(DocumentWriters.Get(ProofName));
-        string expected;
-        using (var document = DocumentFormats.Open(library, "proof"))
-        {
-            expected = document.ReadPage(0, DocumentParts.Text).Text;
-        }
-
-        try
-        {
-            // The format: fails on its pages.
-            DocumentFormats.Register(new ToyDocumentFormat(ProofName, ToyBehaviour.Fails));
-            Check(DocumentFormats.Origin(ProofName) == typeof(DocumentPluginTests).Assembly.GetName().Name && DocumentFormats.Default(ProofName) is not null, "the app's over the library's");
-            using (var document = DocumentFormats.Open(library, "proof"))
-            {
-                try
-                {
-                    document.ReadPage(0, DocumentParts.Text);
-                    Check(false, "the app's failure was not reported");
-                }
-                catch (InvalidOperationException)
-                {
-                    // Throw, the default policy: the app's failure reaches the caller.
-                }
-
-                DocumentFormats.SetPolicy(ProofName, SlotPolicy.FallBack);
-                Check(document.ReadPage(0, DocumentParts.Text).Text == expected, "under FallBack the library's answers the failing call");
-            }
-
-            Check(Row(nameof(DocumentFormats)) is { Failures: >= 2, FallBacks: >= 1 }, $"the report: {Row(nameof(DocumentFormats))}");
-
-            // The format: differs; compared under Shadow, the library's answering.
-            DocumentFormats.Register(new ToyDocumentFormat(ProofName, ToyBehaviour.Differs));
-            DocumentFormats.SetPolicy(ProofName, SlotPolicy.Shadow, shadowRate: 1);
-            using (var document = DocumentFormats.Open(library, "proof"))
-            {
-                Check(document.ReadPage(0, DocumentParts.Text).Text == expected, "under Shadow the library's answers");
-            }
-
-            Check(Row(nameof(DocumentFormats)) is { Compared: >= 1, Differed: >= 1 }, $"the comparison: {Row(nameof(DocumentFormats))}");
-
-            // The writer: fails to start a document, then writes other bytes.
-            DocumentWriters.Register(new ToyDocumentWriter(ProofName, ToyBehaviour.Fails));
-            DocumentWriters.SetPolicy(ProofName, SlotPolicy.FallBack);
-            Check(Write(DocumentWriters.Get(ProofName)).AsSpan().SequenceEqual(library), "under FallBack the library's writes the document");
-            DocumentWriters.Register(new ToyDocumentWriter(ProofName, ToyBehaviour.Differs));
-            DocumentWriters.SetPolicy(ProofName, SlotPolicy.Shadow, shadowRate: 1);
-            Check(Write(DocumentWriters.Get(ProofName)).AsSpan().SequenceEqual(library), "under Shadow the library's bytes are written");
-            Check(Row(nameof(DocumentWriters)) is { Compared: >= 1, Differed: >= 1 }, $"the writers' comparison: {Row(nameof(DocumentWriters))}");
-        }
-        finally
-        {
-            DocumentFormats.Unregister(ProofName);
-            DocumentWriters.Unregister(ProofName);
-            DocumentFormats.SetPolicy(ProofName, SlotPolicy.Throw);
-            DocumentWriters.SetPolicy(ProofName, SlotPolicy.Throw);
-        }
-
-        Check(DocumentFormats.Origin(ProofName) == Overrides.Library && DocumentWriters.Origin(ProofName) == Overrides.Library, "unregistered, the library's are back");
-    }
-
-    private static SlotOverride? Row(string registry) => Overrides.Report().FirstOrDefault(o => o.Registry == registry && o.Name == ProofName);
-
-    // A one-page document of two rectangles and, where the test font is here, a line of text in it.
-    private static byte[] Write(IDocumentWriter writer)
-    {
-        using var destination = new MemoryStream();
-        using (var builder = writer.Create(destination, new DocumentWriteOptions()))
-        {
-            var page = builder.AddPage(400f, 300f);
-            page.Path(DocumentPath.Rectangle(new DocumentBox(10f, 10f, 100f, 50f)));
-            page.Path(DocumentPath.Rectangle(new DocumentBox(150f, 10f, 100f, 50f)));
-            var face = TestFace();
-            if (face is not null)
-            {
-                WriteLine(page, face, "A short report.", 20f, 120f, DocumentTextMode.Fill);
-            }
-
-            builder.Finish();
-        }
-
-        return destination.ToArray();
-    }
-
-    private static void WriteLine(IDocumentPageBuilder page, IFontFace face, string text, float x, float baseline, DocumentTextMode mode)
-    {
-        float size = 12f, scale = size / face.Metrics.UnitsPerEm;
-        var glyphs = new List<DocumentGlyph>();
-        foreach (var rune in text.EnumerateRunes())
-        {
-            int glyph = face.Glyph(rune.Value);
-            glyphs.Add(new DocumentGlyph(glyph, x, baseline, face.Advance(glyph) * scale));
-            x += face.Advance(glyph) * scale;
-        }
-
-        page.Glyphs(face, size, [.. glyphs], text, mode, DocumentColour.Black);
-    }
-
-    // The DejaVu Sans subset of tests/Idrak.Tests/data/fonts, found from the build output folder; null where it is not.
-    private static IFontFace? TestFace()
-    {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
-        {
-            string font = Path.Combine(directory.FullName, "tests", "Idrak.Tests", "data", "fonts", "dejavu-sans-subset.ttf");
-            if (File.Exists(font))
-            {
-                return FontFormats.Read(font).Single();
-            }
-        }
-
-        return null;
-    }
-
-    private static void Check(bool condition, string message)
-    {
-        if (!condition)
-        {
-            throw new InvalidOperationException(message);
-        }
-    }
-}

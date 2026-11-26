@@ -10,8 +10,8 @@ namespace Idrak.PluginTests;
 /// least <see cref="LevelKey"/> of ink (0.5 unless set) become rectangles of whole pixels, all turning the same way, so
 /// the outline has one winding and keeps its holes; its edges lie on pixel edges, within a pixel of the half-ink edge.
 /// </summary>
-/// <param name="name">The name it registers under.</param>
-/// <param name="behaviour">How it misbehaves (the guards' proof): it fails, or its outline lies four pixels to the right.</param>
+/// <param name="name">Its name.</param>
+/// <param name="behaviour">How it misbehaves: it fails, or its outline lies four pixels to the right.</param>
 public sealed class ToyOutlineTracer(string name = ToyOutlineTracer.DefaultName, ToyBehaviour behaviour = ToyBehaviour.Plain) : IOutlineTracer
 {
     /// <summary>The toy's name.</summary>
@@ -27,16 +27,13 @@ public sealed class ToyOutlineTracer(string name = ToyOutlineTracer.DefaultName,
     public string Summary => "each row's runs of ink as rectangles of whole pixels (the outside proof's tracer)";
 
     /// <inheritdoc />
-    public IReadOnlySet<string> Keys { get; } = new OptionKeys(LevelKey);
-
-    /// <inheritdoc />
     public OutlineTracerSettings Read(IReadOnlyDictionary<string, string> options)
     {
         ArgumentNullException.ThrowIfNull(options);
         float level = 0.5f;
         foreach (var (key, value) in options)
         {
-            if (!Keys.Contains(key.ToLowerInvariant()))
+            if (!string.Equals(key, LevelKey, StringComparison.OrdinalIgnoreCase))
             {
                 throw new ArgumentException($"The tracer {Name} takes {LevelKey} only, not '{key}'.", nameof(options));
             }
@@ -108,8 +105,8 @@ public sealed class ToyOutlineTracer(string name = ToyOutlineTracer.DefaultName,
 /// is reported left out. A column holds ink where a pixel has <see cref="LevelKey"/> of it (0.5 unless set). The baseline
 /// is the lowest ink's bottom row, the size the tallest glyph's height.
 /// </summary>
-/// <param name="name">The name it registers under.</param>
-/// <param name="behaviour">How it misbehaves (the guards' proof): it fails, or it labels the glyphs from the right.</param>
+/// <param name="name">Its name.</param>
+/// <param name="behaviour">How it misbehaves: it fails, or it labels the glyphs from the right.</param>
 public sealed class ToyGlyphSource(string name = ToyGlyphSource.DefaultName, ToyBehaviour behaviour = ToyBehaviour.Plain) : IGlyphSource
 {
     /// <summary>The toy's name.</summary>
@@ -125,16 +122,13 @@ public sealed class ToyGlyphSource(string name = ToyGlyphSource.DefaultName, Toy
     public string Summary => "the ink between blank columns, one glyph each, labelled from the known text (the outside proof's source)";
 
     /// <inheritdoc />
-    public IReadOnlySet<string> Keys { get; } = new OptionKeys(LevelKey);
-
-    /// <inheritdoc />
     public GlyphSourceSettings Read(IReadOnlyDictionary<string, string> options)
     {
         ArgumentNullException.ThrowIfNull(options);
         float level = 0.5f;
         foreach (var (key, value) in options)
         {
-            if (!Keys.Contains(key.ToLowerInvariant()))
+            if (!string.Equals(key, LevelKey, StringComparison.OrdinalIgnoreCase))
             {
                 throw new ArgumentException($"The glyph source {Name} takes {LevelKey} only, not '{key}'.", nameof(options));
             }
@@ -269,18 +263,10 @@ public sealed class ToyGlyphSource(string name = ToyGlyphSource.DefaultName, Toy
 }
 
 /// <summary>
-/// The proofs of the handwriting contracts from outside (plan 38, F0): <see cref="ToyOutlineTracer"/> and
-/// <see cref="ToyGlyphSource"/> registered, used by name, checked by the conformance kit, and put over a library tracer
-/// and source of the same name to fall back and be compared.
+/// The samples of the handwriting contracts from outside (plan 38, F0): pages that <see cref="ToyGlyphSource"/> reads.
 /// </summary>
 public static class HandwritingPluginTests
 {
-    /// <summary>The name the proof's library defaults and app registrations share.</summary>
-    public const string ProofName = "outside-proof";
-
-    private static readonly Lock Gate = new();
-    private static bool s_defaults;
-
     /// <summary>
     /// Pages of generic glyph shapes in a row (a bar, a ring, a hook, a block with a notch), with their known text and
     /// where each glyph is: a grey page, a colour page read at another ink level, and a page whose text has a character more
@@ -298,183 +284,6 @@ public static class HandwritingPluginTests
             new(short1, "1 7 0 4") { Name = "a row with a character more than its ink", Glyphs = Expected("170", shortBoxes) },
         ];
     }
-
-    /// <summary>
-    /// A toy tracer and source of one's own register, are found by name, find and trace a page's glyphs, pass the suites
-    /// and unregister; an unknown name is refused naming the registered ones.
-    /// </summary>
-    public static void RegistersAndConforms(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;                                                          // read on the host: checked once
-        }
-
-        var tracer = new ToyOutlineTracer();
-        var source = new ToyGlyphSource();
-        OutlineTracers.Register(tracer);
-        GlyphSources.Register(source);
-        try
-        {
-            string origin = typeof(HandwritingPluginTests).Assembly.GetName().Name!;
-            Check(OutlineTracers.Names.Contains(ToyOutlineTracer.DefaultName) && OutlineTracers.Origin(ToyOutlineTracer.DefaultName) == origin
-                  && OutlineTracers.Default(ToyOutlineTracer.DefaultName) is null && ReferenceEquals(OutlineTracers.Get("OUTSIDE-RUNS"), tracer)
-                  && OutlineTracers.Describe().Contains($"{ToyOutlineTracer.DefaultName}: ", StringComparison.Ordinal) && OutlineTracers.AllKeys().Contains(ToyOutlineTracer.LevelKey),
-                $"the tracer registered from outside: {string.Join(", ", OutlineTracers.Names)}, origin {OutlineTracers.Origin(ToyOutlineTracer.DefaultName)}");
-            Check(GlyphSources.Names.Contains(ToyGlyphSource.DefaultName) && GlyphSources.Origin(ToyGlyphSource.DefaultName) == origin
-                  && GlyphSources.Default(ToyGlyphSource.DefaultName) is null && ReferenceEquals(GlyphSources.Find("Outside-Columns"), source)
-                  && GlyphSources.Describe().Contains($"{ToyGlyphSource.DefaultName}: ", StringComparison.Ordinal) && GlyphSources.AllKeys().Contains(ToyGlyphSource.LevelKey),
-                $"the source registered from outside: {string.Join(", ", GlyphSources.Names)}");
-
-            // Used by name: a page's glyphs found, labelled from its text, and traced at their baseline and size.
-            var sample = Samples()[0];
-            var found = GlyphSources.Get(ToyGlyphSource.DefaultName).Find(new GlyphSourceRequest(sample.Image, sample.Text, source.Read(PageOptions.None)));
-            Check(string.Concat(found.Glyphs.Select(g => g.Text)) == "1074" && found.LeftOut.Count == 0, $"found: {string.Join("; ", found.Glyphs)}");
-            var settings = tracer.Read(PageOptions.None);
-            foreach (var glyph in found.Glyphs)
-            {
-                var outline = OutlineTracers.Get(ToyOutlineTracer.DefaultName).Trace(glyph.Ink, glyph.Placement(1000), settings);
-                var (minX, minY, maxX, maxY) = outline.Bounds();
-                float units = 1000f / glyph.Size;
-                Check(!outline.IsEmpty && MathF.Abs(minX) < 0.5f && MathF.Abs(maxX - glyph.Box.Width * units) < 1f
-                      && MathF.Abs(maxY - (glyph.Baseline - glyph.Box.Y) * units) < 1f && minY >= -1f,
-                    $"'{glyph.Text}' traced at its baseline and size: {outline.Bounds()} for {glyph}");
-            }
-
-            // The conformance kit on the toys.
-            Abstraction.Testing.Conformance.CheckOutlineTracer(tracer, settings: [new Dictionary<string, string> { [ToyOutlineTracer.LevelKey] = "0.4" }]).ThrowIfFailed();
-            Abstraction.Testing.Conformance.CheckGlyphSource(source, Samples(), new Abstraction.Testing.ContractCheckOptions { RandomCases = 8 }).ThrowIfFailed();
-        }
-        finally
-        {
-            Check(OutlineTracers.Unregister(ToyOutlineTracer.DefaultName) && GlyphSources.Unregister(ToyGlyphSource.DefaultName)
-                  && OutlineTracers.Find(ToyOutlineTracer.DefaultName) is null && GlyphSources.Find(ToyGlyphSource.DefaultName) is null, "unregistered");
-        }
-
-        try
-        {
-            OutlineTracers.Get(ToyOutlineTracer.DefaultName);
-            Check(false, "an unregistered tracer was found");
-        }
-        catch (NotRegisteredException e)
-        {
-            Check(e.Registry == nameof(OutlineTracers) && e.Name == ToyOutlineTracer.DefaultName && e.Registered.SequenceEqual(OutlineTracers.Names)
-                  && e.Message.Contains("OutlineTracers.Register", StringComparison.Ordinal), $"the refusal: {e.Message}");
-        }
-
-        try
-        {
-            GlyphSources.Get(ToyGlyphSource.DefaultName);
-            Check(false, "an unregistered source was found");
-        }
-        catch (NotRegisteredException e)
-        {
-            Check(e.Registry == nameof(GlyphSources) && e.Name == ToyGlyphSource.DefaultName && e.Registered.SequenceEqual(GlyphSources.Names)
-                  && e.Message.Contains("GlyphSources.Register", StringComparison.Ordinal), $"the refusal: {e.Message}");
-        }
-    }
-
-    /// <summary>
-    /// A toy tracer and source over library ones of the same name (stand-ins for the library's, registered as its
-    /// defaults for the process): the app's answers by default and its failure reaches the caller; under FallBack the
-    /// library's answers the failing call; under Shadow the library's answers and the app's is compared; unregistered,
-    /// the library's are back.
-    /// </summary>
-    public static void OverridesFallsBackAndShadows(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;
-        }
-
-        lock (Gate)
-        {
-            if (!s_defaults)
-            {
-                // Library defaults stay for the process: the stand-ins for a tracer and a source the library ships.
-                Overrides.AsLibraryDefaults(() =>
-                {
-                    OutlineTracers.Register(new ToyOutlineTracer(ProofName));
-                    GlyphSources.Register(new ToyGlyphSource(ProofName));
-                });
-                s_defaults = true;
-            }
-        }
-
-        Check(OutlineTracers.Origin(ProofName) == Overrides.Library && GlyphSources.Origin(ProofName) == Overrides.Library, "the stand-ins are library defaults");
-        var sample = Samples()[0];
-        var library = GlyphSources.Get(ProofName);
-        var expected = library.Find(new GlyphSourceRequest(sample.Image, sample.Text, library.Read(PageOptions.None)));
-        var glyph = expected.Glyphs[1];
-        var at = glyph.Placement(1000);
-        var libraryTracer = OutlineTracers.Get(ProofName);
-        var traced = libraryTracer.Trace(glyph.Ink, at, libraryTracer.Read(PageOptions.None));
-        string app = typeof(HandwritingPluginTests).Assembly.GetName().Name!;
-        try
-        {
-            // The tracer: fails, then traces four pixels off.
-            OutlineTracers.Register(new ToyOutlineTracer(ProofName, ToyBehaviour.Fails));
-            Check(OutlineTracers.Origin(ProofName) == app && OutlineTracers.Default(ProofName) is not null, "the app's tracer over the library's");
-            var guarded = OutlineTracers.Get(ProofName);
-            var settings = guarded.Read(PageOptions.None);
-            try
-            {
-                guarded.Trace(glyph.Ink, at, settings);
-                Check(false, "the app's tracer's failure was not reported");
-            }
-            catch (InvalidOperationException)
-            {
-                // Throw, the default policy: the app's failure reaches the caller.
-            }
-
-            OutlineTracers.SetPolicy(ProofName, SlotPolicy.FallBack);
-            Check(Same(guarded.Trace(glyph.Ink, at, settings), traced), "under FallBack the library's tracer answers the failing call");
-            Check(Row(nameof(OutlineTracers)) is { Failures: >= 2, FallBacks: >= 1 }, $"the report: {Row(nameof(OutlineTracers))}");
-            OutlineTracers.Register(new ToyOutlineTracer(ProofName, ToyBehaviour.Differs));
-            OutlineTracers.SetPolicy(ProofName, SlotPolicy.Shadow, shadowRate: 1);
-            var shadowed = OutlineTracers.Get(ProofName);
-            Check(Same(shadowed.Trace(glyph.Ink, at, shadowed.Read(PageOptions.None)), traced), "under Shadow the library's tracer answers");
-            Check(Row(nameof(OutlineTracers)) is { Compared: >= 1, Differed: >= 1 }, $"the tracers' comparison: {Row(nameof(OutlineTracers))}");
-
-            // The source: fails, then labels from the right.
-            GlyphSources.Register(new ToyGlyphSource(ProofName, ToyBehaviour.Fails));
-            var source = GlyphSources.Get(ProofName);
-            var request = new GlyphSourceRequest(sample.Image, sample.Text, source.Read(PageOptions.None));
-            try
-            {
-                source.Find(request);
-                Check(false, "the app's source's failure was not reported");
-            }
-            catch (InvalidOperationException)
-            {
-                // Throw, the default policy.
-            }
-
-            GlyphSources.SetPolicy(ProofName, SlotPolicy.FallBack);
-            Check(Labels(source.Find(request)) == Labels(expected), "under FallBack the library's source answers the failing call");
-            Check(Row(nameof(GlyphSources)) is { Failures: >= 2, FallBacks: >= 1 }, $"the report: {Row(nameof(GlyphSources))}");
-            GlyphSources.Register(new ToyGlyphSource(ProofName, ToyBehaviour.Differs));
-            GlyphSources.SetPolicy(ProofName, SlotPolicy.Shadow, shadowRate: 1);
-            var compared = GlyphSources.Get(ProofName);
-            Check(Labels(compared.Find(request with { Settings = compared.Read(PageOptions.None) })) == Labels(expected), "under Shadow the library's source answers");
-            Check(Row(nameof(GlyphSources)) is { Compared: >= 1, Differed: >= 1 }, $"the sources' comparison: {Row(nameof(GlyphSources))}");
-        }
-        finally
-        {
-            OutlineTracers.Unregister(ProofName);
-            GlyphSources.Unregister(ProofName);
-            OutlineTracers.SetPolicy(ProofName, SlotPolicy.Throw);
-            GlyphSources.SetPolicy(ProofName, SlotPolicy.Throw);
-        }
-
-        Check(OutlineTracers.Origin(ProofName) == Overrides.Library && GlyphSources.Origin(ProofName) == Overrides.Library, "unregistered, the library's are back");
-    }
-
-    private static SlotOverride? Row(string registry) => Overrides.Report().FirstOrDefault(o => o.Registry == registry && o.Name == ProofName);
-
-    private static bool Same(GlyphOutline a, GlyphOutline b) => a.Verbs.Span.SequenceEqual(b.Verbs.Span) && a.Points.Span.SequenceEqual(b.Points.Span);
-
-    private static string Labels(FoundGlyphs found) => string.Join(" ", found.Glyphs.Select(g => $"{g.Text}@{g.Box}"));
 
     private static List<Abstraction.Testing.ExpectedGlyph> Expected(string text, IReadOnlyList<PixelBox> boxes) =>
         [.. text.Select((c, i) => new Abstraction.Testing.ExpectedGlyph(c.ToString(), null, boxes[i]))];
@@ -533,13 +342,5 @@ public static class HandwritingPluginTests
         }
 
         return (new ImageData(pixels, channels, height, width), boxes);
-    }
-
-    private static void Check(bool condition, string message)
-    {
-        if (!condition)
-        {
-            throw new InvalidOperationException(message);
-        }
     }
 }
