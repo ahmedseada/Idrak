@@ -252,7 +252,7 @@ public static class ComputeResources
     /// Which vector paths the CPU's kernels take (<see cref="CpuVectorPaths"/>): <see cref="CpuVectorPaths.Automatic"/> by
     /// default (the platform's intrinsics where the runtime reports them, else portable 128-bit vectors where it
     /// accelerates them). IDRAK_CPU_VECTORS sets it at start: auto, native, portable or scalar. Every path gives the same
-    /// results; the products read it on every call, the int4 kernels' lane shifts when the CPU's int4 kernels first run.
+    /// results; the products read it on every call.
     /// </summary>
     public static CpuVectorPaths CpuVectors { get; set; } = ParseCpuVectors(Environment.GetEnvironmentVariable("IDRAK_CPU_VECTORS"));
 

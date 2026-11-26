@@ -85,7 +85,7 @@ public sealed record TuningManifest
 
     /// <summary>
     /// The base model with the adapter in <paramref name="folder"/> merged (as fast as the base model), on
-    /// <paramref name="device"/> (the CPU when null); bfloat16 weights on CUDA. <paramref name="options"/> overrides the rest.
+    /// <paramref name="device"/> (the CPU when null). <paramref name="options"/> overrides the rest.
     /// </summary>
     public PretrainedModel LoadModel(string folder, Device? device = null, PretrainedOptions? options = null)
     {

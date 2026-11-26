@@ -14,7 +14,7 @@ reinforcement-learning trainer (`Idrak.Reinforcement`). The sample has no task l
 | `agent-train <model> <suite> --out <dir>` | Trains the model's LoRA adapters on the suite by reinforcement learning: `ReinforcementTrainer` in the `coding` environment, the hidden tests the reward; checkpoints in `<dir>/checkpoints`, the adapter in `<dir>` |
 
 `<model>` is a model folder, a Hugging Face id (`Qwen/Qwen3-0.6B`), a `.gguf` file or `store:name`. Model options:
-`--cuda`, `--cpu`, `--vulkan`, `--device NAME`, `--context N`,
+`--cpu`, `--device NAME`, `--context N`,
 `--adapter DIR`, `--no-think`, `--offload`, `--gpu-memory GiB`.
 
 ## A task suite

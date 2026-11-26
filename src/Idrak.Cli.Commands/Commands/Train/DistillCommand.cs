@@ -47,7 +47,7 @@ internal sealed class DistillCommand : Command
 
         The student's adapter (LoRA, as idrak tune trains it) learns from the teacher. Four ways:
           logits      (default) the teacher's next-token distributions at every trained token, computed as the student
-                      trains (both models loaded; the teacher in inference mode, any weight format, any device). The loss is
+                      trains (both models loaded; the teacher in inference mode, on any device). The loss is
                       alpha · T² · KL(teacher ‖ student) at temperature T plus (1 − alpha) · the cross-entropy on the data.
                       Teacher and student must share a vocabulary (the same tokenizer); a mismatch is refused.
           precompute  --precompute FILE writes the teacher's top-k logits for the data (k = --top-k, default 16) and

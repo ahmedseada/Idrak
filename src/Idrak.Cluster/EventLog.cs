@@ -29,8 +29,8 @@ public sealed class EventLog
     /// </summary>
     public const int Version = 2;
 
-    // The advisor's setting in the header: on (a byte), its warm steps, and the slice's values its bfloat16 measurement
-    // took (two Int32s; the measurement is gone, so the slice is written as 0 and skipped when read).
+    // The advisor's setting in the header: on (a byte), its warm steps, and an Int32 older logs filled (written as 0 and
+    // skipped when read).
     internal const int AdviceBytes = 9;
 
     internal static ReadOnlySpan<byte> Magic => "IDRKLOG\0"u8;
@@ -238,7 +238,7 @@ public sealed class EventLog
 
         bool on = r.Byte() != 0;
         int steps = r.Int32();
-        _ = r.Int32();                                                 // the slice of the bfloat16 measurement, gone
+        _ = r.Int32();                                                 // written as 0, skipped
         return (on, steps);
     }
 

@@ -18,7 +18,7 @@ namespace Idrak.Text;
 /// <see cref="FineTuningLosses.Distillation"/> trains on). Set one as <see cref="FineTuningOptions.Teacher"/>. Two kinds:
 /// <list type="bullet">
 /// <item><see cref="FromModel(PretrainedModel, int, int)"/>: a loaded model computes its distributions on the fly, in inference mode, batch by batch
-/// (any weight format, on any device: the student's or another; only its hidden states at the trained positions are kept
+/// (on any device: the student's or another; only its hidden states at the trained positions are kept
 /// between the passes of a step, and the head runs on a chunk of rows at a time).</item>
 /// <item><see cref="FromFile"/>: the top-k logits per token stored by <see cref="TeacherLogitsWriter"/>, so the teacher need
 /// not be loaded while the student trains. The distribution is the softmax over the stored k tokens alone, renormalized

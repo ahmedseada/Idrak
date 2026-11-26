@@ -478,7 +478,7 @@ internal sealed class VlmCheckCommand : Command
             }
             else if (!referenceClean)
             {
-                parts.Add("With transformers' own image features the decoder still differs beyond a near-tie: the decoder (or its weight format) differs; "
+                parts.Add("With transformers' own image features the decoder still differs beyond a near-tie: the decoder differs; "
                           + "compare with float32 weights, or send this report.");
             }
             else

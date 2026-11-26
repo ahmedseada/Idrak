@@ -36,8 +36,7 @@ step 11-idrak-doctor $I doctor
 step 12-idrak-devices $I devices
 step 13-idrak-bench-kernels $I bench --kernels matmul,gemv -d cpu
 step 14-idrak-bench-model $I bench Qwen/Qwen3-0.6B -d cpu
-step 15-idrak-bench-int8 $I bench Qwen/Qwen3-0.6B -d cpu -w int8
-step 16-idrak-run $I run Qwen/Qwen3-0.6B "Explain in three sentences why the sky is blue." -d cpu
+step 15-idrak-run $I run Qwen/Qwen3-0.6B "Explain in three sentences why the sky is blue." -d cpu
 cd ~ && rm -f idrak-mac-results.zip && zip -qr idrak-mac-results.zip idrak-mac-results && echo "DONE: ~/idrak-mac-results.zip"
 ```
 
@@ -50,7 +49,7 @@ git clone https://github.com/ahmedseada/Idrak.git ~/Idrak && cd ~/Idrak
 ## The web chat page
 
 ```bash
-~/idrak-tool/idrak ui Qwen/Qwen3-0.6B -d cpu -w int8      # opens http://127.0.0.1:7317/ui
+~/idrak-tool/idrak ui Qwen/Qwen3-0.6B -d cpu      # opens http://127.0.0.1:7317/ui
 ```
 
 ## Results on the M4 Max
@@ -58,9 +57,8 @@ git clone https://github.com/ahmedseada/Idrak.git ~/Idrak && cd ~/Idrak
 | Measurement | Value |
 |---|---|
 | Tests (CPU) | 425 of 426; the failure was a test comparing a temp path with the working directory's (`/var` is a link to `/private/var` on macOS), fixed in the test |
-| Float32 product 1024³ / 2048³ | 477 / 448 GFLOP/s (mixed bfloat16: 456 / 511) |
-| Qwen3-0.6B, stored weights | prompt 378 tokens/s, generation 23.5 tokens/s |
-| Qwen3-0.6B, int8 weights | prompt 356 tokens/s, generation 37.8 tokens/s, 887 MiB |
+| Float32 product 1024³ / 2048³ | 477 / 448 GFLOP/s |
+| Qwen3-0.6B, float32 weights | prompt 378 tokens/s, generation 23.5 tokens/s |
 
 Found on this machine and fixed: float32 products of 5 to 7 rows ran 4 to 7 times slower than 4 or 8 rows (they now
 split the columns over the threads, as 1 to 4 rows did), and `idrak doctor` warned about backends macOS does not use.

@@ -4,7 +4,7 @@
   three words, full lines).
 
 .DESCRIPTION
-  Builds the CLI (it registers the vision plug-ins package, IdrakVision among them, at startup), then makes whatever the work folder is missing, in order:
+  Builds the CLI (it references the vision plug-ins package, IdrakVision among them), then makes whatever the work folder is missing, in order:
     1. the text corpus, its tokenizer and token file (idrak data text, data tokenizer, data tokens);
     2. the text model (A5: idrak create, then pretrain);
     3. the vision model on it (create init --vision at -ImageSize pixels, create --decoder);

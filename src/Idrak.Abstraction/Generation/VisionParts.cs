@@ -124,7 +124,7 @@ public interface IVisionTuningPart : IPretrainedVision
     /// <summary>The encoder's <see cref="ITrainableVisionEncoder.ParametersOf"/>.</summary>
     /// <exception cref="ArgumentException">The encoder is not one this family built.</exception>
     /// <exception cref="NotSupportedException">The family does not offer <paramref name="part"/> (the message names the parts it offers).</exception>
-    /// <exception cref="InvalidOperationException">The part's weights are held fixed in this encoder (packed or bfloat16); the message says how to build one that trains.</exception>
+    /// <exception cref="InvalidOperationException">The part's weights are held fixed in this encoder; the message says how to build one that trains.</exception>
     IReadOnlyList<Tensor> Parameters(IVisionEncoder encoder, string part) => VisionTuningParts.Trainable(this, encoder).ParametersOf(part);
 
     /// <summary>The encoder's <see cref="ITrainableVisionEncoder.FeaturesForTraining"/>.</summary>
@@ -172,7 +172,7 @@ public interface ITrainableVisionEncoder : IVisionEncoder
     /// (<see cref="Tensor.RequiresGrad"/>) and gives its optimizer.
     /// </summary>
     /// <exception cref="NotSupportedException">The family does not offer <paramref name="part"/> (the message names the parts it offers).</exception>
-    /// <exception cref="InvalidOperationException">The part's weights are held fixed in this encoder (packed or bfloat16); the message says how to build one that trains.</exception>
+    /// <exception cref="InvalidOperationException">The part's weights are held fixed in this encoder; the message says how to build one that trains.</exception>
     IReadOnlyList<Tensor> ParametersOf(string part);
 
     /// <summary>

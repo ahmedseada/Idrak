@@ -163,7 +163,7 @@ internal sealed class LinesReader : IPageReader
 }
 
 /// <summary>
-/// The vision-language reader: a Gemma 3 vision checkpoint (through the Gemma 3 plug-in the app registers), with an
+/// The vision-language reader: a Gemma 3 vision checkpoint (through Idrak.Vision.Plugins' Gemma 3 family), with an
 /// adapter tuned on images (plan 12) merged as it loads and its saved image preparation (<see cref="TuningImages"/>)
 /// applied; the page and a prompt in one user turn, the answer generated greedily.
 /// </summary>

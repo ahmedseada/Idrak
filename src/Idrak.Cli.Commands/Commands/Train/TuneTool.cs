@@ -698,7 +698,7 @@ internal sealed class TuneTool(ToolConsole console)
                     $"epoch {p.Epoch}/{tuning.Epochs}, loss {p.Loss:F4}, lr {p.LearningRate:G3}, {p.TokensPerSecond:N0} tokens/s");
             });
 
-            // The trace's notable lines (graph recording, FP8, checkpoints); with -v every line (each batch, its image
+            // The trace's notable lines (graph recording, checkpoints); with -v every line (each batch, its image
             // features from the cache or encoded).
             void Trace(string line)
             {

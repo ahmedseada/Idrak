@@ -8,16 +8,16 @@ using Idrak.Text.Abstractions;
 
 namespace Idrak.Cli.Shared;
 
-/// <summary>Helpers of the commands that load and write models (quantize, merge, convert): sizes, quality checks, output folders.</summary>
+/// <summary>Helpers of the commands that load and write models (merge, convert): sizes, quality checks, output folders.</summary>
 internal static class ModelWork
 {
     /// <summary>A short English text for a quick perplexity check when none is given.</summary>
     public const string SampleText =
         "The library reads a model from its folder, builds the network on the chosen device and generates text one token at a time. "
         + "Each step looks at the tokens so far, scores every word in the vocabulary and picks the next one. "
-        + "Smaller weight formats save memory and time, and a short check like this one shows how much quality they cost.";
+        + "A fine-tune changes what it scores, and a short check like this one shows how much quality it gains or costs.";
 
-    /// <summary>Bytes the model's parameters and buffers take on its device (packed weights at their packed size; tied tensors once).</summary>
+    /// <summary>Bytes the model's parameters and buffers take on its device (tied tensors once).</summary>
     public static long Bytes(Module network)
     {
         var seen = new HashSet<Tensor>(ReferenceEqualityComparer.Instance);

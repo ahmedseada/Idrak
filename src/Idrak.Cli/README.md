@@ -601,7 +601,7 @@ the run is measured, and each case says how many (`read back: N encrypted`).
 | `idrak bench` (`b`) | Speed of a model (tokens per second, GFLOP/s, memory) or of the kernels on a device |
 | `idrak bench documents` (`b documents`) | Speed and memory of reading, drawing, writing, editing and signing documents, cold and warm |
 | `idrak eval` | Answer metrics of a chat model on held-out conversations (accuracy, exact match, F1) |
-| `idrak score` (`perplexity`) | Score a text under a model: its perplexity (compare weight formats and fine-tunes) |
+| `idrak score` (`perplexity`) | Score a text under a model: its perplexity (compare fine-tunes) |
 | `idrak profile` | Time per layer, operation and kernel of one decoding step |
 | `idrak check` | Compare token ids, chat templates, logits and greedy output with a transformers reference |
 | `idrak tuning show` | The kernel choices measured on this machine (the tuning caches); --reset clears them |
@@ -753,7 +753,6 @@ stored by `idrak login`, not here. The most used:
 | `IDRAK_WEIGHT_MAPPING` | Whether a decoder's weights are read in place from the checkpoint's file mapping: `map` (default: a split model's CPU layers and lazily built layers read float32 weights, and formats kept as stored, where the file's pages lie, so the system's page cache holds them once; the same results) or `copy` (every weight copied into memory, as before). The load says `weights mapped: …` |
 | `IDRAK_CONFIG`, `IDRAK_CONFIG_PROFILE` | The config file and the profile in use |
 | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP` | Backends not looked for |
-| `IDRAK_VULKAN_DEFAULT` | A Vulkan GPU may be the default device |
 | `IDRAK_OFFLOAD`, `IDRAK_LOOKUP_TABLES` | Spilling to system memory; where a token table lives (auto, host, device) |
 | `IDRAK_GPU_CHUNK_MB`, `IDRAK_GPU_STACK_BYTES` | The chunks long-lived GPU blocks share (0: off); each GPU thread's stack |
 | `IDRAK_CPU_THREADS`, `IDRAK_CPU_MEMORY_LIMIT_MB`, `IDRAK_GPU_MEMORY_LIMIT_MB` | The most CPU threads (default every core) and the most MiB of tensor memory on the CPU and on each GPU (default unlimited) |

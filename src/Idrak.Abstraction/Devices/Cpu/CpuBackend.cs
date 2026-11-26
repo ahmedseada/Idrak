@@ -139,7 +139,7 @@ internal sealed partial class CpuBackend : Backend, IMemoryReport
             // layers) keep hitting their sizes; shapes that change (lines of other widths, page after page) would otherwise
             // leave every earlier size cached and grow the process until the machine runs out. Emptying the whole pool on
             // every such miss (as before) also dropped the sizes still in use: a prompt pass interleaves a dozen sizes a
-            // layer, so each layer allocated its activations anew (a CPU bfloat16 pass, about 1 GB of fresh arrays).
+            // layer, so each layer allocated its activations anew (about 1 GB of fresh arrays a pass).
             if (releaseCache)
             {
                 ReleaseCachedMemory();

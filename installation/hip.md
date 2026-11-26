@@ -6,12 +6,10 @@ own GCN code, written in C# and assembled by Idrak. Memory, uploads, downloads,
 copies and fills run on the GPU, and so do the row operations (RMS norm with and without gain, layer norm fused, its
 training forward and gradients, softmax, log-softmax, the scaled masked softmax, log-softmax top-k) and the element-wise
 ones (the activations, add, sub, mul, max, min, affine, axpy, multiply-add, the row-vector add), the matrix products
-(float32 in every transposition with beta, batches and a bias; few rows for decoding; int8, int4, bfloat16 and float16
-weights; their expansions and bfloat16 packing), attention (decoding and the tiled form over float32, bfloat16 and int8
-key/value caches, attention over key ranges with grouped heads and its strided form, the int8 cache's scores and
-weighted values), the shape operations (the cache writes, the decoder mask, the gathers, permutes, the adding
-strided copy) and decoding's (the fused packed products: gated, of one input, a gate/up pair, with the residual addition
-and norms; float32 products of one input; attention over rows of different lengths and over packed sequences; the
+(float32 in every transposition with beta, batches and a bias; few rows for decoding), attention (decoding and the
+tiled form over float32 key/value caches, attention over key ranges with grouped heads and its strided form), the shape
+operations (the cache writes, the decoder mask, the gathers, permutes, the adding strided copy) and decoding's (float32
+products of one input; attention over rows of different lengths and over packed sequences; the
 arg-max, class matches, rotary embeddings, the norm and rotation of queries and keys and of the attention heads into
 their layouts and cache, the sampler with the CPU's seeded draws, repetition penalties, one-hot rows, the token history;
 powers, clamps, selection, leaky ReLU, inverse square roots, GELU after a bias, the gated activations) on Idrak's GCN
@@ -172,9 +170,8 @@ failure, send the failures file and the run again with `IDRAK_TRACE=1`.
   (its code object loaded, cold and again; a launch over one float, queued, with a wait, and on the device; a launch
   over a large buffer), uploads, downloads and copies on the device, fill bandwidth (`fill_f32` beside the runtime's own
   fill), the kernel set (assembled cold, then read from a cache warm), each row and element-wise kernel, the products
-  (float32, few-row, packed few-row with the k splits each took, the expansions and bfloat16 packing), attention
-  (decoding over each cache format, the tiled form, key ranges, the int8 cache's products), the shape operations and
-  decoding's (the fused packed products, float32 products of one input, attention over rows and packed sequences, the
+  (float32 and few-row), attention (decoding, the tiled form, key ranges), the shape operations and
+  decoding's (float32 products of one input, attention over rows and packed sequences, the
   rows of decoding with the heads' norm and rotation and the sampler's three paths, the element-wise operations with
   parameters), training's (the backward passes, SGD, Adam, fused AdamW, dropout, the sums and the attention gradients)
   and convolution's (the patches, the composed and depthwise convolutions, pooling, interpolation, CTC and the recurrent
@@ -210,8 +207,6 @@ dotnet run -c Release --no-build --project src\Idrak.Cli -- bench -d hip:0 > tes
 | `IDRAK_HIP_KERNELS=0` | HIP's GCN kernels stay off: every operation through the host fallback (to compare or isolate a kernel). A plug-in's `GcnKernel` still runs. |
 | `IDRAK_HIP_KERNEL_CACHE` | `0` keeps no assembled kernel set or plug-in kernel (assembled at every start); a folder keeps them there (default `IDRAK_CACHE/hip/kernels`, `~/.cache/idrak/hip/kernels`). |
 | `IDRAK_HIP_POINTWISE_BLOCKS` | Blocks of 256 an element-wise launch may take per compute unit the GPU reports (default 8); each kernel's grid-stride loop takes the rest. |
-| `IDRAK_HIP_GEMV_SPLITS` | The k splits of the packed few-row products (decoding through int8, int4, bfloat16 and float16 weights): a positive count, which then is the only one tried; by default measured on the GPU per shape (with the rows of k a step, see `IDRAK_HIP_GEMV_DEPTH`) and kept per GPU, driver and build in the cache folder's `tuning/hip/` (`IDRAK_AUTOTUNE=0`: never measured; `IDRAK_TUNING_CACHE=0`: not kept), and until measured about two blocks a compute unit the GPU reports, a power of two, at most min(64, k / 64). The splits' sums are added in split order (see `IDRAK_HIP_FINISH`). |
-| `IDRAK_HIP_GEMV_DEPTH` | Rows of k a step of the packed few-row products: `4` or `8` (given, the only one tried; by default measured on the GPU per shape with the k splits, `4` until then), eight weight words in flight and each input row read by one scalar load. Both give the same bits; `--bench-hip products` times each with every k split count, so the faster one can be set. |
 | `IDRAK_HIP_ATTENTION_SPLIT` | Key positions one split of an attention row takes (rounded up to a multiple of 256; default 512; `0` turns splits off): few rows over many keys split them over blocks (at most 64 splits, 4,096 blocks), merged in split order. |
 | `IDRAK_HIP_ATTENTION_ROWS` | Query rows of a head one block of the tiled attention takes (2, 4 or 8: they share each tile of keys and values, read once for them all; `0` or `1`: a block a row). By default the most the GPU's reported shared memory per block allows. The tiled form serves many rows (a prompt, training) with heads up to 256; few rows over a long cache split it instead. |
 | `IDRAK_HIP_FINISH` | How split sums and the fused decoding kernels' tails are finished: `block` (default) by the launch's last block, which a completion counter names (the counter only signals; the parts are still added in split order, and it resets itself), so a product with its splits, the residual addition and norm after a product, a gate/up pair, a split attention row and a greedy sampling step each take one launch; `launch` by a second kernel, as before. Both give the same bits; which is faster depends on the device and the shape. |

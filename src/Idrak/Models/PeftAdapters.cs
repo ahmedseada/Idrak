@@ -174,7 +174,7 @@ internal sealed record PeftAdapterConfig(int Rank, float Alpha, float Scale, boo
 
 /// <summary>
 /// Folds a PEFT LoRA adapter (adapter_config.json, adapter_model.safetensors) into weights while they are read, so a
-/// fine-tuned model is quantized with its update included and runs as fast as the base model.
+/// fine-tuned model runs as fast as the base model, its update included.
 /// </summary>
 internal sealed class AdapterMerge : IDisposable
 {

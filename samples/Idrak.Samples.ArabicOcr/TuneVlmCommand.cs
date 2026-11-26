@@ -12,8 +12,8 @@ internal static class TuneVlmCommand
 {
     private const string Help = """
         tune-vlm --model DIR --data train.json [--eval val.json] [--images DIR|ZIP] [-o ADAPTER] [--epochs N] [--grayscale]
-          Prints the PowerShell commands that fine-tune the model with idrak tune (plan 12: LoRA, the Gemma 3 plug-in the tool
-          registers itself, CER on the evaluation set) and score it before and after; nothing is run.
+          Prints the PowerShell commands that fine-tune the model with idrak tune (plan 12: LoRA, the Gemma 3 family of
+          Idrak.Vision.Plugins, CER on the evaluation set) and score it before and after; nothing is run.
         """;
 
     public static int Run(string[] args, TextWriter output, TextWriter error)

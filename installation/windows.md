@@ -66,11 +66,11 @@ The first benchmark run on a new build measures kernel choices and stores them (
 
 ```powershell
 # the default device (CUDA when present)
-dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --int8
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B
 
 # a named device
-dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --int8 --vulkan
-dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --int8 --device vulkan:1
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --device vulkan:0
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --device vulkan:1
 ```
 
 The model is downloaded once from Hugging Face. The first line after loading names the device (`on cuda:0`,

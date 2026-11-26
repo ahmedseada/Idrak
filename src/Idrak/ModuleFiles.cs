@@ -14,9 +14,9 @@ namespace Idrak;
 public static class ModuleFiles
 {
     private const uint FileMagic = 0x3257_4B49; // "IKW2": parameters followed by buffers (float32)
-    private const uint FileMagic3 = 0x3357_4B49; // "IKW3": packed layers, then tensors each with a stored type
-    private const uint FileMagic4 = 0x3457_4B49; // "IKW4": as IKW3, with a second list of packed layers
-    private const uint FileMagic5 = 0x3557_4B49; // "IKW5": as IKW4, with two more lists of packed layers
+    private const uint FileMagic3 = 0x3357_4B49; // "IKW3": layers of other types, then tensors each with a stored type
+    private const uint FileMagic4 = 0x3457_4B49; // "IKW4": as IKW3, with a second list of layers of other types
+    private const uint FileMagic5 = 0x3557_4B49; // "IKW5": as IKW4, with two more lists of layers of other types
 
     /// <summary>Writes all parameter values to a binary file (float32).</summary>
     public static void Save(this Module module, string path)

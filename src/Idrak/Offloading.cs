@@ -329,7 +329,7 @@ internal static class Offloading
     }
 
     // A layer's read-only tensors and their storages, found once (rule 75: no list a layer and token once warm) and checked
-    // on each use: every tensor alive with the same storage, else found again (a weight replaced: quantized, merged, moved).
+    // on each use: every tensor alive with the same storage, else found again (a weight replaced: merged, moved).
     // Leaf: the layer has no sub-layers (only those stage their own weights); a group's members are leaves.
     private sealed class LayerWeights(Tensor[] tensors, Storage[] storages, bool leaf, bool marked)
     {

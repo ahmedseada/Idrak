@@ -1029,7 +1029,7 @@ public sealed record FineTuningProfile(IReadOnlyList<GpuProfileEntry> Kernels, i
             _ when Has("rope") || Has("rotary") => "rotary embedding",
             _ when Has("silu") || Has("gelu") || Has("gated") || Has("act") => "activations",
             _ when Has("adam") || Has("sumsq") || Has("clip") => "optimizer and clipping",
-            _ when Has("transpose") || Has("copy") || Has("convert") || Has("bf16") || Has("fill") || Has("quant") => "copies, conversions, zeroing",
+            _ when Has("transpose") || Has("copy") || Has("convert") || Has("fill") => "copies, conversions, zeroing",
             _ when Has("add") || Has("mul") || Has("axpy") || Has("scale") || Has("sum") => "element-wise and reductions",
             _ => "other",
         };

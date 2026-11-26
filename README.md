@@ -206,7 +206,7 @@ dependency.
 
 ### Conformance
 
-Picking a kind by its name and loading plug-ins are not on the new design yet; the contracts stay.
+Picking a kind by its name is not on the new design yet; the contracts stay.
 
 `Idrak.Abstraction.Testing` checks any implementation against the library default: `DeviceCases` (every kernel, fixed
 and random shapes, sampling over small and large vocabularies), stress (threads, long runs, odd shapes, cancellation,

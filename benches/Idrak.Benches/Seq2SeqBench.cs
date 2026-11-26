@@ -8,7 +8,7 @@ using Idrak.Models;
 namespace Idrak.Benches;
 
 /// <summary>
-/// A text encoder-decoder (any family a plug-in registers in <c>PretrainedSeq2Seq</c>; IDRAK_BENCH_SEQ2SEQ names the
+/// A text encoder-decoder (a family of <c>PretrainedSeq2Seq</c>; IDRAK_BENCH_SEQ2SEQ names the
 /// folder, default the tiny fixture under tests/): the load (cold and warm, and the host memory it allocated), a cached
 /// decoding step through a context of the model's longest target (ms a token, launches a token), and a beam search of 4
 /// beams that runs its full length (ms a step), with the best hypothesis's tokens hashed and its score printed so a change

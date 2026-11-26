@@ -13,7 +13,7 @@ Finding a checkpoint's family by its architecture name is not on the new design 
   library's attention paths, never a stored [1500, 1500] score matrix), a final LayerNorm.
 - **Decoder** (`WhisperDecoder`): the library's `DecoderBlock` with a `CrossAttention` over the encoder's output
   (projected once per segment into every layer's keys and values and held in the `DecodingContext`), learned positions,
-  the head tied to the embeddings; the key/value cache as any decoder's (float32, int8 or bfloat16).
+  the head tied to the embeddings; the key/value cache as any decoder's (float32).
 - **Decoding**: greedy or beam search (`Idrak.Generation.BeamSearch`, transformers' semantics: 2·beams candidates a
   step, early stopping, the length penalty), from `<|startoftranscript|><|lang|><|task|>[<|notimestamps|>]`; the
   checkpoint's `suppress_tokens` and `begin_suppress_tokens`; with timestamps, the family's timestamp rules (a timestamp
@@ -34,16 +34,14 @@ transformers trains `WhisperForConditionalGeneration`:
 - **Sound**: the features the recognizer reads (each clip padded to the 30 s segment with Whisper's own silence), so
   training sees what transcription sees. A clip longer than the segment is left out (its sound would be cut, its text
   not), counted in the run's notes.
-- **Weights**: training needs float32 projections: load with `SpeechModelOptions.Weights = EncoderWeights.Float32` (the
-  CLI does); a model of packed float16 or bfloat16 weights refuses to give its network. `SpeechForwardOptions.Checkpointing`
-  checkpoints the encoder's layers.
+- **Checkpointing**: `SpeechForwardOptions.Checkpointing` checkpoints the encoder's layers.
 - **Saving**: `Save` (each checkpoint) writes a folder transformers and `SpeechModels.Load` both read: `config.json`,
   `generation_config.json` with the language and task, `model.safetensors` in float32 under transformers' names (the
   packed query, key and value split again, one tensor in memory at a time), and every other file of the source folder.
 
 ```csharp
 using var model = (WhisperRecognizer)SpeechModels.Load("models/whisper-small",
-    new SpeechModelOptions { Device = device, Weights = EncoderWeights.Float32, Language = "ar" });
+    new SpeechModelOptions { Device = device, Language = "ar" });
 var result = SpeechTrainer.Train(model, new SpeechSource(SpeechSources.Transcripts, ["train.jsonl"]),
     new SpeechSource(SpeechSources.Transcripts, ["dev.jsonl"]), new SpeechTrainingOptions { Steps = 500, LearningRate = 1e-5f }, "runs/whisper-ar");
 ```

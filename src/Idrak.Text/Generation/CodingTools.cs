@@ -417,7 +417,7 @@ public sealed partial class CodingTools
 
     /// <summary>
     /// A notice when none of the languages detects the workspace although it holds source files
-    /// (<c>CodingLanguages.Notice</c>: which plug-in to register); null otherwise, and with the choice
+    /// (<c>CodingLanguages.Notice</c>: which language package to add); null otherwise, and with the choice
     /// <see cref="CodingLanguages.None"/>. Found on first read.
     /// </summary>
     public string? LanguageNotice => _notice.Value;

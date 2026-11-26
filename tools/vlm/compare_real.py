@@ -28,8 +28,7 @@ available, else the CPU.
 
 Choosing the precision (the logits' last bits decide near-ties, so say which one you ran):
   --dtype bfloat16                         the whole model in bfloat16 (as most people run it; 8.6 GB on the GPU)
-  --dtype bfloat16 --vision-dtype float32  the decoder in bfloat16, the vision tower and projector in float32 (what
-                                           `idrak run -w bf16` does: Idrak's encoder is float32); fits a 12-16 GB card
+  --dtype bfloat16 --vision-dtype float32  the decoder in bfloat16, the vision tower and projector in float32; fits a 12-16 GB card
                                            (the weights are loaded in --dtype, then the vision side is cast: exact for
                                            a checkpoint stored in bfloat16, as the real model is)
   --dtype float32                          everything in float32 (17 GB of weights): on the CPU (--device cpu, about
@@ -52,7 +51,7 @@ Examples (PowerShell or bash; a prompt with non-ASCII text is safer in a UTF-8 f
   python tools/vlm/compare_real.py MODEL scan.jpg --grayscale --prompt-file prompt.txt --dtype float32 --device cpu --out ref-f32
   python tools/vlm/compare_real.py MODEL scan.jpg --grayscale --prompt-file prompt.txt --pan-and-scan --out ref-pas
   python tools/vlm/compare_real.py MODEL scan.jpg --prompt "Extract details to JSON." --image-transform grayscale,max_width=1024,contrast=1.5 --out ref-card
-  idrak vlm check MODEL --reference ref-bf16 -d cuda:0 -w bf16
+  idrak vlm check MODEL --reference ref-bf16
 """
 import argparse
 import json

@@ -11,8 +11,7 @@ namespace Idrak.Cli.Commands.Measure;
 
 /// <summary>
 /// <c>idrak score MODEL FILE</c> (also <c>idrak perplexity</c>): the perplexity of a text's tokens, exp of their mean
-/// negative log-likelihood, read in windows of the model's context, to compare weight formats and fine-tunes on the
-/// same text.
+/// negative log-likelihood, read in windows of the model's context, to compare fine-tunes on the same text.
 /// </summary>
 internal sealed class PerplexityCommand : Command
 {
@@ -20,7 +19,7 @@ internal sealed class PerplexityCommand : Command
 
     public override IReadOnlyCollection<string> Aliases => ["perplexity"];
 
-    public override string Summary => "Score a text under a model: its perplexity (compare weight formats and fine-tunes)";
+    public override string Summary => "Score a text under a model: its perplexity (compare fine-tunes)";
 
     public override string Usage =>
         "MODEL FILE [options]\n\n" +

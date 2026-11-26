@@ -360,7 +360,7 @@ public static partial class Pretrainer
     /// loaded from its folder).
     /// </summary>
     /// <exception cref="ArgumentException">An option is wrong (no stages, no sources, an unknown part, …).</exception>
-    /// <exception cref="InvalidOperationException">The model cannot train every parameter (packed weights, adapters), or the loss stayed not finite.</exception>
+    /// <exception cref="InvalidOperationException">The model cannot train every parameter (adapters), or the loss stayed not finite.</exception>
     /// <exception cref="OperationCanceledException">Cancelled: a checkpoint of the last finished step is written first.</exception>
     public static PretrainingResult Train(PretrainedModel model, PretrainingOptions options, string outputFolder, PretrainingCheckpoint? resume = null,
         IProgress<PretrainingProgress>? progress = null, CancellationToken cancellationToken = default, Action<string>? trace = null)

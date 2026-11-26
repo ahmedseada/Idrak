@@ -15,7 +15,7 @@
 //   launch         the host's cost a launch: thousands of calls on 32 elements queued without a sync, µs a call at each
 //                  layer (the backend on existing storages, the tensor operation, with its gradient recorded, a product)
 //   train-decoder  a decoder's training step (size by IDRAK_BENCH_SIZE): ms a step, launches a step, peak memory,
-//                  activation memory with and without checkpointing, float32 and bfloat16 products
+//                  activation memory with and without checkpointing, float32 products
 //   infer-decoder  a decoder decoding token by token: tokens a second, launches a token, the key/value cache's memory
 //   train-speech   a speech synthesizer's adversarial training step (the plug-in's VITS; IDRAK_BENCH_MODEL names the
 //                  model folder, default the tiny fixture under tests/; IDRAK_BENCH_CLIPS a folder of clips, default

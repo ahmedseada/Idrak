@@ -195,20 +195,20 @@ unset IDRAK_VULKAN_WIDTH IDRAK_VULKAN_SUBGROUPS IDRAK_AUTOTUNE IDRAK_VULKAN_STOR
 export DOTNET_GCHeapHardLimit=0x100000000
 
 # on the GPU
-dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --int8 --vulkan
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --device vulkan:0
 
 # on the CPU, for comparison
-dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --int8 --device cpu
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --device cpu
 ```
 
 The model (1.4 GB) is downloaded once to `~/.cache/idrak/downloads`. Loading prints the device, for example
-`Loaded Qwen3ForCausalLM ... in 17.6 s on vulkan:0, int8 weights`. Type a message and press Enter; each answer ends
+`Loaded Qwen3ForCausalLM ... in 17.6 s on vulkan:0`. Type a message and press Enter; each answer ends
 with its speed, for example `[136 tokens, 17.4 tok/s]`. An empty line quits.
 
 To keep a transcript and copy it out:
 
 ```bash
-dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --int8 --vulkan 2>&1 | tee ~/chat-log.txt
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --device vulkan:0 2>&1 | tee ~/chat-log.txt
 cp ~/chat-log.txt /sdcard/IdrakOutput/
 ```
 
@@ -220,6 +220,6 @@ cp ~/chat-log.txt /sdcard/IdrakOutput/
 | `apt install` stops at a time-zone question | tzdata asks interactively | `export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC` before installing (step 3) |
 | `dotnet-install.sh` stays at 0 KB/s | Download stalls | `apt install -y dotnet-sdk-10.0` (step 4) |
 | `vulkaninfo` in Ubuntu shows only llvmpipe or no GPU | Turnip was built without KGSL, or `VK_ICD_FILENAMES` is not set | Build with `-Dfreedreno-kmds=kgsl` and `source ~/.bashrc` (step 7) |
-| The chat says `on cpu` | The sample uses the default device | Add `--vulkan` (or `--device vulkan:0`) |
+| The chat says `on cpu` | The sample uses the default device | Add `--device vulkan:0` |
 | `VK_ERROR_DEVICE_LOST` during a long run | A GPU job ran long enough for the driver's watchdog to reset the GPU | Update Idrak (`git pull`): the measured width avoids the slow wide kernels; as a workaround `IDRAK_VULKAN_WIDTH=256` |
 | Speeds drop over a long session | The phone heats up and lowers its clocks, more so while charging | Let it cool between runs |

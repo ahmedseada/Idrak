@@ -7,7 +7,7 @@ public sealed partial class Tensor
 {
     // ---------------------------------------------------------------- writing in place
     //
-    // For optimizers, initializers, caches and weight formats of one's own: these change the tensor's values without
+    // For optimizers, initializers and caches of one's own: these change the tensor's values without
     // making a new tensor, and autograd does not record them. They refuse a tensor computed by a recorded operation (a
     // change autograd would not see), and a backward step that read the values before the change refuses to run.
 

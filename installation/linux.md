@@ -50,6 +50,6 @@ dotnet run -c Release --project tests/Idrak.Tests -- --bench-vulkan
 ## 5. Chat with a model
 
 ```bash
-dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --int8
-dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --int8 --vulkan
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B
+dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --device vulkan:0
 ```

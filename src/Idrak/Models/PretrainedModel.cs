@@ -267,7 +267,7 @@ public sealed record PretrainedLoadTimes(TimeSpan Open, TimeSpan Read, TimeSpan 
 /// A pretrained decoder-only language model read from a folder in the Hugging Face layout (config.json, safetensors
 /// weights, tokenizer.json, tokenizer_config.json): the <see cref="Network"/> built from its <see cref="Spec"/>, its
 /// <see cref="Tokenizer"/> and <see cref="ChatTemplate"/>. The network is an ordinary Idrak model: generate and chat with
-/// it (Idrak.Text's <c>CreateGenerator</c> and <c>CreateChat</c>), fine-tune it with LoRA, quantize it, save it as a package.
+/// it (Idrak.Text's <c>CreateGenerator</c> and <c>CreateChat</c>), fine-tune it with LoRA, save it as a package.
 /// </summary>
 public sealed class PretrainedModel : IDisposable
 {

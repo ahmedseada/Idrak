@@ -275,7 +275,7 @@ public sealed class VisionTransformerEncoder : Module
     /// <summary>
     /// The encoder's tensors by their names (prefix + name) in the checkpoint's layout, the inverse of <see cref="FromTensors"/>:
     /// Linear weights [in, out] transposed to [out, in], the fused [dim, 3·dim] q, k, v projection split into q_proj, k_proj
-    /// and v_proj. Packed (bfloat16) projections are read back as float32 values.
+    /// and v_proj.
     /// </summary>
     public IEnumerable<(string Name, int[] Shape, float[] Values)> Tensors(string prefix)
     {
