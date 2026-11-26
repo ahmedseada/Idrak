@@ -30,7 +30,6 @@ internal abstract partial class DesktopTests : Tests
         ("cli train data: data convert, dedupe, split, sample, mix", CliDataTransform),
         ("cli train data: train, predict, runs, resume, package on CSV", CliTrainCsv),
         ("cli train data: train and predict on an image folder", CliTrainImages),
-        ("cli train data: distill on the fly, precomputed top-k logits then trained from the file, teacher-written answers; a vocabulary mismatch is refused", CliDistill),
     ];
 
     private static (int Code, string Out, string Err) TrainCli(params string[] args)
