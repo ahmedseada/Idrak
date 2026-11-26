@@ -22,35 +22,19 @@ internal sealed unsafe partial class HipBackend
 
     /// <summary>
     /// A product kernel's floating-point operations and global-memory bytes for one call, from the table at the top of
-    /// GcnKernels.Products.cs (<paramref name="splits"/>: a packed few-row product's k splits; <paramref name="batch"/>: the
-    /// float32 products'); (0, 0) for a kernel it does not list. The profile's labels and <c>--bench-hip</c>'s rates read it.
+    /// GcnKernels.Products.cs (<paramref name="batch"/>: the float32 products'); (0, 0) for a kernel it does not list. The
+    /// profile's labels and <c>--bench-hip</c>'s rates read it.
     /// </summary>
-    internal static (double Flops, double Bytes) ProductCost(string kernel, long m, long n, long k, int splits = 1, int batch = 1, bool beta = false)
+    internal static (double Flops, double Bytes) ProductCost(string kernel, long m, long n, long k, int batch = 1, bool beta = false)
     {
         double mnk = 2.0 * m * n * k;
-        long WordsOf(int perWord) => (n + perWord - 1) / perWord;
-        double outputs = 4.0 * m * n * (splits > 1 ? splits : 1);
         return kernel switch
         {
             "matmul_f32" => (mnk * batch, 4.0 * batch * (m * k + k * n + m * n * (beta ? 2 : 1))),
             "gemv_nn_f32" or "gemv_nt_f32" => (mnk * batch, 4.0 * batch * (m * k + (m + 7) / 8 * k * n + m * n)),
             "gemv_multi_f32" => (mnk, 4.0 * (m * k + k * n + m * n + n)),                       // n: the products' columns together
-            _ when kernel.Contains("_gemv_addnorm", StringComparison.Ordinal) => AddNormProductCost(kernel, m, n, k, splits, batch, beta),
-            _ when kernel.StartsWith("int8_gemv", StringComparison.Ordinal) && kernel != "int8_gemv_finish_f32" => (mnk, 4.0 * k * WordsOf(4) + 4.0 * m * k + 4.0 * n + outputs),
-            _ when kernel.StartsWith("int4_gemv", StringComparison.Ordinal) => (mnk + (double)k * n, 4.0 * k * WordsOf(8) + 32.0 * ((k + 31) / 32) * WordsOf(8) + 4.0 * m * k + outputs),
-            _ when kernel.StartsWith("bf16_gemv", StringComparison.Ordinal) || kernel.StartsWith("f16_gemv", StringComparison.Ordinal) => (mnk, 4.0 * k * WordsOf(2) + 4.0 * m * k + outputs),
-            "int8_gemv_finish_f32" => ((double)m * n * splits, 4.0 * m * n * (splits + 1)),
-            "int8_matmul_f32" => (mnk, 4.0 * m * WordsOf(4) * k + 4.0 * m * k * WordsOf(4) + 4.0 * m * n + 4.0 * n),
             _ => (0, 0),
         };
-    }
-
-    // A product with the add and norms (*_gemv_addnorm[_rR]_f32): the plain product's cost, then its last block's three
-    // passes over the m × n outputs (gemv_addnorm_f32's operations, y read back instead of the splits).
-    private static (double Flops, double Bytes) AddNormProductCost(string kernel, long m, long n, long k, int splits, int batch, bool beta)
-    {
-        var product = ProductCost(kernel.Replace("_gemv_addnorm", "_gemv", StringComparison.Ordinal), m, n, k, splits, batch, beta);
-        return (product.Flops + 9.0 * m * n, product.Bytes + 4.0 * 9 * m * n);
     }
 
     // Launches `function` over x × y × z blocks of its declared block, its arguments packed from one 64-bit value each.

@@ -199,8 +199,6 @@ internal abstract partial class Tests
 
     internal static float[] OrderValues(Random random, int n, float lo = -1f, float hi = 1f) => [.. Enumerable.Range(0, n).Select(_ => lo + (hi - lo) * random.NextSingle())];
 
-    internal static float[] OrderBits(Random random, int n) => [.. Enumerable.Range(0, n).Select(_ => BitConverter.Int32BitsToSingle(random.Next() ^ (random.Next() << 16)))];
-
     internal static readonly int[] OrderSplits = [1, 2, 4, 8, 16, 32, 64];
 
     // ------------------------------------------------------------------ float32 products (VulkanTuneOp.MatMul)

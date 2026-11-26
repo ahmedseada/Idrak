@@ -361,7 +361,7 @@ internal static partial class GcnKernels
 
     /// <summary>
     /// norm_rope_heads_f32's arguments (<see cref="NormRopeArguments"/>) into <paramref name="arguments"/>: flags 1 the
-    /// norms (gains given), 2 bfloat16 caches, 4 a cache position (pos); half 0 when there are no tables.
+    /// norms (gains given), 4 a cache position (pos); half 0 when there are no tables.
     /// </summary>
     internal static void PackNormRopeHeads(Span<byte> arguments, ulong q, ulong gainQ, ulong k, ulong gainK, ulong v, ulong cos, ulong sin, ulong positions,
         ulong position, ulong yq, ulong yk, ulong yv, uint cols, float epsQ, float offsetQ, uint heads, float epsK, float offsetK, uint kvHeads, uint steps,
@@ -384,8 +384,7 @@ internal static partial class GcnKernels
     //   launch: rows1 query rows, then rows2 key rows, then rows2 value rows (row = (b · steps + s) · heads + h). With flags
     //   & 1, queries and keys are normalized with their gains; queries and keys are rotated (half pairs; half 0: none);
     //   values are copied (· 1 · 1, exact). Queries go to y [batch, heads, steps, cols]; keys and values to y2 and y3
-    //   [batch, heads2, cap, stride] at row s + pos[0] (flags & 4: a cache) or s, as floats or, with flags & 2, as bfloat16
-    //   (to nearest even, NaN quieted: kv_write_bf16's and the CPU's rounding).
+    //   [batch, heads2, cap, stride] at row s + pos[0] (flags & 4: a cache) or s, as floats.
     private static GcnKernelSource NormRope(NormRopeForm form)
     {
         bool pair = form == NormRopeForm.Pair, heads3 = form == NormRopeForm.Heads;
@@ -400,8 +399,8 @@ internal static partial class GcnKernels
         w.L($"s_cselect_b32 {shift}, 1, 0                              ; interleaved: pair p at 2p and 2p + 1, else p and p + half");
         w.L($"s_cselect_b32 {pairStep}, 1, {half}");
 
-        // norm_rope_heads_f32's per-call values: the cache position (flags & 4), the flags' bits, bfloat16's rounding.
-        string flags = heads3 ? a.Scalar("flags") : "", position0 = w.S(), normFlag = w.S(), halfFlag = w.S(), roundBias = w.S();
+        // norm_rope_heads_f32's per-call values: the cache position (flags & 4), the flags' bits.
+        string flags = heads3 ? a.Scalar("flags") : "", position0 = w.S(), normFlag = w.S();
         if (heads3)
         {
             string bits = w.S(), loaded = w.V();
@@ -414,15 +413,13 @@ internal static partial class GcnKernels
             w.L($"v_readfirstlane_b32 {position0}, {loaded}");
             w.Label(".Lno_cache");
             w.L($"s_and_b32 {normFlag}, {flags}, 1");
-            w.L($"s_and_b32 {halfFlag}, {flags}, 2");
-            w.L($"s_movk_i32 {roundBias}, 0x7fff");
         }
 
         w.BeginRows(a.Scalar("n"));
 
         // The row's tensor: its row in it, its pointers and values (queries, then keys, then values for the heads).
         string local = w.S(), x = w.SPair(), gain = w.SPair(), y = w.SPair(), heads = w.S(), byRowHeads = w.S(), eps = w.S(), offset = w.S();
-        string rowHalf = w.S(), normalize = w.S(), bf16 = w.S(), outSteps = w.S(), outFirst = w.S(), outCols = w.S();
+        string rowHalf = w.S(), normalize = w.S(), outSteps = w.S(), outFirst = w.S(), outCols = w.S();
         w.L($"""
             s_mov_b32 {local}, {w.Row}
             s_mov_b64 {x}, {a.Pointer("x")}
@@ -434,7 +431,6 @@ internal static partial class GcnKernels
             s_mov_b32 {offset}, {a.Scalar("offset")}
             s_mov_b32 {rowHalf}, {half}
             s_mov_b32 {normalize}, {(heads3 ? normFlag : "1")}
-            s_mov_b32 {bf16}, 0
             s_mov_b32 {outSteps}, {steps}
             s_mov_b32 {outFirst}, 0
             s_mov_b32 {outCols}, {cols}
@@ -456,7 +452,6 @@ internal static partial class GcnKernels
             if (heads3)
             {
                 w.L($"""
-                    s_mov_b32 {bf16}, {halfFlag}
                     s_mov_b32 {outSteps}, {a.Scalar("cap")}
                     s_mov_b32 {outFirst}, {position0}
                     s_mov_b32 {outCols}, {a.Scalar("stride")}
@@ -473,10 +468,10 @@ internal static partial class GcnKernels
             w.Label(".Ltensor");
         }
 
-        // The row's step and head, its input row and its output row (in bytes: floats, or bfloat16 halves).
+        // The row's step and head, its input row and its output row (in bytes: floats).
         var (stepRow, head) = AttentionDivMod(w, local, heads, byRowHeads);
         var (batch, step) = AttentionDivMod(w, stepRow, steps, bySteps);
-        string xb = w.Base(x, w.Product64(local, cols)), outRow = w.S(), outShift = w.S(), outBack = w.S(), yb = w.SPair();
+        string xb = w.Base(x, w.Product64(local, cols)), outRow = w.S(), yb = w.SPair();
         if (heads3)
         {
             w.L($"""
@@ -494,11 +489,8 @@ internal static partial class GcnKernels
         }
 
         w.L($"""
-            s_cmp_lg_u32 {bf16}, 0
-            s_cselect_b32 {outShift}, 1, 2
-            s_sub_u32 {outBack}, 32, {outShift}
-            s_lshl_b32 {RowWriter.Lo(yb)}, {outRow}, {outShift}
-            s_lshr_b32 {RowWriter.Hi(yb)}, {outRow}, {outBack}
+            s_lshl_b32 {RowWriter.Lo(yb)}, {outRow}, 2
+            s_lshr_b32 {RowWriter.Hi(yb)}, {outRow}, 30
             s_add_u32 {RowWriter.Lo(yb)}, {RowWriter.Lo(y)}, {RowWriter.Lo(yb)}
             s_addc_u32 {RowWriter.Hi(yb)}, {RowWriter.Hi(y)}, {RowWriter.Hi(yb)}
             """);
@@ -524,39 +516,13 @@ internal static partial class GcnKernels
             w.Label(".Lnormed");
         }
 
-        // A value's store at column `index` of the output row: a float, or (keys and values with flags & 2) its bfloat16.
+        // A value's store at column `index` of the output row, a float.
         int stores = 0;
-        string at = w.V(), odd = w.V(), rounded = w.V(), quiet = w.V();
-        string Store(string index, string value)
-        {
-            if (!heads3)
-            {
-                return $"""
-                    v_lshlrev_b32_e32 {at}, 2, {index}
-                    global_store_dword {at}, {value}, {yb}
-                    """;
-            }
-
-            string n = (stores++).ToString(CultureInfo.InvariantCulture);
-            return $"""
-                s_cmp_lg_u32 {bf16}, 0
-                s_cbranch_scc1 .Lhalf{n}
-                v_lshlrev_b32_e32 {at}, 2, {index}
-                global_store_dword {at}, {value}, {yb}
-                s_branch .Lstored{n}
-                .Lhalf{n}:
-                v_bfe_u32 {odd}, {value}, 16, 1
-                v_add3_u32 {rounded}, {value}, {roundBias}, {odd}
-                v_lshrrev_b32_e32 {rounded}, 16, {rounded}
-                v_lshrrev_b32_e32 {quiet}, 16, {value}
-                v_or_b32_e32 {quiet}, 64, {quiet}
-                v_cmp_u_f32_e32 vcc, {value}, {value}
-                v_cndmask_b32_e32 {rounded}, {rounded}, {quiet}, vcc
-                v_lshlrev_b32_e32 {at}, 1, {index}
-                global_store_short {at}, {rounded}, {yb}
-                .Lstored{n}:
-                """;
-        }
+        string at = w.V();
+        string Store(string index, string value) => $"""
+            v_lshlrev_b32_e32 {at}, 2, {index}
+            global_store_dword {at}, {value}, {yb}
+            """;
 
         // The gains at the given byte offsets (gain + offset, the loads first), or 1 without the norm.
         string Gains(params (string At, string Gain)[] items)

@@ -21,7 +21,7 @@ internal abstract partial class DesktopTests : Tests
         ("cli measure: bench warm-up settles on a fake clock: the first call apart with the JIT's share of it, rounds until they agree and nothing compiles, the median", d => { CpuOnly(d); CliBenchSettle(); }),
         ("cli measure: bench MODEL gives tokens per second, GFLOP/s and memory; --save and --compare", CliBenchModel),
         ("cli measure: bench usage errors exit with 2", d => { CpuOnly(d); CliBenchErrors(); }),
-        ("cli measure: perplexity of a text, float32 and int8 weights", CliPerplexity),
+        ("cli measure: perplexity of a text", CliPerplexity),
         ("cli measure: profile times every layer, operation and kernel of one decoding step", CliProfile),
         ("cli measure: eval scores answers on conversations and writes them", CliEval),
         ("cli measure: check against a reference passes, and a changed reference fails", CliCheck),
@@ -251,8 +251,6 @@ internal abstract partial class DesktopTests : Tests
             var json = IdrakJson(cache, "score", MeasureModel, text, "--window", "64", "-d", device.ToString());
             double perplexity = (double)json["perplexity"]!;
             Check(double.IsFinite(perplexity) && perplexity > 1 && (int)json["windows"]! > 1 && (int)json["scored_tokens"]! == (int)json["tokens"]! - (int)json["windows"]!, json.ToJsonString());
-            var int8 = IdrakJson(cache, "perplexity", MeasureModel, text, "--window", "64", "-d", device.ToString());
-            Check(Math.Abs((double)int8["perplexity"]! - perplexity) < 0.1 * perplexity, $"int8 {int8["perplexity"]} near float32 {perplexity}");
             Check(MeasureIdrak(cache, "score", MeasureModel, text, "--window", "100000").Code == 2, "a window past the context");
         }
         finally

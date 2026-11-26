@@ -63,28 +63,6 @@ public static class ComputeResources
         }
     }
 
-    /// <summary>
-    /// The length of the k chunks the CPU's matrix product splits a long inner dimension into, or 0 (the default): never
-    /// split. With a length set, a product whose k passes it and whose row and column blocks cannot occupy
-    /// <see cref="MaxCpuThreads"/> (from its shape and the thread count at run time: a token's products, a weight's
-    /// gradient over few rows; never a prompt's, whose rows already fill the cores) runs each chunk of k as a product of
-    /// its own, the chunks in parallel, and adds their partial sums in chunk order: a fixed summation order set by k and
-    /// this length (rule 86), though not the unsplit product's bits (one FMA chain over all of k); whether a product
-    /// splits depends on the thread count. It holds a partial product per chunk while it runs. Measured by the benches'
-    /// <c>matmul</c> section on the CPU. IDRAK_CPU_SPLIT_K sets it at start.
-    /// </summary>
-    public static int CpuProductKChunk
-    {
-        get => s_productKChunk;
-        set
-        {
-            ArgumentOutOfRangeException.ThrowIfNegative(value);
-            s_productKChunk = value;
-        }
-    }
-
-    private static int s_productKChunk = Math.Max(0, EnvironmentInt("IDRAK_CPU_SPLIT_K") ?? 0);
-
     /// <summary>Maximum bytes of tensor memory on the CPU (null = unlimited). IDRAK_CPU_MEMORY_LIMIT_MB sets it in MiB.</summary>
     public static long? CpuMemoryLimit { get; set; } = EnvironmentMebibytes("IDRAK_CPU_MEMORY_LIMIT_MB");
 

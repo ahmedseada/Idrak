@@ -180,7 +180,6 @@ internal static class EnvironmentVariables
         new("IDRAK_LOOKUP_TABLES", Precision, "auto", "auto, host or device: where a frozen model's separate token table lives (auto: on the GPU until it is full)", OnDevice),
 
         new("IDRAK_CPU_PARALLEL_ELEMENTS", Cpu, "measured", "Overrides the element-wise parallel cut-over (tests and benchmarks)", OnDevice),
-        new("IDRAK_CPU_SPLIT_K", Cpu, "0 (never split)", "A length: CPU matrix products whose inner dimension passes it, and whose row and column blocks cannot occupy the threads (decided from the shape and the thread count at run time; never a prompt), run in chunks of k, in parallel, their partial sums added in chunk order (ComputeResources.CpuProductKChunk; a fixed order, not the unsplit bits)", OnDevice),
         new("IDRAK_CPU_VECTORS", Cpu, "auto", "The vector paths of the CPU's kernels: auto, native, portable or scalar (ComputeResources.CpuVectors; every path gives the same results)", OnDevice),
         new("IDRAK_MEMORY_REFRESH_MS", Cpu, "250", "How long a reading of the system's memory is kept before it is read again, in ms; 0: read on every call", OnDevice),
         new("IDRAK_REFUSED_KERNELS", Devices, "fall back", "throw: a kernel the driver refuses reaches the caller instead of falling back (to find the fault)", OnDevice),
