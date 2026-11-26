@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
 using ModelContextProtocol.Server;
 
 namespace Idrak.Mcp.Abstractions;
@@ -65,7 +64,7 @@ public sealed record McpTransportRequest
     /// <summary>The stream a stream transport writes its messages to (null: the process's standard output).</summary>
     public Stream? Output { get; init; }
 
-    /// <summary>Options of the transport's own, by key (<see cref="IConfigurableKind.Keys"/> names the ones it takes); null for none.</summary>
+    /// <summary>Options of the transport's own, by key; null for none (the built-in transports take none).</summary>
     public IReadOnlyDictionary<string, string>? Options { get; init; }
 }
 
@@ -89,12 +88,14 @@ public interface IMcpListener : IAsyncDisposable
 }
 
 /// <summary>
-/// A way to serve MCP sessions to clients, registered in <see cref="McpServerTransports"/> under its
-/// <see cref="IKind.Name"/>: "stdio" (the process's standard input and output, or given streams) and "http" (streamable
-/// HTTP on a loopback port) come with Idrak.Mcp; a host registers others (Idrak.AspNetCore, Kestrel).
+/// A way to serve MCP sessions to clients: "stdio" (the process's standard input and output, or given streams) and "http"
+/// (streamable HTTP on a loopback port) come with Idrak.Mcp; a host brings others (Idrak.AspNetCore, Kestrel).
 /// </summary>
-public interface IMcpServerTransport : IConfigurableKind
+public interface IMcpServerTransport
 {
+    /// <summary>The transport's name ("stdio", "http").</summary>
+    string Name { get; }
+
     /// <summary>
     /// Starts serving <paramref name="request"/>'s server; returns once clients can connect (a network transport has bound
     /// its address). Cancelling <paramref name="cancellationToken"/> while it starts throws; after it, use the listener.
@@ -104,9 +105,8 @@ public interface IMcpServerTransport : IConfigurableKind
 }
 
 /// <summary>
-/// The MCP server transports by name (ignoring case). Built in (Idrak.Mcp): <see cref="Stdio"/> and <see cref="Http"/>.
-/// A transport that is not registered is refused with "not registered"; nothing falls back to another. Register another
-/// with <see cref="Register"/>; one under a library name takes the library's place, which <see cref="Unregister"/> brings back.
+/// The names of the MCP server transports that come with Idrak.Mcp: <see cref="Stdio"/> and <see cref="Http"/>. A
+/// transport is no longer looked up by its name (not on the new design yet).
 /// </summary>
 public static class McpServerTransports
 {
@@ -119,44 +119,6 @@ public static class McpServerTransports
     /// <summary>The variable that names the transport when an option does not: "IDRAK_MCP_TRANSPORT".</summary>
     public const string EnvironmentVariable = "IDRAK_MCP_TRANSPORT";
 
-    private static readonly KindTable<IMcpServerTransport> Table = BuiltIn();
-
-    private static KindTable<IMcpServerTransport> BuiltIn()
-    {
-        var table = new KindTable<IMcpServerTransport>(nameof(McpServerTransports), "MCP server transport", "add it with McpServerTransports.Register",
-            comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a transport is where clients connect and what they may reach: falling back to another would listen where nobody asked");
-        table.RegisterDefault(new Transports.StdioServerTransportKind());
-        table.RegisterDefault(new Transports.HttpServerTransportKind());
-        return table;
-    }
-
     /// <summary>The transport named by <see cref="EnvironmentVariable"/>, or <see cref="Stdio"/> when it is not set.</summary>
     public static string DefaultName => Environment.GetEnvironmentVariable(EnvironmentVariable) is { } name && name.Trim().Length > 0 ? name.Trim() : Stdio;
-
-    /// <summary>Registers <paramref name="transport"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IMcpServerTransport transport) => Table.Register(transport, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's transport <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The transport registered as <paramref name="name"/>, or null.</summary>
-    public static IMcpServerTransport? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The transport registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotRegisteredException">None is: the message names the registered ones.</exception>
-    public static IMcpServerTransport Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's transport <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IMcpServerTransport? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered transport as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
 }

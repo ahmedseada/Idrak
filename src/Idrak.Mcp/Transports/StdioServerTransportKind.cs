@@ -17,10 +17,6 @@ internal sealed class StdioServerTransportKind : IMcpServerTransport
 {
     public string Name => McpServerTransports.Stdio;
 
-    public string Summary => "the process's standard input and output: one client, the one that started the process";
-
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
     public ValueTask<IMcpListener> StartAsync(McpTransportRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);

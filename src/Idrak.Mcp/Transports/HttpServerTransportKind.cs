@@ -27,19 +27,12 @@ internal sealed class HttpServerTransportKind : IMcpServerTransport
 {
     public string Name => McpServerTransports.Http;
 
-    public string Summary => "streamable HTTP on a loopback port (the system picks one unless asked), a bearer token required: any number of clients, each its own session";
-
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
-    // Any option key the transport does not take is refused, naming the ones it does.
+    // The built-in transports take no option of their own: any key is refused.
     internal static void CheckKeys(IMcpServerTransport transport, McpTransportRequest request)
     {
         foreach (string key in request.Options?.Keys ?? [])
         {
-            if (!transport.Keys.Contains(key))
-            {
-                throw new ArgumentException($"The MCP transport '{transport.Name}' takes no option '{key}' (it takes: {(transport.Keys.Count == 0 ? "none" : string.Join(", ", transport.Keys))}).", nameof(request));
-            }
+            throw new ArgumentException($"The MCP transport '{transport.Name}' takes no option '{key}' (it takes none).", nameof(request));
         }
     }
 

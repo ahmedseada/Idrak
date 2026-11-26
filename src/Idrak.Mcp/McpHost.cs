@@ -70,7 +70,7 @@ public sealed record McpHostOptions
     /// <summary>The stdio transport's output (null: standard output).</summary>
     public Stream? Output { get; init; }
 
-    /// <summary>Options of the transport's own (<see cref="IConfigurableKind.Keys"/>); null for none.</summary>
+    /// <summary>Options of the transport's own; null for none (the built-in transports take none).</summary>
     public IReadOnlyDictionary<string, string>? TransportOptions { get; init; }
 
     /// <summary>
@@ -119,8 +119,8 @@ public sealed record McpHostOptions
 }
 
 /// <summary>
-/// An MCP server running in this process over a registered transport (<see cref="McpServerTransports"/>): "stdio" for a
-/// client that started the process, "http" for any client that can reach a loopback port, including while an app runs.
+/// An MCP server running in this process over a transport (<see cref="IMcpServerTransport"/>): "stdio" for a client that
+/// started the process, "http" for any client that can reach a loopback port, including while an app runs.
 /// Dispose it (or cancel the token it started with) to stop it: sessions close and calls in flight are cancelled.
 /// </summary>
 /// <example>
@@ -162,7 +162,7 @@ public sealed class McpHost : IAsyncDisposable
     /// Serves <paramref name="registry"/>'s tools (its validation, rules and timeout apply) over the transport
     /// <paramref name="transport"/>; returns once clients can connect.
     /// </summary>
-    /// <exception cref="NotRegisteredException">No transport is registered as <paramref name="transport"/>.</exception>
+    /// <exception cref="NotSupportedException">Always for now: a transport by name is not on the new design yet.</exception>
     public static Task<McpHost> StartAsync(string transport, IToolRegistry registry, McpHostOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(registry);
@@ -173,7 +173,7 @@ public sealed class McpHost : IAsyncDisposable
     /// Serves the tools of <paramref name="registry"/> and the models of <paramref name="models"/> (the tools generate, chat
     /// and embed, <see cref="McpTools.ServerTools(IModelCatalog)"/>), either may be null, over <paramref name="transport"/>.
     /// </summary>
-    /// <exception cref="NotRegisteredException">No transport is registered as <paramref name="transport"/>.</exception>
+    /// <exception cref="NotSupportedException">Always for now: a transport by name is not on the new design yet.</exception>
     public static Task<McpHost> StartAsync(string transport, IToolRegistry? registry, IModelCatalog? models, McpHostOptions? options = null,
         CancellationToken cancellationToken = default)
     {
@@ -206,13 +206,19 @@ public sealed class McpHost : IAsyncDisposable
     /// Serves <paramref name="server"/> (the SDK's options: tools, prompts, resources, handlers) over <paramref name="transport"/>;
     /// the name and version in <paramref name="options"/> are not applied (the server's own are).
     /// </summary>
-    /// <exception cref="NotRegisteredException">No transport is registered as <paramref name="transport"/>.</exception>
-    public static async Task<McpHost> StartAsync(string transport, McpServerOptions server, McpHostOptions? options = null, CancellationToken cancellationToken = default)
+    /// <exception cref="NotSupportedException">Always for now: a transport by name is not on the new design yet.</exception>
+    public static Task<McpHost> StartAsync(string transport, McpServerOptions server, McpHostOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(transport);
         ArgumentNullException.ThrowIfNull(server);
-        options ??= new McpHostOptions();
-        var kind = McpServerTransports.Get(transport);
+        // The transport was looked up by its name (McpServerTransports.Get): not on the new design yet. The method below
+        // serves once a transport is given.
+        throw new NotSupportedException($"The MCP transport '{transport}': a transport by name is not on the new design yet.");
+    }
+
+    // Serves server over kind with options.
+    private static async Task<McpHost> StartAsync(IMcpServerTransport kind, McpServerOptions server, McpHostOptions options, CancellationToken cancellationToken)
+    {
         McpTelemetry.Attach(server);                                     // tool calls reported on any transport
         var listener = await kind.StartAsync(new McpTransportRequest
         {
