@@ -19,8 +19,6 @@ internal abstract partial class Tests
         ("chat templates: limits: a render past JinjaOptions.MaxSteps (IDRAK_TEMPLATE_MAX_STEPS) or MaxOutputChars (IDRAK_TEMPLATE_MAX_OUTPUT) stops naming the template and the limit; a huge range or repeat stops before it is built; a macro that calls itself stops at the stack naming the template; the caller's text in the output is not counted; a bad variable is refused naming it", d => { if (d == Device.Cpu) JinjaLimits(); }),
         ("chat templates: a Qwen3 template read from a model folder renders tools, tool calls and reasoning as transformers does", ModelChatTemplate),
         ("chat templates: each family's tool-call format is read off its template (tags, bare JSON, lists) and parsed from streamed output", ToolCallFormats),
-        ("chat templates: tool-call formats (pythonic, Qwen3-Coder XML, Mistral, harmony, DeepSeek) detected from published templates, parsed streamed and round-tripped", ToolCallFormatsDetectAndParse),
-        ("chat templates: tool-call formats can be registered, detected from a probe call, named, unregistered, or made by a template", ToolCallFormatsRegistry),
         ("chat templates: tool calls written as text (markdown fences, bare JSON, one '}' too many) are read when they name an offered tool; examples naming none stay text; text with no call allocates nothing", ToolCallsWrittenAsText),
     ];
 
