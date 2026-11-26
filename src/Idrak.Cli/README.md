@@ -46,7 +46,7 @@ idrak b qwen --save laptop                     # tokens per second, kept to comp
 
 `idrak help` lists every command by group, `idrak help COMMAND` (or `idrak COMMAND --help`) shows one command's
 arguments, options, examples, limits and the environment variables that affect it, and `idrak help topics` lists the
-concept pages (devices, formats, models, plugins, config, env, exit codes).
+concept pages (devices, formats, models, config, env, exit codes).
 
 ## How every command works
 
@@ -88,7 +88,7 @@ explain). Commands that delete, overwrite or download ask first on a terminal, t
 cleanly: generation after the current token, training after the current batch with its checkpoints kept, downloads
 with their partial files kept for resuming.
 
-The config file holds defaults for these options (`device`, `cache`, `plugins`), model aliases and named profiles
+The config file holds defaults for these options (`device`, `cache`), model aliases and named profiles
 (`idrak config set device cpu --config-profile phone`); options on the command line win. `idrak init` writes one.
 
 ## The commands

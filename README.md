@@ -135,8 +135,8 @@ dependency.
   Llama, Mistral, Mixtral, Qwen2, Qwen2-MoE, Qwen3, Qwen3-MoE (GGUF architectures llama, qwen2, qwen2moe, qwen3,
   qwen3moe), Gemma, Gemma 2 and Gemma 3 (GGUF gemma, gemma2, gemma3), BERT and T5, one namespace each; the library
   has none. Finding a checkpoint's family by its architecture name is not on the new design yet, so loading stops there.
-- Checkpoints: safetensors (F32; tensors of other types are refused when read, their types not on the new design yet), GGUF (F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K to Q6_K, IQ1_S, IQ1_M, IQ2_XXS, IQ2_XS, IQ2_S,
-  IQ3_XXS, IQ3_S, IQ4_NL, IQ4_XS, TQ1_0, TQ2_0 and MXFP4 dequantized as ggml does, bit for bit; another type is refused),
+- Checkpoints: safetensors (F32; tensors of other types are refused when read, their types not on the new design yet), GGUF
+  (F32; tensors of every other ggml type are refused when read, their types not on the new design yet),
   PyTorch zip read without running it; PEFT adapter folders (LoRA, DoRA, rsLoRA) loaded or merged; KV caches in float32.
 - Tokenizers: BPE from `tokenizer.json` or GGUF with its normalizers, pre-tokenizers and decoders; a BPE
   trainer (`idrak data tokenizer`).
@@ -146,7 +146,7 @@ dependency.
 - Chat: the model's own Jinja template, tool calling in the `json`, `pythonic`, `qwen3-coder`, `mistral`, `harmony`
   and `deepseek` formats, server-side tool rounds for any chat model, MCP tools, conversations with memory.
 - Fine-tuning: LoRA, DoRA, full tuning; chat and completion objectives; distillation from a
-  teacher model or saved distributions; `idrak tune`, `idrak distill`, `idrak merge`, `idrak quantize`.
+  teacher model or saved distributions; `idrak tune`, `idrak distill`, `idrak merge`.
 - Pre-training from scratch: `idrak pretrain` over the decoder spec, with `idrak data tokens`.
 - Evaluation: perplexity, answer metrics (exact match, F1, CER, WER, contains), `idrak eval`, `idrak score`,
   `idrak compare`.
@@ -247,7 +247,7 @@ environment variable with its scope):
 | Group | Commands |
 |---|---|
 | Devices and health | `devices`, `check`, `doctor`, `kernels`, `kernels dump`, `tuning show`, `tune init`, `memory`, `profile`, `trace`, `bench`, `compare`, `version`, `update`, `setup android` |
-| Models | `pull`, `list`, `show`, `rm`, `search`, `inspect`, `verify`, `convert`, `quantize`, `merge`, `package`, `families`, `formats`, `cache info`, `cache clear`, `login`, `logout` |
+| Models | `pull`, `list`, `show`, `rm`, `search`, `inspect`, `verify`, `convert`, `merge`, `package`, `cache info`, `cache clear`, `login`, `logout` |
 | Generation | `chat`, `complete`, `run`, `batch`, `embed`, `tokenize`, `template`, `predict`, `agent`, `suggest`, `shell`, `demo` |
 | Training | `train`, `tune`, `pretrain`, `pretrain init`, `distill`, `resume`, `eval`, `perplexity`, `diff`, `runs list`, `runs show`, `runs compare`, `report`, `viz` |
 | Data | `data preview`, `stats`, `validate`, `convert`, `dedupe`, `split`, `mix`, `sample`, `tokens`, `tokenizer`, `synth`, `text`, `fonts`, `audio`, `mel` |
@@ -256,7 +256,7 @@ environment variable with its scope):
 | Vision | `vlm check` |
 | Serving | `serve`, `api`, `ui`, `ping`, `server load`, `server unload`, `server ps`, `server stop`, `server keys add`, `list`, `rm`, `mcp serve`, `tools list`, `tools test` |
 | Interchange | `onnx export`, `onnx import`, `onnx check`, `create`, `create init`, `new`, `init` |
-| Configuration | `config get`, `set`, `list`, `unset`, `alias set`, `list`, `rm`, `env`, `env set`, `env unset`, `env reset`, `plugins list`, `completion`, `test` |
+| Configuration | `config get`, `set`, `list`, `unset`, `alias set`, `list`, `rm`, `env`, `env set`, `env unset`, `env reset`, `completion`, `test` |
 
 Every command takes `-d DEVICE` (`cpu`), `-v` and `--json`.
 
@@ -296,7 +296,7 @@ Working rules for this repository are in `CLAUDE.md`; the performance rules in `
 | `src/` | the 20 packages and the 8 reserved ones |
 | `tests/Idrak.Tests`, `tests/Idrak.Tests.Library`, `tests/Idrak.PluginTests` | the test program (filtered by group; `-- --list` prints the tests a filter keeps, so it counts them), the groups and the runner it shares with an app (those that need no CLI, ASP.NET Core, native ONNX Runtime or child process) and the plug-in tests |
 | `benches/Idrak.Benches` | the benches above |
-| `samples/` | 19 sample apps (Arabic OCR, chat, coding agent, GPT API and training, house prices and its API, OCR, ONNX import, an override checked with the testing kit, quantization, RAG, re-ranker, sentiment, shape recognition, spirals, summarizer, text generation, XOR), two of them with their own tests, and scripts (IdrakVision, OpenVoice, WhisperSpeech) |
+| `samples/` | 17 sample apps (Arabic OCR, chat, coding agent, GPT API and training, house prices and its API, OCR, ONNX import, RAG, re-ranker, sentiment, shape recognition, spirals, summarizer, text generation, XOR), one of them with its own tests, and scripts (IdrakVision, OpenVoice, WhisperSpeech) |
 | `api/` | the public API dumps the guard test checks |
 | `docs/` | `optimization.md` and the longer guides |
 | `tools/` | fixture makers (Python references the tests compare against: uroman, HarfBuzz, torch losses, ffmpeg); `tools/check`, the pre-build check (every project's compile errors in one pass, without building) |
