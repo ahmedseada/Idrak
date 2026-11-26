@@ -12,22 +12,22 @@ using System.Text.Json.Nodes;
 namespace Idrak.Cli;
 
 /// <summary>
-/// What a command runs with: its parsed options and positional arguments, the common options (device, plug-ins, JSON
-/// output, verbosity, cache folder), the config file, and output helpers that print text or, with <c>--json</c>, one
+/// What a command runs with: its parsed options and positional arguments, the common options (device, JSON output,
+/// verbosity, cache folder), the config file, and output helpers that print text or, with <c>--json</c>, one
 /// JSON document.
 /// </summary>
 internal sealed class CommandContext : IDisposable
 {
     // Options every command accepts; the value-taking ones are listed for the parser.
     internal static readonly string[] CommonValueOptions =
-        ["--device", "--plugin", "--cache", "--config", "--log", "--threads", "--seed", "--format", "--columns", "--output", "--color", "--timeout", "--lang", "--lang-render"];
+        ["--device", "--cache", "--config", "--log", "--threads", "--seed", "--format", "--columns", "--output", "--color", "--timeout", "--lang", "--lang-render"];
     internal static readonly string[] CommonFlags = ["--json", "--quiet", "--verbose", "--help", "--offline", "--plain", "--profile"];
 
     /// <summary>Short forms every command accepts (plans/done/idrak-cli.md, "Short forms").</summary>
     internal static readonly IReadOnlyDictionary<string, string> CommonShortForms = new Dictionary<string, string>
     {
         ["-h"] = "--help", ["-d"] = "--device", ["-j"] = "--json", ["-q"] = "--quiet", ["-v"] = "--verbose",
-        ["-P"] = "--plugin", ["-C"] = "--config", ["-O"] = "--output",
+        ["-C"] = "--config", ["-O"] = "--output",
     };
 
     // Indented, and without escaping characters such as '+' that are safe outside HTML.
@@ -393,20 +393,6 @@ internal sealed class CommandContext : IDisposable
         }
 
         Log(text);
-    }
-
-    /// <summary>
-    /// The assemblies given with <c>--plugin</c> (and in the config's "plugins" list): loading them is not on the new design
-    /// yet.
-    /// </summary>
-    /// <exception cref="UsageException">A plug-in is given.</exception>
-    internal void LoadPlugins()
-    {
-        var paths = Options("--plugin").Concat(Config.List("plugins")).ToList();
-        if (paths.Count > 0)
-        {
-            throw new UsageException($"Loading plug-ins ({string.Join(", ", paths)}) is not on the new design yet.");
-        }
     }
 }
 

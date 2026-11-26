@@ -144,7 +144,7 @@ public static class GenerateSettings
             LabSettingKind.Text, "the library's style", o => o.Page ?? "", (o, t) => o.Page = PageSettings(t)),
         new("parts", "Parts file", "A JSON file of header, subject, signature and footer parts around the text (--parts, SyntheticPageParts); empty: the text alone.",
             LabSettingKind.Text, "none", o => o.Parts ?? "", (o, t) => o.Parts = PartsFile(t)),
-        new("image_format", "Image format", "The format a page is saved and a data set's images written in (--image-format): jpeg, or a registered encoder.", LabSettingKind.Choice,
+        new("image_format", "Image format", "The format a page is saved and a data set's images written in (--image-format): jpeg (another encoder by name is not on the new design yet).", LabSettingKind.Choice,
             Library.ImageFormat, o => o.ImageFormat ?? "", (o, t) => o.ImageFormat = Format(t), () => Formats),
         new("quality", "JPEG quality", "1 to 100 (--quality).", LabSettingKind.Number, LabSettings.Show(Library.Quality), o => LabSettings.Show(o.Quality),
             (o, t) => o.Quality = LabSettings.Whole(t, 1, 100)),

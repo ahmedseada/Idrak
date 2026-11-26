@@ -120,12 +120,12 @@ public static class AppSections
 
     /// <summary>Every section in order (<see cref="IAppSection.Order"/>, then the title).</summary>
     public static IReadOnlyList<IAppSection> All =>
-        [.. Registered().OrderBy(s => s.Order).ThenBy(s => s.Title, StringComparer.CurrentCultureIgnoreCase)];
+        [.. Listed().OrderBy(s => s.Order).ThenBy(s => s.Title, StringComparer.CurrentCultureIgnoreCase)];
 
     // Listing the sections and features or finding one by name is not on the new design yet.
-    private static IEnumerable<IAppSection> Registered() => throw new NotSupportedException("The app's registered sections are not on the new design yet.");
+    private static IEnumerable<IAppSection> Listed() => throw new NotSupportedException("Listing the app's sections is not on the new design yet.");
 
-    private static bool IsFeatureRegistered(string name) => throw new NotSupportedException($"The feature '{name}' by name is not on the new design yet.");
+    private static bool HasFeature(string name) => throw new NotSupportedException($"The feature '{name}' by name is not on the new design yet.");
 
     /// <summary>
     /// The sections in order, without those that host features and whose every feature <paramref name="options"/> turn off.
@@ -133,7 +133,7 @@ public static class AppSections
     public static IReadOnlyList<IAppSection> Visible(IdrakMauiOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return [.. All.Where(s => s.Features.Count == 0 || s.Features.Any(f => options.IsFeatureEnabled(f) && IsFeatureRegistered(f)))];
+        return [.. All.Where(s => s.Features.Count == 0 || s.Features.Any(f => options.IsFeatureEnabled(f) && HasFeature(f)))];
     }
 
     /// <summary>The visible section hosting the feature <paramref name="feature"/>, or null when none does.</summary>

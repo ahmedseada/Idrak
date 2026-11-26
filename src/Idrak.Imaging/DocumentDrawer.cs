@@ -286,7 +286,7 @@ internal static class FontFolder
 
     // A fonts folder was read through the font formats (FontFormats): not on the new design yet.
     private static IReadOnlyList<IFontFace> FontsIn(string folder) =>
-        throw new NotSupportedException($"{folder}: reading fonts through the registered font formats is not on the new design yet.");
+        throw new NotSupportedException($"{folder}: reading fonts by their format is not on the new design yet.");
 
     public static IFontFace? Match(string folder, string? font, string text)
     {

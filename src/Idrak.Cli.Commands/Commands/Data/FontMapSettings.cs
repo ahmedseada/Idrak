@@ -54,7 +54,7 @@ internal sealed class FontMapSettings : IDisposable
     {
         if (context.Options("--font-map") is { Count: > 0 } maps)
         {
-            _ = NotOnTheNewDesign.Yet<FontMap>($"Registering the font map {maps[0]} (--font-map)");
+            _ = NotOnTheNewDesign.Yet<FontMap>($"Applying the font map {maps[0]} (--font-map)");
         }
 
         var settings = new FontMapSettings();

@@ -188,16 +188,16 @@ public sealed record SpeechTextNeeds
     {
         if (Phonemes)
         {
-            var registered = PhonemizerNames();
-            if (Phonemizer is { } name && !registered.Contains(name, StringComparer.Ordinal))
+            var phonemizers = PhonemizerNames();
+            if (Phonemizer is { } name && !phonemizers.Contains(name, StringComparer.Ordinal))
             {
-                return $"it reads phonemes{Language()} from the phonemizer '{name}', which is not registered here "
-                    + $"(registered: {(registered.Count == 0 ? "none" : string.Join(", ", registered))})";
+                return $"it reads phonemes{Language()} from the phonemizer '{name}', which is not here "
+                    + $"(here: {(phonemizers.Count == 0 ? "none" : string.Join(", ", phonemizers))})";
             }
 
-            if (registered.Count == 0)
+            if (phonemizers.Count == 0)
             {
-                return $"it reads phonemes{Language()} from a phonemizer, and none is registered here "
+                return $"it reads phonemes{Language()} from a phonemizer, and none is here "
                     + "(Idrak.Audio.Plugins' espeak-ng phonemizer runs the espeak-ng program)";
             }
         }
@@ -205,8 +205,8 @@ public sealed record SpeechTextNeeds
         if (Romanized && text is not null && HasOtherScript(text) && RomanizerFor(text) is null)
         {
             var romanizers = RomanizerNames();
-            return "it reads romanised text, and no registered romanizer covers this text's script "
-                + $"(registered: {(romanizers.Count == 0 ? "none" : string.Join(", ", romanizers))})";
+            return "it reads romanised text, and no romanizer here covers this text's script "
+                + $"(here: {(romanizers.Count == 0 ? "none" : string.Join(", ", romanizers))})";
         }
 
         return null;
@@ -215,12 +215,12 @@ public sealed record SpeechTextNeeds
     private string Language() => PhonemeLanguage is { Length: > 0 } language ? $" ({language})" : "";
 
     // Looking up the phonemizers and romanizers is not on the new design yet.
-    private static IReadOnlyList<string> PhonemizerNames() => throw new NotSupportedException("The registered phonemizers are not on the new design yet.");
+    private static IReadOnlyList<string> PhonemizerNames() => throw new NotSupportedException("Listing the phonemizers is not on the new design yet.");
 
-    private static IReadOnlyList<string> RomanizerNames() => throw new NotSupportedException("The registered romanizers are not on the new design yet.");
+    private static IReadOnlyList<string> RomanizerNames() => throw new NotSupportedException("Listing the romanizers is not on the new design yet.");
 
     private static ITextRomanizer? RomanizerFor(string text) =>
-        throw new NotSupportedException("The romanizer that covers a text's script, found among the registered ones, is not on the new design yet.");
+        throw new NotSupportedException("Finding the romanizer that covers a text's script is not on the new design yet.");
 
     private static bool HasOtherScript(string text)
     {

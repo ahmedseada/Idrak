@@ -183,7 +183,7 @@ public sealed class CodeExtractor(CodeExtractorOptions? options = null)
 
         // Everything named is checked before any work: the families, the verifier, the formats. Looking up the task
         // families, the verifiers, the data file formats and the row filters by name is not on the new design yet.
-        var families = (options.Families ?? throw new NotSupportedException("A code extraction runs every registered task family: a task family by name is not on the new design yet."))
+        var families = (options.Families ?? throw new NotSupportedException("A code extraction over every task family is not on the new design yet, nor a task family by name."))
             .Distinct(StringComparer.OrdinalIgnoreCase).Select(FamilyNamed).ToList();
         ITaskVerifier? verifier = options.Verifier is null || options.Verifier.Equals(TaskVerifiers.None, StringComparison.OrdinalIgnoreCase) ? null
             : throw new NotSupportedException($"The task verifier '{options.Verifier}' by name is not on the new design yet.");

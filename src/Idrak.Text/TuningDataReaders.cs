@@ -363,8 +363,8 @@ internal sealed class TuningImageSource : IDisposable
     {
         if (TuningRecordImages.PartKindNamed(kind) is not IBinaryPartKind binary)
         {
-            throw new InvalidDataException($"{where}: the record names a '{kind}' part ({reference}) and no '{kind}' part kind made from bytes is registered in ChatParts "
-                + "(ship Idrak.Audio for 'audio', or register one with ChatParts.Register).");
+            throw new InvalidDataException($"{where}: the record names a '{kind}' part ({reference}) and no '{kind}' part kind made from bytes is here "
+                + "(ship Idrak.Audio for 'audio').");
         }
 
         if (string.IsNullOrWhiteSpace(reference))
@@ -837,9 +837,9 @@ internal static class TuningRecordImages
     // Reading a record's parts by their part kinds' names is not on the new design yet.
     internal static IChatPartKind? PartKindNamed(string name) => throw new NotSupportedException($"The chat part kind '{name}' by name is not on the new design yet.");
 
-    internal static IReadOnlyList<IBinaryPartKind> BinaryKinds() => throw new NotSupportedException("The registered binary chat part kinds are not on the new design yet.");
+    internal static IReadOnlyList<IBinaryPartKind> BinaryKinds() => throw new NotSupportedException("Listing the binary chat part kinds is not on the new design yet.");
 
-    internal static ChatPart PartFromJson(JsonNode? part) => throw new NotSupportedException("A chat part read through the registered part kinds is not on the new design yet.");
+    internal static ChatPart PartFromJson(JsonNode? part) => throw new NotSupportedException("Reading a chat part by its kind is not on the new design yet.");
 
     internal static IReadOnlyList<ChatPart> ContentFromJson(JsonNode? content) => throw new NotSupportedException("A message's content read through the chat part kinds is not on the new design yet.");
 

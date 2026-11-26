@@ -209,7 +209,7 @@ public interface IOutlineRasterizer
     {
         if (rule != OutlineFill.Glyph)
         {
-            throw new NotSupportedException($"The outline rasterizer '{Name}' fills glyphs by its own rule only, not by the {rule} rule; register one that implements it with OutlineRasterizers.Register.");
+            throw new NotSupportedException($"The outline rasterizer '{Name}' fills glyphs by its own rule only, not by the {rule} rule; use one that implements it.");
         }
 
         Fill(outline, scale, x, y, coverage, width, height);

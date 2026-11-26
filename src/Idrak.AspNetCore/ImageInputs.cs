@@ -542,7 +542,7 @@ internal static class ImageRequests
                 if (ChatImageDecoder.FormatOf(image) is null)
                 {
                     throw new ArgumentException($"Image {count} ({image.MediaType ?? "unknown type"}, {image.Data.Length} bytes) is not in a format this server reads; "
-                        + "send PNG, JPEG, BMP or PPM/PGM (or a format an image codec the server registered reads).");
+                        + "send PNG, JPEG, BMP or PPM/PGM.");
                 }
             }
         }

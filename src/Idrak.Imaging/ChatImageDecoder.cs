@@ -298,9 +298,9 @@ public static class ChatImageDecoder
 // Finding an image's format among the image codecs is not on the new design yet.
 file static class Codecs
 {
-    public static ImageData Decode(ReadOnlySpan<byte> file) => throw new NotSupportedException("Decoding an image through the registered image codecs is not on the new design yet.");
+    public static ImageData Decode(ReadOnlySpan<byte> file) => throw new NotSupportedException("Decoding an image by its format is not on the new design yet.");
 
-    public static ImageInfo? ReadInfo(ReadOnlySpan<byte> file) => throw new NotSupportedException("Reading an image's size through the registered image codecs is not on the new design yet.");
+    public static ImageInfo? ReadInfo(ReadOnlySpan<byte> file) => throw new NotSupportedException("Reading an image's size by its format is not on the new design yet.");
 
-    public static string? FormatOf(ReadOnlySpan<byte> header) => throw new NotSupportedException("Finding an image's format among the registered image codecs is not on the new design yet.");
+    public static string? FormatOf(ReadOnlySpan<byte> header) => throw new NotSupportedException("Finding an image's format is not on the new design yet.");
 }

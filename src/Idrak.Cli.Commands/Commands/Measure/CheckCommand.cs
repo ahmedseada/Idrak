@@ -27,8 +27,8 @@ internal sealed class CheckCommand : Command
         "MODEL --reference FILE [options]\n\n" +
         "FILE is the JSON that tools/pytorch/pretrained_reference.py writes: \"texts\" (text and ids), \"chats\" (messages,\n" +
         "tools and the rendered template), \"tools\", and \"runs\" (prompt ids, last-position logits, greedy ids and text).\n" +
-        "Logits must agree within 2e-3 of the largest (float32 weights) and greedy text exactly; with packed weights\n" +
-        "or a packed cache only the top token is required. Exit code 1 when anything differs.\n\n" +
+        "Logits must agree within 2e-3 of the largest and greedy text exactly; with a key/value cache in a format of\n" +
+        "one's own only the top token is required. Exit code 1 when anything differs.\n\n" +
         "Options:\n" +
         "      --reference FILE  the reference JSON (required)\n" +
         "  -k, --kv FORMAT       the key/value cache format\n" +

@@ -572,9 +572,9 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
             int cannot = models.Count(m => !m.CanSpeak);
             ModelsText = models.Count > 0
                 ? $"{models.Count} synthesis model{(models.Count == 1 ? "" : "s")} on this phone{(cannot > 0 ? $", {cannot} of them cannot speak here (their reason below when picked)" : "")}."
-                : families.Count == 0 ? "No speech synthesis family is registered: the app registers the families it shows (SpeechSynthesisFamilies.Register, a plug-in's own Register call)."
+                : families.Count == 0 ? "No speech synthesis family here."
                 : $"No synthesis model on this phone{(others > 0 ? $" among the {others} other model{(others == 1 ? "" : "s")}" : "")}: pull one in Models, "
-                  + $"of an architecture registered here ({string.Join(", ", families)}).";
+                  + $"of one of these architectures: {string.Join(", ", families)}.";
             var keep = models.FirstOrDefault(m => string.Equals(m.Key, _options.Model, StringComparison.OrdinalIgnoreCase))
                 ?? models.FirstOrDefault(m => _selected is { } current && current.Key == m.Key)
                 ?? models.FirstOrDefault(m => m.CanSpeak)
@@ -975,7 +975,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
                 }
 
                 return voice.Encoder is not { } family ? "its voice.json names no encoder family"
-                    : NotOnTheNewDesign.Yet<object?>($"The voice converter family '{family}' by name") is null ? $"it is converted by the '{family}' voice converter, which is not registered here (VoiceConverters)"
+                    : NotOnTheNewDesign.Yet<object?>($"The voice converter family '{family}' by name") is null ? $"it is converted by the '{family}' voice converter, which is not here (VoiceConverters)"
                     : null;
             case VoiceKinds.Checkpoint:
                 if (voice.CheckpointFolder is not { } folder)

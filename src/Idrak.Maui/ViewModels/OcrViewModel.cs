@@ -474,9 +474,9 @@ public sealed class OcrViewModel : ViewModel
             var vision = VisionModels;
             var families = NotOnTheNewDesign.Names("vision families");
             ModelsText = vision.Count > 0 ? $"{vision.Count} vision-language model{(vision.Count == 1 ? "" : "s")} on this phone."
-                : families.Count == 0 ? "No vision family is registered: the app registers the families it shows (a vision plug-in's own Register call)."
+                : families.Count == 0 ? "No vision family here."
                 : $"No vision-language model on this phone{(others > 0 ? $" among the {others} other model{(others == 1 ? "" : "s")}" : "")}: pull one in Models, "
-                  + $"of an architecture registered here ({string.Join(", ", families)}).";
+                  + $"of one of these architectures: {string.Join(", ", families)}.";
             var keep = vision.FirstOrDefault(m => string.Equals(m.Key, _options.Model, StringComparison.OrdinalIgnoreCase))
                 ?? vision.FirstOrDefault(m => _selected is { } current && current.Key == m.Key)
                 ?? vision.FirstOrDefault();

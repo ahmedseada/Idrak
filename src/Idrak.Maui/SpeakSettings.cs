@@ -185,17 +185,17 @@ public static class SpeakSettings
                 LabSettingKind.Number, "the model's", o => LabSettings.Show(o.DecoderSeconds), (o, t) => o.DecoderSeconds = LabSettings.Real(t, atLeast: 0)),
             new("sample_rate", "Sample rate (Hz)", "The speech resampled to this rate (SampleRate). Empty: the model's rate.",
                 LabSettingKind.Number, "the model's", o => LabSettings.Show(o.SampleRate), (o, t) => o.SampleRate = LabSettings.Whole(t, 1000, 384_000)),
-            new("vocoder", "Vocoder", "A registered vocoder, for a model that makes a spectrogram (Vocoders). Default: the model's own.", LabSettingKind.Choice, "default",
-                o => o.Vocoder ?? "", (o, t) => o.Vocoder = LabSettings.IsDefault(t) ? null : LabSettings.Registered(t, NotOnTheNewDesign.Names("vocoders"), "a vocoder"), () => ["default"]),
+            new("vocoder", "Vocoder", "A vocoder by name, for a model that makes a spectrogram (Vocoders; not on the new design yet). Default: the model's own.", LabSettingKind.Choice, "default",
+                o => o.Vocoder ?? "", (o, t) => o.Vocoder = LabSettings.IsDefault(t) ? null : LabSettings.Listed(t, NotOnTheNewDesign.Names("vocoders"), "a vocoder"), () => ["default"]),
             new("voice_conversion", "Voice conversion", "An installed embedding voice: auto converts the speech with the converter it was made with, off speaks in the model's own voice (VoiceConversion).",
                 LabSettingKind.Choice, $"default ({speech.VoiceConversion})", o => o.VoiceConversion ?? "", (o, t) => o.VoiceConversion = Conversion(t),
                 () => ["default", "auto", "off"]),
             new("tau", "Conversion looseness (tau)", "How loosely a converted voice copies the speech's detail; 0 is deterministic (VoiceConversionOptions.Tau).",
                 LabSettingKind.Number, LabSettings.Show(conversion.Tau), o => LabSettings.Show(o.Tau), (o, t) => o.Tau = LabSettings.Real(t, atLeast: 0)),
             new("voice_store", "Voice store", "Where installed voices are looked up (VoiceStores).", LabSettingKind.Choice, $"default ({VoiceStores.FolderName})",
-                o => o.VoiceStore ?? "", (o, t) => o.VoiceStore = LabSettings.IsDefault(t) ? null : LabSettings.Registered(t, NotOnTheNewDesign.Names("voice stores"), "a voice store"), () => ["default"]),
+                o => o.VoiceStore ?? "", (o, t) => o.VoiceStore = LabSettings.IsDefault(t) ? null : LabSettings.Listed(t, NotOnTheNewDesign.Names("voice stores"), "a voice store"), () => ["default"]),
             new("playback", "Playback", "The system's sound output (AudioPlaybacks); default: the first that can play here (aaudio on Android).", LabSettingKind.Choice, "default",
-                o => o.Playback ?? "", (o, t) => o.Playback = LabSettings.IsDefault(t) ? null : LabSettings.Registered(t, NotOnTheNewDesign.Names("audio playbacks"), "an audio playback"), () => ["default"]),
+                o => o.Playback ?? "", (o, t) => o.Playback = LabSettings.IsDefault(t) ? null : LabSettings.Listed(t, NotOnTheNewDesign.Names("audio playbacks"), "an audio playback"), () => ["default"]),
             new("output_device", "Output device", "The output device's id as the playback lists it; empty: the system's default.",
                 LabSettingKind.Text, "the system's default", o => o.OutputDevice ?? "", (o, t) => o.OutputDevice = t.Length == 0 ? null : t),
             new("buffer_s", "Playback buffer (s)", "The seconds of sound held ahead of the speaker: what a write waits for (AudioPlaybackOptions.BufferSeconds).",
@@ -206,7 +206,7 @@ public static class SpeakSettings
                 $"default ({output.Performance})", o => o.Performance?.ToString() ?? "", (o, t) => o.Performance = LabSettings.Performance(t),
                 () => ["default", .. Enum.GetNames<AudioPerformance>()]),
             new("format", "Save as", "The encoder the speech is saved with (AudioEncoders: wav, mp3).", LabSettingKind.Choice, "wav",
-                o => o.SaveFormat ?? "", (o, t) => o.SaveFormat = LabSettings.IsDefault(t) ? null : LabSettings.Registered(t, NotOnTheNewDesign.Names("audio encoders"), "an audio encoder"), () => ["wav"]),
+                o => o.SaveFormat ?? "", (o, t) => o.SaveFormat = LabSettings.IsDefault(t) ? null : LabSettings.Listed(t, NotOnTheNewDesign.Names("audio encoders"), "an audio encoder"), () => ["wav"]),
             new("bits", "WAV samples", "The samples a saved WAV holds: 16-bit (the default), 24, 32, 8 or 32-bit float.", LabSettingKind.Choice, "16",
                 o => o.Bits ?? "", (o, t) => o.Bits = LabSettings.OneOf(t, LabSettings.SampleFormats) is { } bits && bits != "16" ? bits : null, () => LabSettings.SampleFormats),
         ];
@@ -216,5 +216,5 @@ public static class SpeakSettings
         LabSettings.IsDefault(text) ? null
         : text.Equals("auto", StringComparison.OrdinalIgnoreCase) || text.Equals("off", StringComparison.OrdinalIgnoreCase) ? text.ToLowerInvariant()
         : NotOnTheNewDesign.Names("voice converters").Contains(text, StringComparer.Ordinal) ? text
-        : throw new FormatException($"'{text}' is not auto, off or a voice converter (registered: {(NotOnTheNewDesign.Names("voice converters").Count == 0 ? "none" : string.Join(", ", NotOnTheNewDesign.Names("voice converters")))}).");
+        : throw new FormatException($"'{text}' is not auto, off or a voice converter (choices: {(NotOnTheNewDesign.Names("voice converters").Count == 0 ? "none" : string.Join(", ", NotOnTheNewDesign.Names("voice converters")))}).");
 }

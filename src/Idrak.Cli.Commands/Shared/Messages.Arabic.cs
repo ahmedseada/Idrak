@@ -39,7 +39,6 @@ internal static partial class Messages
         [Help.CommonOptions] =
             "خيارات عامة:\n" +
             "  -d, --device NAME   الجهاز: cpu أو cuda:0 أو vulkan:1 أو hip:0 (الافتراضي: الجهاز الافتراضي)\n" +
-            "  -P, --plugin PATH   تحميل مكتبة إضافة (ليس على التصميم الجديد بعد)\n" +
             "  -j, --json          مخرجات تقرؤها البرامج (بالإنجليزية دائما)\n" +
             "  -q, --quiet         مخرجات أقل؛ و -v, --verbose: مخرجات أكثر وعمل المكتبة أثناء حدوثه (مرات قراءة الطلب،\n" +
             "                      وفك الترميز، واختيارات النوى المقيسة، والرجوع إلى المضيف؛ IDRAK_VERBOSE=1)\n" +
@@ -145,7 +144,7 @@ internal static partial class Messages
             "تشغل حوسبة Vulkan النوى التي تولدها إدراك على معظم بطاقات الرسومات (وعلى الهواتف)؛ وتحتاج إلى المحمل ومشغل.",
         ["HIP drives AMD GPUs through the graphics driver's runtime, with Idrak's own kernels (no SDK); without it those GPUs can still run through Vulkan."] =
             "تشغل HIP بطاقات AMD عبر بيئة تشغيل مشغل الرسومات، بنوى إدراك الخاصة (دون SDK)؛ وبدونها يمكن لهذه البطاقات أن تعمل عبر Vulkan.",
-        ["A registered backend adds devices of its kind."] = "كل واجهة خلفية مسجلة تضيف أجهزة من نوعها.",
+        ["This backend adds devices of its kind."] = "هذه الواجهة الخلفية تضيف أجهزة من نوعها.",
         [", or leave the backend out with {0}"] = "، أو استبعد الواجهة بالمتغير {0}",
         ["update the device's driver{0}"] = "حدث مشغل الجهاز{0}",
         ["A device that is found but cannot start fails every model placed on it."] = "الجهاز الموجود الذي يتعذر تشغيله يفشل معه كل نموذج يوضع عليه.",

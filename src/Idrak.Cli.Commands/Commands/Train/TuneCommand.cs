@@ -18,7 +18,7 @@ namespace Idrak.Cli.Commands.Train;
 internal sealed class TuneCommand : Command
 {
     // Keys of a tune.json that are not tune options: the config file's own, the format, and the command, model and data.
-    private static readonly string[] OwnKeys = ["device", "cache", "plugins", "aliases", "token", "hf_token", "profiles", "format", "command", "model", "data", "base"];
+    private static readonly string[] OwnKeys = ["device", "cache", "aliases", "token", "hf_token", "profiles", "format", "command", "model", "data", "base"];
 
     /// <summary>
     /// The "format" of a tune.json (written by <c>idrak tune init</c> and <c>idrak suggest --base</c>, optional when

@@ -129,14 +129,14 @@ public static class ImageSettings
             o => o.Profile ?? "", (o, t) => o.Profile = Profile(t), () => ["none"]),
         new("seed", "Profile seed", "The seed a scan profile draws its steps from: the same seed, the same steps; empty: a new one each time (shown).",
             LabSettingKind.Number, "a new one each time", o => LabSettings.Show(o.Seed), (o, t) => o.Seed = LabSettings.Whole(t, 0)),
-        new("save_format", "Save as", "The format a result is saved and shared in (png: the library's PNG encoder; jpeg: its JPEG encoder; or another registered encoder).",
+        new("save_format", "Save as", "The format a result is saved and shared in (png: the library's PNG encoder; jpeg: its JPEG encoder).",
             LabSettingKind.Choice, Png, o => o.SaveFormat ?? "", (o, t) => o.SaveFormat = Format(t), () => Formats),
         new("jpeg_quality", "JPEG quality", "1 to 100, for a result saved as JPEG (JpegEncoder.Encode's quality); empty: the library's.",
             LabSettingKind.Number, "the library's", o => LabSettings.Show(o.JpegQuality), (o, t) => o.JpegQuality = LabSettings.Whole(t, 1, 100)),
         new("preview_px", "Picture size on the page (px)", "The longest side a picture is shrunk to for the page only (the image keeps its size); empty: the screen's, measured.",
             LabSettingKind.Number, "the screen's", o => LabSettings.Show(o.PreviewPixels), (o, t) => o.PreviewPixels = LabSettings.Whole(t, 16)),
         new("preview_resample", "Picture shrinking", "How a picture is shrunk for the page (ImageResampling); empty: the library's (PillowImageOps.ScaleDown's).", LabSettingKind.Choice,
-            "default", o => o.PreviewResampling ?? "", (o, t) => o.PreviewResampling = LabSettings.Registered(t, Resamplings, "a resampling"), () => ["default", .. Resamplings]),
+            "default", o => o.PreviewResampling ?? "", (o, t) => o.PreviewResampling = LabSettings.Listed(t, Resamplings, "a resampling"), () => ["default", .. Resamplings]),
     ];
 
     // The resampling filters by name, lower case.

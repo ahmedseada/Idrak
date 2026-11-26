@@ -19,7 +19,7 @@ internal sealed class PdfFieldFonts(DocumentFormOptions options)
 
     // Reading a folder through the font formats is not on the new design yet.
     private static IReadOnlyList<IFontFace> ReadFolder(string folder) =>
-        throw new NotSupportedException($"{folder}: reading fonts through the registered font formats is not on the new design yet.");
+        throw new NotSupportedException($"{folder}: reading fonts by their format is not on the new design yet.");
 
     /// <summary>The faces of the fonts folder (none when it is not set or not there).</summary>
     public IReadOnlyList<IFontFace> Folder => _folder ??= options.Fonts is { Length: > 0 } path && Directory.Exists(path) ? ReadFolder(path) : [];

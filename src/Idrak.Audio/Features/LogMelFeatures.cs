@@ -46,7 +46,7 @@ public sealed class LogMelFeatures : IAudioFeatureExtractor
         {
             "auto" => device.Type == DeviceType.Cpu ? "host" : "composed",
             "host" or "composed" => path,
-            "kernel" => throw new NotSupportedException("No fused STFT kernel is registered yet (AudioFeatureOptions.Path \"kernel\"); use auto, host or composed."),
+            "kernel" => throw new NotSupportedException("A fused STFT kernel is not on the new design yet (AudioFeatureOptions.Path \"kernel\"); use auto, host or composed."),
             _ => throw new ArgumentException($"STFT path '{path}' is not auto, host, composed or kernel."),
         };
     }

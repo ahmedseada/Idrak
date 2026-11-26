@@ -20,7 +20,7 @@ public static class PretrainedTokenizers
     public static (string File, ITokenizerFileReader Reader)? Find(string path, TokenizerOptions? options = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
-        return NotOnTheNewDesign.Yet<(string File, ITokenizerFileReader Reader)?>($"Finding the reader of the tokenizer at {path} among the registered ones");
+        return NotOnTheNewDesign.Yet<(string File, ITokenizerFileReader Reader)?>($"Finding the reader of the tokenizer at {path}");
     }
 
     /// <summary>Whether <paramref name="path"/> holds (or is) a tokenizer file a reader reads.</summary>

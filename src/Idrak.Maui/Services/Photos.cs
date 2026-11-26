@@ -138,7 +138,7 @@ public static class Photos
     }
 
     /// <summary>The formats the library's codecs read, with their extensions: "png (.png), jpeg (.jpg, .jpeg), …".</summary>
-    public static string Readable() => NotOnTheNewDesign.Yet<string>("The registered image codecs");
+    public static string Readable() => NotOnTheNewDesign.Yet<string>("Listing the formats the library's codecs read");
 
     /// <summary>The brand of a HEIF-family file (an ISO media "ftyp" box naming heic, heif, avif and the like), or null.</summary>
     public static string? HeifBrand(ReadOnlySpan<byte> file)

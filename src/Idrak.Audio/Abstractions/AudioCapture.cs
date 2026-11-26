@@ -110,7 +110,7 @@ public static class AudioCaptures
     public static IAudioCapture ForThisMachine()
     {
         var reasons = new List<string>();
-        foreach (var capture in Registered())
+        foreach (var capture in Captures())
         {
             if (capture.IsAvailable(out string reason))
             {
@@ -125,6 +125,6 @@ public static class AudioCaptures
     }
 
     // Picking the first capture that can run is not on the new design yet.
-    private static IEnumerable<IAudioCapture> Registered() =>
-        throw new NotSupportedException("The audio captures to pick from were registered, which is not on the new design yet.");
+    private static IEnumerable<IAudioCapture> Captures() =>
+        throw new NotSupportedException("Picking an audio capture is not on the new design yet.");
 }

@@ -183,7 +183,7 @@ internal static class DocumentBenchReadBack
             c.Colour(image.Stencil);
             try
             {
-                c.Image(NotOnTheNewDesign.Yet<ImageData>("Decoding a document's image through the registered image codecs"));
+                c.Image(NotOnTheNewDesign.Yet<ImageData>("Decoding a document's image by its format"));
                 var mask = image.Mask();
                 c.Bool(mask is not null);
                 if (mask is not null)

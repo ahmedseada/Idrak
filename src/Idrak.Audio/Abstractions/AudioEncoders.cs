@@ -43,7 +43,7 @@ public static class AudioEncoders
 {
     // Finding the encoder of a path's extension is not on the new design yet.
     private static IAudioEncoder EncoderFor(string path) =>
-        throw new NotSupportedException($"{path}: finding the audio encoder of its extension among the registered encoders is not on the new design yet.");
+        throw new NotSupportedException($"{path}: finding the audio encoder of its extension is not on the new design yet.");
 
     /// <summary>Writes <paramref name="audio"/> to <paramref name="path"/> with the encoder of its extension (the folder is created).</summary>
     /// <exception cref="NotSupportedException">Always for now: finding the encoder of the extension is not on the new design yet.</exception>

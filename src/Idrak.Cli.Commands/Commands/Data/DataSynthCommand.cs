@@ -33,7 +33,7 @@ internal sealed class DataSynthCommand : Command
         Options:
           -o, --out FILE          the records written (.jsonl); the images go to the folder of its name beside it (or
                                   its .zip with --zip), how each page was made to NAME.manifest.jsonl
-              --fonts DIR         the fonts ({{FontMapSettings.FontFiles()}}: the registered font formats'); each
+              --fonts DIR         the fonts ({{FontMapSettings.FontFiles()}}); each
                                   page is set in those that have its characters. A legacy font (letter forms in the
                                   Private Use Area, no shaping tables) is mapped by the library's maps and drawn joined,
                                   its missing digits and marks drawn in and missing letters composed

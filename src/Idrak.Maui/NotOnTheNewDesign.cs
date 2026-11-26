@@ -15,5 +15,5 @@ internal static class NotOnTheNewDesign
 
     /// <summary>Throws: the names listed (<paramref name="what"/>) are not on the new design yet.</summary>
     /// <exception cref="NotSupportedException">Always.</exception>
-    public static IReadOnlyCollection<string> Names(string what) => Yet<IReadOnlyCollection<string>>($"The registered {what}");
+    public static IReadOnlyCollection<string> Names(string what) => Yet<IReadOnlyCollection<string>>($"Listing the {what}");
 }

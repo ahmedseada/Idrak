@@ -919,7 +919,7 @@ public static class CompletionsTranslation
     // The binary kind whose requests' content parts have the type `type` (its RecordKeys.InputPart: "input_audio" for the
     // audio kind): finding the binary kinds by their part's type is not on the new design yet.
     private static IBinaryPartKind? InputKind(string type) =>
-        throw new NotSupportedException($"Finding the binary part kind of '{type}' parts among the registered kinds is not on the new design yet.");
+        throw new NotSupportedException($"Finding the binary part kind of '{type}' parts is not on the new design yet.");
 
     // An input part of a binary kind, {"input_audio": {"data": "<base64>", "format": "wav"}}: a part of that kind made
     // from the bytes, a 400 when the data is bad.

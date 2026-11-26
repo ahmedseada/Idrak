@@ -171,7 +171,7 @@ public static class MobileFeatures
     /// (<see cref="IMobileFeature.State"/>) alike.
     /// </summary>
     public static IReadOnlyList<IMobileFeature> All =>
-        [.. Registered().OrderBy(Place).ThenBy(f => f.Title, StringComparer.CurrentCultureIgnoreCase)];
+        [.. Listed().OrderBy(Place).ThenBy(f => f.Title, StringComparer.CurrentCultureIgnoreCase)];
 
     /// <summary>
     /// Where <paramref name="feature"/> stands in the menu: its <see cref="IMobileFeature.Order"/>, or, when it sets none,
@@ -186,7 +186,7 @@ public static class MobileFeatures
     }
 
     // Listing the features or finding one by name is not on the new design yet.
-    private static IEnumerable<IMobileFeature> Registered() => throw new NotSupportedException("The app's registered features are not on the new design yet.");
+    private static IEnumerable<IMobileFeature> Listed() => throw new NotSupportedException("Listing the app's features is not on the new design yet.");
 
     private static IMobileFeature? LibraryFeature(string name) => throw new NotSupportedException($"The library's feature '{name}' by name is not on the new design yet.");
 

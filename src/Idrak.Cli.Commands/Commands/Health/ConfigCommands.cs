@@ -160,13 +160,12 @@ internal sealed class ConfigSetCommand : ConfigCommand
         Options:
               --config-profile NAME  write to the named profile (idrak config set profile NAME makes it the one in use)
 
-        Keys the tool reads: device, cache, plugins (a list of paths), aliases (NAME: {model, weights, kv}),
+        Keys the tool reads: device, cache, aliases (NAME: {model, kv}),
         profile, serve.port (the port of serve and ui, and of the server the client commands call), and any key
         another command documents.
 
         Examples:
           idrak config set device vulkan:0
-          idrak config set plugins '["./MyFormat.dll"]'
           idrak config set device cpu --config-profile phone
           idrak config set aliases.qwen.model Qwen/Qwen3-0.6B
         """;

@@ -713,9 +713,9 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable, ILiveLevelSour
             var speech = SpeechModels;
             var families = NotOnTheNewDesign.Names("speech families");
             ModelsText = speech.Count > 0 ? $"{speech.Count} speech model{(speech.Count == 1 ? "" : "s")} on this phone."
-                : families.Count == 0 ? "No speech family is registered: the app registers the families it shows (SpeechFamilies.Register, a plug-in's own Register call)."
+                : families.Count == 0 ? "No speech family here."
                 : $"No speech model on this phone{(others > 0 ? $" among the {others} other model{(others == 1 ? "" : "s")}" : "")}: pull one in Models, "
-                  + $"of an architecture registered here ({string.Join(", ", families)}).";
+                  + $"of one of these architectures: {string.Join(", ", families)}.";
             var keep = speech.FirstOrDefault(m => string.Equals(m.Key, _options.Model, StringComparison.OrdinalIgnoreCase))
                 ?? speech.FirstOrDefault(m => _selected is { } current && current.Key == m.Key)
                 ?? speech.FirstOrDefault();

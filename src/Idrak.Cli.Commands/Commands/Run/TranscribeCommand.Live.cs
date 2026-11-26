@@ -20,7 +20,7 @@ internal sealed partial class TranscribeCommand
     private static int ListInputs(CommandContext context)
     {
         var captures = new JsonArray();
-        foreach (var capture in NotOnTheNewDesign.Yet<IReadOnlyList<IAudioCapture>>("Listing the registered audio captures").OrderBy(c => c.Name, StringComparer.Ordinal))
+        foreach (var capture in NotOnTheNewDesign.Yet<IReadOnlyList<IAudioCapture>>("Listing the audio captures").OrderBy(c => c.Name, StringComparer.Ordinal))
         {
             string name = capture.Name;
             bool available = capture.IsAvailable(out string reason);

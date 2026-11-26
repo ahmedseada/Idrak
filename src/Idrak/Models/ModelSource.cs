@@ -68,7 +68,7 @@ public static class ModelSource
     public static string Resolve(string model, ModelSourceOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return NotOnTheNewDesign.Yet<IModelSource>($"Picking the source that resolves '{model}' among the registered ones").Resolve(model, options);
+        return NotOnTheNewDesign.Yet<IModelSource>($"Picking the source that resolves '{model}'").Resolve(model, options);
     }
 
     /// <summary>The options <see cref="Resolve(string, string, string?, IDownloader?, bool)"/> passes to a source: the revision, token, downloader and download switch.</summary>

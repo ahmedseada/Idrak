@@ -210,7 +210,7 @@ public static class LabSettings
 
     // A name of a list (`names`) as it is spelled there (any case typed), or null for the default; `what`
     // names them in the refusal.
-    internal static string? Registered(string text, IReadOnlyCollection<string> names, string what, StringComparer? comparer = null)
+    internal static string? Listed(string text, IReadOnlyCollection<string> names, string what, StringComparer? comparer = null)
     {
         if (IsDefault(text))
         {
@@ -226,7 +226,7 @@ public static class LabSettings
             }
         }
 
-        throw new FormatException($"'{text}' is not {what} (registered: {(names.Count == 0 ? "none" : string.Join(", ", names))}).");
+        throw new FormatException($"'{text}' is not {what} (choices: {(names.Count == 0 ? "none" : string.Join(", ", names))}).");
     }
 
     // One of `choices` (any case), or null for the default.

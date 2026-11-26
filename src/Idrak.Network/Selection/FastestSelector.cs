@@ -29,6 +29,6 @@ internal sealed class FastestSelector : ITransportSelector
         }
 
         throw new NotSupportedException($"No transport joins ranks {rankA} and {rankB}: " +
-            (available.Count == 0 ? "none is registered" : string.Join("; ", available.Select(a => $"{a.Transport}: {a.Reason}"))) + ".");
+            (available.Count == 0 ? "none is given" : string.Join("; ", available.Select(a => $"{a.Transport}: {a.Reason}"))) + ".");
     }
 }

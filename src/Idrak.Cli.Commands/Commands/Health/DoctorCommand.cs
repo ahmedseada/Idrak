@@ -249,7 +249,7 @@ internal sealed class DoctorCommand : Command
         "cuda" => Messages.T("CUDA drives GPUs through their CUDA driver; without it those GPUs can still run through Vulkan."),
         "vulkan" => Messages.T("Vulkan compute runs Idrak's generated kernels on most GPUs (and on phones); it needs the loader and a driver."),
         "hip" => Messages.T("HIP drives AMD GPUs through the graphics driver's runtime, with Idrak's own kernels (no SDK); without it those GPUs can still run through Vulkan."),
-        _ => Messages.T("A registered backend adds devices of its kind."),
+        _ => Messages.T("This backend adds devices of its kind."),
     };
 
     private static void Devices(CommandContext context, List<Check> checks)

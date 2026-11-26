@@ -173,7 +173,7 @@ internal sealed class VlmCheckCommand : Command
         {
             var chatImage = ChatImage.FromFile(imagePath);
             var decoded = (bool?)manifest["exif_applied"] == false
-                ? NotOnTheNewDesign.Yet<ImageData>("Decoding an image through the registered image codecs") : ImageInputs.Decode(chatImage);
+                ? NotOnTheNewDesign.Yet<ImageData>("Decoding an image by its format") : ImageInputs.Decode(chatImage);
             using (var own = stages.PixelValues(decoded, visionOptions))
             {
                 ownPixels = own.ToArray();

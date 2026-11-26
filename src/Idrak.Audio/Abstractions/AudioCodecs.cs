@@ -55,7 +55,7 @@ public static class AudioCodecs
     // WAV codec's before a codec that finds a frame sync inside its samples is asked), then the rest. Finding them by the
     // path's extension and the file's first bytes is not on the new design yet.
     private static IEnumerable<IAudioCodec> CodecsFor(string path) =>
-        throw new NotSupportedException($"{path}: finding the audio codec that reads it among the registered codecs is not on the new design yet.");
+        throw new NotSupportedException($"{path}: finding the audio codec that reads it is not on the new design yet.");
 
     /// <summary>Whether a codec lists the extension of <paramref name="path"/>.</summary>
     /// <exception cref="NotSupportedException">Always for now: picking among the codecs is not on the new design yet.</exception>

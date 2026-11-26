@@ -37,7 +37,7 @@ internal sealed class KernelsDumpCommand : Command
         "Options:\n" +
         "  -o, --out DIR       the folder to write to (default ./kernels)\n" +
         "  --target TARGET     gcn: the GCN target to print for, as a device reports it (default: hip:0's, else the\n" +
-        "                      first processor a registered family handles)\n\n" +
+        "                      first processor a family handles)\n\n" +
         "Examples:\n" +
         "  idrak kernels dump\n" +
         "  idrak kernels dump spirv -o /tmp/spv && spirv-val /tmp/spv/spirv/add.spv\n" +

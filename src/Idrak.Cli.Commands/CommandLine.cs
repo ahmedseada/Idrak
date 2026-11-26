@@ -184,7 +184,6 @@ internal static class CommandLine
 
             profile = Shared.CommandProfile.Start(context, args);              // --profile: watched from here to the end
             verbose = Shared.VerboseLines.Start(context);                      // --verbose: the library's work as it happens
-            context.LoadPlugins();
             exit = command.Run(context);
             return exit = context.Stopped && exit == ExitCodes.Ok ? ExitCodes.Stopped : exit;   // a command that stops itself cleanly on the host's stop
         }
@@ -450,7 +449,6 @@ internal static class Help
     internal const string CommonOptions =
         "Common options:\n" +
         "  -d, --device NAME   cpu, cuda:0, vulkan:1, hip:0 (default: the default device)\n" +
-        "  -P, --plugin PATH   load a plug-in assembly (not on the new design yet)\n" +
         "  -j, --json          machine-readable output\n" +
         "  -q, --quiet         less output; -v, --verbose: more, and the library's work as it happens (prompt passes,\n" +
         "                      decoding, kernel choices measured, host fallbacks; IDRAK_VERBOSE=1)\n" +

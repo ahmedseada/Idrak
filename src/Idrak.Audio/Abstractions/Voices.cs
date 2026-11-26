@@ -165,7 +165,7 @@ public static class VoiceConverters
 {
     // Finding a checkpoint's converter family is not on the new design yet.
     private static IVoiceConverterFamily ConverterFamilyFor(JsonObject config, string? name) =>
-        throw new NotSupportedException($"The voice converter family {(name is null ? "that reads this config.json" : $"'{name}'")}, found among the registered ones, is not on the new design yet.");
+        throw new NotSupportedException($"Finding the voice converter family {(name is null ? "that reads this config.json" : $"'{name}'")} is not on the new design yet.");
 
     // Finding the checkpoint format of a path is not on the new design yet.
     private static ICheckpointFormat FormatFor(string path) =>

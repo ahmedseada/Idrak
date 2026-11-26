@@ -163,7 +163,7 @@ public static class AudioPlaybacks
     public static IAudioPlayback ForThisMachine()
     {
         var reasons = new List<string>();
-        foreach (var playback in Registered())
+        foreach (var playback in Playbacks())
         {
             if (playback.IsAvailable(out string reason))
             {
@@ -178,6 +178,6 @@ public static class AudioPlaybacks
     }
 
     // Picking the first playback that can run is not on the new design yet.
-    private static IEnumerable<IAudioPlayback> Registered() =>
-        throw new NotSupportedException("The audio playbacks to pick from were registered, which is not on the new design yet.");
+    private static IEnumerable<IAudioPlayback> Playbacks() =>
+        throw new NotSupportedException("Picking an audio playback is not on the new design yet.");
 }

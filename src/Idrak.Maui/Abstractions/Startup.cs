@@ -80,10 +80,10 @@ public static class StartupSteps
     public const string Sections = "sections";
 
     /// <summary>Every step in order (<see cref="IStartupStep.Order"/>, then the name).</summary>
-    public static IReadOnlyList<IStartupStep> All => [.. Registered().OrderBy(s => s.Order).ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)];
+    public static IReadOnlyList<IStartupStep> All => [.. Listed().OrderBy(s => s.Order).ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)];
 
     // Listing the steps is not on the new design yet.
-    private static IEnumerable<IStartupStep> Registered() => throw new NotSupportedException("The app's registered start-up steps are not on the new design yet.");
+    private static IEnumerable<IStartupStep> Listed() => throw new NotSupportedException("Listing the app's start-up steps is not on the new design yet.");
 }
 
 /// <summary>

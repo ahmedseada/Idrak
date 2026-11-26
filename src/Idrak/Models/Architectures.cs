@@ -189,7 +189,7 @@ public static class PretrainedFamilies
         if (c["num_local_experts"] is not null || (int?)c["num_experts"] is > 0)
         {
             throw new NotSupportedException("This configuration has experts, which this family does not read; mixture-of-experts families "
-                + "(Idrak.Text.Plugins' MixtralForCausalLM, Qwen2MoeForCausalLM, Qwen3MoeForCausalLM, or one registered with PretrainedFamilies.ExpertSpec) do.");
+                + "(Idrak.Text.Plugins' MixtralForCausalLM, Qwen2MoeForCausalLM, Qwen3MoeForCausalLM, or a family of one's own that reads it with PretrainedFamilies.ExpertSpec) do.");
         }
 
         return Common(c, notes);

@@ -25,7 +25,7 @@ internal sealed class DataFontsCommand : Command
     public override string Usage => $$"""
         FONTS... [--language CODE] [--script NAME] [--lines FILE] [--write-lines OUT] [--harfbuzz JSON]
 
-        Reads every font file ({{FontMapSettings.FontFiles()}}: the registered font formats'; folders searched through)
+        Reads every font file ({{FontMapSettings.FontFiles()}}; folders searched through)
         and says for each: whether it reads, which characters of the sample it has no glyph for (a page with one of them
         is left out), its layout features for the script, and for a joining script (Arabic) whether it has the joining
         forms (init, medi, fina), the lam-alef ligatures (rlig) and mark positioning (mark). A legacy font a font map

@@ -88,9 +88,9 @@ internal sealed class SearchCommand : Command
             }
 
             string? why = isGguf
-                ? ggufArchitecture is null ? "GGUF architecture not reported" : ggufArchitectures.Contains(ggufArchitecture) ? null : $"GGUF architecture {ggufArchitecture} not registered"
+                ? ggufArchitecture is null ? "GGUF architecture not reported" : ggufArchitectures.Contains(ggufArchitecture) ? null : $"GGUF architecture {ggufArchitecture}: finding it is not on the new design yet"
                 : isSafetensors
-                    ? family is null ? "no family in config.json" : families.Contains(family) ? null : $"family {family} not registered"
+                    ? family is null ? "no family in config.json" : families.Contains(family) ? null : $"family {family}: finding it is not on the new design yet"
                     : "neither safetensors nor GGUF weights";
             if (why is not null && !all)
             {

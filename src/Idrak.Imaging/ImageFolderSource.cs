@@ -142,9 +142,9 @@ public sealed class ImageFolderSource : ISampleSource
 // Decoding a file through the image codecs is not on the new design yet.
 file static class Codecs
 {
-    public static ImageData Decode(string path) => throw new NotSupportedException($"{path}: decoding an image through the registered image codecs is not on the new design yet.");
+    public static ImageData Decode(string path) => throw new NotSupportedException($"{path}: decoding an image by its format is not on the new design yet.");
 
-    public static ImageInfo? ReadInfo(string path) => throw new NotSupportedException($"{path}: reading an image's size through the registered image codecs is not on the new design yet.");
+    public static ImageInfo? ReadInfo(string path) => throw new NotSupportedException($"{path}: reading an image's size by its format is not on the new design yet.");
 
     public static bool CanDecode(string path) => throw new NotSupportedException($"{path}: finding an image codec by the file's extension is not on the new design yet.");
 }

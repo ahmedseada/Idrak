@@ -63,7 +63,7 @@ internal sealed class ExplainCommand : Command
             : $"Device        {context.Device}: its memory is not reported (set a GPU memory limit to compare)");
         foreach (string op in analysis.Unknown.Distinct())
         {
-            context.Write($"Note          '{op}' is a registered step this analysis does not know: its parameters are counted, its FLOPs are not");
+            context.Write($"Note          '{op}' is a step this analysis does not know: its parameters are counted, its FLOPs are not");
         }
 
         context.WriteJson(new JsonObject

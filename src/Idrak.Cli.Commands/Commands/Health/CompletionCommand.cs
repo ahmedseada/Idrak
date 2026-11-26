@@ -10,7 +10,7 @@ namespace Idrak.Cli.Commands.Health;
 /// <summary>
 /// <c>idrak completion bash|zsh|fish|pwsh</c>: prints a shell completion script. The scripts ask the tool itself
 /// (<c>idrak completion --complete -- WORDS...</c>) for the candidates, so commands, options, device names and cached
-/// model names stay current, plug-in commands included.
+/// model names stay current.
 /// </summary>
 internal sealed class CompletionCommand : Command
 {

@@ -66,22 +66,21 @@ internal sealed class ShowCommand : Command
         }
 
         // A vision-language model's image side (vision_config), described without loading it: the keys most vision
-        // configs share, as written (no family's defaults), and whether its vision family is known.
+        // configs share, as written (no family's defaults); finding its vision family is not on the new design yet.
         JsonObject? vision = null;
         if (info.Config["vision_config"] is JsonObject visionConfig)
         {
             string? architecture = info.Config["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : null;
-            bool registered = false;                                    // finding its vision family by name: not on the new design yet
             vision = new JsonObject
             {
-                ["modelType"] = (string?)visionConfig["model_type"], ["family"] = architecture, ["registered"] = registered,
+                ["modelType"] = (string?)visionConfig["model_type"], ["family"] = architecture,
                 ["layers"] = (int?)visionConfig["num_hidden_layers"], ["width"] = (int?)visionConfig["hidden_size"], ["heads"] = (int?)visionConfig["num_attention_heads"],
                 ["imageSize"] = (int?)visionConfig["image_size"], ["patchSize"] = (int?)visionConfig["patch_size"],
             };
             string Part(string key, string label) => vision[key] is { } value ? $" · {label} {value}" : "";
             fields.Add(("Vision", $"{(string?)visionConfig["model_type"] ?? "vision encoder"}{Part("layers", "layers")}{Part("width", "width")}{Part("heads", "heads")}"
                 + $"{Part("imageSize", "image px")}{Part("patchSize", "patch px")} · "
-                + (registered ? $"vision family {architecture} registered" : $"vision family '{architecture}': finding it is not on the new design yet")));
+                + $"vision family '{architecture}': finding it is not on the new design yet"));
         }
 
         fields.Add(("Weights", $"{info.Format} · {Units.Bytes(info.WeightBytes)}"));

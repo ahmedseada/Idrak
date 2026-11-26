@@ -1023,7 +1023,7 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
 
                 try
                 {
-                    var faces = NotOnTheNewDesign.Yet<IReadOnlyList<IFontFace>>("Reading a font through the registered font formats");
+                    var faces = NotOnTheNewDesign.Yet<IReadOnlyList<IFontFace>>("Reading a font by its format");
                     string path = Path.Combine(folder, safe);
                     File.WriteAllBytes(path, bytes);
                     lock (_facesGate)
@@ -1236,7 +1236,7 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
         IReadOnlyList<IFontFace> faces;
         try
         {
-            faces = NotOnTheNewDesign.Yet<IReadOnlyList<IFontFace>>("Reading a font through the registered font formats");
+            faces = NotOnTheNewDesign.Yet<IReadOnlyList<IFontFace>>("Reading a font by its format");
         }
         catch (InvalidDataException)
         {

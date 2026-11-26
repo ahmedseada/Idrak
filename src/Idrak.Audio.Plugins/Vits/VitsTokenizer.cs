@@ -164,7 +164,7 @@ public sealed class VitsTokenizer
 
     // Picking the phonemizer, the one named or the default, is not on the new design yet.
     private static ITextPhonemizer PhonemizerNamed(string? name) =>
-        throw new NotSupportedException($"The phonemizer {(name is null ? "registered last" : $"'{name}'")} is not on the new design yet.");
+        throw new NotSupportedException($"Picking {(name is null ? "the default phonemizer" : $"the phonemizer '{name}'")} is not on the new design yet.");
 
     /// <summary>
     /// <paramref name="text"/> as a <see cref="Phonemize"/> checkpoint reads it: lower-cased (transformers' normalisation),

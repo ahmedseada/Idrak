@@ -73,13 +73,13 @@ public static class ModuleFiles
         bool typed = magic is FileMagic3 or FileMagic4 or FileMagic5;
         if (typed)
         {
-            // An older file lists its packed layers first: only a file with none holds float32 values alone.
+            // An older file lists its layers of other types first: only a file with none holds float32 values alone.
             int lists = magic == FileMagic3 ? 1 : magic == FileMagic4 ? 2 : 4;
             for (int list = 0; list < lists; list++)
             {
                 if (reader.ReadInt32() != 0)
                 {
-                    throw new NotSupportedException($"{source} holds packed layers: type not on the new design yet.");
+                    throw new NotSupportedException($"{source} holds layers of a type other than float32: type not on the new design yet.");
                 }
             }
         }

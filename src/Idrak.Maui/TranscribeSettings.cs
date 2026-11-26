@@ -385,12 +385,12 @@ public static class TranscribeSettings
     private static string? Policy(string text) =>
         text.Length == 0 || text.Equals("default", StringComparison.OrdinalIgnoreCase) ? null
         : NotOnTheNewDesign.Names("live commit policies").Contains(text, StringComparer.OrdinalIgnoreCase) ? text
-        : throw new FormatException($"'{text}' is not a commit policy (registered: {string.Join(", ", NotOnTheNewDesign.Names("live commit policies"))}).");
+        : throw new FormatException($"'{text}' is not a commit policy (choices: {string.Join(", ", NotOnTheNewDesign.Names("live commit policies"))}).");
 
     private static string? Capture(string text) =>
         text.Length == 0 || text.Equals("default", StringComparison.OrdinalIgnoreCase) ? null
         : NotOnTheNewDesign.Names("audio captures").Contains(text, StringComparer.OrdinalIgnoreCase) ? text
-        : throw new FormatException($"'{text}' is not an audio capture (registered: {string.Join(", ", NotOnTheNewDesign.Names("audio captures"))}).");
+        : throw new FormatException($"'{text}' is not an audio capture (choices: {string.Join(", ", NotOnTheNewDesign.Names("audio captures"))}).");
 
     private static TranscribeFileMode FileMode(string text) =>
         text.Length == 0 || text.Equals("live", StringComparison.OrdinalIgnoreCase) ? TranscribeFileMode.Live

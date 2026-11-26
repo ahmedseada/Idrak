@@ -6,8 +6,8 @@ using System.Text;
 namespace Idrak.Cli.Shared;
 
 /// <summary>
-/// Concept pages for <c>idrak help topics</c> and <c>idrak help TOPIC</c>: devices, formats, models, plugins,
-/// config, env and exit codes. Listing the choices by name is not on the new design yet.
+/// Concept pages for <c>idrak help topics</c> and <c>idrak help TOPIC</c>: devices, formats, models, config, env and
+/// exit codes. Listing the choices by name is not on the new design yet.
 /// </summary>
 internal static class HelpTopics
 {
@@ -17,7 +17,6 @@ internal static class HelpTopics
         ("devices", "Device names, the default device, backends and what each device reports"),
         ("formats", "KV cache, checkpoint, dataset and tool-call formats"),
         ("models", "Model names (hub ids, folders, GGUF, .ikm, aliases) and the supported families"),
-        ("plugins", "Loading plug-in assemblies (not on the new design yet)"),
         ("config", "The config file, its keys and profiles"),
         ("env", "Every environment variable Idrak reads"),
         ("exit-codes", "What the tool's exit codes mean"),
@@ -38,7 +37,6 @@ internal static class HelpTopics
         "devices" => Devices,
         "formats" => Formats(),
         "models" => Models(),
-        "plugins" or "plug-ins" => Plugins,
         "config" => Config,
         "env" or "environment" => "idrak help env: every environment variable Idrak reads\n" + EnvironmentVariables.Reference(),
         "exit-codes" or "exitcodes" => ExitCodesPage,
@@ -89,7 +87,7 @@ internal static class HelpTopics
             weights (safetensors, GGUF, ...); dataset file formats read rows (Parquet, JSON Lines, CSV, ...); tool-call
             formats parse the calls a model writes, detected from its chat template.
 
-            Listing the registered formats is not on the new design yet.
+            Listing the formats is not on the new design yet.
 
             Commands: idrak inspect.
             """);
@@ -118,8 +116,8 @@ internal static class HelpTopics
             and data audio takes one too (a comma list of the cleaning stages alone keeps --clean-settings). --live takes
             only live processors: a whole-recording one is refused, naming its live alternative.
 
-            Listing what is registered (processors, codecs, encoders, feature extractors, families, vocoders, voice
-            converters, splitters) is not on the new design yet.
+            Listing the processors, codecs, encoders, feature extractors, families, vocoders, voice converters and
+            splitters is not on the new design yet.
 
             Installed voices live in {{{Idrak.Audio.FolderVoiceStore.DefaultRoot}}} (IDRAK_VOICES; --voices DIR for one command).
             A voice is a person's likeness: voice add records their consent, voice show prints it; the library cannot
@@ -171,8 +169,8 @@ internal static class HelpTopics
                                                       paused, resumed and stopped at an iteration, every rank at the same one;
                                                       its iterations, rewards and pass rate shown from DIR/log.jsonl
 
-            Listing what is registered (environments, rewards, policy and Q-learning losses, advantage estimators,
-            command sandboxes, teacher divergences) is not on the new design yet.
+            Listing the environments, rewards, policy and Q-learning losses, advantage estimators, command sandboxes
+            and teacher divergences is not on the new design yet.
 
             A run is reproducible from its seed (--seed, IDRAK_RL_SEED) on every device and thread count; it writes
             checkpoints into DIR/checkpoints and goes on from the latest with --resume. A coding episode runs the model's
@@ -193,21 +191,12 @@ internal static class HelpTopics
             ("aliases": {"qwen": {"model": "Qwen/Qwen3-0.6B"}}). Hub models are downloaded into the cache once
             (idrak pull) and found there afterwards; -k/--kv chooses the KV cache format, --context the context length.
 
-            Listing the registered families, GGUF architectures and RoPE scalings is not on the new design yet.
+            Listing the families, GGUF architectures and RoPE scalings is not on the new design yet.
 
             Commands: idrak pull, list, show, memory, chat, run, serve, alias set.
             Variables: HF_TOKEN, HF_HOME, HF_ENDPOINT, IDRAK_CACHE (idrak help env).
             """;
     }
-
-    private const string Plugins = """
-        idrak help plugins
-
-        -P/--plugin PATH (repeatable), or the config's "plugins" list, names an assembly to load: loading one is not on
-        the new design yet, and a command given one stops saying so.
-
-        Commands: idrak new plugin.
-        """;
 
     private const string Arabic = """
         idrak help arabic
@@ -246,7 +235,7 @@ internal static class HelpTopics
         idrak help config
 
         The config file (--config, IDRAK_CONFIG, or ~/.idrak/config.json) gives defaults; options on the command line
-        win. Keys: "device", "cache", "plugins" (a list of paths), "aliases" (NAME: {"model", "kv"}),
+        win. Keys: "device", "cache", "aliases" (NAME: {"model", "kv"}),
         "lang" (en or ar) and "lang-render" (auto, visual, visual-right or logical; idrak help arabic),
         "tokens" (written by idrak login; never printed), "profile" (the profile in use) and "profiles"
         (NAME: {keys...}): a profile's keys are read before the top-level ones, so one file serves a phone and a

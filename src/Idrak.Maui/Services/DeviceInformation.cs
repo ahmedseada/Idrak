@@ -38,7 +38,7 @@ public sealed class DeviceInformation : IDeviceInformation
         try
         {
             memory = ComputeResources.GetMemoryUsage(device);
-            choices = NotOnTheNewDesign.Yet<int>("Counting the device's measured choices through their registered providers");
+            choices = NotOnTheNewDesign.Yet<int>("Counting the device's measured choices");
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or UnauthorizedAccessException or NotSupportedException)
         {

@@ -9,5 +9,4 @@ dotnet build
 dotnet run --project tests/__NAME__.Tests            # the tests on the CPU; add -- vulkan:0 for another device
 ```
 
-From your own code, reference the project (or its package) and use `__NAMESPACE__.Plugin.Softplus`. Registering a
-plug-in's parts by name is not on the new design yet.
+From your own code, reference the project (or its package) and use `__NAMESPACE__.Plugin.Softplus`.

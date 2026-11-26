@@ -127,7 +127,7 @@ public static class OcrSettings
                 LabSettingKind.Number, LabSettings.Show(request.RepeatStop), o => LabSettings.Show(o.RepeatStop), (o, t) => o.RepeatStop = LabSettings.Whole(t, 0)),
             new("cache_format", "Attention cache", "The attention cache's format (ImageReaderOptions.CacheFormat). Taken at the next load.", LabSettingKind.Choice,
                 $"default ({reader.CacheFormat.ToString().ToLowerInvariant()})", o => o.CacheFormat?.ToString().ToLowerInvariant() ?? "",
-                (o, t) => o.CacheFormat = LabSettings.Registered(t, caches, "a cache format") is { } c ? Enum.Parse<KeyValueFormat>(c, ignoreCase: true) : null, () => ["default", .. caches]),
+                (o, t) => o.CacheFormat = LabSettings.Listed(t, caches, "a cache format") is { } c ? Enum.Parse<KeyValueFormat>(c, ignoreCase: true) : null, () => ["default", .. caches]),
             new("context", "Context (tokens)", "The longest prompt and answer, the page's image tokens included; it sizes the attention cache the model is measured with. Taken at the next load.",
                 LabSettingKind.Number, LabSettings.Show(new GenerationOptions().NumCtx), o => LabSettings.Show(o.Context), (o, t) => o.Context = LabSettings.Whole(t, 16)),
             new("preview_px", "Picture size on the page (px)", "The longest side the page's picture is shrunk to on the screen only (the model reads the page itself); empty: the screen's, measured.",
