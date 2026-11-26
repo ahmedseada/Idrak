@@ -6,8 +6,8 @@ using System.Buffers.Binary;
 namespace Idrak.Data.Pdf;
 
 /// <summary>
-/// A font program a PDF embeds (TrueType, or OpenType), read through <c>FontFormats</c> at run time (this assembly
-/// does not reference the readers): its face, for drawing (<see cref="DocumentTextRun.Face"/>), and its own <c>cmap</c>
+/// A font program a PDF embeds (Type 1, TrueType, a bare CFF or OpenType), read by the reader its font descriptor's key
+/// names (Idrak.Imaging's, reached directly): its face, for drawing (<see cref="DocumentTextRun.Face"/>), and its own <c>cmap</c>
 /// read here both ways: each glyph's lowest code point in the best Unicode subtable (what the glyph says when the file
 /// gives no other way: the third way to text), and the symbol (3,0) and Macintosh (1,0) subtables a simple TrueType
 /// font's codes reach glyphs through. Read once per document, when first needed; immutable after.
@@ -145,16 +145,65 @@ internal sealed class PdfFontProgram
     /// <summary>About how many bytes it holds.</summary>
     public long Bytes { get; private init; }
 
+    // The readers of the programs a font descriptor embeds (ISO 32000-2, 9.9), each reached directly: its key
+    // says which one reads the program, never its first bytes.
+    private static readonly Idrak.Imaging.Type1FontFormat Type1 = new();
+
+    private static readonly Idrak.Imaging.OpenTypeFormat OpenType = new();
+
+    private static readonly Idrak.Imaging.CffFontFormat Cff = new();
+
     /// <summary>
-    /// The program in <paramref name="program"/>'s bytes as the first font format that accepts them reads it,
-    /// or null when none does or it cannot be read (a program without a <c>cmap</c>, a bare CFF, a damaged file).
+    /// The Type 1 program a font descriptor's <c>FontFile</c> holds in <paramref name="program"/>'s bytes, or null when it
+    /// cannot be read (its first bytes not a Type 1 program's, a damaged file).
     /// </summary>
-    /// <exception cref="NotSupportedException">Always for now: the font formats were tried in their registry's order
-    /// (<c>FontFormats</c>), which is not on the new design yet.</exception>
-    public static PdfFontProgram? Read(byte[] program, string name)
+    public static PdfFontProgram? ReadType1(byte[] program, string name) => Read(Type1, program, name);
+
+    /// <summary>
+    /// The TrueType program a font descriptor's <c>FontFile2</c> holds in <paramref name="program"/>'s bytes, or null when
+    /// it cannot be read (its first bytes not a TrueType or OpenType font's, a damaged file).
+    /// </summary>
+    public static PdfFontProgram? ReadTrueType(byte[] program, string name) => Read(OpenType, program, name);
+
+    /// <summary>
+    /// The program a font descriptor's <c>FontFile3</c> holds in <paramref name="program"/>'s bytes, as its stream's
+    /// <paramref name="subtype"/> says: <c>Type1C</c> and <c>CIDFontType0C</c> a bare CFF program, <c>OpenType</c> an
+    /// OpenType font. Null when it cannot be read (its first bytes not that program's, a damaged file), and refused (null)
+    /// with no subtype or one PDF does not define.
+    /// </summary>
+    public static PdfFontProgram? ReadFontFile3(byte[] program, string name, PdfName? subtype) =>
+        subtype is null ? null
+        : subtype.Is("Type1C"u8) || subtype.Is("CIDFontType0C"u8) ? Read(Cff, program, name)
+        : subtype.Is("OpenType"u8) ? Read(OpenType, program, name)
+        : null;
+
+    // The program as `reader` reads it (the first face of what it reads), or null when its first bytes are not what the
+    // reader takes or it cannot be read: the file gives its text another way, or none.
+    private static PdfFontProgram? Read(IFontFormat reader, byte[] program, string name)
     {
         ArgumentNullException.ThrowIfNull(program);
-        throw new NotSupportedException($"{name}: an embedded font program is read through the registered font formats, which are not on the new design yet.");
+        try
+        {
+            if (!reader.Accepts(program.AsSpan(0, Math.Min(program.Length, FontFormats.HeaderBytes))))
+            {
+                return null;
+            }
+
+            var faces = reader.Read(program, name);
+            if (faces.Count == 0)
+            {
+                return null;
+            }
+
+            var face = faces[0];
+            var cmap = face.Table("cmap").Span;
+            var (codePoints, symbol, macintosh) = ReadCmap(cmap, face.GlyphCount);
+            return new PdfFontProgram(face, codePoints, symbol, macintosh) { Bytes = program.Length + 4L * codePoints.Length + 4096 };
+        }
+        catch (Exception e) when (e is not (OutOfMemoryException or OperationCanceledException))
+        {
+            return null;   // a program the reader cannot read: the file gives its text another way, or none
+        }
     }
 
     /// <summary>The lowest code point the program's best Unicode <c>cmap</c> maps to <paramref name="glyph"/>, or -1.</summary>

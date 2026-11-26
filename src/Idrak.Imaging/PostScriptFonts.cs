@@ -13,17 +13,22 @@ namespace Idrak.Imaging;
 /// the "post" and "cmap" tables a TrueType font would have (<see cref="PostScriptFontTables"/>). It lists no file
 /// extension: such programs come inside documents, read by their first bytes.
 /// </summary>
-internal sealed class CffFontFormat : IFontFormat
+public sealed class CffFontFormat : IFontFormat
 {
+    /// <summary>The format's name.</summary>
     public const string FormatName = "cff";
 
+    /// <inheritdoc/>
     public string Name => FormatName;
 
+    /// <summary>None: such programs come inside documents.</summary>
     public IReadOnlyCollection<string> Extensions { get; } = [];
 
     // A CFF header: version 1.x, a header size of 4 or more, an offset size of 1 to 4.
+    /// <inheritdoc/>
     public bool Accepts(ReadOnlySpan<byte> header) => header.Length >= 4 && header[0] == 1 && header[2] >= 4 && header[3] is >= 1 and <= 4;
 
+    /// <inheritdoc/>
     public IReadOnlyList<IFontFace> Read(ReadOnlyMemory<byte> file, string name) => [new CffFace(file, name)];
 }
 
@@ -143,17 +148,22 @@ internal sealed class CffFace : IFontFace
 /// sbw; the glyphs' names and the program's own encoding as the "post" and "cmap" tables
 /// (<see cref="PostScriptFontTables"/>). No file extension is listed: programs come inside documents.
 /// </summary>
-internal sealed class Type1FontFormat : IFontFormat
+public sealed class Type1FontFormat : IFontFormat
 {
+    /// <summary>The format's name.</summary>
     public const string FormatName = "type1";
 
+    /// <inheritdoc/>
     public string Name => FormatName;
 
+    /// <summary>None: such programs come inside documents.</summary>
     public IReadOnlyCollection<string> Extensions { get; } = [];
 
+    /// <inheritdoc/>
     public bool Accepts(ReadOnlySpan<byte> header) =>
         header.StartsWith("%!PS-AdobeFont"u8) || header.StartsWith("%!FontType1"u8) || (header.Length >= 2 && header[0] == 0x80 && header[1] == 0x01);
 
+    /// <inheritdoc/>
     public IReadOnlyList<IFontFace> Read(ReadOnlyMemory<byte> file, string name) => [new Type1Face(file.Span, name)];
 }
 

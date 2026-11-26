@@ -10,9 +10,9 @@ namespace Idrak.Data.Pdf;
 /// split strings into codes and give CIDs, widths from <c>/W</c> and <c>/DW</c> (vertical: <c>/W2</c> and <c>/DW2</c>),
 /// glyphs through <c>/CIDToGIDMap</c>. Text comes, in this order: the font's ToUnicode CMap; a simple font's encoding (its
 /// base encoding and <c>/Differences</c>) with glyph names read by the Adobe Glyph List's rules; the embedded program's
-/// own <c>cmap</c> (through <c>FontFormats</c>), a glyph's lowest code point; otherwise none (the reader puts U+FFFD
-/// and counts it). Nothing here is for one language or script. Immutable once read, so one font serves every page and
-/// thread.
+/// own <c>cmap</c> (the program read as its font descriptor's key says), a glyph's lowest code point; otherwise none (the
+/// reader puts U+FFFD and counts it). Nothing here is for one language or script. Immutable once read, so one font serves
+/// every page and thread.
 /// </summary>
 internal sealed class PdfFont
 {
@@ -392,7 +392,7 @@ internal static class PdfFonts
                 // A bare CFF program's own encoding (the standard or Expert one, or codes of its own): its codes' glyph
                 // names, the standard encoding's where it encodes none (what stood in for it before). The program is read
                 // here, once, and kept for drawing.
-                var cff = ProgramReader(file, fontFile3, baseFont)!();
+                var cff = ProgramReader(file, fontFile3, baseFont, (p, n) => PdfFontProgram.ReadFontFile3(p, n, subtype3))!();
                 builtInProgram = () => cff;
                 builtIn = CffEncoding(cff);
                 if (builtIn is not null)
@@ -449,7 +449,9 @@ internal static class PdfFonts
 
         var toUnicode = ToUnicode(file, dictionary);
         bool programGlyphs = (trueType && fontFile2 is not null) || fontFile3 is not null;
-        var program = builtInProgram ?? (programGlyphs ? ProgramReader(file, fontFile2 ?? fontFile3, baseFont) : null);
+        var program = builtInProgram ?? (!programGlyphs ? null
+            : fontFile2 is not null ? ProgramReader(file, fontFile2, baseFont, PdfFontProgram.ReadTrueType)
+            : ProgramReader(file, fontFile3, baseFont, (p, n) => PdfFontProgram.ReadFontFile3(p, n, subtype3)));
         // Fonts drawn by their glyphs' names: a Type 1 program (read for drawing only: its text comes from its encoding),
         // a bare CFF (FontFile3 that is not OpenType), Type 3's own glyphs.
         bool byName = !trueType && (fontFile is not null || (fontFile3 is not null && bareCff) || type3);
@@ -459,7 +461,7 @@ internal static class PdfFonts
         }
         else if (fontFile is not null && program is null)
         {
-            program = ProgramReader(file, fontFile, baseFont);
+            program = ProgramReader(file, fontFile, baseFont, PdfFontProgram.ReadType1);
         }
 
         var widths = file.Resolve(dictionary["Widths"u8]).AsArray;
@@ -628,11 +630,15 @@ internal static class PdfFonts
             cidToGid = decoded.Span.ToArray();
         }
 
-        var fontFile = descriptor is null ? null : file.Resolve(descriptor["FontFile2"u8]).AsStream ?? file.Resolve(descriptor["FontFile3"u8]).AsStream;
+        var fontFile2 = descriptor is null ? null : file.Resolve(descriptor["FontFile2"u8]).AsStream;
+        var fontFile3 = descriptor is null || fontFile2 is not null ? null : file.Resolve(descriptor["FontFile3"u8]).AsStream;
+        var subtype3 = fontFile3 is null ? null : file.Resolve(fontFile3.Dictionary["Subtype"u8]).AsName;
         var (ascent, descent) = Extents(file, descriptor, -1);
         bool cidKeyed = file.Resolve(descendant["Subtype"u8]).AsName is { } cidType && cidType.Is("CIDFontType0"u8);
+        var program = fontFile2 is not null ? ProgramReader(file, fontFile2, name, PdfFontProgram.ReadTrueType)
+            : ProgramReader(file, fontFile3, name, (p, n) => PdfFontProgram.ReadFontFile3(p, n, subtype3));
         return new PdfFont(name, encoding, toUnicode, widths, vertical, defaultVertical, cidToGid, ascent, descent,
-            fontFile is null ? null : ProgramReader(file, fontFile, name), cidKeyed, positionX, positionY) { Note = note, VerticalOrigin = verticalOrigin / 1000 };
+            program, cidKeyed, positionX, positionY) { Note = note, VerticalOrigin = verticalOrigin / 1000 };
     }
 
     // /W ([c [w1 w2 ...]] or [cfirst clast w]) or /W2 ([c [w1y vx vy ...]] or [cfirst clast w1y vx vy]): number `at` (the
@@ -725,8 +731,9 @@ internal static class PdfFonts
         }
     }
 
-    // Reads the embedded TrueType or OpenType program when first needed.
-    private static Func<PdfFontProgram?>? ProgramReader(PdfFile file, PdfStream? stream, string? name)
+    // Reads the embedded program when first needed, with `read`: the reader its font descriptor's key names (FontFile a
+    // Type 1 program, FontFile2 a TrueType one, FontFile3 by its stream's Subtype).
+    private static Func<PdfFontProgram?>? ProgramReader(PdfFile file, PdfStream? stream, string? name, Func<byte[], string, PdfFontProgram?> read)
     {
         if (stream is null)
         {
@@ -738,7 +745,7 @@ internal static class PdfFonts
             try
             {
                 using var decoded = file.Decode(stream);
-                return PdfFontProgram.Read(decoded.Span.ToArray(), name ?? $"object {stream.Number}");
+                return read(decoded.Span.ToArray(), name ?? $"object {stream.Number}");
             }
             catch (InvalidDataException)
             {

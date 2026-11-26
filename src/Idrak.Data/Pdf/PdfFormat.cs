@@ -17,7 +17,7 @@ namespace Idrak.Data.Pdf;
 /// UTF-16 and UTF-8 strings, dates), the version, each page's size and rotation, and its text are read: the content
 /// interpreted (text state, matrices, form XObjects within <see cref="DocumentOptions.MaxDepth"/>, inline images,
 /// <c>/ActualText</c>), fonts to text by ToUnicode, encodings and glyph names, or the embedded program's own cmap (read
-/// through <c>FontFormats</c>), glyph widths placing each run's box on the page as shown, and the lines and text
+/// as its font descriptor's key says), glyph widths placing each run's box on the page as shown, and the lines and text
 /// made by <see cref="DocumentOptions.Layout"/>; a glyph with no text is U+FFFD and counted in the page's issues. An
 /// encrypted file is read through the standard security handler (revisions 2-6: RC4, AES-128, AES-256) with
 /// <see cref="DocumentOptions.Password"/> (as the owner's, then the user's password) or the empty password, a damaged one
