@@ -386,6 +386,24 @@ public sealed class PretrainedModel : IDisposable
     }
 
     /// <summary>
+    /// The library's checkpoint format that opens <paramref name="path"/>, each asked in turn (its own test of the path):
+    /// a .gguf file or the folder prepared from one (read through <paramref name="families"/>' GGUF mappings), else a model
+    /// folder of safetensors.
+    /// </summary>
+    private static ICheckpointFormat FormatOf(string path, IFamilyProvider? families)
+    {
+        foreach (var format in (ReadOnlySpan<ICheckpointFormat>)[new GgufCheckpointFormat(families), SafeTensorsCheckpointFormat.Format])
+        {
+            if (format.CanOpen(path))
+            {
+                return format;
+            }
+        }
+
+        throw new FileNotFoundException($"{path} is neither a .gguf file nor a model folder.", path);
+    }
+
+    /// <summary>
     /// Reads the model in <paramref name="folder"/> (a model folder, a .gguf file). Every weight is read from disk one
     /// tensor at a time, so the model is never held twice. Its architecture is <see cref="PretrainedOptions.Family"/>, or
     /// the family of <see cref="PretrainedOptions.Families"/> that states the name config.json gives; picking the folder's
@@ -400,8 +418,7 @@ public sealed class PretrainedModel : IDisposable
             throw new ArgumentException("A deferred load (PretrainedOptions.Deferred) reads float32 weights where they are placed: load without a merged adapter.", nameof(options));
         }
 
-        var format = options.Format ?? (SafeTensorsCheckpointFormat.Format.CanOpen(folder) ? SafeTensorsCheckpointFormat.Format
-            : NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {folder} (give PretrainedOptions.Format)"));
+        var format = options.Format ?? FormatOf(folder, options.Families);
         folder = format.Prepare(folder);                            // a .gguf file: config, tokenizer and template from its metadata
 
         var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))!.AsObject();

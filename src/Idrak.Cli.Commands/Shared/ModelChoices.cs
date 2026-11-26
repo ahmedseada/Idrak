@@ -246,7 +246,7 @@ internal static class ModelChoices
 
         if (File.Exists(model))
         {
-            return model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase) ? GgufModel.Prepare(model, context.CacheFolder) : model;
+            return model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase) ? GgufModel.Prepare(model, context.CacheFolder, Idrak.Text.Plugins.BuiltInFamilies.All) : model;
         }
 
         if (LooksLocal(model))

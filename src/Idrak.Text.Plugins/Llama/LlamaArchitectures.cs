@@ -44,6 +44,7 @@ public static class LlamaArchitectures
     public static IGgufArchitecture Gguf() => new LlamaGguf
     {
         HuggingFace = LlamaPlugin.LlamaForCausalLM,
+        Names = ["llama"],
         InterleavedQueryKeys = true,
         WithExperts = "MixtralForCausalLM",
         ExpertCountKey = "num_local_experts",

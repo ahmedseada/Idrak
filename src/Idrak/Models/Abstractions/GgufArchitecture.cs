@@ -53,6 +53,12 @@ public interface IGgufArchitecture
     /// whose norm gains are stored as a difference from 1 gets them back so, while the file holds 1 + gain).
     /// </summary>
     float StoredOffset(string name);
+
+    /// <summary>
+    /// The names a GGUF file calls this family by, as the family states them (llama.cpp's <c>general.architecture</c>:
+    /// "qwen3"): what a file's own name is compared with where it comes in (<see cref="IFamilyProvider.GgufArchitectures"/>).
+    /// </summary>
+    IReadOnlyList<string> Names => [];
 }
 
 /// <summary>
@@ -63,6 +69,9 @@ public class GgufArchitecture : IGgufArchitecture
 {
     /// <inheritdoc />
     public required string HuggingFace { get; init; }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> Names { get; init; } = [];
 
     /// <inheritdoc />
     public bool InterleavedQueryKeys { get; init; }

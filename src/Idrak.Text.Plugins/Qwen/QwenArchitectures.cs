@@ -31,15 +31,16 @@ public static class QwenArchitectures
     public static IPretrainedArchitecture Qwen3Moe() => PretrainedFamilies.Architecture((config, notes) => PretrainedFamilies.ExpertSpec(config, notes, normalizeTopK: false) with { QkNorm = true }, MoeTensorName, [QwenPlugin.Qwen3MoeForCausalLM]);
 
     /// <summary>
-    /// llama.cpp's architecture names and their mappings: "qwen2", "qwen3" (no interleaved query and key rows), "qwen2moe"
-    /// (experts' weights not renormalized unless the file says so) and "qwen3moe" (renormalized unless the file says not).
+    /// The GGUF mappings, each stating llama.cpp's name for it: "qwen2", "qwen3" (no interleaved query and key rows),
+    /// "qwen2moe" (experts' weights not renormalized unless the file says so) and "qwen3moe" (renormalized unless the file
+    /// says not).
     /// </summary>
-    public static IReadOnlyList<(string Name, IGgufArchitecture Architecture)> Gguf() =>
+    public static IReadOnlyList<IGgufArchitecture> Gguf() =>
     [
-        ("qwen2", new GgufArchitecture { HuggingFace = QwenPlugin.Qwen2ForCausalLM, InterleavedQueryKeys = false }),
-        ("qwen3", new GgufArchitecture { HuggingFace = QwenPlugin.Qwen3ForCausalLM, InterleavedQueryKeys = false }),
-        ("qwen2moe", new GgufArchitecture { HuggingFace = QwenPlugin.Qwen2MoeForCausalLM, InterleavedQueryKeys = false, NormalizeTopK = false }),
-        ("qwen3moe", new GgufArchitecture { HuggingFace = QwenPlugin.Qwen3MoeForCausalLM, InterleavedQueryKeys = false, NormalizeTopK = true }),
+        new GgufArchitecture { HuggingFace = QwenPlugin.Qwen2ForCausalLM, Names = ["qwen2"], InterleavedQueryKeys = false },
+        new GgufArchitecture { HuggingFace = QwenPlugin.Qwen3ForCausalLM, Names = ["qwen3"], InterleavedQueryKeys = false },
+        new GgufArchitecture { HuggingFace = QwenPlugin.Qwen2MoeForCausalLM, Names = ["qwen2moe"], InterleavedQueryKeys = false, NormalizeTopK = false },
+        new GgufArchitecture { HuggingFace = QwenPlugin.Qwen3MoeForCausalLM, Names = ["qwen3moe"], InterleavedQueryKeys = false, NormalizeTopK = true },
     ];
 
     /// <summary>

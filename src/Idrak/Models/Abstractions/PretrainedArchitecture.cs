@@ -52,6 +52,12 @@ public interface IFamilyProvider
 {
     /// <summary>The families handed over.</summary>
     IReadOnlyList<IPretrainedArchitecture> Families { get; }
+
+    /// <summary>Their GGUF mappings (each stating llama.cpp's names for it, <see cref="IGgufArchitecture.Names"/>), for a .gguf file's <c>general.architecture</c>.</summary>
+    IReadOnlyList<IGgufArchitecture> GgufArchitectures => [];
+
+    /// <summary>Their GGUF pre-tokenizers (each stating its names), for a .gguf file's <c>tokenizer.ggml.pre</c>.</summary>
+    IReadOnlyList<IGgufPreTokenizer> GgufPreTokenizers => [];
 }
 
 /// <summary>

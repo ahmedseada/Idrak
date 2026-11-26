@@ -203,7 +203,7 @@ internal static class ModelCache
         if (System.IO.File.Exists(model))
         {
             return model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase)
-                ? new Local(model, GgufModel.Prepare(model, context.CacheFolder), model)
+                ? new Local(model, GgufModel.Prepare(model, context.CacheFolder, Idrak.Text.Plugins.BuiltInFamilies.All), model)
                 : throw new UsageException($"{model} is a file but not a .gguf model; give the model's folder, a .gguf file or a Hugging Face id.");
         }
 
@@ -225,7 +225,7 @@ internal static class ModelCache
         if (found.FirstOrDefault() is { } entry)
         {
             Touch(context.CacheFolder, entry.Path);
-            return entry.Kind == "gguf" ? new Local(model, GgufModel.Prepare(entry.Path, context.CacheFolder), entry.Path) : new Local(model, entry.Path, null);
+            return entry.Kind == "gguf" ? new Local(model, GgufModel.Prepare(entry.Path, context.CacheFolder, Idrak.Text.Plugins.BuiltInFamilies.All), entry.Path) : new Local(model, entry.Path, null);
         }
 
         if (ModelSource.IsModelId(model))
@@ -244,11 +244,28 @@ internal static class ModelCache
         return null;
     }
 
-    /// <summary>The checkpoint's tensors by Hugging Face name (safetensors or GGUF): picking the path's checkpoint format is not on the new design yet.</summary>
+    /// <summary>The checkpoint's tensors by Hugging Face name (safetensors or GGUF), through the format that opens the path (<see cref="FormatOf"/>).</summary>
     public static ITensorStore OpenTensors(string path)
     {
-        var format = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {path}");
+        var format = FormatOf(path);
         return format.Open(format.Prepare(path));
+    }
+
+    /// <summary>
+    /// The library's checkpoint format that opens <paramref name="path"/>, each asked in turn (its own test of the path): a
+    /// .gguf file or the folder prepared from one (read through the built-in families' GGUF mappings), else a model folder.
+    /// </summary>
+    public static ICheckpointFormat FormatOf(string path)
+    {
+        foreach (var format in (ReadOnlySpan<ICheckpointFormat>)[new GgufCheckpointFormat(Idrak.Text.Plugins.BuiltInFamilies.All), SafeTensorsCheckpointFormat.Format])
+        {
+            if (format.CanOpen(path))
+            {
+                return format;
+            }
+        }
+
+        throw new FileNotFoundException($"{path} is neither a .gguf file nor a model folder.", path);
     }
 
     /// <summary>Total elements of the tensors in a store.</summary>

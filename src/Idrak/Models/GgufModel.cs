@@ -35,9 +35,12 @@ public static class GgufModel
 
     /// <summary>
     /// The folder describing <paramref name="gguf"/> in the Hugging Face layout, made once per file (by path, size and
-    /// time) under <paramref name="cacheRoot"/>/gguf (default: the library's cache folder, <see cref="ComputeResources.CacheFolder"/>).
+    /// time) under <paramref name="cacheRoot"/>/gguf (default: the library's cache folder, <see cref="ComputeResources.CacheFolder"/>):
+    /// its family the one of <paramref name="families"/>' GGUF mappings that states the file's <c>general.architecture</c>,
+    /// its tokenizer the built-in converter that states its <c>tokenizer.ggml.model</c>, its split pattern the pre-tokenizer
+    /// handed over that states its <c>tokenizer.ggml.pre</c>, each list walked where the file comes in.
     /// </summary>
-    public static string Prepare(string gguf, string? cacheRoot = null)
+    public static string Prepare(string gguf, string? cacheRoot = null, IFamilyProvider? families = null)
     {
         string path = Path.GetFullPath(gguf);
         var info = new FileInfo(path);
@@ -60,7 +63,9 @@ public static class GgufModel
         using var file = GgufFile.Open(path);
         var notes = new List<string>();
         string arch = file.Get("general.architecture", "");
-        var architecture = NotOnTheNewDesign.Yet<IGgufArchitecture>($"{path}: reading the GGUF architecture '{arch}' by its name");
+        var architecture = ArchitectureNamed(families, arch) ?? throw new NotSupportedException(families is null
+            ? $"{path} is a '{arch}' file; no GGUF families were handed over to read it (give the families, such as Idrak.Text.Plugins' BuiltInFamilies.All)."
+            : $"{path} is a '{arch}' file; none of the GGUF families handed over states that name ({string.Join(", ", families.GgufArchitectures.SelectMany(a => a.Names))}).");
 
         string temp = folder + ".tmp";
         if (Directory.Exists(temp))
@@ -71,7 +76,7 @@ public static class GgufModel
         Directory.CreateDirectory(temp);
         var tokens = file.Get<string[]>("tokenizer.ggml.tokens", []);
         WriteJson(Path.Combine(temp, "config.json"), Config(file, arch, architecture, tokens.Length, notes));
-        WriteTokenizer(file, temp, tokens, notes);
+        WriteTokenizer(file, temp, tokens, notes, families);
         WriteJson(Path.Combine(temp, Marker), new JsonObject
         {
             ["file"] = path,
@@ -92,7 +97,35 @@ public static class GgufModel
     internal static IEnumerable<string> NotesOf(string folder) =>
         (JsonNode.Parse(File.ReadAllText(Path.Combine(folder, Marker)))?["notes"] as JsonArray ?? []).Select(n => (string?)n ?? "");
 
-    internal static ITensorStore OpenTensors(string folder) => new GgufTensors(GgufFile.Open(SourceOf(folder)));
+    internal static ITensorStore OpenTensors(string folder, IFamilyProvider? families) => new GgufTensors(GgufFile.Open(SourceOf(folder)), families);
+
+    // The GGUF mapping of `families` that states the file's general.architecture among its own names, or null.
+    private static IGgufArchitecture? ArchitectureNamed(IFamilyProvider? families, string arch)
+    {
+        foreach (var architecture in families?.GgufArchitectures ?? [])
+        {
+            if (architecture.Names.Contains(arch, StringComparer.Ordinal))
+            {
+                return architecture;
+            }
+        }
+
+        return null;
+    }
+
+    // The family of `families` that states the Hugging Face name among its own names, or null.
+    private static IPretrainedArchitecture? FamilyNamed(IFamilyProvider? families, string name)
+    {
+        foreach (var family in families?.Families ?? [])
+        {
+            if (family.Names.Contains(name, StringComparer.Ordinal))
+            {
+                return family;
+            }
+        }
+
+        return null;
+    }
 
     // The Hugging Face architecture of a file: the family's, or its one with experts when the file has experts.
     private static string HuggingFaceOf(GgufFile file, string arch, IGgufArchitecture architecture) =>
@@ -203,11 +236,17 @@ public static class GgufModel
 
     // The tokenizer.json of the file's tokenizer (by tokenizer.ggml.model), then tokenizer_config.json and
     // generation_config.json.
-    internal static void WriteTokenizer(GgufFile file, string folder, string[] tokens, List<string> notes)
+    internal static void WriteTokenizer(GgufFile file, string folder, string[] tokens, List<string> notes, IFamilyProvider? families)
     {
         string model = file.Get("tokenizer.ggml.model", "");
-        var definition = NotOnTheNewDesign.Yet<IGgufTokenizer>($"{file.Path}: the GGUF tokenizer converter '{model}', picked by its name,")
-            .Create(new GgufTokenizerRequest(file, tokens, notes));
+        IGgufTokenizer? converter = null;
+        foreach (var candidate in GgufTokenizerFormats.All)
+        {
+            converter ??= candidate.Names.Contains(model, StringComparer.Ordinal) ? candidate : null;
+        }
+
+        var definition = (converter ?? throw new NotSupportedException($"{file.Path}: its tokenizer model '{model}' is none the converters state ({string.Join(", ", GgufTokenizerFormats.All.SelectMany(c => c.Names))})."))
+            .Create(new GgufTokenizerRequest(file, tokens, notes, families?.GgufPreTokenizers));
         TokenizerJsonReader.Write(definition, Path.Combine(folder, "tokenizer.json"));
 
         string? Token(string key) => file.Metadata.TryGetValue(key, out var v) && Convert.ToInt64(v, System.Globalization.CultureInfo.InvariantCulture) is var id
@@ -287,17 +326,16 @@ public static class GgufModel
         private readonly bool _interleavedQueryKeys;
         private readonly int _heads, _kvHeads;
 
-        public GgufTensors(GgufFile file)
+        public GgufTensors(GgufFile file, IFamilyProvider? families)
         {
             _file = file;
             _arch = file.Get("general.architecture", "");
-            var architecture = NotOnTheNewDesign.Yet<IGgufArchitecture?>($"{file.Path}: reading the GGUF architecture '{_arch}' by its name");
+            var architecture = ArchitectureNamed(families, _arch);
             _interleavedQueryKeys = architecture is { InterleavedQueryKeys: true };
             _heads = file.Get($"{_arch}.attention.head_count", 0);
             _kvHeads = file.Get($"{_arch}.attention.head_count_kv", _heads);
             // Experts' tensors are named through the Hugging Face family's own names (Mixtral's and Qwen's differ).
-            var family = architecture is null ? null
-                : NotOnTheNewDesign.Yet<IPretrainedArchitecture?>($"{file.Path}: the experts' names of the family '{HuggingFaceOf(file, _arch, architecture)}', picked by its name,");
+            var family = architecture is null ? null : FamilyNamed(families, HuggingFaceOf(file, _arch, architecture));
             foreach (var (name, info) in file.Tensors)
             {
                 if ((architecture is null ? GgufArchitecture.CommonTensorName(name) : architecture.TensorName(name)) is { } hf)

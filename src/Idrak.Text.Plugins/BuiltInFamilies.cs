@@ -31,4 +31,17 @@ public sealed class BuiltInFamilies : IFamilyProvider
         LlamaArchitectures.Llama(), MistralArchitectures.Mistral(), MistralArchitectures.Mixtral(),
         GemmaArchitectures.Gemma(), GemmaArchitectures.Gemma2(), GemmaArchitectures.Gemma3(),
     ]);
+
+    /// <inheritdoc />
+    public IReadOnlyList<IGgufArchitecture> GgufArchitectures { get; } = Array.AsReadOnly<IGgufArchitecture>(
+    [
+        .. QwenArchitectures.Gguf(), LlamaArchitectures.Gguf(), GemmaGguf.Gemma(), GemmaGguf.Gemma2(), GemmaGguf.Gemma3(),
+    ]);
+
+    /// <inheritdoc />
+    public IReadOnlyList<IGgufPreTokenizer> GgufPreTokenizers { get; } = Array.AsReadOnly<IGgufPreTokenizer>(
+    [
+        new GgufPreTokenizer(["qwen2", "qwen35", "megrez", "hunyuan"], QwenArchitectures.SplitPattern),
+        new GgufPreTokenizer(["llama3", "llama-bpe", "llama-v3", "smaug-bpe", "falcon3", "pixtral"], LlamaArchitectures.SplitPattern),
+    ]);
 }

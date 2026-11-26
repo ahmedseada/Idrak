@@ -31,17 +31,27 @@ public sealed class SafeTensorsCheckpointFormat : ICheckpointFormat
     public IEnumerable<string> Notes(string folder) => [];
 }
 
-// A .gguf file (described once by a folder in the Hugging Face layout), or that folder; the weights are read from the file.
-internal sealed class GgufCheckpointFormat : ICheckpointFormat
+/// <summary>
+/// A .gguf file (described once by a folder in the Hugging Face layout, <see cref="GgufModel.Prepare"/>), or that folder;
+/// the weights are read from the file, through the GGUF mappings of <paramref name="families"/> (the one that states the
+/// file's <c>general.architecture</c>).
+/// </summary>
+/// <param name="families">The families whose GGUF mappings and pre-tokenizers read the files.</param>
+public sealed class GgufCheckpointFormat(IFamilyProvider? families) : ICheckpointFormat
 {
+    /// <inheritdoc />
     public string Name => "gguf";
 
+    /// <inheritdoc />
     public bool CanOpen(string path) =>
         File.Exists(path) && path.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase) || Directory.Exists(path) && GgufModel.IsPrepared(path);
 
-    public string Prepare(string path) => File.Exists(path) ? GgufModel.Prepare(path) : path;   // config, tokenizer and template from the file's metadata
+    /// <inheritdoc />
+    public string Prepare(string path) => File.Exists(path) ? GgufModel.Prepare(path, families: families) : path;   // config, tokenizer and template from the file's metadata
 
-    public ITensorStore Open(string folder) => GgufModel.OpenTensors(folder);
+    /// <inheritdoc />
+    public ITensorStore Open(string folder) => GgufModel.OpenTensors(folder, families);
 
+    /// <inheritdoc />
     public IEnumerable<string> Notes(string folder) => [$"weights read from {GgufModel.SourceOf(folder)}", .. GgufModel.NotesOf(folder)];
 }

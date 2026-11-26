@@ -385,7 +385,7 @@ internal static class ServeOptions
             }
 
             string path = ModelChoices.Resolve(context, choice.Model);
-            string folder = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {path}").Prepare(path);
+            string folder = ModelCache.FormatOf(path).Prepare(path);
             var tokenizer = PretrainedTokenizers.TryLoad(folder);
             var template = JinjaChatTemplate.Load(folder, tokenizer);
             string configFile = System.IO.Path.Combine(folder, "config.json");

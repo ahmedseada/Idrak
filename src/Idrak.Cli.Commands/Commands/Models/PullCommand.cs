@@ -92,7 +92,7 @@ internal sealed class PullCommand : Command
         string? prepared = null;
         if (File.Exists(path) && path.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase) && !dryRun)
         {
-            prepared = GgufModel.Prepare(path, context.CacheFolder);
+            prepared = GgufModel.Prepare(path, context.CacheFolder, Idrak.Text.Plugins.BuiltInFamilies.All);
         }
 
         context.Write($"{path} is on disk; nothing to download.{(prepared is null ? "" : $" Prepared for loading in {prepared}.")}");
@@ -236,7 +236,7 @@ internal sealed class PullCommand : Command
     {
         try
         {
-            return GgufModel.Prepare(gguf, context.CacheFolder);
+            return GgufModel.Prepare(gguf, context.CacheFolder, Idrak.Text.Plugins.BuiltInFamilies.All);
         }
         catch (Exception e) when (e is NotSupportedException or InvalidDataException or IOException)
         {

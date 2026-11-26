@@ -15,9 +15,27 @@ namespace Idrak.Models;
 /// </summary>
 internal static class GgufTokenizerFormats
 {
+    /// <summary>The built-in converters, each stating the <c>tokenizer.ggml.model</c> it reads: one array in source, walked where a file comes in.</summary>
+    public static IReadOnlyList<IGgufTokenizer> All { get; } = Array.AsReadOnly<IGgufTokenizer>(
+    [
+        new Converter(["gpt2"], r => Gpt2(r.File, r.Tokens, r.Notes, r.PreTokenizers ?? [])),
+        new Converter(["llama"], r => Llama(r.File, r.Tokens, r.Notes)),
+        new Converter(["t5"], r => T5(r.File, r.Tokens, r.Notes)),
+        new Converter(["bert"], r => Bert(r.File, r.Tokens, r.Notes)),
+    ]);
+
+    // A converter of its names and its conversion.
+    private sealed class Converter(IReadOnlyList<string> names, Func<GgufTokenizerRequest, TokenizerDefinition> create) : IGgufTokenizer
+    {
+        public IReadOnlyList<string> Names => names;
+
+        public TokenizerDefinition Create(GgufTokenizerRequest request) => create(request);
+    }
+
     // Byte-level BPE: the vocabulary and merges, token types 3 and 4 as added tokens (3 special), the pre-tokenizer's split
-    // pattern by tokenizer.ggml.pre (picked by that name: not on the new design yet), the ByteLevel decoder.
-    public static TokenizerDefinition Gpt2(GgufFile file, IReadOnlyList<string> tokens, List<string> notes)
+    // pattern (the pre-tokenizer handed over whose own names hold the file's tokenizer.ggml.pre; none: byte-level BPE's own,
+    // noted), the ByteLevel decoder.
+    public static TokenizerDefinition Gpt2(GgufFile file, IReadOnlyList<string> tokens, List<string> notes, IReadOnlyList<IGgufPreTokenizer> pres)
     {
         var types = file.Get<long[]>("tokenizer.ggml.token_type", []);
         var merges = file.Get<string[]>("tokenizer.ggml.merges", []);
@@ -35,7 +53,20 @@ internal static class GgufTokenizerFormats
         }
 
         string pre = file.Get("tokenizer.ggml.pre", "default");
-        string? pattern = NotOnTheNewDesign.Yet<string?>($"{file.Path}: the split pattern of the GGUF pre-tokenizer '{pre}', picked by its name,");
+        string? pattern = null;
+        bool found = false;
+        foreach (var candidate in pres)
+        {
+            if (!found && candidate.Names.Contains(pre, StringComparer.Ordinal))
+            {
+                (pattern, found) = (candidate.Pattern, true);
+            }
+        }
+
+        if (!found)
+        {
+            notes.Add($"the file's pre-tokenizer '{pre}' is not one handed over: text is split by byte-level BPE's own pattern.");
+        }
         var pretokenizers = new JsonArray();
         if (pattern is not null)
         {

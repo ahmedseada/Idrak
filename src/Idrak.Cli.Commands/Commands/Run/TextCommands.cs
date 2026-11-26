@@ -19,7 +19,7 @@ internal sealed record ModelText(string Model, string Folder, IPretrainedTokeniz
     {
         var choice = ModelChoices.Choose(context, name);
         string path = ModelChoices.Resolve(context, choice.Model);
-        string folder = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {path}").Prepare(path);   // a .gguf file: its tokenizer and template from the metadata
+        string folder = ModelCache.FormatOf(path).Prepare(path);   // a .gguf file: its tokenizer and template from the metadata
         var tokenizer = PretrainedTokenizers.TryLoad(folder)
             ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer.");
         return new ModelText(choice.Model, folder, tokenizer, JinjaChatTemplate.Load(folder, tokenizer));

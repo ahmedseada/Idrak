@@ -23,7 +23,7 @@ namespace Idrak.Text.Plugins.Gemma;
 public static class GemmaGguf
 {
     /// <summary>llama.cpp's "gemma": <c>GemmaForCausalLM</c>, the common tensor names, gains stored with the 1 added, GELU.</summary>
-    public static IGgufArchitecture Gemma() => new Mapping(1, ImpliedQueryScalar, ownNorms: false) { HuggingFace = GemmaPlugin.GemmaForCausalLM };
+    public static IGgufArchitecture Gemma() => new Mapping(1, ImpliedQueryScalar, ownNorms: false) { HuggingFace = GemmaPlugin.GemmaForCausalLM, Names = ["gemma"] };
 
     /// <summary>
     /// llama.cpp's "gemma2": <c>Gemma2ForCausalLM</c> with its four norms per layer (<see cref="TensorName"/>), gains stored
@@ -34,7 +34,7 @@ public static class GemmaGguf
     /// and the configuration read so far; null takes <see cref="ImpliedQueryScalar"/>.
     /// </param>
     public static IGgufArchitecture Gemma2(Func<GgufFile, JsonObject, float>? queryScalar = null) =>
-        new Mapping(2, queryScalar ?? ImpliedQueryScalar, ownNorms: true) { HuggingFace = GemmaPlugin.Gemma2ForCausalLM };
+        new Mapping(2, queryScalar ?? ImpliedQueryScalar, ownNorms: true) { HuggingFace = GemmaPlugin.Gemma2ForCausalLM, Names = ["gemma2"] };
 
     /// <summary>
     /// llama.cpp's "gemma3": <c>Gemma3ForCausalLM</c> with its four norms per layer and its query and key norms, gains
@@ -43,7 +43,7 @@ public static class GemmaGguf
     /// </summary>
     /// <param name="queryScalar">As for <see cref="Gemma2"/>.</param>
     public static IGgufArchitecture Gemma3(Func<GgufFile, JsonObject, float>? queryScalar = null) =>
-        new Mapping(3, queryScalar ?? ImpliedQueryScalar, ownNorms: true) { HuggingFace = GemmaPlugin.Gemma3ForCausalLM };
+        new Mapping(3, queryScalar ?? ImpliedQueryScalar, ownNorms: true) { HuggingFace = GemmaPlugin.Gemma3ForCausalLM, Names = ["gemma3"] };
 
     // A Gemma version's mapping: gains stored with the 1 added, its keys read from the file, its own norms' names (2 and 3).
     private sealed class Mapping(int version, Func<GgufFile, JsonObject, float> queryScalar, bool ownNorms) : GgufArchitecture
