@@ -4,7 +4,6 @@
 using System.Diagnostics;
 using Idrak.Generation;
 using Idrak.Models;
-using Idrak.Text.Plugins;
 
 namespace Idrak.Benches;
 
@@ -21,7 +20,6 @@ internal static class Seq2SeqBench
 
     public static void Run(Device device, Settings settings, Report report)
     {
-        TextPlugins.RegisterAll();
         string folder = Environment.GetEnvironmentVariable("IDRAK_BENCH_SEQ2SEQ") is { Length: > 0 } chosen ? chosen : Fixture();
         int sourceLength = 32, steps = settings.Size == BenchSize.Small ? 32 : 64, beams = 4;
 

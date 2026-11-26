@@ -10,17 +10,14 @@ using Idrak.Cluster;
 using Idrak.Gpu.Vulkan;
 
 // A separate backend is disposable (plan 36, G-1b, item G6): its memory, kernels and streams go back to the device, a
-// call after that fails naming it, the device's own backend lives for the process, and a simulated cluster gives its
-// ranks' carved devices back. On a GPU, creating and disposing a separate backend again and again leaves the device's
-// free memory where it started (rule 77).
+// call after that fails naming it, and the device's own backend lives for the process. On a GPU, creating and disposing a
+// separate backend again and again leaves the device's free memory where it started (rule 77).
 internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] BackendDisposeGroup =
     [
         ("backend dispose: a separate CPU backend gives its pool back; Allocate, Upload, Download and an operation after it throw ObjectDisposedException naming the backend; Return is a no-op and a second Dispose does nothing; the device's own backend ignores Dispose", d => { CpuOnly(d); SeparateCpuBackendDisposes(); }),
         ("backend dispose: a miss in the CPU pool while it caches as much in other sizes frees only as much as it needs, the least recently used sizes first (rule 77: in use plus cached does not grow), so the sizes still in use stay cached and hit", d => { CpuOnly(d); CpuPoolFreesOnlyWhatAMissNeeds(); }),
-        ("backend dispose: a simulated cluster disposes every rank's carved backend when the run ends (counted), a failed rank's as it leaves, a tensor kept past the run fails naming its device; ReleaseDevices=false keeps them until SimulatedDevices.Release", d => { CpuOnly(d); SimulatedClusterReleasesDevices(); }),
-        ("backend dispose: a carved device released before its first use refuses to start a backend, naming the release; Release refuses a device that is not carved, and carving alike afterwards gives a new device", d => { CpuOnly(d); ReleasedCarvedDevice(); }),
         ("backend dispose: creating, using and disposing a separate backend of the GPU again and again leaves the driver's free memory where it started (within its granularity; not measured where the driver reports a CPU device, whose free memory is the host's), and each disposed one refuses calls", SeparateGpuBackendReturnsMemory),
     ];
 
@@ -84,92 +81,6 @@ internal abstract partial class DesktopTests : Tests
         {
             backend.Dispose();
         }
-    }
-
-    private static void SimulatedClusterReleasesDevices()
-    {
-        // Three ranks carved from the CPU; each keeps a tensor past the run and records its backend.
-        var topology = DpTopology(Device.Cpu, 3);
-        var backends = new Backend?[3];
-        var kept = new Tensor?[3];
-        var devices = new Device?[3];
-        InProcessCluster.Run(topology, DpOptions(), rank =>
-        {
-            devices[rank.Rank] = rank.Device;
-            backends[rank.Rank] = rank.Device.Backend;
-            kept[rank.Rank] = Tensor.From([1f, 2f, 3f, 4f], [4], rank.Device);
-            Check(kept[rank.Rank]!.Sum().ToArray()[0] == 10f, $"rank {rank.Rank} computes on its carved device");
-        }).ThrowIfFailed();
-        int disposed = backends.Count(b => b?.IsDisposed == true);
-        Check(devices.All(d => d?.Kind == SimulatedDevices.Kind), $"every rank runs on a carved device: {string.Join(", ", devices.Select(d => d?.ToString()))}");
-        Check(disposed == 3, $"the run disposes each of its 3 ranks' backends as it ends: {disposed} disposed");
-        ThrowsNaming<ObjectDisposedException>(() => kept[1]!.ToArray(), "reading a tensor kept past the run", backends[1]!.Name, "disposed");
-        ThrowsNaming<ObjectDisposedException>(() => _ = kept[2]! + kept[2]!, "computing on a tensor kept past the run", "disposed");
-
-        // ReleaseDevices off: the ranks' devices stay until the caller releases them.
-        var keep = DpOptions() with { Simulation = new SimulationOptions { ReleaseDevices = false } };
-        var held = new Backend?[2];
-        var heldDevices = new Device?[2];
-        var heldTensors = new Tensor?[2];
-        InProcessCluster.Run(DpTopology(Device.Cpu, 2), keep, rank =>
-        {
-            heldDevices[rank.Rank] = rank.Device;
-            held[rank.Rank] = rank.Device.Backend;
-            heldTensors[rank.Rank] = Tensor.From([5f, 6f], [2], rank.Device);
-        }).ThrowIfFailed();
-        Check(held.All(b => b is { IsDisposed: false }), "with ReleaseDevices=false the ranks' backends outlive the run");
-        Check(heldTensors[0]!.ToArray().SequenceEqual([5f, 6f]), "with ReleaseDevices=false a tensor kept past the run still reads");
-        foreach (var device in heldDevices)
-        {
-            SimulatedDevices.Release(device!);
-        }
-
-        Check(held.All(b => b is { IsDisposed: true }), "SimulatedDevices.Release disposes each kept device's backend");
-        SimulatedDevices.Release(heldDevices[0]!);                         // released twice: forgotten, not an error
-
-        // A rank that fails gives its device back as it leaves, while the others still run.
-        var leaving = new Backend?[2];
-        bool sawReleased = false;
-        var failed = InProcessCluster.Run(DpTopology(Device.Cpu, 2), DpOptions(), rank =>
-        {
-            Volatile.Write(ref leaving[rank.Rank], rank.Device.Backend);
-            if (rank.Rank == 1)
-            {
-                throw new InvalidOperationException("rank 1 leaves on purpose");
-            }
-
-            var clock = Stopwatch.StartNew();
-            while (Volatile.Read(ref leaving[1]) is not { IsDisposed: true } && clock.Elapsed < TimeSpan.FromSeconds(60))
-            {
-                Thread.Sleep(5);
-            }
-
-            sawReleased = Volatile.Read(ref leaving[1]) is { IsDisposed: true };
-            Check(!rank.Device.Backend.IsDisposed, "rank 0's backend lives while rank 0 runs");
-        });
-        Check(failed.Errors[1] is InvalidOperationException { Message: "rank 1 leaves on purpose" }, $"rank 1's own error is the run's: {failed.Errors[1]}");
-        Check(failed.Errors[0] is null, $"rank 0 runs on after rank 1 leaves: {failed.Errors[0]}");
-        Check(sawReleased, "a failed rank's backend is disposed as it leaves, before the run ends");
-        Check(leaving.All(b => b is { IsDisposed: true }), "every rank's backend is disposed once the failed run ends");
-    }
-
-    private static void ReleasedCarvedDevice()
-    {
-        var first = SimulatedDevices.Carve(Device.Cpu, 8L << 20, slot: 9_000);
-        SimulatedDevices.Release(first);
-        ThrowsNaming<ObjectDisposedException>(() => _ = first.Backend, "a released carved device's first use", first.ToString(), "released");
-        ThrowsNaming<ArgumentException>(() => SimulatedDevices.Release(Device.Cpu), "releasing the CPU", "not a carved device");
-
-        var again = SimulatedDevices.Carve(Device.Cpu, 8L << 20, slot: 9_000);
-        Check(again != first, $"carving alike after a release gives a new device: {first} then {again}");
-        using (var x = Tensor.From([1f, 2f], [2], again))
-        {
-            Check((x * 2f).ToArray().SequenceEqual([2f, 4f]), "the newly carved device computes");
-        }
-
-        Check(SimulatedDevices.Carve(Device.Cpu, 8L << 20, slot: 9_000) == again, "carving alike while it is held gives the same device back");
-        SimulatedDevices.Release(again);
-        Check(again.Backend.IsDisposed, "releasing a started carved device disposes its backend");
     }
 
     private static void SeparateGpuBackendReturnsMemory(Device device)

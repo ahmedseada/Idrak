@@ -11,9 +11,7 @@
 // Sections (default: all):
 //   ops            element-wise, reductions, softmax, layer norm: µs a call (IDRAK_BENCH_CALLS back to back, one sync),
 //                  GB/s, launches; forward and backward
-//   matmul         products and convolutions at several shapes: TFLOPS, ms a call; on the CPU, products with a long k
-//                  whole and split into chunks of k (ComputeResources.CpuProductKChunk, off by default;
-//                  IDRAK_BENCH_SPLIT_K the chunk length, default 4096): ms each, speed-up, largest relative difference
+//   matmul         products and convolutions at several shapes: TFLOPS, ms a call
 //   launch         the host's cost a launch: thousands of calls on 32 elements queued without a sync, µs a call at each
 //                  layer (the backend on existing storages, the tensor operation, with its gradient recorded, a product)
 //   train-decoder  a decoder's training step (size by IDRAK_BENCH_SIZE): ms a step, launches a step, peak memory,
@@ -39,8 +37,7 @@
 // is skipped with the reason), IDRAK_BENCH_REPEATS (timed rounds after the cold one, default 5), IDRAK_BENCH_WARMUP
 // (untimed calls first, default 30), IDRAK_BENCH_CALLS (calls a timed round in the ops section, default 8: one device
 // sync a round, so a driver's submission latency does not stand for a 10 µs kernel), IDRAK_BENCH_SECONDS (the most a
-// stress section runs, default 60), IDRAK_BENCH_OUT, IDRAK_BENCH_MODEL, IDRAK_BENCH_CLIPS, IDRAK_BENCH_SEQ2SEQ,
-// IDRAK_BENCH_SPLIT_K (the k chunk length the matmul section's split products use on the CPU).
+// stress section runs, default 60), IDRAK_BENCH_OUT, IDRAK_BENCH_MODEL, IDRAK_BENCH_CLIPS, IDRAK_BENCH_SEQ2SEQ.
 
 using Idrak.Benches;
 
