@@ -75,11 +75,20 @@ internal sealed unsafe partial class CpuBackend
         RowMap<TV, TF, DivideMap>(ref divide, n);
     }
 
+    // Each row operation takes its row inputs through TypedInput: float32's own words as they are (one run over every row),
+    // another type's values read a chunk of rows at a time (the run a chunk at a time, its kernel indexing rows as in the
+    // whole run); a vector every row reads (a gain, a bias) read once for the call, its own size.
     public override void SoftmaxKernel(Storage x, Storage y, int rows, int cols, bool log)
     {
-        fixed (float* px = V(x), py = V(y))
+        fixed (float* wx = D(x), py = V(y))
         {
-            Rows(log ? "LogSoftmax" : "Softmax", new SoftmaxRows(px, py, cols, log, rows), rows, cols, 24);
+            int step = RowStep(rows, cols, !NativeFloats(x));
+            var tx = new TypedInput(x, wx, 0, (long)step * cols, "Softmax");
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                Rows(log ? "LogSoftmax" : "Softmax", new SoftmaxRows(tx.Range((long)r * cols, (long)(e - r) * cols), py, cols, log, rows), e, cols, 24, r);
+            }
         }
     }
 
@@ -95,9 +104,17 @@ internal sealed unsafe partial class CpuBackend
 
     public override void ScaleMaskSoftmaxKernel(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {
-        fixed (float* px = V(x), pm = mask is null ? null : V(mask), py = V(y))
+        fixed (float* wx = D(x), wm = mask is null ? null : D(mask), py = V(y))
         {
-            Rows("ScaleMaskSoftmax", new ScaleMaskSoftmaxRows(px, pm, py, cols, Math.Max(1, maskRows), scale, rows), rows, cols, 24);
+            int masks = Math.Max(1, maskRows);
+            int step = RowStep(rows, cols, !NativeFloats(x));
+            TypedInput tx = new(x, wx, 0, (long)step * cols, "ScaleMaskSoftmax"), tm = mask is null ? default : new(mask, wm, 1, (long)masks * cols, "ScaleMaskSoftmax");
+            float* pm = mask is null ? null : tm.Range(0, (long)masks * cols);
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                Rows("ScaleMaskSoftmax", new ScaleMaskSoftmaxRows(tx.Range((long)r * cols, (long)(e - r) * cols), pm, py, cols, masks, scale, rows), e, cols, 24, r);
+            }
         }
     }
 
@@ -119,9 +136,16 @@ internal sealed unsafe partial class CpuBackend
 
     public override void SoftmaxBackwardKernel(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
-        fixed (float* py = V(y), pdy = V(dy), pdx = V(dx))
+        fixed (float* wy = D(y), wdy = D(dy), pdx = V(dx))
         {
-            Rows(log ? "LogSoftmaxBackward" : "SoftmaxBackward", new SoftmaxBackRows(py, pdy, pdx, cols, log, rows), rows, cols, 24);
+            int step = RowStep(rows, cols, !NativeFloats(y) || !NativeFloats(dy));
+            TypedInput ty = new(y, wy, 0, (long)step * cols, "SoftmaxBackward"), tdy = new(dy, wdy, 1, (long)step * cols, "SoftmaxBackward");
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                long at = (long)r * cols, count = (long)(e - r) * cols;
+                Rows(log ? "LogSoftmaxBackward" : "SoftmaxBackward", new SoftmaxBackRows(ty.Range(at, count), tdy.Range(at, count), pdx, cols, log, rows), e, cols, 24, r);
+            }
         }
     }
 
@@ -184,25 +208,47 @@ internal sealed unsafe partial class CpuBackend
 
     public override void RmsNormKernel(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
-        fixed (float* px = V(x), py = V(y), pi = V(inv))
+        fixed (float* wx = D(x), py = V(y), pi = V(inv))
         {
-            Rows("RmsNorm", new RmsRows(px, null, null, null, py, pi, cols, eps, 0f, rows), rows, cols);
+            int step = RowStep(rows, cols, !NativeFloats(x));
+            var tx = new TypedInput(x, wx, 0, (long)step * cols, "RmsNorm");
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                Rows("RmsNorm", new RmsRows(tx.Range((long)r * cols, (long)(e - r) * cols), null, null, null, py, pi, cols, eps, 0f, rows), e, cols, 4, r);
+            }
         }
     }
 
     public override void RmsNormAffineKernel(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
-        fixed (float* px = V(x), pg = V(gain), py = V(y))
+        fixed (float* wx = D(x), wg = D(gain), py = V(y))
         {
-            Rows("RmsNormAffine", new RmsRows(px, null, null, pg, py, null, cols, eps, offset, rows), rows, cols);
+            int step = RowStep(rows, cols, !NativeFloats(x));
+            TypedInput tx = new(x, wx, 0, (long)step * cols, "RmsNormAffine"), tg = new(gain, wg, 1, cols, "RmsNormAffine");
+            float* pg = tg.Range(0, cols);
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                Rows("RmsNormAffine", new RmsRows(tx.Range((long)r * cols, (long)(e - r) * cols), null, null, pg, py, null, cols, eps, offset, rows), e, cols, 4, r);
+            }
         }
     }
 
     public override void AddRmsNormAffineKernel(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
-        fixed (float* pa = V(a), pb = V(b), ps = V(sum), pg = V(gain), py = V(y))
+        fixed (float* wa = D(a), wb = D(b), ps = V(sum), wg = D(gain), py = V(y))
         {
-            Rows("AddRmsNormAffine", new RmsRows(pa, pb, ps, pg, py, null, cols, eps, offset, rows), rows, cols);
+            int step = RowStep(rows, cols, !NativeFloats(a) || !NativeFloats(b));
+            TypedInput ta = new(a, wa, 0, (long)step * cols, "AddRmsNormAffine"), tb = new(b, wb, 1, (long)step * cols, "AddRmsNormAffine"),
+                tg = new(gain, wg, 2, cols, "AddRmsNormAffine");
+            float* pg = tg.Range(0, cols);
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                long at = (long)r * cols, count = (long)(e - r) * cols;
+                Rows("AddRmsNormAffine", new RmsRows(ta.Range(at, count), tb.Range(at, count), ps, pg, py, null, cols, eps, offset, rows), e, cols, 4, r);
+            }
         }
     }
 
@@ -247,9 +293,16 @@ internal sealed unsafe partial class CpuBackend
 
     public override void RmsNormBackwardKernel(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
     {
-        fixed (float* pdy = V(dy), py = V(y), pi = V(inv), pdx = V(dx))
+        fixed (float* wdy = D(dy), wy = D(y), pi = V(inv), pdx = V(dx))
         {
-            Rows("RmsNormBackward", new RmsBackRows(pdy, py, pi, pdx, cols, rows), rows, cols);
+            int step = RowStep(rows, cols, !NativeFloats(dy) || !NativeFloats(y));
+            TypedInput tdy = new(dy, wdy, 0, (long)step * cols, "RmsNormBackward"), ty = new(y, wy, 1, (long)step * cols, "RmsNormBackward");
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                long at = (long)r * cols, count = (long)(e - r) * cols;
+                Rows("RmsNormBackward", new RmsBackRows(tdy.Range(at, count), ty.Range(at, count), pi, pdx, cols, rows), e, cols, 4, r);
+            }
         }
     }
 
@@ -278,19 +331,24 @@ internal sealed unsafe partial class CpuBackend
 
     // ------------------------------------------------------------------ layer normalization
 
-    public override void LayerNormFusedKernel(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
-    {
-        fixed (float* px = V(x), pg = V(gamma), pb = V(beta), py = V(y))
-        {
-            Rows("LayerNorm", new LayerRows(px, pg, pb, py, null, cols, eps, rows), rows, cols);
-        }
-    }
+    public override void LayerNormFusedKernel(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps) =>
+        LayerNorm(x, gamma, beta, y, null, rows, cols, eps);
 
-    public override void LayerNormTrainKernel(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
+    public override void LayerNormTrainKernel(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps) =>
+        LayerNorm(x, gamma, beta, y, stats, rows, cols, eps);
+
+    private static void LayerNorm(Storage x, Storage gamma, Storage beta, Storage y, Storage? stats, int rows, int cols, float eps)
     {
-        fixed (float* px = V(x), pg = V(gamma), pb = V(beta), py = V(y), ps = V(stats))
+        fixed (float* wx = D(x), wg = D(gamma), wb = D(beta), py = V(y), ps = stats is null ? null : V(stats))
         {
-            Rows("LayerNorm", new LayerRows(px, pg, pb, py, ps, cols, eps, rows), rows, cols);
+            int step = RowStep(rows, cols, !NativeFloats(x));
+            TypedInput tx = new(x, wx, 0, (long)step * cols, "LayerNorm"), tg = new(gamma, wg, 1, cols, "LayerNorm"), tb = new(beta, wb, 2, cols, "LayerNorm");
+            float* pg = tg.Range(0, cols), pb = tb.Range(0, cols);
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                Rows("LayerNorm", new LayerRows(tx.Range((long)r * cols, (long)(e - r) * cols), pg, pb, py, ps, cols, eps, rows), e, cols, 4, r);
+            }
         }
     }
 
@@ -342,17 +400,29 @@ internal sealed unsafe partial class CpuBackend
 
     public override void LayerNormBackwardKernel(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
-        fixed (float* px = V(x), pg = V(gamma), pdy = V(dy), ps = V(stats), pdx = dx is null ? null : V(dx), pdg = dgamma is null ? null : V(dgamma),
+        fixed (float* px = V(x), wg = D(gamma), wdy = D(dy), ps = V(stats), pdx = dx is null ? null : V(dx), pdg = dgamma is null ? null : V(dgamma),
             pdb = dbeta is null ? null : V(dbeta))
         {
+            TypedInput tg = new(gamma, wg, 0, cols, "LayerNormBackward"), tdy = new(dy, wdy, 1, (long)RowStep(rows, cols, !NativeFloats(dy)) * cols, "LayerNormBackward");
+            float* pg = tg.Range(0, cols);
+            if (pdg != null || pdb != null)
+            {
+                _ = V(dy);                                  // the parameter gradients read dy whole by columns: float32's own only
+            }
+
             if (pdx != null)
             {
-                Rows("LayerNormBackward", new LayerBackRows(px, pg, pdy, ps, pdx, cols, rows), rows, cols, 8);
+                int step = RowStep(rows, cols, tdy.Typed);
+                for (int r = 0; r < rows; r += step)
+                {
+                    int e = Math.Min(rows, r + step);
+                    Rows("LayerNormBackward", new LayerBackRows(px, pg, tdy.Range((long)r * cols, (long)(e - r) * cols), ps, pdx, cols, rows), e, cols, 8, r);
+                }
             }
 
             if (pdg != null || pdb != null)
             {
-                Elements("LayerNormBackward columns", new LayerColumns(px, pdy, ps, pdg, pdb, rows, cols), cols, rows * 2);
+                Elements("LayerNormBackward columns", new LayerColumns(px, wdy, ps, pdg, pdb, rows, cols), cols, rows * 2);
             }
         }
     }
@@ -447,18 +517,35 @@ internal sealed unsafe partial class CpuBackend
     public override void RopeKernel(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half,
         bool interleaved, float sign)
     {
-        fixed (float* px = V(x), py = V(y), pc = V(cos), ps = V(sin), pp = D(positions))
+        fixed (float* wx = D(x), py = V(y), pc = V(cos), ps = V(sin), pp = D(positions))
         {
-            Rows("Rope", new RopeRows(px, py, pc, ps, IndicesOf(positions, pp), null, heads, steps, dim, dim, half, interleaved, sign, 0f, 0f, rows), rows, 2 * half);
+            int step = RowStep(rows, dim, !NativeFloats(x));
+            var tx = new TypedInput(x, wx, 0, (long)step * dim, "Rope");
+            var ids = IndicesOf(positions, pp);
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                Rows("Rope", new RopeRows(tx.Range((long)r * dim, (long)(e - r) * dim), py, pc, ps, ids, null, heads, steps, dim, dim, half, interleaved, sign, 0f, 0f, rows),
+                    e, 2 * half, 4, r);
+            }
         }
     }
 
     public override void RmsNormRopeKernel(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
         float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
-        fixed (float* px = V(x), pg = V(gain), pc = V(cos), ps = V(sin), pp = D(positions), py = V(y))
+        fixed (float* wx = D(x), wg = D(gain), pc = V(cos), ps = V(sin), pp = D(positions), py = V(y))
         {
-            Rows("RmsNormRope", new RopeRows(px, py, pc, ps, IndicesOf(positions, pp), pg, heads, steps, cols, cols, half, interleaved, 1f, eps, offset, rows), rows, cols);
+            int step = RowStep(rows, cols, !NativeFloats(x));
+            TypedInput tx = new(x, wx, 0, (long)step * cols, "RmsNormRope"), tg = new(gain, wg, 1, cols, "RmsNormRope");
+            float* pg = tg.Range(0, cols);
+            var ids = IndicesOf(positions, pp);
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                Rows("RmsNormRope", new RopeRows(tx.Range((long)r * cols, (long)(e - r) * cols), py, pc, ps, ids, pg, heads, steps, cols, cols, half, interleaved, 1f, eps,
+                    offset, rows), e, cols, 4, r);
+            }
         }
     }
 
@@ -618,17 +705,24 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AddRowVectorKernel(Storage a, Storage v, Storage c, int rows, int cols)
     {
-        fixed (float* pa = V(a), pv = V(v), pc = V(c))
-        {
-            Rows("AddRowVector", new RowVectorRows(pa, pv, pc, cols, rows, gelu: false), rows, cols, 1);
-        }
+        RowVector(a, v, c, rows, cols, gelu: false);
     }
 
-    public override void BiasGeluKernel(Storage x, Storage bias, Storage y, int n, int cols)
+    public override void BiasGeluKernel(Storage x, Storage bias, Storage y, int n, int cols) => RowVector(x, bias, y, n / Math.Max(1, cols), cols, gelu: true);
+
+    private static void RowVector(Storage a, Storage v, Storage c, int rows, int cols, bool gelu)
     {
-        fixed (float* px = V(x), pb = V(bias), py = V(y))
+        fixed (float* wa = D(a), wv = D(v), pc = V(c))
         {
-            Rows("BiasGelu", new RowVectorRows(px, pb, py, cols, n / Math.Max(1, cols), gelu: true), n / Math.Max(1, cols), cols, 24);
+            string name = gelu ? "BiasGelu" : "AddRowVector";
+            int step = RowStep(rows, cols, !NativeFloats(a));
+            TypedInput ta = new(a, wa, 0, (long)step * cols, name), tv = new(v, wv, 1, cols, name);
+            float* pv = tv.Range(0, cols);
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                Rows(name, new RowVectorRows(ta.Range((long)r * cols, (long)(e - r) * cols), pv, pc, cols, rows, gelu), e, cols, gelu ? 24 : 1, r);
+            }
         }
     }
 
@@ -693,9 +787,21 @@ internal sealed unsafe partial class CpuBackend
 
     public override void Copy2D(Storage src, int srcOffset, int srcStride, Storage dst, int dstOffset, int dstStride, int rows, int cols, bool accumulate)
     {
-        fixed (float* ps = V(src), pd = V(dst))
+        fixed (float* ws = D(src), pd = V(dst))
         {
-            Rows("Copy2D", new CopyRows(ps + srcOffset, srcStride, pd + dstOffset, dstStride, cols, accumulate, rows), rows, cols, 1);
+            if (NativeFloats(src))
+            {
+                Rows("Copy2D", new CopyRows(ws + srcOffset, srcStride, pd + dstOffset, dstStride, cols, accumulate, rows), rows, cols, 1);
+                return;
+            }
+
+            // A typed source: each row's values read through its type, then copied (or added) as float32.
+            var ts = new TypedInput(src, ws, 0, cols, "Copy2D");
+            for (int r = 0; r < rows; r++)
+            {
+                float* row = ts.Range(srcOffset + (long)r * srcStride, cols) + srcOffset + (long)r * srcStride;
+                Rows("Copy2D", new CopyRows(row, 0, pd + dstOffset + (long)r * dstStride, 0, cols, accumulate, 1), 1, cols, 1);
+            }
         }
     }
 
@@ -735,13 +841,20 @@ internal sealed unsafe partial class CpuBackend
 
     public override void ArgMaxKernel(Storage x, Storage y, int rows, int cols)
     {
-        var px = V(x);
-        fixed (float* py = D(y))
+        fixed (float* wx = D(x), py = D(y))
         {
             var into = IndicesOf(y, py);
+            int step = RowStep(rows, cols, !NativeFloats(x));
+            var tx = new TypedInput(x, wx, 0, (long)step * cols, "ArgMax");
+            float* px = wx;
             for (int r = 0; r < rows; r++)
             {
-                var row = px.AsSpan(r * cols, cols);
+                if (r % step == 0)
+                {
+                    px = tx.Range((long)r * cols, (long)(Math.Min(rows, r + step) - r) * cols);
+                }
+
+                var row = new ReadOnlySpan<float>(px + (long)r * cols, cols);
                 int best = 0;
                 float value = cols > 0 ? row[0] : 0f;
                 for (int j = 1; j < cols; j++)
@@ -817,7 +930,7 @@ internal sealed unsafe partial class CpuBackend
                 var target = new Span<float>(py + (long)i * dim, dim);
                 if (index >= 0 && index < vocabulary)
                 {
-                    type.Read(bytes.Slice(checked((int)(index * rowBytes)), (int)rowBytes), target);
+                    ReadValues(type, bytes.Slice(checked((int)(index * rowBytes)), (int)rowBytes), target);
                 }
                 else
                 {

@@ -53,6 +53,7 @@ internal sealed partial class CpuBackend
     internal static void ForgetChoices()
     {
         s_lanesChosen.Clear();
+        s_readChosen.Clear();
         StoredLanes.Clear();
         CpuChoices.Forget();
     }
@@ -151,23 +152,24 @@ internal sealed partial class CpuBackend
         void Redirect(ref Scratch scratch);
     }
 
-    // `kernel` over [0, n) by the width measured for (operation, n's class); `work` element operations an element, for the
-    // parallel cut-over.
-    internal static void Elements<TK>(string operation, TK kernel, long n, int work = 1) where TK : struct, IMap
+    // `kernel` over [first, n) by the width measured for (operation, the range's class); `work` element operations an
+    // element, for the parallel cut-over. A range past 0 is a chunk of a larger run (an operation reading a typed input a
+    // chunk at a time): the kernel indexes its elements as in the whole run.
+    internal static void Elements<TK>(string operation, TK kernel, long n, int work = 1, long first = 0) where TK : struct, IMap
     {
-        if (n <= 0)
+        if (n <= first)
         {
             return;
         }
 
-        var run = new MapRun<TK> { Kernel = kernel, N = n, Work = work };
-        run.Run(ChosenLanes(operation, SizeClass(n), 0, ref run));
+        var run = new MapRun<TK> { Kernel = kernel, First = first, N = n, Work = work };
+        run.Run(ChosenLanes(operation, SizeClass(n - first), 0, ref run));
     }
 
     private struct MapRun<TK> : ILanesRun where TK : struct, IMap
     {
         public TK Kernel;
-        public long N;
+        public long First, N;
         public int Work;
 
         public void Run(Lanes lanes)
@@ -175,16 +177,16 @@ internal sealed partial class CpuBackend
             switch (lanes)
             {
                 case Lanes.Wide512:
-                    Spread<TK, Vector512<float>, F512>(ref Kernel, N, Work);
+                    Spread<TK, Vector512<float>, F512>(ref Kernel, First, N, Work);
                     break;
                 case Lanes.Wide256:
-                    Spread<TK, Vector256<float>, F256>(ref Kernel, N, Work);
+                    Spread<TK, Vector256<float>, F256>(ref Kernel, First, N, Work);
                     break;
                 case Lanes.Wide128:
-                    Spread<TK, Vector128<float>, F128>(ref Kernel, N, Work);
+                    Spread<TK, Vector128<float>, F128>(ref Kernel, First, N, Work);
                     break;
                 default:
-                    Spread<TK, float, F1>(ref Kernel, N, Work);
+                    Spread<TK, float, F1>(ref Kernel, First, N, Work);
                     break;
             }
         }
@@ -192,22 +194,23 @@ internal sealed partial class CpuBackend
         public void Redirect(ref Scratch scratch) => Kernel.Redirect(ref scratch);
     }
 
-    // The elements in chunks over the threads where they pass the cut-over (any split gives the same bits: each element its own).
-    private static void Spread<TK, TV, TF>(ref TK kernel, long n, int work) where TK : struct, IMap where TV : unmanaged where TF : struct, IFloats<TV>
+    // The elements [first, n) in chunks over the threads where they pass the cut-over (any split gives the same bits: each
+    // element its own).
+    private static void Spread<TK, TV, TF>(ref TK kernel, long first, long n, int work) where TK : struct, IMap where TV : unmanaged where TF : struct, IFloats<TV>
     {
         int threads = ComputeResources.MaxCpuThreads;
-        long total = n * Math.Max(1, work);
+        long count = n - first, total = count * Math.Max(1, work);
         if (threads <= 1 || total < ParallelThreshold)
         {
-            Steps<TK, TV, TF>(ref kernel, 0, (nint)n);
+            Steps<TK, TV, TF>(ref kernel, (nint)first, (nint)n);
             return;
         }
 
         long grain = Math.Max(64, ParallelThreshold / Math.Max(1, work) / 2);
-        int chunks = (int)Math.Clamp(n / grain, 1, threads * 4L);
-        int size = (int)((n + chunks - 1) / chunks + 63 & ~63L);
-        var body = new MapBody<TK, TV, TF> { Kernel = kernel };
-        CpuRanges.Run((int)((n + size - 1) / size), size, (int)n, threads, ref body);
+        int chunks = (int)Math.Clamp(count / grain, 1, threads * 4L);
+        int size = (int)((count + chunks - 1) / chunks + 63 & ~63L);
+        var body = new MapBody<TK, TV, TF> { Kernel = kernel, First = (nint)first };
+        CpuRanges.Run((int)((count + size - 1) / size), size, (int)count, threads, ref body);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -231,8 +234,9 @@ internal sealed partial class CpuBackend
     private struct MapBody<TK, TV, TF> : IRangeBody where TK : struct, IMap where TV : unmanaged where TF : struct, IFloats<TV>
     {
         public TK Kernel;
+        public nint First;
 
-        public void Run(int first, int last) => Steps<TK, TV, TF>(ref Kernel, first, last);
+        public void Run(int first, int last) => Steps<TK, TV, TF>(ref Kernel, First + first, First + last);
     }
 
     // ------------------------------------------------------------------ kernels a row at a time
@@ -245,23 +249,25 @@ internal sealed partial class CpuBackend
         void Redirect(ref Scratch scratch);
     }
 
-    // `kernel` over rows [0, rows) of `cols` by the width measured for (operation, the classes of rows and cols); `work`
-    // element operations an element of a row, for the parallel cut-over. A row is one thread's (its sums in order).
-    internal static void Rows<TK>(string operation, TK kernel, int rows, int cols, int work = 4) where TK : struct, IRowKernel
+    // `kernel` over rows [first, rows) of `cols` by the width measured for (operation, the classes of the rows and cols);
+    // `work` element operations an element of a row, for the parallel cut-over. A row is one thread's (its sums in order).
+    // Rows past 0 are a chunk of a larger run (typed inputs read a chunk of rows at a time): the kernel indexes them as in
+    // the whole run.
+    internal static void Rows<TK>(string operation, TK kernel, int rows, int cols, int work = 4, int first = 0) where TK : struct, IRowKernel
     {
-        if (rows <= 0)
+        if (rows <= first)
         {
             return;
         }
 
-        var run = new RowRun<TK> { Kernel = kernel, Count = rows, Cost = (long)Math.Max(1, cols) * Math.Max(1, work) };
-        run.Run(ChosenLanes(operation, SizeClass(rows), SizeClass(cols), ref run));
+        var run = new RowRun<TK> { Kernel = kernel, First = first, Count = rows, Cost = (long)Math.Max(1, cols) * Math.Max(1, work) };
+        run.Run(ChosenLanes(operation, SizeClass(rows - first), SizeClass(cols), ref run));
     }
 
     private struct RowRun<TK> : ILanesRun where TK : struct, IRowKernel
     {
         public TK Kernel;
-        public int Count;
+        public int First, Count;
         public long Cost;
 
         public void Run(Lanes lanes)
@@ -269,16 +275,16 @@ internal sealed partial class CpuBackend
             switch (lanes)
             {
                 case Lanes.Wide512:
-                    SpreadRows<TK, Vector512<float>, F512>(ref Kernel, Count, Cost);
+                    SpreadRows<TK, Vector512<float>, F512>(ref Kernel, First, Count, Cost);
                     break;
                 case Lanes.Wide256:
-                    SpreadRows<TK, Vector256<float>, F256>(ref Kernel, Count, Cost);
+                    SpreadRows<TK, Vector256<float>, F256>(ref Kernel, First, Count, Cost);
                     break;
                 case Lanes.Wide128:
-                    SpreadRows<TK, Vector128<float>, F128>(ref Kernel, Count, Cost);
+                    SpreadRows<TK, Vector128<float>, F128>(ref Kernel, First, Count, Cost);
                     break;
                 default:
-                    SpreadRows<TK, float, F1>(ref Kernel, Count, Cost);
+                    SpreadRows<TK, float, F1>(ref Kernel, First, Count, Cost);
                     break;
             }
         }
@@ -286,12 +292,12 @@ internal sealed partial class CpuBackend
         public void Redirect(ref Scratch scratch) => Kernel.Redirect(ref scratch);
     }
 
-    private static void SpreadRows<TK, TV, TF>(ref TK kernel, int rows, long cost) where TK : struct, IRowKernel where TV : unmanaged where TF : struct, IFloats<TV>
+    private static void SpreadRows<TK, TV, TF>(ref TK kernel, int first, int end, long cost) where TK : struct, IRowKernel where TV : unmanaged where TF : struct, IFloats<TV>
     {
-        int threads = ComputeResources.MaxCpuThreads;
+        int threads = ComputeResources.MaxCpuThreads, rows = end - first;
         if (threads <= 1 || rows == 1 || rows * cost < ParallelThreshold)
         {
-            for (int r = 0; r < rows; r++)
+            for (int r = first; r < end; r++)
             {
                 kernel.Row<TV, TF>(r);
             }
@@ -302,17 +308,18 @@ internal sealed partial class CpuBackend
         int perChunk = (int)Math.Clamp(ParallelThreshold / 2 / Math.Max(1, cost), 1, rows);
         int chunks = Math.Clamp((rows + perChunk - 1) / perChunk, 1, threads * 4);
         int size = (rows + chunks - 1) / chunks;
-        var body = new RowBody<TK, TV, TF> { Kernel = kernel };
+        var body = new RowBody<TK, TV, TF> { Kernel = kernel, First = first };
         CpuRanges.Run((rows + size - 1) / size, size, rows, threads, ref body);
     }
 
     private struct RowBody<TK, TV, TF> : IRangeBody where TK : struct, IRowKernel where TV : unmanaged where TF : struct, IFloats<TV>
     {
         public TK Kernel;
+        public int First;
 
         public void Run(int first, int last)
         {
-            for (int r = first; r < last; r++)
+            for (int r = First + first; r < First + last; r++)
             {
                 Kernel.Row<TV, TF>(r);
             }

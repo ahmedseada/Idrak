@@ -22,11 +22,47 @@ internal sealed unsafe partial class CpuBackend
             return;
         }
 
-        fixed (float* pa = V(a), pb = V(b), pc = V(c))
+        if (Wide(a, b))
         {
-            Product(pa, pb, null, pc, batch, m, n, k, transA, transB, beta);
+            Product64(a, b, c, batch, m, n, k, transA, transB, beta);
+            return;
+        }
+
+        fixed (float* wa = D(a), wb = D(b), pc = V(c))
+        {
+            // A typed B is read through its type as it is packed (BType); a typed A a block of its rows at a time.
+            var bType = NativeFloats(b) ? null : TypedB(b, "MatMul");
+            if (NativeFloats(a))
+            {
+                Product(wa, wb, null, pc, batch, m, n, k, transA, transB, beta, bType: bType);
+                return;
+            }
+
+            if (transA)
+            {
+                throw new NotSupportedException($"The CPU's MatMul reads a transposed A of {a.Type.Name} as float32's own only: read it through its type a block of rows at a time untransposed.");
+            }
+
+            int step = Math.Max(TileRows, ChunkValues / Math.Max(1, k) / TileRows * TileRows);
+            var ta = new TypedInput(a, wa, 0, (long)Math.Min(step, m) * k, "MatMul");
+            for (int matrix = 0; matrix < batch; matrix++)
+            {
+                for (int i = 0; i < m; i += step)
+                {
+                    int rows = Math.Min(step, m - i);
+                    long at = ((long)matrix * m + i) * k;
+                    float* rowsA = ta.Range(at, (long)rows * k) + at;
+                    float* bAt = bType is null ? wb + (long)matrix * k * n : wb;
+                    Product(rowsA, bAt, null, pc + ((long)matrix * m + i) * n, 1, rows, n, k, false, transB, beta, bType: bType, bBase: bType is null ? 0 : (long)matrix * k * n);
+                }
+            }
         }
     }
+
+    // A typed B's type, refused where its values need float64 (never narrowed).
+    private static IElementType TypedB(Storage b, string operation) => WideValues(b.Type)
+        ? throw new NotSupportedException($"The CPU's {operation} reads float32 values; {b.Type.Name}'s values need float64 (native kind {b.Type.Native}), which it never narrows: its float64 lane is not built.")
+        : b.Type;
 
     public override bool MatMulBiasKernel(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
     {
@@ -35,30 +71,35 @@ internal sealed unsafe partial class CpuBackend
             return true;
         }
 
-        fixed (float* pa = V(a), pb = V(b), pbias = V(bias), pc = V(c))
+        fixed (float* pa = V(a), wb = D(b), wbias = D(bias), pc = V(c))
         {
-            Product(pa, pb, pbias, pc, 1, m, n, k, false, false, 0f);
+            var tbias = new TypedInput(bias, wbias, 0, n, "MatMulBias");
+            Product(pa, wb, tbias.Range(0, n), pc, 1, m, n, k, false, false, 0f, bType: NativeFloats(b) ? null : TypedB(b, "MatMulBias"));
         }
 
         return true;
     }
 
-    // `lda`: the step between A's rows where it is not transposed (0: k, its rows packed).
-    private static void Product(float* a, float* b, float* bias, float* c, int batch, int m, int n, int k, bool transA, bool transB, float beta, long lda = 0)
+    // `lda`: the step between A's rows where it is not transposed (0: k, its rows packed). `bType`: B's type where its words
+    // hold another type's values (read through it as B is packed, from element `bBase` on), else null.
+    private static void Product(float* a, float* b, float* bias, float* c, int batch, int m, int n, int k, bool transA, bool transB, float beta, long lda = 0,
+        IElementType? bType = null, long bBase = 0)
     {
-        var run = new ProductRun(new ProductShape(a, b, bias, c, batch, m, n, k, transA, transB, beta, lda > 0 ? lda : k));
-        run.Run(ChosenLanes("MatMul", SizeClass((long)batch * m), SizeClass(n) << 6 | SizeClass(k), ref run));
+        var run = new ProductRun(new ProductShape(a, b, bias, c, batch, m, n, k, transA, transB, beta, lda > 0 ? lda : k, bType, bBase));
+        run.Run(ChosenLanes(bType is null ? "MatMul" : "MatMul typed B", SizeClass((long)batch * m), SizeClass(n) << 6 | SizeClass(k), ref run));
     }
 
-    private readonly struct ProductShape(float* a, float* b, float* bias, float* c, int batch, int m, int n, int k, bool transA, bool transB, float beta, long lda)
+    private readonly struct ProductShape(float* a, float* b, float* bias, float* c, int batch, int m, int n, int k, bool transA, bool transB, float beta, long lda,
+        IElementType? bType, long bBase)
     {
         public readonly float* A = a, B = b, Bias = bias, C = c;
         public readonly int Batch = batch, M = m, N = n, K = k;
         public readonly bool TransA = transA, TransB = transB;
         public readonly float Beta = beta;
-        public readonly long Lda = lda;
+        public readonly long Lda = lda, BBase = bBase;
+        public readonly IElementType? BType = bType;
 
-        public ProductShape WithC(float* to) => new(A, B, Bias, to, Batch, M, N, K, TransA, TransB, 0f, Lda);
+        public ProductShape WithC(float* to) => new(A, B, Bias, to, Batch, M, N, K, TransA, TransB, 0f, Lda, BType, BBase);
     }
 
     private struct ProductRun(ProductShape shape) : ILanesRun
@@ -128,6 +169,17 @@ internal sealed unsafe partial class CpuBackend
             float* packed = stackalloc float[BlockK * 2 * 16];
             float* tile = stackalloc float[TileRows * 2 * 16];
             var s = Shape;
+
+            // A typed B's values read this thread's own way: a run of a row (or a column's k values) through the type, from
+            // the unit holding its first.
+            float* temp = null;
+            if (s.BType is { } bt)
+            {
+                int unit = Math.Max(1, bt.Description.UnitValues);
+                float* room = stackalloc float[2 * (unit + BlockK + 32)];
+                temp = room;
+            }
+
             for (int item = first; item < last; item++)
             {
                 int group = item % RowGroups, rest = item / RowGroups, p = rest % Panels, matrix = rest / Panels;
@@ -138,7 +190,14 @@ internal sealed unsafe partial class CpuBackend
                 for (int k0 = 0; k0 < s.K; k0 += BlockK)
                 {
                     int kc = Math.Min(BlockK, s.K - k0);
-                    Pack(b, s.N, s.K, s.TransB, k0, kc, j0, columns, panel, packed);
+                    if (s.BType is { } type)
+                    {
+                        PackTyped(type, s.B, s.BBase + (long)matrix * s.K * s.N, s.N, s.K, s.TransB, k0, kc, j0, columns, panel, packed, temp);
+                    }
+                    else
+                    {
+                        Pack(b, s.N, s.K, s.TransB, k0, kc, j0, columns, panel, packed);
+                    }
                     for (int i = i0; i < i1; i += TileRows)
                     {
                         int rows = Math.Min(TileRows, i1 - i);
@@ -221,6 +280,40 @@ internal sealed unsafe partial class CpuBackend
             for (int j = columns; j < panel; j++)
             {
                 to[j] = 0f;
+            }
+        }
+    }
+
+    // Pack for a B of another type: each row's run of columns (or, transposed, each column's run of k) read through the
+    // type into the packed block (zeros past the columns), the same layout as Pack's.
+    private static void PackTyped(IElementType type, float* words, long matrix, int n, int k, bool transB, int k0, int kc, int j0, int columns, int panel, float* packed,
+        float* temp)
+    {
+        if (transB)
+        {
+            float* column = temp + Math.Max(1, type.Description.UnitValues) + BlockK + 32;
+            for (int j = 0; j < columns; j++)
+            {
+                ReadRange(type, words, matrix + (long)(j0 + j) * k + k0, kc, column, temp);
+                for (int kk = 0; kk < kc; kk++)
+                {
+                    packed[kk * panel + j] = column[kk];
+                }
+            }
+        }
+        else
+        {
+            for (int kk = 0; kk < kc; kk++)
+            {
+                ReadRange(type, words, matrix + (long)(k0 + kk) * n + j0, columns, packed + kk * panel, temp);
+            }
+        }
+
+        for (int kk = 0; kk < kc; kk++)
+        {
+            for (int j = columns; j < panel; j++)
+            {
+                packed[kk * panel + j] = 0f;
             }
         }
     }

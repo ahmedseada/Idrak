@@ -115,7 +115,7 @@ internal sealed unsafe partial class CpuBackend
             {
                 fixed (float* pg = V(t.G))
                 {
-                    total += ChunkedSum(pg, t.N, squares: true);
+                    total += ChunkedSum(new TypedInput(t.G, pg, 0, SumChunk, "FusedAdamW"), t.N, squares: true);
                 }
             }
 

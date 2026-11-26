@@ -253,79 +253,125 @@ internal sealed unsafe partial class CpuBackend
         public void Redirect(ref Scratch scratch) => _y = scratch.Take(n);
     }
 
+    // Each element-wise operation takes its inputs through TypedInput: float32's own words as they are (one run over every
+    // element), another type's values read a chunk at a time (the run a chunk at a time, its kernel indexing elements as
+    // in the whole run).
     public override void UnaryKernel(UnaryOp op, Storage x, Storage y, int n)
     {
-        fixed (float* px = V(x), py = V(y))
+        if (Wide(x))
         {
-            int work = UnaryWork(op);
-            switch (op)
+            Elements64("Unary " + op, Map64.Unary, (int)op, x, null, y, n);
+            return;
+        }
+
+        fixed (float* wx = D(x), py = V(y))
+        {
+            var tx = new TypedInput(x, wx, 0, ChunkValues, "Unary");
+            for (long i = 0, step = Step(n, tx.Typed); i < n; i += step)
             {
-                case UnaryOp.Sigmoid: Elements("Unary Sigmoid", new Map1<SigmoidFn>(px, py, n), n, work); break;
-                case UnaryOp.Tanh: Elements("Unary Tanh", new Map1<TanhFn>(px, py, n), n, work); break;
-                case UnaryOp.Relu: Elements("Unary Relu", new Map1<ReluFn>(px, py, n), n, work); break;
-                case UnaryOp.Square: Elements("Unary Square", new Map1<SquareFn>(px, py, n), n, work); break;
-                case UnaryOp.Abs: Elements("Unary Abs", new Map1<AbsFn>(px, py, n), n, work); break;
-                case UnaryOp.Exp: Elements("Unary Exp", new Map1<ExpFn>(px, py, n), n, work); break;
-                case UnaryOp.Log: Elements("Unary Log", new Map1<LogFn>(px, py, n), n, work); break;
-                case UnaryOp.Gelu: Elements("Unary Gelu", new Map1<GeluFn>(px, py, n), n, work); break;
-                case UnaryOp.Sqrt: Elements("Unary Sqrt", new Map1<SqrtFn>(px, py, n), n, work); break;
-                case UnaryOp.Sin: Elements("Unary Sin", new Map1<SinFn>(px, py, n), n, work); break;
-                case UnaryOp.Cos: Elements("Unary Cos", new Map1<CosFn>(px, py, n), n, work); break;
-                case UnaryOp.Silu: Elements("Unary Silu", new Map1<SiluFn>(px, py, n), n, work); break;
-                case UnaryOp.Sign: Elements("Unary Sign", new Map1<SignFn>(px, py, n), n, work); break;
-                case UnaryOp.GeluErf: Elements("Unary GeluErf", new Map1<GeluErfFn>(px, py, n), n, work); break;
-                default: throw new ArgumentOutOfRangeException(nameof(op), op, "Not a unary function.");
+                long e = Math.Min(n, i + step);
+                Unary(op, tx.Range(i, e - i), py, n, i, e);
             }
+        }
+    }
+
+    private static void Unary(UnaryOp op, float* px, float* py, long n, long first, long last)
+    {
+        int work = UnaryWork(op);
+        switch (op)
+        {
+            case UnaryOp.Sigmoid: Elements("Unary Sigmoid", new Map1<SigmoidFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Tanh: Elements("Unary Tanh", new Map1<TanhFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Relu: Elements("Unary Relu", new Map1<ReluFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Square: Elements("Unary Square", new Map1<SquareFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Abs: Elements("Unary Abs", new Map1<AbsFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Exp: Elements("Unary Exp", new Map1<ExpFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Log: Elements("Unary Log", new Map1<LogFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Gelu: Elements("Unary Gelu", new Map1<GeluFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Sqrt: Elements("Unary Sqrt", new Map1<SqrtFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Sin: Elements("Unary Sin", new Map1<SinFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Cos: Elements("Unary Cos", new Map1<CosFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Silu: Elements("Unary Silu", new Map1<SiluFn>(px, py, n), last, work, first); break;
+            case UnaryOp.Sign: Elements("Unary Sign", new Map1<SignFn>(px, py, n), last, work, first); break;
+            case UnaryOp.GeluErf: Elements("Unary GeluErf", new Map1<GeluErfFn>(px, py, n), last, work, first); break;
+            default: throw new ArgumentOutOfRangeException(nameof(op), op, "Not a unary function.");
         }
     }
 
     public override void UnaryBackwardKernel(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
-        fixed (float* px = V(x), py = V(y), pdy = V(dy), pdx = V(dx))
+        fixed (float* wx = D(x), wy = D(y), wdy = D(dy), pdx = V(dx))
         {
-            int work = UnaryWork(op) + 2;
-            switch (op)
+            TypedInput tx = new(x, wx, 0, ChunkValues, "UnaryBackward"), ty = new(y, wy, 1, ChunkValues, "UnaryBackward"), tdy = new(dy, wdy, 2, ChunkValues, "UnaryBackward");
+            for (long i = 0, step = Step(n, tx.Typed || ty.Typed || tdy.Typed); i < n; i += step)
             {
-                case UnaryOp.Sigmoid: Elements("UnaryBackward Sigmoid", new MapBack<SigmoidFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Tanh: Elements("UnaryBackward Tanh", new MapBack<TanhFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Relu: Elements("UnaryBackward Relu", new MapBack<ReluFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Square: Elements("UnaryBackward Square", new MapBack<SquareFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Abs: Elements("UnaryBackward Abs", new MapBack<AbsFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Exp: Elements("UnaryBackward Exp", new MapBack<ExpFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Log: Elements("UnaryBackward Log", new MapBack<LogFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Gelu: Elements("UnaryBackward Gelu", new MapBack<GeluFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Sqrt: Elements("UnaryBackward Sqrt", new MapBack<SqrtFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Sin: Elements("UnaryBackward Sin", new MapBack<SinFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Cos: Elements("UnaryBackward Cos", new MapBack<CosFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Silu: Elements("UnaryBackward Silu", new MapBack<SiluFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.Sign: Elements("UnaryBackward Sign", new MapBack<SignFn>(px, py, pdy, pdx, n), n, work); break;
-                case UnaryOp.GeluErf: Elements("UnaryBackward GeluErf", new MapBack<GeluErfFn>(px, py, pdy, pdx, n), n, work); break;
-                default: throw new ArgumentOutOfRangeException(nameof(op), op, "Not a unary function.");
+                long e = Math.Min(n, i + step);
+                UnaryBackward(op, tx.Range(i, e - i), ty.Range(i, e - i), tdy.Range(i, e - i), pdx, n, i, e);
             }
+        }
+    }
+
+    private static void UnaryBackward(UnaryOp op, float* px, float* py, float* pdy, float* pdx, long n, long first, long last)
+    {
+        int work = UnaryWork(op) + 2;
+        switch (op)
+        {
+            case UnaryOp.Sigmoid: Elements("UnaryBackward Sigmoid", new MapBack<SigmoidFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Tanh: Elements("UnaryBackward Tanh", new MapBack<TanhFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Relu: Elements("UnaryBackward Relu", new MapBack<ReluFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Square: Elements("UnaryBackward Square", new MapBack<SquareFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Abs: Elements("UnaryBackward Abs", new MapBack<AbsFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Exp: Elements("UnaryBackward Exp", new MapBack<ExpFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Log: Elements("UnaryBackward Log", new MapBack<LogFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Gelu: Elements("UnaryBackward Gelu", new MapBack<GeluFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Sqrt: Elements("UnaryBackward Sqrt", new MapBack<SqrtFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Sin: Elements("UnaryBackward Sin", new MapBack<SinFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Cos: Elements("UnaryBackward Cos", new MapBack<CosFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Silu: Elements("UnaryBackward Silu", new MapBack<SiluFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.Sign: Elements("UnaryBackward Sign", new MapBack<SignFn>(px, py, pdy, pdx, n), last, work, first); break;
+            case UnaryOp.GeluErf: Elements("UnaryBackward GeluErf", new MapBack<GeluErfFn>(px, py, pdy, pdx, n), last, work, first); break;
+            default: throw new ArgumentOutOfRangeException(nameof(op), op, "Not a unary function.");
         }
     }
 
     public override void BinaryKernel(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
-        fixed (float* pa = V(a), pb = V(b), pc = V(c))
+        if (Wide(a, b))
         {
-            switch (op)
+            Elements64("Binary " + op, Map64.Binary, (int)op, a, b, c, n);
+            return;
+        }
+
+        fixed (float* wa = D(a), wb = D(b), pc = V(c))
+        {
+            TypedInput ta = new(a, wa, 0, ChunkValues, "Binary"), tb = new(b, wb, 1, ChunkValues, "Binary");
+            for (long i = 0, step = Step(n, ta.Typed || tb.Typed); i < n; i += step)
             {
-                case BinaryOp.Add: Elements("Binary Add", new Map2<AddFn>(pa, pb, pc, n), n); break;
-                case BinaryOp.Sub: Elements("Binary Sub", new Map2<SubFn>(pa, pb, pc, n), n); break;
-                case BinaryOp.Mul: Elements("Binary Mul", new Map2<MulFn>(pa, pb, pc, n), n); break;
-                case BinaryOp.Maximum: Elements("Binary Maximum", new Map2<MaxFn>(pa, pb, pc, n), n); break;
-                case BinaryOp.Minimum: Elements("Binary Minimum", new Map2<MinFn>(pa, pb, pc, n), n); break;
-                default: throw new ArgumentOutOfRangeException(nameof(op), op, "Not a binary function.");
+                long e = Math.Min(n, i + step);
+                float* pa = ta.Range(i, e - i), pb = tb.Range(i, e - i);
+                switch (op)
+                {
+                    case BinaryOp.Add: Elements("Binary Add", new Map2<AddFn>(pa, pb, pc, n), e, 1, i); break;
+                    case BinaryOp.Sub: Elements("Binary Sub", new Map2<SubFn>(pa, pb, pc, n), e, 1, i); break;
+                    case BinaryOp.Mul: Elements("Binary Mul", new Map2<MulFn>(pa, pb, pc, n), e, 1, i); break;
+                    case BinaryOp.Maximum: Elements("Binary Maximum", new Map2<MaxFn>(pa, pb, pc, n), e, 1, i); break;
+                    case BinaryOp.Minimum: Elements("Binary Minimum", new Map2<MinFn>(pa, pb, pc, n), e, 1, i); break;
+                    default: throw new ArgumentOutOfRangeException(nameof(op), op, "Not a binary function.");
+                }
             }
         }
     }
 
     public override void ExtremumBackwardKernel(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
     {
-        fixed (float* pa = V(a), pb = V(b), pdy = V(dy), pda = da is null ? null : V(da), pdb = db is null ? null : V(db))
+        fixed (float* wa = D(a), wb = D(b), wdy = D(dy), pda = da is null ? null : V(da), pdb = db is null ? null : V(db))
         {
-            Elements("ExtremumBackward", new ExtremumMap(op == BinaryOp.Maximum, pa, pb, pdy, pda, pdb, n), n, 2);
+            TypedInput ta = new(a, wa, 0, ChunkValues, "ExtremumBackward"), tb = new(b, wb, 1, ChunkValues, "ExtremumBackward"), tdy = new(dy, wdy, 2, ChunkValues, "ExtremumBackward");
+            for (long i = 0, step = Step(n, ta.Typed || tb.Typed || tdy.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("ExtremumBackward", new ExtremumMap(op == BinaryOp.Maximum, ta.Range(i, e - i), tb.Range(i, e - i), tdy.Range(i, e - i), pda, pdb, n), e, 2, i);
+            }
         }
     }
 
@@ -358,9 +404,14 @@ internal sealed unsafe partial class CpuBackend
 
     public override void PowKernel(Storage x, Storage y, int n, float exponent)
     {
-        fixed (float* px = V(x), py = V(y))
+        fixed (float* wx = D(x), py = V(y))
         {
-            Elements("Pow", new PowMap(px, py, exponent, n), n, 64);
+            var tx = new TypedInput(x, wx, 0, ChunkValues, "Pow");
+            for (long i = 0, step = Step(n, tx.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("Pow", new PowMap(tx.Range(i, e - i), py, exponent, n), e, 64, i);
+            }
         }
     }
 
@@ -382,9 +433,14 @@ internal sealed unsafe partial class CpuBackend
 
     public override void PowBackwardKernel(Storage x, Storage dy, Storage dx, int n, float exponent)
     {
-        fixed (float* px = V(x), pdy = V(dy), pdx = V(dx))
+        fixed (float* wx = D(x), wdy = D(dy), pdx = V(dx))
         {
-            Elements("PowBackward", new PowBackMap(px, pdy, pdx, exponent, n), n, 64);
+            TypedInput tx = new(x, wx, 0, ChunkValues, "PowBackward"), tdy = new(dy, wdy, 1, ChunkValues, "PowBackward");
+            for (long i = 0, step = Step(n, tx.Typed || tdy.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("PowBackward", new PowBackMap(tx.Range(i, e - i), tdy.Range(i, e - i), pdx, exponent, n), e, 64, i);
+            }
         }
     }
 
@@ -407,9 +463,14 @@ internal sealed unsafe partial class CpuBackend
 
     public override void ClampKernel(Storage x, Storage y, int n, float min, float max)
     {
-        fixed (float* px = V(x), py = V(y))
+        fixed (float* wx = D(x), py = V(y))
         {
-            Elements("Clamp", new ClampMap(px, py, min, max, n), n);
+            var tx = new TypedInput(x, wx, 0, ChunkValues, "Clamp");
+            for (long i = 0, step = Step(n, tx.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("Clamp", new ClampMap(tx.Range(i, e - i), py, min, max, n), e, 1, i);
+            }
         }
     }
 
@@ -425,9 +486,14 @@ internal sealed unsafe partial class CpuBackend
 
     public override void ClampBackwardKernel(Storage x, Storage dy, Storage dx, int n, float min, float max)
     {
-        fixed (float* px = V(x), pdy = V(dy), pdx = V(dx))
+        fixed (float* wx = D(x), wdy = D(dy), pdx = V(dx))
         {
-            Elements("ClampBackward", new ClampBackMap(px, pdy, pdx, min, max, n), n);
+            TypedInput tx = new(x, wx, 0, ChunkValues, "ClampBackward"), tdy = new(dy, wdy, 1, ChunkValues, "ClampBackward");
+            for (long i = 0, step = Step(n, tx.Typed || tdy.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("ClampBackward", new ClampBackMap(tx.Range(i, e - i), tdy.Range(i, e - i), pdx, min, max, n), e, 1, i);
+            }
         }
     }
 
@@ -448,9 +514,14 @@ internal sealed unsafe partial class CpuBackend
 
     public override void LeakyReluKernel(Storage x, Storage y, int n, float slope)
     {
-        fixed (float* px = V(x), py = V(y))
+        fixed (float* wx = D(x), py = V(y))
         {
-            Elements("LeakyRelu", new LeakyMap(px, py, slope, n), n);
+            var tx = new TypedInput(x, wx, 0, ChunkValues, "LeakyRelu");
+            for (long i = 0, step = Step(n, tx.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("LeakyRelu", new LeakyMap(tx.Range(i, e - i), py, slope, n), e, 1, i);
+            }
         }
     }
 
@@ -469,9 +540,14 @@ internal sealed unsafe partial class CpuBackend
 
     public override void LeakyReluBackwardKernel(Storage x, Storage dy, Storage dx, int n, float slope)
     {
-        fixed (float* px = V(x), pdy = V(dy), pdx = V(dx))
+        fixed (float* wx = D(x), wdy = D(dy), pdx = V(dx))
         {
-            Elements("LeakyReluBackward", new LeakyBackMap(px, pdy, pdx, slope, n), n);
+            TypedInput tx = new(x, wx, 0, ChunkValues, "LeakyReluBackward"), tdy = new(dy, wdy, 1, ChunkValues, "LeakyReluBackward");
+            for (long i = 0, step = Step(n, tx.Typed || tdy.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("LeakyReluBackward", new LeakyBackMap(tx.Range(i, e - i), tdy.Range(i, e - i), pdx, slope, n), e, 1, i);
+            }
         }
     }
 
@@ -491,9 +567,14 @@ internal sealed unsafe partial class CpuBackend
 
     public override void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n)
     {
-        fixed (float* pc = V(condition), pa = V(a), pb = V(b), py = V(y))
+        fixed (float* wc = D(condition), wa = D(a), wb = D(b), py = V(y))
         {
-            Elements("Where", new WhereMap(pc, pa, pb, py, n), n);
+            TypedInput tc = new(condition, wc, 0, ChunkValues, "Where"), ta = new(a, wa, 1, ChunkValues, "Where"), tb = new(b, wb, 2, ChunkValues, "Where");
+            for (long i = 0, step = Step(n, tc.Typed || ta.Typed || tb.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("Where", new WhereMap(tc.Range(i, e - i), ta.Range(i, e - i), tb.Range(i, e - i), py, n), e, 1, i);
+            }
         }
     }
 
@@ -509,9 +590,14 @@ internal sealed unsafe partial class CpuBackend
 
     public override void WhereBackwardKernel(Storage condition, Storage dy, Storage? da, Storage? db, int n)
     {
-        fixed (float* pc = V(condition), pdy = V(dy), pda = da is null ? null : V(da), pdb = db is null ? null : V(db))
+        fixed (float* wc = D(condition), wdy = D(dy), pda = da is null ? null : V(da), pdb = db is null ? null : V(db))
         {
-            Elements("WhereBackward", new WhereBackMap(pc, pdy, pda, pdb, n), n);
+            TypedInput tc = new(condition, wc, 0, ChunkValues, "WhereBackward"), tdy = new(dy, wdy, 1, ChunkValues, "WhereBackward");
+            for (long i = 0, step = Step(n, tc.Typed || tdy.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("WhereBackward", new WhereBackMap(tc.Range(i, e - i), tdy.Range(i, e - i), pda, pdb, n), e, 1, i);
+            }
         }
     }
 
@@ -543,9 +629,20 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AffineKernel(Storage x, Storage y, int n, float alpha, float beta)
     {
-        fixed (float* px = V(x), py = V(y))
+        if (Wide(x))
         {
-            Elements("Affine", new AffineMap(px, py, alpha, beta, n), n);
+            Elements64("Affine", Map64.Affine, 0, x, null, y, n, alpha, beta);
+            return;
+        }
+
+        fixed (float* wx = D(x), py = V(y))
+        {
+            var tx = new TypedInput(x, wx, 0, ChunkValues, "Affine");
+            for (long i = 0, step = Step(n, tx.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("Affine", new AffineMap(tx.Range(i, e - i), py, alpha, beta, n), e, 1, i);
+            }
         }
     }
 
@@ -561,9 +658,14 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AxpyKernel(Storage x, Storage y, int n, float alpha)
     {
-        fixed (float* px = V(x), py = V(y))
+        fixed (float* wx = D(x), py = V(y))
         {
-            Elements("Axpy", new AxpyMap(px, py, alpha, n), n);
+            var tx = new TypedInput(x, wx, 0, ChunkValues, "Axpy");
+            for (long i = 0, step = Step(n, tx.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("Axpy", new AxpyMap(tx.Range(i, e - i), py, alpha, n), e, 1, i);
+            }
         }
     }
 
@@ -579,9 +681,14 @@ internal sealed unsafe partial class CpuBackend
 
     public override void MulAddKernel(Storage a, Storage b, Storage c, int n)
     {
-        fixed (float* pa = V(a), pb = V(b), pc = V(c))
+        fixed (float* wa = D(a), wb = D(b), pc = V(c))
         {
-            Elements("MulAdd", new MulAddMap(pa, pb, pc, n), n);
+            TypedInput ta = new(a, wa, 0, ChunkValues, "MulAdd"), tb = new(b, wb, 1, ChunkValues, "MulAdd");
+            for (long i = 0, step = Step(n, ta.Typed || tb.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("MulAdd", new MulAddMap(ta.Range(i, e - i), tb.Range(i, e - i), pc, n), e, 1, i);
+            }
         }
     }
 
@@ -597,9 +704,10 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AddBroadcastScalarKernel(Storage s, Storage y, int n, float scale)
     {
-        fixed (float* ps = V(s), py = V(y))
+        fixed (float* ws = D(s), py = V(y))
         {
-            Elements("AddBroadcastScalar", new AxpyScalarMap(py, scale, *ps, n), n);
+            var ts = new TypedInput(s, ws, 0, 1, "AddBroadcastScalar");
+            Elements("AddBroadcastScalar", new AxpyScalarMap(py, scale, *ts.Range(0, 1), n), n);
         }
     }
 
@@ -615,16 +723,24 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AxpyAtKernel(Storage x, Storage y, int offset, float alpha)
     {
-        var px = V(x);
         var py = V(y);
-        py[offset] = MathF.FusedMultiplyAdd(alpha, px[0], py[offset]);
+        fixed (float* wx = D(x))
+        {
+            var tx = new TypedInput(x, wx, 0, 1, "AxpyAt");
+            py[offset] = MathF.FusedMultiplyAdd(alpha, *tx.Range(0, 1), py[offset]);
+        }
     }
 
     public override void InvSqrtKernel(Storage x, Storage y, int n, float eps)
     {
-        fixed (float* px = V(x), py = V(y))
+        fixed (float* wx = D(x), py = V(y))
         {
-            Elements("InvSqrt", new InvSqrtMap(px, py, eps, n), n, 4);
+            var tx = new TypedInput(x, wx, 0, ChunkValues, "InvSqrt");
+            for (long i = 0, step = Step(n, tx.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("InvSqrt", new InvSqrtMap(tx.Range(i, e - i), py, eps, n), e, 4, i);
+            }
         }
     }
 
@@ -643,21 +759,27 @@ internal sealed unsafe partial class CpuBackend
 
     public override void GatedActivationKernel(Storage gate, Storage up, Storage y, int n, int kind)
     {
-        fixed (float* pg = V(gate), pu = V(up), py = V(y))
+        fixed (float* wg = D(gate), wu = D(up), py = V(y))
         {
-            Gated(pg, pu, py, n, kind);
+            TypedInput tg = new(gate, wg, 0, ChunkValues, "GatedActivation"), tu = new(up, wu, 1, ChunkValues, "GatedActivation");
+            for (long i = 0, step = Step(n, tg.Typed || tu.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Gated(tg.Range(i, e - i), tu.Range(i, e - i), py, n, kind, i, e);
+            }
         }
     }
 
-    // y = act(gate) · up over [0, n) (y may be up itself: each element read before it is written).
-    private static void Gated(float* pg, float* pu, float* py, long n, int kind)
+    // y = act(gate) · up over [first, last) of n (y may be up itself: each element read before it is written).
+    private static void Gated(float* pg, float* pu, float* py, long n, int kind, long first = 0, long last = -1)
     {
+        last = last < 0 ? n : last;
         switch (kind)
         {
-            case 0: Elements("GatedActivation SiLU", new Map2<GatedSilu>(pg, pu, py, n), n, 24); break;
-            case 1: Elements("GatedActivation GELU", new Map2<GatedGelu>(pg, pu, py, n), n, 24); break;
-            case 2: Elements("GatedActivation ReLU", new Map2<GatedRelu>(pg, pu, py, n), n); break;
-            case 3: Elements("GatedActivation tanh-sigmoid", new Map2<GatedTanhSigmoid>(pg, pu, py, n), n, 48); break;
+            case 0: Elements("GatedActivation SiLU", new Map2<GatedSilu>(pg, pu, py, n), last, 24, first); break;
+            case 1: Elements("GatedActivation GELU", new Map2<GatedGelu>(pg, pu, py, n), last, 24, first); break;
+            case 2: Elements("GatedActivation ReLU", new Map2<GatedRelu>(pg, pu, py, n), last, 1, first); break;
+            case 3: Elements("GatedActivation tanh-sigmoid", new Map2<GatedTanhSigmoid>(pg, pu, py, n), last, 48, first); break;
             default: throw new ArgumentOutOfRangeException(nameof(kind), kind, "A gated activation is 0 (SiLU), 1 (GELU), 2 (ReLU) or 3 (tanh · sigmoid).");
         }
     }
@@ -689,9 +811,15 @@ internal sealed unsafe partial class CpuBackend
             return;
         }
 
-        fixed (float* pg = V(gate), pu = V(up), pdy = V(dy), pdg = (flags & 1) != 0 ? V(dgate) : null, pdu = (flags & 2) != 0 ? V(dup) : null)
+        fixed (float* wg = D(gate), wu = D(up), wdy = D(dy), pdg = (flags & 1) != 0 ? V(dgate) : null, pdu = (flags & 2) != 0 ? V(dup) : null)
         {
-            Elements("GatedActivationBackward", new GatedBackMap(kind, flags, pg, pu, pdy, pdg, pdu, n), n, 48);
+            TypedInput tg = new(gate, wg, 0, ChunkValues, "GatedActivationBackward"), tu = new(up, wu, 1, ChunkValues, "GatedActivationBackward"),
+                tdy = new(dy, wdy, 2, ChunkValues, "GatedActivationBackward");
+            for (long i = 0, step = Step(n, tg.Typed || tu.Typed || tdy.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("GatedActivationBackward", new GatedBackMap(kind, flags, tg.Range(i, e - i), tu.Range(i, e - i), tdy.Range(i, e - i), pdg, pdu, n), e, 48, i);
+            }
         }
     }
 
@@ -764,25 +892,40 @@ internal sealed unsafe partial class CpuBackend
 
     public override void DropoutKernel(Storage x, Storage y, int n, float p, uint seed)
     {
-        fixed (float* px = V(x), py = V(y))
+        fixed (float* wx = D(x), py = V(y))
         {
-            Elements("Dropout", new DropoutMap(px, py, null, p, seed, n, accumulate: false), n, 8);
+            var tx = new TypedInput(x, wx, 0, ChunkValues, "Dropout");
+            for (long i = 0, step = Step(n, tx.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("Dropout", new DropoutMap(tx.Range(i, e - i), py, null, p, seed, n, accumulate: false), e, 8, i);
+            }
         }
     }
 
     public override void DropoutBackwardKernel(Storage dy, Storage dx, int n, float p, uint seed)
     {
-        fixed (float* pdy = V(dy), pdx = V(dx))
+        fixed (float* wdy = D(dy), pdx = V(dx))
         {
-            Elements("DropoutBackward", new DropoutMap(pdy, pdx, null, p, seed, n, accumulate: true), n, 8);
+            var tdy = new TypedInput(dy, wdy, 0, ChunkValues, "DropoutBackward");
+            for (long i = 0, step = Step(n, tdy.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("DropoutBackward", new DropoutMap(tdy.Range(i, e - i), pdx, null, p, seed, n, accumulate: true), e, 8, i);
+            }
         }
     }
 
     public override void AddDropoutKernel(Storage residual, Storage x, Storage output, int n, float p, uint seed)
     {
-        fixed (float* pr = V(residual), px = V(x), py = V(output))
+        fixed (float* wr = D(residual), wx = D(x), py = V(output))
         {
-            Elements("AddDropout", new DropoutMap(px, py, pr, p, seed, n, accumulate: false), n, 8);
+            TypedInput tr = new(residual, wr, 0, ChunkValues, "AddDropout"), tx = new(x, wx, 1, ChunkValues, "AddDropout");
+            for (long i = 0, step = Step(n, tr.Typed || tx.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("AddDropout", new DropoutMap(tx.Range(i, e - i), py, tr.Range(i, e - i), p, seed, n, accumulate: false), e, 8, i);
+            }
         }
     }
 
@@ -890,22 +1033,35 @@ internal sealed unsafe partial class CpuBackend
 
     public override void SumKernel(Storage x, Storage result, int n, float scale)
     {
-        fixed (float* px = V(x))
+        if (Wide(x))
         {
-            V(result)[0] = scale * ChunkedSum(px, n, squares: false);
+            V(result)[0] = (float)(scale * Sum64(x, n, squares: false));
+            return;
+        }
+
+        fixed (float* wx = D(x))
+        {
+            V(result)[0] = scale * ChunkedSum(new TypedInput(x, wx, 0, SumChunk, "Sum"), n, squares: false);
         }
     }
 
     public override void SumSquaresKernel(Storage x, Storage total, int n)
     {
-        fixed (float* px = V(x))
+        if (Wide(x))
         {
-            V(total)[0] += ChunkedSum(px, n, squares: true);
+            V(total)[0] = (float)(V(total)[0] + Sum64(x, n, squares: true));
+            return;
+        }
+
+        fixed (float* wx = D(x))
+        {
+            V(total)[0] += ChunkedSum(new TypedInput(x, wx, 0, SumChunk, "SumSquares"), n, squares: true);
         }
     }
 
-    // Σ x (or Σ x²) over [0, n): chunks of SumChunk in sixteen lanes each, the chunks' sums added in order.
-    private static float ChunkedSum(float* x, long n, bool squares)
+    // Σ x (or Σ x²) over [0, n): chunks of SumChunk in sixteen lanes each, the chunks' sums added in order (a typed x read
+    // a chunk at a time: the same chunks, the same bits).
+    private static float ChunkedSum(TypedInput x, long n, bool squares)
     {
         if (n <= 0)
         {
@@ -916,7 +1072,14 @@ internal sealed unsafe partial class CpuBackend
         Span<float> sums = chunks <= 64 ? stackalloc float[chunks] : new float[chunks];
         fixed (float* ps = sums)
         {
-            Rows(squares ? "SumSquares" : "Sum", new ChunkSums(x, ps, n, squares), chunks, SumChunk, 1);
+            int step = x.Typed ? 1 : chunks;
+            for (int c = 0; c < chunks; c += step)
+            {
+                int end = Math.Min(chunks, c + step);
+                long at = (long)c * SumChunk;
+                float* px = x.Range(at, Math.Min(n, (long)end * SumChunk) - at);
+                Rows(squares ? "SumSquares" : "Sum", new ChunkSums(px, ps, n, squares), end, SumChunk, 1, c);
+            }
         }
 
         float total = 0f;

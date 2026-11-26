@@ -8,13 +8,13 @@ namespace Idrak.Cli.Commands.Measure;
 
 /// <summary>
 /// <c>idrak tuning show</c>: the kernel choices the backends measured on this machine and keep in their tuning caches
-/// (the CPU's parallel cut-overs, the CUDA and Vulkan kernel and runtime choices), per device, and what a cluster keeps
-/// beside them (plan 23, phase C8: the calibrated link profiles and the measured chunk and bucket sizes); <c>--reset</c>
-/// deletes them so they are measured again on next use.
+/// (the CPU's widths and described-lane variants per shape, the CUDA and Vulkan kernel and runtime choices), per device,
+/// and what a cluster keeps beside them (plan 23, phase C8: the calibrated link profiles and the measured chunk and bucket
+/// sizes); <c>--reset</c> deletes them so they are measured again on next use.
 /// </summary>
 internal sealed class TuningShowCommand : Command
 {
-    private static readonly string[] Backends = ["cuda", "vulkan", "cluster"];
+    private static readonly string[] Backends = ["cpu", "cuda", "vulkan", "cluster"];
 
     public override string Name => "tuning show";
 
@@ -22,13 +22,14 @@ internal sealed class TuningShowCommand : Command
 
     public override string Usage =>
         "[options]\n\n" +
-        "Reads the tuning caches the backends write as they measure their choices: the CUDA kernel choices\n" +
-        "(tuning/cuda/*.txt, one file per GPU and driver) and the Vulkan\n" +
-        "runtime and kernel choices (vulkan/tuning.tsv), and a cluster's: the link profiles idrak cluster calibrate fitted\n" +
-        "(cluster/link-*.txt) and the chunk and bucket sizes the collectives measured (cluster/tuning.txt), all under the\n" +
-        "cache folder unless the variables below move them. Each choice is shown with what it was measured on.\n\n" +
+        "Reads the tuning caches the backends write as they measure their choices: the CPU's measured choices\n" +
+        "(tuning/cpu/choices-*.txt, one file per processor, threads and instruction sets: each operation's width and the\n" +
+        "described lane's variant per shape), the CUDA kernel choices (tuning/cuda/*.txt, one file per GPU and driver) and\n" +
+        "the Vulkan runtime and kernel choices (vulkan/tuning.tsv), and a cluster's: the link profiles idrak cluster\n" +
+        "calibrate fitted (cluster/link-*.txt) and the chunk and bucket sizes the collectives measured (cluster/tuning.txt),\n" +
+        "all under the cache folder unless the variables below move them. Each choice is shown with what it was measured on.\n\n" +
         "Options:\n" +
-        "      --backend NAME  only cuda, vulkan or cluster\n" +
+        "      --backend NAME  only cpu, cuda, vulkan or cluster\n" +
         "      --reset         delete the caches (or the --backend one): choices are measured again on next use\n\n" +
         "Examples:\n" +
         "  idrak tuning show\n" +
@@ -50,7 +51,7 @@ internal sealed class TuningShowCommand : Command
         string? only = context.Option("--backend")?.ToLowerInvariant();
         if (only is not null && !Backends.Contains(only))
         {
-            throw new UsageException($"--backend takes cuda, vulkan or cluster, not '{only}'.");
+            throw new UsageException($"--backend takes cpu, cuda, vulkan or cluster, not '{only}'.");
         }
 
         var caches = Caches(context.CacheFolder).Where(c => only is null || c.Backend == only).ToList();
@@ -122,6 +123,14 @@ internal sealed class TuningShowCommand : Command
         static bool Off(string? setting) => Idrak.Abstraction.Devices.TuningFiles.IsOff(setting);           // as every backend reads it
         string? tuning = Environment.GetEnvironmentVariable("IDRAK_TUNING_CACHE");
 
+        // The CPU's measured choices: a file per machine (its processor, threads and instruction sets), under the setting's
+        // folder where it names one, as the CPU keeps them.
+        string? cpu = Off(tuning) ? null
+            : tuning is { Length: > 0 } && tuning.Trim() is not "1" && !tuning.Trim().Equals("on", StringComparison.OrdinalIgnoreCase)
+              && !tuning.Trim().Equals("true", StringComparison.OrdinalIgnoreCase) ? System.IO.Path.Combine(System.IO.Path.GetFullPath(tuning.Trim()), "cpu")
+            : System.IO.Path.Combine(cacheFolder, "tuning", "cpu");
+        yield return new Cache("cpu", cpu, cpu is not null && Directory.Exists(cpu) ? [.. Directory.GetFiles(cpu, "choices-*.txt").Order(StringComparer.Ordinal)] : [], ReadCpu);
+
         string? cuda = Off(tuning) ? null
             : tuning is { Length: > 0 } && tuning is not "1" && !string.Equals(tuning, "true", StringComparison.OrdinalIgnoreCase) ? tuning
             : System.IO.Path.Combine(cacheFolder, "tuning", "cuda");
@@ -175,6 +184,26 @@ internal sealed class TuningShowCommand : Command
         foreach (var size in ClusterCache.ParseTuning(text))
         {
             yield return new Entry($"measured {size.Kind} sizes", size.Key, string.Create(inv, $"{size.Value} B ({size.Measured:yyyy-MM-dd}: {size.Detail})"));
+        }
+    }
+
+    // The format's line, the machine's identity (the processor, threads, architecture, runtime and instruction sets), then
+    // "key<TAB>value" per choice ("lanes Op 2^a x2^b paths" a width, "described ..." the described lane's variant).
+    private static IEnumerable<Entry> ReadCpu(string path)
+    {
+        var lines = File.ReadAllLines(path);
+        if (lines.Length < 2 || !lines[0].StartsWith("idrak-cpu-choices ", StringComparison.Ordinal))
+        {
+            yield break;
+        }
+
+        foreach (string line in lines.Skip(2))
+        {
+            int tab = line.IndexOf('\t', StringComparison.Ordinal);
+            if (tab > 0)
+            {
+                yield return new Entry(lines[1], line[..tab], line[(tab + 1)..]);
+            }
         }
     }
 

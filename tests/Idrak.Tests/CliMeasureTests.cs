@@ -226,9 +226,14 @@ internal abstract partial class DesktopTests : Tests
             Directory.CreateDirectory(Path.Combine(cache, "vulkan"));
             File.WriteAllText(Path.Combine(cache, "vulkan", "tuning.tsv"),
                 "dev/drv/1/ac/push-descriptors\t1\tTest Vulkan\nkernels/dev/drv/1/ac/w64/subgroups/v1/Gemv 0 1 768 256 0 0 0\t3\tTest Vulkan\n");
+            Directory.CreateDirectory(Path.Combine(cache, "tuning", "cpu"));
+            File.WriteAllText(Path.Combine(cache, "tuning", "cpu", "choices-0123456789ABCDEF.txt"),
+                "idrak-cpu-choices 1\nTest CPU; 8 threads; X64; .NET 10; avx2 fma\nlanes Softmax 2^3x2^10 Native\tWide256\nlanes MatMul 2^4x2^650 Native\tWide512\n");
             var json = IdrakJson(cache, "tuning", "show");
             var caches = json["caches"]!.AsArray().ToDictionary(c => (string)c!["backend"]!, c => c!["choices"]!.AsArray());
-            Check(!caches.ContainsKey("cpu") && caches["cuda"].Count == 2 && caches["vulkan"].Count == 2, json.ToJsonString());
+            Check(caches["cpu"].Count == 2 && caches["cuda"].Count == 2 && caches["vulkan"].Count == 2, json.ToJsonString());
+            Check(caches["cpu"].Any(c => (string?)c!["choice"] == "lanes Softmax 2^3x2^10 Native" && (string?)c["value"] == "Wide256" && ((string)c["device"]!).Contains("Test CPU")),
+                caches["cpu"].ToJsonString());
             Check(caches["cuda"].Any(c => (string?)c!["choice"] == "GemvSplits 0 1 2048 1024 0 0 0" && (string?)c["value"] == "16" && ((string)c["device"]!).Contains("Test GPU")), caches["cuda"].ToJsonString());
             Check(caches["vulkan"].Any(c => (string?)c!["choice"] == "kernel w64/subgroups/v1/Gemv 0 1 768 256 0 0 0" && (string?)c["value"] == "3"), caches["vulkan"].ToJsonString());
             var vulkanOnly = IdrakJson(cache, "tuning", "show", "--backend", "vulkan");
@@ -237,6 +242,8 @@ internal abstract partial class DesktopTests : Tests
             var reset = IdrakJson(cache, "tuning", "show", "--reset", "--backend", "cuda");
             Check(!File.Exists(Path.Combine(cache, "tuning", "cuda", "gpu.txt")) && File.Exists(Path.Combine(cache, "vulkan", "tuning.tsv"))
                 && reset["caches"]![0]!["deleted"]!.AsArray().Count == 1, reset.ToJsonString());
+            var cpuReset = IdrakJson(cache, "tuning", "show", "--reset", "--backend", "cpu");
+            Check(Directory.GetFiles(Path.Combine(cache, "tuning", "cpu")).Length == 0 && cpuReset["caches"]![0]!["deleted"]!.AsArray().Count == 1, cpuReset.ToJsonString());
             Check(MeasureIdrak(cache, "tuning", "show", "--backend", "tpu").Code == 2, "unknown backend");
         }
         finally
