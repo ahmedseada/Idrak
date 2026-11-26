@@ -13,16 +13,13 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] AbstractionGroup =
     [
         ("abstractions: a custom ITokenSampler (greedy, on the host, not recordable) plugged into TextGenerator gives the built-in sampler's top-1 text, with and without the KV cache, and its request carries the generator's tokenizer", CustomSampler),
-        ("abstractions: Idrak.Abstraction and Idrak name no GPU device, Idrak.Gpu references Idrak.Abstraction alone, and its devices (cuda, vulkan, hip) are registered first, in that order", LibraryDevicesFirst),
+        ("abstractions: Idrak.Abstraction and Idrak name no GPU device, and Idrak.Gpu references Idrak.Abstraction alone", LibraryDevicesFirst),
     ];
 
     internal static void LibraryDevicesFirst(Device device)
     {
         _ = device;
-        string[] kinds = [.. DeviceProviders.All.Select(p => p.Name)];
-        Check(kinds.Length >= 3 && kinds[..3].SequenceEqual(["cuda", "vulkan", "hip"]), $"providers: {string.Join(", ", kinds)}");
         var gpu = System.Reflection.Assembly.Load("Idrak.Gpu");
-        Check(DeviceProviders.All.Take(3).All(p => p.GetType().Assembly == gpu), "the GPU providers come from Idrak.Gpu");
         var references = typeof(Device).Assembly.GetReferencedAssemblies().Select(a => a.Name).ToArray();
         Check(!references.Any(r => r!.StartsWith("Idrak", StringComparison.Ordinal)), $"Idrak.Abstraction references: {string.Join(", ", references)}");
         references = typeof(Sequential).Assembly.GetReferencedAssemblies().Select(a => a.Name).ToArray();

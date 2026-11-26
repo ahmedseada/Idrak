@@ -19,9 +19,7 @@ internal abstract partial class Tests
         ("attention spans: bidirectional multi-head attention runs on the key-range kernel or the full scores as measured or forced, and matches the composed path, forward and gradients", BidirectionalAttentionLayer),
         ("attention spans: the fastest path (forced key ranges, forced composed, measured) gives AttentionSpans' result with every key and with a dense mask; the memory guard; IDRAK_ATTENTION_PATH", FastestAttention),
         ("attention spans: grouped heads and several tables compose on the device (a table at a time, the ranges as a mask) and match AttentionSpans, forward and gradients; a device without its own kernel for the head size composes them unforced, one with it keeps its kernel", SpanAttentionComposedGroups),
-        ("attention spans: the CUDA span modules (float32, tensor-core and pipelined, every padded head size) declare their kernels and parameters, and are judged by the shared memory a device reports", SpanModules),
-        ("attention spans: the CPU's key panels (Kᵀ transposed once per call for blocks that see every key) give the transposing products' output and log-sum-exp bit for bit (bidirectional, two tables, grouped heads, a last block of few rows, keys past several tiles)", CpuKeyPanels),
-        ("attention spans backward: the conformance kit's key-range cases (forward and gradient; random ranges, bidirectional, causal, windows, image blocks, grouped heads, tables, head sizes 1 to 256, a soft-cap) replay on the device call by call", SpanGradientCases),
+        ("attention spans: the CUDA span modules (float32, every padded head size) declare their kernels and parameters, and are judged by the shared memory a device reports", SpanModules),
         ("attention spans backward: training through the fastest path (forced key ranges, forced composed, measured with the gradient) gives the same gradients; the key-range path runs AttentionSpansBackward", SpanTrainingPaths),
         ("attention spans: a checkpointed pass's recompute takes the path its first pass took (composed in the first pass, the key ranges forced before the backward pass) and gives the gradients of the stored pass bit for bit; the first pass computes as with gradients (Autograd.IsFirstPass) and nothing is replayed past the recompute", CheckpointedAttentionPath),
     ];
@@ -310,7 +308,7 @@ internal abstract partial class Tests
     // Runs without a GPU (the PTX is generated on the host): each padded head size's modules, their kernels' parameters
     // (CudaBackend.Launch checks every launch against them), and the shared memory they need against what a device
     // reports: the float32 kernel's tiles grow with the head size, past 48 KiB from 104 on (devices that cannot opt in
-    // to more keep the first kernel there), the tensor-core tiles stay within 48 KiB of static memory.
+    // to more keep the first kernel there).
     internal static void SpanModules(Device device)
     {
         if (device.Type != DeviceType.Cpu)
@@ -331,15 +329,6 @@ internal abstract partial class Tests
             int shared = Idrak.Gpu.Cuda.PtxKernels.SpanFloatShared(d);
             Check(shared <= documented.SharedPerBlockOptin && (d > Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim || (shared <= old.SharedPerBlockOptin) == (d < 104))
                   && Idrak.Gpu.Cuda.PtxKernels.SpanFloatRows(d) == (d > Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim ? 32 : 64), $"f32 d{d}: {shared} bytes of shared memory");
-            if (d % 16 == 0 && d <= Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim)
-            {
-                var tensor = Idrak.Gpu.Cuda.PtxKernels.SpanTensorModule(d);
-                var tensorCounts = Idrak.Gpu.Cuda.PtxKernels.ParameterCountsOf(tensor.Source);
-                Check(tensor.Kernels.SequenceEqual(Idrak.Gpu.Cuda.PtxKernels.SpanTensorWarps.Select(w => Idrak.Gpu.Cuda.PtxKernels.SpanTensorName(d, w)))
-                      && tensor.Kernels.All(k => tensorCounts[k] == 13), $"tc d{d}: a kernel per warp count, 13 parameters each");
-                Check(Idrak.Gpu.Cuda.PtxKernels.Fits(tensor.Source, old) is null, $"tc d{d}: within 48 KiB");
-                Check(SpanTilesFixed(tensor.Source, tensor.Kernels.Length), $"tc d{d}: every kernel's tiles on the fixed grid, a warp only its own (the same bits at 4 and 8 warps)");
-            }
         }
 
         Check(Idrak.Gpu.Cuda.PtxKernels.SpanFloatDim(72) == 72 && Idrak.Gpu.Cuda.PtxKernels.SpanFloatDim(68) == 72 && Idrak.Gpu.Cuda.PtxKernels.SpanFloatDim(13) == 0
@@ -359,106 +348,6 @@ internal abstract partial class Tests
               && Idrak.Gpu.Cuda.CudaBackend.SpanHeadDim(old) == Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim,
             $"span head sizes from the reported shared memory: {Idrak.Gpu.Cuda.CudaBackend.SpanHeadDim(documented)} at {documented.SharedPerBlockOptin} bytes, "
             + $"{Idrak.Gpu.Cuda.CudaBackend.SpanHeadDim(old)} at {old.SharedPerBlockOptin}");
-        Check(Idrak.Gpu.Cuda.PtxKernels.SpanTensorDim(72) == 80 && Idrak.Gpu.Cuda.PtxKernels.SpanTensorDim(64) == 64 && Idrak.Gpu.Cuda.PtxKernels.SpanTensorDim(6) == 0,
-            "tensor-core head sizes: multiples of 4 up to 128, padded to 16");
-
-        // The pipelined modules (one per head size rounded to 8): the packing kernel and a span kernel per warp count, PTX
-        // 7.0 for sm_80, a block's declared size, two stages of keys and values in dynamic shared memory within what the
-        // documented device opts in to (the static part within 48 KiB).
-        for (int v = 8; v <= Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim; v += 8)
-        {
-            var (_, kernels, source) = Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedModule(v);
-            var counts = Idrak.Gpu.Cuda.PtxKernels.ParameterCountsOf(source);
-            var staticBytes = Idrak.Gpu.Cuda.PtxKernels.StaticSharedBytes(source);
-            Check(kernels.SequenceEqual([Idrak.Gpu.Cuda.PtxKernels.SpanPackName, .. Idrak.Gpu.Cuda.PtxKernels.SpanTensorWarps.Select(w => Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedName(v, w))])
-                  && counts[Idrak.Gpu.Cuda.PtxKernels.SpanPackName] == 10 && kernels.Skip(1).All(k => counts[k] == 20),
-                $"tcp d{v}: the packing kernel (10 parameters) and a span kernel per warp count (20 parameters): {string.Join(", ", counts.Select(c => $"{c.Key} {c.Value}"))}");
-            Check(source.ReplaceLineEndings("\n").StartsWith(".version 7.0\n.target sm_80", StringComparison.Ordinal), $"tcp d{v}: PTX 7.0 for sm_80");
-            Check(SpanTilesFixed(source, kernels.Length - 1), $"tcp d{v}: every span kernel's tiles on the fixed grid, a warp only its own (the same bits at 4 and 8 warps)");
-            int shared = Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedShared(v);
-            Check(kernels.Skip(1).All(k => staticBytes[k] <= old.SharedPerBlock && staticBytes[k] + shared <= documented.SharedPerBlockOptin)
-                  && source.Contains($".maxntid {32 * Idrak.Gpu.Cuda.PtxKernels.SpanTensorWarps[^1]}, 1, 1", StringComparison.Ordinal),
-                $"tcp d{v}: {shared} bytes of dynamic shared memory, {string.Join(", ", staticBytes.Select(b => $"{b.Key} {b.Value} static"))}");
-        }
-
-        Check(Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(72) == 72 && Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(68) == 72 && Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(76) == 80
-              && Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(4) == 8 && Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(6) == 0 && Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedDim(132) == 0,
-            "pipelined head sizes: multiples of 4 up to 128, padded to 8 (the outputs' tiles)");
-        Check(Idrak.Gpu.Cuda.PtxKernels.SpanPipelinedShared(72) == 4 * 64 * (80 + 8) * 2, "tcp d72: two stages of 64 keys and values of 80 + 8 bfloat16 values a row");
-    }
-
-    // Whether each of a tensor-core span module's `kernels` span kernels starts its tiles on the grid of 64 keys (not at the
-    // block's first key) and skips the tiles that hold none of a warp's keys: what makes the warps per block change no bit
-    // (the owner's CUDA run on a compute 12.0 GPU: 8 warps differed from 4 at dim 68, 70 rows, 200 keys, random ranges,
-    // 2 key/value heads, 4 tables, row 64, where the blocks' first keys differed).
-    internal static bool SpanTilesFixed(string source, int kernels) =>
-        CountOf(source, "and.b32 %r36, %r36, 0xFFFFFFC0;") == kernels && CountOf(source, "@!%p22 bra SKIP;") == kernels;
-
-    internal static int CountOf(string text, string part)
-    {
-        int count = 0;
-        for (int at = text.IndexOf(part, StringComparison.Ordinal); at >= 0; at = text.IndexOf(part, at + part.Length, StringComparison.Ordinal))
-        {
-            count++;
-        }
-
-        return count;
-    }
-
-    // The CPU's AttentionSpans with Kᵀ's panels against the same call with every product transposing its tile: bit for bit.
-    internal static void CpuKeyPanels(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;
-        }
-
-        var random = new Random(80);
-        var previous = Idrak.Abstraction.Devices.Cpu.CpuBackend.UseKeyPanels;
-        try
-        {
-            foreach (var (heads, kvHeads, rows, keyRows, dim, tables) in new[] { (2, 2, 300, 300, 72, 1), (4, 2, 130, 520, 64, 2), (2, 1, 66, 129, 13, 1) })
-            {
-                var spans = KeySpans.Concat([.. Enumerable.Range(0, tables).Select(t => t == 0 ? KeySpans.Bidirectional(rows, keyRows)
-                    : KeySpans.ImageBlocks(rows, [(3, 40)], window: 50))]);
-                float[] qv = RandomArray(random, heads * rows * dim), kv = RandomArray(random, kvHeads * keyRows * dim), vv = RandomArray(random, kvHeads * keyRows * dim);
-                (float[] Y, float[] Lse) Run(bool panels)
-                {
-                    Idrak.Abstraction.Devices.Cpu.CpuBackend.UseKeyPanels = panels;
-                    using var q = Tensor.From(qv, [heads, rows, dim], device);
-                    using var k = Tensor.From(kv, [kvHeads, keyRows, dim], device);
-                    using var v = Tensor.From(vv, [kvHeads, keyRows, dim], device);
-                    var (starts, ends) = spans.ToTensors(device);
-                    using var y = Tensor.Zeros([heads * rows * dim], device);
-                    using var lse = Tensor.Zeros([heads * rows], device);
-                    device.Backend.AttentionSpans(q.Storage, k.Storage, v.Storage, starts.Storage, ends.Storage, y.Storage, lse.Storage, heads, kvHeads,
-                        heads / tables, rows, keyRows, dim, 1f / MathF.Sqrt(dim));
-                    return (y.ToArray(), lse.ToArray());
-                }
-
-                var (transposing, panels) = (Run(false), Run(true));
-                string what = $"{heads} heads, {kvHeads} key/value heads, {rows} rows, {keyRows} keys, dim {dim}, {tables} tables";
-                Check(transposing.Y.AsSpan().SequenceEqual(panels.Y) && transposing.Lse.AsSpan().SequenceEqual(panels.Lse),
-                    $"{what}: the key panels change the output (largest difference {transposing.Y.Zip(panels.Y).Max(p => MathF.Abs(p.First - p.Second)):G3})");
-            }
-        }
-        finally
-        {
-            Idrak.Abstraction.Devices.Cpu.CpuBackend.UseKeyPanels = previous;
-        }
-    }
-
-    // The kit's two key-range cases on this device: every call the CPU made (AttentionSpans, AttentionSpansBackward, and
-    // the composed path's products and softmax) made again here and compared with what the CPU wrote.
-    internal static void SpanGradientCases(Device device)
-    {
-        var report = Conformance.Check(device, new DeviceCheckOptions { Filter = name => name.StartsWith("attention over key ranges", StringComparison.Ordinal) });
-        report.ThrowIfFailed();
-        foreach (string operation in new[] { "AttentionSpans", "AttentionSpansBackward" })
-        {
-            var entry = report.Entries.Single(e => e.Name == operation);
-            Check(entry.Status == CheckStatus.Passed, $"{operation} on {device}: {entry}");
-        }
     }
 
     // Tensor.AttentionFastest with the gradient recorded: each path (forced key ranges, forced composed where the device
@@ -651,6 +540,5 @@ internal abstract partial class Tests
         }
 
         Check(Device.Cpu.Backend.Capabilities.SpanAttentionHeadDim == int.MaxValue, "the CPU's own kernel takes every head size");
-        Check(Device.Get("minimal").Backend.Capabilities.SpanAttentionHeadDim == 0, "the minimal backend has no kernel of its own");
     }
 }

@@ -19,7 +19,6 @@
 //   … -- --bench-image                                                         time the CPU side of reading a page (decoders, every image transform, the preprocessor, the preview PNG): cold, warm, bytes, output hashes
 //   … -- --bench-jpeg [cases]                                                    time the JPEG encoder (a grey page, colour images; inputs 8-bit and float): cold, warm, bytes allocated a call, file size and hash; cases: the SHA-256 of every case of the encoder's byte-identity test instead
 //   … -- --bench-dispatch                                                        time a million tiny operations through the dispatcher and straight to the CPU's kernel
-//   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
 //   IDRAK_FILTER=retrieval dotnet run --project tests/Idrak.Tests   only tests whose name contains the text ("a|b": any of several)
 //   … -- --list                                    the names of the tests IDRAK_FILTER keeps, one a line, in the order they run (nothing run)
 //   IDRAK_TIMEOUT=60 …    a test still running after this many seconds (default 300) is reported as HANG and the run stops
@@ -47,11 +46,6 @@ if (args is ["--sandbox-child", var sandboxScenario])
 {
     return DesktopTests.SandboxChild(sandboxScenario);                                  // a child of the interactive sandbox test (plan 1 of Craft, X part 6b)
 }
-
-// The text model families (Llama, Qwen, Mistral, Gemma, BERT, T5, …) are Idrak.Text.Plugins' (plan 26, P7); the
-// library registers none. The runner registers them at startup, as an app (and the idrak tool) does, so every test and
-// child process (the cluster ranks) finds them; a test of a family's registration takes it away and puts it back.
-TestSuite.Prepare();
 
 // The idrak tool's servers (serve, ui, the cluster dashboard: ASP.NET Core), registered as its Program does, since the tests
 // run its commands in this process (CommandLine.Run).
@@ -149,11 +143,6 @@ if (args is ["--bench-jpeg", .. var jpegArguments] && jpegArguments.Length <= 1)
 if (args is ["--bench-alloc"])
 {
     return Tests.BenchAlloc();
-}
-
-if (args is ["--bench-offload"])
-{
-    return Tests.BenchOffload();
 }
 
 if (args is ["--bench-dispatch"])

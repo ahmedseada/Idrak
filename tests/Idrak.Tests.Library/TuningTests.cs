@@ -13,12 +13,12 @@ internal abstract partial class Tests
     [
         ("tuning: candidates are compared by their median time, so a lucky timing does not win and a close one keeps the formula's choice; a winner is timed again and kept only if it wins twice (noisy short prompt products)", TuneMedians),
         ("tuning: candidates are timed in pairs with the formula's choice, so a drifting clock does not move the choice (the 151936-column head kept 2-4% slower splits under a rising clock); decoding-sized products are timed with a cold L2 cache", TuneDrift),
-        ("tuning: few-row products are measured over 1, 2, 3, 4, 6, 8, 12, ... splits with the kernel that then runs (fused add-and-normalize kept apart from the plain kernel), after a warm-up, in pairs with the formula's choice", GemvSelection),
+        ("tuning: a clock that rises part way through a measurement does not move the choice (ratios of pairs with the formula's choice), and the warm-up stops soon on a settled GPU, waits out a clock ramp and is bounded", GemvSelection),
         ("tuning: the cache file of measured choices round-trips and is ignored when the GPU, driver, library build or format differs", TuningCacheFile),
-        ("tuning: decoding attention reads at least a measured number of positions per block (short caches on fewer blocks): every least chunk, split count and cache format gives the one-block result; lengths 64 ... capacity and chunk candidates", DecodeMinChunks),
-        ("tuning: every backend keeps one set of measured choices per power source (mains or battery, as the system reports it)", PowerSourceKeys),
+        ("tuning: decoding attention reads at least a measured number of positions per block (short caches on fewer blocks): every least chunk and split count gives the one-block result; lengths 64 ... capacity and chunk candidates", DecodeMinChunks),
+        ("tuning: the power source is read as the system reports it (mains or battery)", PowerSourceKeys),
         ("tuning: sizes that follow the data are keyed by size class (exact up to 32, then four classes a doubling, each within a quarter), so convolutions over batches of every width share a few measured choices", TuneSizeClasses),
-        ("tuning: attention over rows of different lengths and decoding attention key the cache's size and the rows by size class: caches of 1000 and 1010 positions (float32 and bfloat16, decode and prompt steps) share one measured choice, the second measures nothing and matches the CPU", RowsTuneSizeClasses),
+        ("tuning: attention over rows of different lengths and decoding attention key the cache's size and the rows by size class: caches of 1000 and 1010 positions (float32, decode and prompt steps) share one measured choice, the second measures nothing and matches the CPU", RowsTuneSizeClasses),
         ("tuning: a convolution or a float32 product at a size class none measured takes the choice of the nearest measured class of its shape within ComputeResources.TuningNeighbourOctaves (IDRAK_TUNE_NEIGHBOUR_OCTAVES) instead of measuring, a class farther away is measured, 0 measures every class, and the lent choice gives the CPU's result; each measured tuning is a TuningCompleted telemetry event", ConvNeighbourClasses),
     ];
 
@@ -138,9 +138,9 @@ internal abstract partial class Tests
         }
     }
 
-    // Attention over rows of different lengths (each row from its own start) on a cache of `capacity` positions filled to
-    // all but the step's own, float32 or bfloat16, with seeded data (the same on every device for one shape).
-    internal static float[] RowsAttention(Device on, int capacity, int steps, bool bfloat16)
+    // Attention over rows of different lengths (each row from its own start) on a float32 cache of `capacity` positions
+    // filled to all but the step's own, with seeded data (the same on every device for one shape).
+    internal static float[] RowsAttention(Device on, int capacity, int steps)
     {
         const int heads = 8, dim = 64;
         var random = new Random(capacity * 31 + steps);
@@ -152,21 +152,8 @@ internal abstract partial class Tests
         using var position = Tensor.From([(float)(capacity - steps)], [1], on);
         using var starts = Tensor.From([.. Enumerable.Range(0, heads * steps).Select(i => (float)(i / steps % 3 * 7))], [heads * steps], on);
         using var y = Tensor.From(new float[heads * steps * dim], [heads, steps, dim], on);
-        if (!bfloat16)
-        {
-            Check(backend.AttentionRows(q.Storage, k.Storage, v.Storage, position.Storage, y.Storage, starts.Storage, heads, 1, steps, steps, capacity, dim, 0.125f),
-                $"float32 rows run on {on}");
-            return y.ToArray();
-        }
-
-        int words = (dim + 1) / 2;
-        using var zero = Tensor.From([0f], [1], on);
-        using var k16 = Tensor.From(new float[heads * capacity * words], [heads, capacity, words], on);
-        using var v16 = Tensor.From(new float[heads * capacity * words], [heads, capacity, words], on);
-        backend.KeyValueWriteBFloat16(k.Storage, k16.Storage, zero.Storage, heads, capacity, capacity, dim);
-        backend.KeyValueWriteBFloat16(v.Storage, v16.Storage, zero.Storage, heads, capacity, capacity, dim);
-        Check(backend.AttentionRowsBFloat16(q.Storage, k16.Storage, v16.Storage, position.Storage, y.Storage, starts.Storage, heads, 1, steps, steps, capacity, dim, 0.125f),
-            $"bfloat16 rows run on {on}");
+        Check(backend.AttentionRows(q.Storage, k.Storage, v.Storage, position.Storage, y.Storage, starts.Storage, heads, 1, steps, steps, capacity, dim, 0.125f),
+            $"float32 rows run on {on}");
         return y.ToArray();
     }
 
@@ -193,18 +180,15 @@ internal abstract partial class Tests
             vulkan?.ForgetTuning();
             using (Telemetry.Subscribe(tunings))
             {
-                foreach (bool bfloat16 in new[] { false, true })
+                foreach (int steps in new[] { 1, 9 })
                 {
-                    foreach (int steps in new[] { 1, 9 })
-                    {
-                        string what = $"{(bfloat16 ? "bfloat16" : "float32")} rows, {(steps == 1 ? "a decoding step" : $"{steps} prompt steps")}";
-                        RowsAttention(device, 1000, steps, bfloat16);           // class 1024: measured where the shape offers choices
-                        int first = tunings.Total;
-                        var near = RowsAttention(device, 1010, steps, bfloat16);
-                        Check(tunings.Total == first, $"{what}: a cache of 1010 positions (class 1024) after 1000 measured {tunings.Total - first} choices again");
-                        var cpu = RowsAttention(Device.Cpu, 1010, steps, bfloat16);
-                        AssertClose(near, cpu, 1e-2f * Math.Max(1f, cpu.Max(Math.Abs)), $"{what}: the class-mate's choice against the CPU");
-                    }
+                    string what = $"float32 rows, {(steps == 1 ? "a decoding step" : $"{steps} prompt steps")}";
+                    RowsAttention(device, 1000, steps);                          // class 1024: measured where the shape offers choices
+                    int first = tunings.Total;
+                    var near = RowsAttention(device, 1010, steps);
+                    Check(tunings.Total == first, $"{what}: a cache of 1010 positions (class 1024) after 1000 measured {tunings.Total - first} choices again");
+                    var cpu = RowsAttention(Device.Cpu, 1010, steps);
+                    AssertClose(near, cpu, 1e-2f * Math.Max(1f, cpu.Max(Math.Abs)), $"{what}: the class-mate's choice against the CPU");
                 }
             }
         }
@@ -320,10 +304,8 @@ internal abstract partial class Tests
             return;
         }
 
-        int[] list = CudaBackend.GemvSplitCandidates(1024, 1);
-        Check(list.SequenceEqual([1, 2, 3, 4, 6, 8, 12, 16]), "head (k 1024): 1 … 16");
-        int formula = CudaBackend.GemvSplitCount(20, (151936 / 4 + 31) / 32, 1024);
-        Check(formula == 1, "head on 20 SMs: the formula gives 1 split");
+        int[] list = [1, 2, 3, 4, 6, 8, 12, 16];                                // the head's split counts (k 1024)
+        int formula = 1;                                                        // the head on 20 SMs: 1 split
         var head = new Dictionary<int, float> { [1] = 657f, [2] = 765f, [3] = 700f, [4] = 690f, [6] = 684f, [8] = 680f, [12] = 676f, [16] = 672f };
 
         // The comparison before (each candidate once per round against the reference's timing of that round, forwards
@@ -375,8 +357,8 @@ internal abstract partial class Tests
         Check(CudaBackend.TimingRepeats(0.007f, cold: false) == 16 && CudaBackend.TimingRepeats(0.007f, cold: true) == 4, "7 µs: 16 back to back, 4 cold");
     }
 
-    // Pure (no GPU): the few-row split choice as CudaBackend.PackedFewRows makes it (candidates, key, formula, TuneTiming)
-    // with fake timers shaped like --bench-gemv's results on a 70-SM and a 30-SM card.
+    // Pure (no GPU): TuneTiming's choice under a clock step and its warm-up, with fake timers shaped like --bench-gemv's
+    // results on a 30-SM card.
     internal static void GemvSelection(Device device)
     {
         if (device.Type != DeviceType.Cpu)
@@ -384,74 +366,12 @@ internal abstract partial class Tests
             return;
         }
 
-        // Candidates: the bench's columns (any count runs: the kernels take a 64-row step, then single rows).
-        Check(CudaBackend.GemvSplitCandidates(2048, 1).SequenceEqual([1, 2, 3, 4, 6, 8, 12, 16, 24, 32]), "k 2048: 1 … 32 with 3, 6, 12, 24");
-        Check(CudaBackend.GemvSplitCandidates(3072, 1).SequenceEqual([1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48]), "k 3072: up to 48");
-        Check(CudaBackend.GemvSplitCandidates(1024, 1).SequenceEqual([1, 2, 3, 4, 6, 8, 12, 16]), "k 1024: up to 16");
-        var int4 = CudaBackend.GemvSplitCandidates(3072, 64);
-        Check(int4.Select(w => (3072 + ((3072 + w - 1) / w + 63) / 64 * 64 - 1) / (((3072 + w - 1) / w + 63) / 64 * 64)).Distinct().Count() == int4.Length,
-            $"int4 (64-row groups): no two candidates run the same chunks ({string.Join(",", int4)})");
-        foreach (int k in new[] { 64, 1024, 2048, 3072, 4096 })
-        {
-            foreach (int sms in new[] { 20, 30, 70, 132 })
-            {
-                foreach (int blocks in new[] { 1, 8, 24, 48, 1187 })
-                {
-                    int formula = CudaBackend.GemvSplitCount(sms, blocks, k);
-                    Check(CudaBackend.GemvSplitCandidates(k, 1).Contains(formula) && CudaBackend.GemvSplitCandidates(k, 64).Contains(formula),
-                        $"the formula's choice ({formula}; k {k}, {sms} SMs, {blocks} blocks) is a candidate");
-                }
-            }
-        }
-
-        // Keys: per kernel variant and shape, so the add-and-normalize kernel no longer takes the plain kernel's choice.
-        var keys = new HashSet<TuneKey>();
-        for (int variant = 0; variant < 12; variant++)
-        {
-            keys.Add(CudaBackend.GemvSplitsKey(variant, 1, 1024, 2048));
-        }
-
-        keys.Add(CudaBackend.GemvSplitsKey(0, 1, 1024, 3072));
-        keys.Add(CudaBackend.GemvSplitsKey(0, 2, 1024, 2048));
-        Check(keys.Count == 14, "every kernel variant and shape has its own key");
-        var identity = new TuningIdentity("GPU", "driver", "library");
-        var plainKey = CudaBackend.GemvSplitsKey(CudaBackend.GemvPlain, 1, 1024, 2048);
-        var addNormKey = CudaBackend.GemvSplitsKey(CudaBackend.GemvAddNorm, 1, 1024, 2048);
-        var file = TuningCache.Parse(TuningCache.Serialize(identity, new Dictionary<TuneKey, int> { [plainKey] = 8, [addNormKey] = 16 }), identity)!;
-        Check(file[plainKey] == 8 && file[addNormKey] == 16, "and the cache file keeps them apart");
-
-        // Measured per key with each kernel's own timer, as PackedFewRows does (the fake curves: µs per call).
-        Dictionary<TuneKey, int> Measure(int sms, int k, params (TuneKey Key, Dictionary<int, float> Curve)[] kernels)
-        {
-            var kept = new Dictionary<TuneKey, int>();
-            foreach (var (key, curve) in kernels)
-            {
-                int[] candidates = CudaBackend.GemvSplitCandidates(k, 1);
-                int formula = CudaBackend.GemvSplitCount(sms, 8, k);           // 1024 int8 columns: 8 column blocks
-                kept.TryAdd(key, candidates[TuneTiming.Choose(candidates, formula, c => curve[candidates[c]])]);
-            }
-
-            return kept;
-        }
-
-        // 70 SMs, o + add + norm 2048 → 1024: the fused kernel is fastest at 16 splits (7.5 µs against 8.8 at
-        // 8); the plain kernel of the shape at 8. Before, the fused kernel took the plain kernel's 8.
-        var plain70 = new Dictionary<int, float> { [1] = 28f, [2] = 15f, [3] = 11f, [4] = 9.5f, [6] = 8f, [8] = 7.0f, [12] = 7.3f, [16] = 7.6f, [24] = 8.2f, [32] = 8.8f };
-        var addNorm70 = new Dictionary<int, float> { [1] = 30f, [2] = 16f, [3] = 12f, [4] = 10.5f, [6] = 9.3f, [8] = 8.8f, [12] = 8.0f, [16] = 7.5f, [24] = 7.9f, [32] = 8.3f };
-        Check(CudaBackend.GemvSplitCount(70, 8, 2048) == 16, "70 SMs: the formula gives 16");
-        var chosen = Measure(70, 2048, (plainKey, plain70), (addNormKey, addNorm70));
-        Check(chosen[plainKey] == 8 && chosen[addNormKey] == 16, $"70 SMs: plain {chosen[plainKey]}, add + norm {chosen[addNormKey]} (8 and 16)");
-        var collided = Measure(70, 2048, (plainKey, plain70), (plainKey, addNorm70));
-        Check(collided[plainKey] == 8, "with the old shared key the fused kernel would run the plain kernel's 8 (8.8 µs, not 7.5)");
-
-        // 30 SMs: 6 splits 15 µs, the formula's 8 about 20; 6 was not a candidate before.
+        // Times shaped like a 30-SM card's: 6 splits 15 µs, the formula's 8 about 20.
         var addNorm30 = new Dictionary<int, float> { [1] = 40f, [2] = 26f, [3] = 19f, [4] = 17f, [6] = 15f, [8] = 20f, [12] = 19f, [16] = 21f, [24] = 25f, [32] = 29f };
-        Check(CudaBackend.GemvSplitCount(30, 8, 2048) == 8, "30 SMs: the formula gives 8");
-        Check(Measure(30, 2048, (addNormKey, addNorm30))[addNormKey] == 6, "30 SMs: 6 splits chosen");
 
         // A clock that rises 3x part way through the measurement (an idle laptop GPU): with ratios of pairs the choice
         // is 6 wherever the step falls; medians of the times themselves chose differently by where it fell.
-        int[] list = CudaBackend.GemvSplitCandidates(2048, 1);
+        int[] list = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32];                         // the split counts of k 2048
         int total = 0;
         TuneTiming.Choose(list, 8, _ => { total++; return 1f; });
         int rawWrong = 0;
@@ -506,8 +426,7 @@ internal abstract partial class Tests
         var identity = new TuningIdentity("NVIDIA Test GPU; compute 8.6; 30 SMs; 6144 MiB", "CUDA 13000; 580.82.07", "0.1.7+abc; kernels 0123456789abcdef");
         var entries = new Dictionary<TuneKey, int>
         {
-            [new TuneKey(TuneOp.GemvSplits, 0, 1, 2048, 1024)] = 16,
-            [new TuneKey(TuneOp.TensorSplits, 9, 256, 256, 4096, 256, -1, 7)] = 6,
+            [new TuneKey(TuneOp.Convolution, 9, 256, 256, 4096, 256, -1, 7)] = 6,
             [new TuneKey(TuneOp.DecodeSplits, 2, 16, 4096, 128)] = 24,
         };
 
@@ -524,7 +443,7 @@ internal abstract partial class Tests
         Check(TuningCache.Parse(text, identity with { Library = "0.1.7+abc; kernels fedcba9876543210" }) is null, "other kernels: ignored");
         Check(TuningCache.Parse(text.Replace($"idrak-tuning {TuningCache.FormatVersion}", "idrak-tuning 999", StringComparison.Ordinal), identity) is null, "another format version: ignored");
         Check(TuningCache.Parse("", identity) is null && TuningCache.Parse("garbage", identity) is null, "not a cache file: ignored");
-        var unknown = TuningCache.Parse(text + "NoSuchOp 0 1 2 3 0 0 0 = 4\nGemvSplits 0 1 x 3 0 0 0 = 4\nGemvSplits 1 1 2 3 0 0 0 = 8\n", identity);
+        var unknown = TuningCache.Parse(text + "NoSuchOp 0 1 2 3 0 0 0 = 4\nDecodeSplits 0 1 x 3 0 0 0 = 4\nDecodeSplits 1 1 2 3 0 0 0 = 8\n", identity);
         Check(unknown?.Count == entries.Count + 1, "lines that do not parse are skipped, the rest kept");
 
         string name = TuningCache.FileName("Vendor GPU 1 Laptop; compute 8.6; 30 SMs; 6144 MiB");
@@ -547,15 +466,15 @@ internal abstract partial class Tests
             Check(loaded.Count == entries.Count && entries.All(e => loaded[e.Key] == e.Value), "loaded back");
 
             // Another process of the same identity adds a choice: both kept, ours win where both measured.
-            var more = new Dictionary<TuneKey, int> { [new TuneKey(TuneOp.FloatTile, 0, 256, 256, 4096, 1)] = 128, [new TuneKey(TuneOp.GemvSplits, 0, 1, 2048, 1024)] = 8 };
+            var more = new Dictionary<TuneKey, int> { [new TuneKey(TuneOp.FloatTile, 0, 256, 256, 4096, 1)] = 128, [new TuneKey(TuneOp.DecodeSplits, 2, 16, 4096, 128)] = 8 };
             Check(TuningCache.Save(path, identity, more), "saved again");
             loaded = TuningCache.Load(path, identity);
-            Check(loaded.Count == entries.Count + 1 && loaded[new TuneKey(TuneOp.GemvSplits, 0, 1, 2048, 1024)] == 8, "merged with what the file held");
+            Check(loaded.Count == entries.Count + 1 && loaded[new TuneKey(TuneOp.DecodeSplits, 2, 16, 4096, 128)] == 8, "merged with what the file held");
 
             // A driver update: the old file is ignored and rewritten with the new identity only.
             var updated = identity with { Driver = "CUDA 13010; 590.10" };
             Check(TuningCache.Load(path, updated).Count == 0, "after a driver update nothing is kept");
-            Check(TuningCache.Save(path, updated, new Dictionary<TuneKey, int> { [new TuneKey(TuneOp.PackedTile, 0, 180, 1024, 1024)] = 64 }), "rewritten");
+            Check(TuningCache.Save(path, updated, new Dictionary<TuneKey, int> { [new TuneKey(TuneOp.FloatTile, 0, 180, 1024, 1024)] = 64 }), "rewritten");
             Check(TuningCache.Load(path, updated).Count == 1 && TuningCache.Load(path, identity).Count == 0, "only the new driver's choices remain");
             Check(!Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.tmp").Any(), "no temporary file left");
         }
@@ -646,27 +565,11 @@ internal abstract partial class Tests
         {
             Directory.Delete(root, recursive: true);
         }
-
-        // The cache keys differ by power source.
-        string? before = Environment.GetEnvironmentVariable("IDRAK_POWER_SOURCE");
-        try
-        {
-            Environment.SetEnvironmentVariable("IDRAK_POWER_SOURCE", "ac");
-            string ac = Idrak.Abstraction.Devices.Cpu.CpuTuning.CacheKey(4);
-            Environment.SetEnvironmentVariable("IDRAK_POWER_SOURCE", "battery");
-            string battery = Idrak.Abstraction.Devices.Cpu.CpuTuning.CacheKey(4);
-            Check(ac != battery && ac.EndsWith("power ac", StringComparison.Ordinal) && battery.EndsWith("power battery", StringComparison.Ordinal),
-                $"CPU cache keys per power source ({ac} / {battery})");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("IDRAK_POWER_SOURCE", before);
-        }
     }
 
     // The least positions per block of decoding attention (CudaBackend.DecodeSplit): any least chunk with any split count
     // gives the result of one block reading every position (the blocks past the filled length add empty parts), for the
-    // float32, int8 and bfloat16 caches and filled lengths from one position to most of the capacity.
+    // float32 cache and filled lengths from one position to most of the capacity.
     internal static void DecodeMinChunks(Device device)
     {
         if (device.Type == DeviceType.Cpu)

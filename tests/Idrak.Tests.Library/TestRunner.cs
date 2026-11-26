@@ -222,15 +222,11 @@ public static class TestRunner
             Report(header);
         }
 
-        // Every device: the CPU and each GPU found, unless the run names its own.
+        // Every device Device lists (the CPU), unless the run names its own.
         var devices = options.Devices?.ToList();
         if (devices is null)
         {
             devices = [.. Device.Available];
-            if (!Device.IsCudaAvailable)
-            {
-                Report($"CUDA not available ({CudaBackend.UnavailableReason}); testing {string.Join(", ", devices)}.", pass: true);
-            }
         }
 
         long total = (long)selected.Count * devices.Count, done = 0;
@@ -455,10 +451,4 @@ public static class TestSuite
 {
     /// <summary>Every test of the library's groups, in the console runner's order.</summary>
     public static IReadOnlyList<(string Name, Action<Device> Run)> All => global::Tests.All;
-
-    /// <summary>
-    /// What every run registers first, as an app does: the text model families (Idrak.Text.Plugins; the library registers
-    /// none), which a test of a family's registration takes away and puts back.
-    /// </summary>
-    public static void Prepare() => Idrak.Text.Plugins.TextPlugins.RegisterAll();
 }

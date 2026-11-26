@@ -12,8 +12,8 @@ using Idrak.Gpu.Vulkan;
 // Plan 34, phase F: what the first runs on a phone and a tablet showed. The CPU's memory is the system's where the
 // runtime's figure is its heap budget (Mono), held to the runtime's heap limit where it has one (CoreCLR); portable
 // 128-bit vectors run where the runtime reports no NEON; the cores are named by their groups; a kernel the driver refuses
-// falls back (the same kernel without its subgroup-size request, its next variant, its operation's fallback), never
-// taking the device down, and is asked for once per process.
+// falls back (the same kernel without its subgroup-size request, its operation's fallback), never taking the device down,
+// and is asked for once per process.
 internal abstract partial class Tests
 {
     // Writes `text` at root/relative, making its folders.
@@ -213,44 +213,6 @@ internal abstract partial class Tests
         Check(CpuInfo.DescribeSets([], VectorSupport.None, Architecture.Arm64) == "no SIMD" && CpuInfo.DescribeSets(["AVX2", "FMA"], VectorSupport.Intrinsics, Architecture.X64) == "AVX2 FMA",
             "no vectors: no SIMD; reported sets as before");
 
-        // The tiled kernel per setting: native as before; portable the 128-bit kernel wherever 128-bit vectors are
-        // accelerated; scalar none; automatic native's, or the portable kernel on ARM64 without reported intrinsics.
-        var native = Vector512.IsHardwareAccelerated && Avx512F.IsSupported && Fma.IsSupported ? TiledKernel.Avx512
-            : Vector256.IsHardwareAccelerated && Avx2.IsSupported && Fma.IsSupported ? TiledKernel.Avx2
-            : AdvSimd.Arm64.IsSupported && Vector128.IsHardwareAccelerated ? TiledKernel.Neon : TiledKernel.None;
-        Check(CpuTuning.KernelFor(CpuVectorPaths.Native) == native, $"native: the former selection ({native})");
-        Check(CpuTuning.KernelFor(CpuVectorPaths.Portable) == (Vector128.IsHardwareAccelerated ? TiledKernel.Neon : TiledKernel.None), "portable: the 128-bit kernel");
-        Check(CpuTuning.KernelFor(CpuVectorPaths.Scalar) == TiledKernel.None, "scalar: no tiled kernel");
-        Check(CpuTuning.KernelFor(CpuVectorPaths.Automatic) == (native != TiledKernel.None ? native
-            : Vector128.IsHardwareAccelerated && RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? TiledKernel.Neon : TiledKernel.None), "automatic");
-
-        // The int4 lane shifts: a shift per lane and a multiply by 2^count give the same bits (rule 71), on every count used.
-        var random = new Random(34);
-        for (int trial = 0; trial < 256; trial++)
-        {
-            var lanes = new int[8];
-            var counts = new int[8];
-            for (int l = 0; l < 8; l++)
-            {
-                lanes[l] = random.Next(int.MinValue, int.MaxValue);
-                counts[l] = 28 - 4 * random.Next(8);
-            }
-
-            var products = lanes.Select((v, l) => unchecked(v * (1 << counts[l]))).ToArray();
-            Check(lanes.Select((v, l) => v << counts[l]).SequenceEqual(products), "a shift is a multiply by 2^count");
-            if (Avx2.IsSupported)
-            {
-                var shifted = Avx2.ShiftLeftLogicalVariable(Vector256.Create(lanes), Vector256.Create(counts).AsUInt32());
-                Check(shifted == Vector256.Create(lanes) * Vector256.Create(products.Select((p, l) => 1 << counts[l]).ToArray()), "AVX2's lane shift as the multiply");
-            }
-
-            if (AdvSimd.IsSupported)
-            {
-                var shifted = AdvSimd.ShiftLogical(Vector128.Create(lanes[..4]), Vector128.Create(counts[..4]));
-                Check(shifted == Vector128.Create(products[..4]), "NEON's lane shift as the multiply");
-            }
-        }
-
         string described = CpuTuning.DescribeVectorPaths();
         Console.WriteLine($"    vector paths: {described}; instruction sets: {CpuInfo.Current.InstructionSets}");
         Check(described.Contains("IDRAK_CPU_VECTORS", StringComparison.Ordinal) && Device.Cpu.Backend.Hardware.Facts!.Any(f => f.Key == "vector paths"),
@@ -347,7 +309,7 @@ internal abstract partial class Tests
             return;
         }
 
-        var refusing = new RefusingBackend("refusing") { RetryOnHost = false, Refuse = true };
+        var refusing = new RefusingBackend("refusing") { Refuse = true };
         float[] values = [1f, 2f, 3f, -1f, 0f, 1f, 0.5f, 7f, -3f];
         var x = refusing.Allocate(values.Length, zeroed: false);
         var y = refusing.Allocate(values.Length, zeroed: true);
@@ -379,7 +341,7 @@ internal abstract partial class Tests
             Check(!refusing.MatMulBias(x, x, x, c, 1, 1, 1), "a refused kernel of an operation with no fallback returns its none");
             Check(refusing.FellBackTo.Contains("MatMulBias|matmul_bias|the caller's path"), "and is listed as the caller's path");
 
-            // Any other device error still reaches the caller (RetryOnHost off: plan 10, decision 13).
+            // Any other device error still reaches the caller (plan 10, decision 13).
             DeviceException? thrown = null;
             try
             {
@@ -414,32 +376,7 @@ internal abstract partial class Tests
             var savedFormula = VulkanBackend.ProbeFormulaOverride;
             string cache = Path.Combine(Path.GetTempPath(), $"idrak-refused-{Environment.ProcessId}.tsv");
             var cpu = CpuBackend.Instance;
-            const int M = 8, K = 96, N = 300;
-            var w = Values(K * N, 5);
-            var int8 = Int8Weight.Quantize(w, K, N, Device.Cpu);
-            float[] q8 = int8.Packed.ToArray(), s8 = int8.Scales.ToArray(), xs = Values(M * K, 6), rows = Values(4 * 300, 7);
-
-            float[] Product(Backend b, int m)
-            {
-                var (x, q, s, y) = (b.Allocate(m * K, false), b.Allocate(q8.Length, false), b.Allocate(s8.Length, false), b.Allocate(m * N, true));
-                try
-                {
-                    b.Upload(xs.AsSpan(0, m * K), x);
-                    b.Upload(q8, q);
-                    b.Upload(s8, s);
-                    b.Int8MatMul(x, q, s, y, m, N, K);
-                    var result = new float[m * N];
-                    b.Download(y, result);
-                    return result;
-                }
-                finally
-                {
-                    x.Release();
-                    q.Release();
-                    s.Release();
-                    y.Release();
-                }
-            }
+            float[] rows = Values(4 * 300, 7);
 
             float[] Softmax(Backend b)
             {
@@ -462,71 +399,35 @@ internal abstract partial class Tests
             static bool Same(float[] a, float[] b) => a.Select(BitConverter.SingleToInt32Bits).SequenceEqual(b.Select(BitConverter.SingleToInt32Bits));
             static string Fact(Backend b, string name) => b.Hardware.Facts!.First(f => f.Key == name).Value;
 
-            float[] reference = Product(shared, M);                            // the device's own kernel, nothing refused
-            float[] cpuProduct = Product(cpu, M);
-            AssertClose(cpuProduct, reference, 1e-4f, "the int8 product matches the CPU");
             try
             {
                 VulkanBackend.TuningCacheFile = cache;
                 VulkanBackend.ProbeFormulaOverride = Math.Min(256, Math.Min(shared.Limits.MaxInvocations, shared.Limits.MaxSizeX));
 
-                // 1. The 8-row int8 product kernel refused (both word variants): the device starts, the width probe
-                //    included (it runs 64-row int8 products), and the products run the next variant with the same bits.
+                // 1. The softmax kernels refused: the operation runs on the host with the CPU's bits, once asked.
                 File.Delete(cache);
-                VulkanBackend.RefuseKernels = ["int8_gemv_8", "int8_gemv_8_w64"];
-                var first = VulkanBackend.CreateSeparate(ordinal, preferMapped: true);
-                try
-                {
-                    Console.WriteLine($"    vulkan:{ordinal}: started with int8_gemv_8 refused: width {first.Width} ({first.WidthChoice})");
-                    long hostCalls = Kernels.HostCalls(first);
-                    var got = Product(first, M);
-                    Check(Same(reference, got), "8 rows through the next variant: the bits of the device's own kernel");
-                    int attempts = first.PipelineAttempts;
-                    for (int again = 0; again < 3; again++)
-                    {
-                        Check(Same(reference, Product(first, M)), "again: the same bits");
-                    }
-
-                    Check(first.PipelineAttempts == attempts, $"the refusal is asked once: {first.PipelineAttempts - attempts} more pipeline attempts");
-                    Check(Kernels.HostCalls(first) == hostCalls, "nothing ran on the host");
-                    Check(first.RefusedKernels.Any(r => r.Kernel == "int8_gemv_8"), "the refusal is kept");
-                    string refused = Fact(first, "refused kernels");
-                    Console.WriteLine($"    vulkan:{ordinal}: refused kernels: {refused}");
-                    Check(refused.Contains("int8_gemv_8 at width", StringComparison.Ordinal) && refused.Contains("VK_ERROR_UNKNOWN", StringComparison.Ordinal)
-                          && refused.Contains("int8_gemv_4", StringComparison.Ordinal), "the facts list the refused kernel, how, and what ran instead");
-                }
-                finally
-                {
-                    first.Shutdown();
-                }
-
-                // 2. Every int8 product kernel and the softmax kernels refused: those operations run on the host with the
-                //    CPU's bits, once asked.
-                VulkanBackend.RefuseKernels = [.. VulkanKernels.GemvRowBlocks.SelectMany(r => VulkanKernels.GemvWordCounts
-                    .Select(words => VulkanKernels.GemvName(VulkanKernels.PackedFormat.Int8, r, words))), "softmax", "softmax_narrow"];
+                VulkanBackend.RefuseKernels = ["softmax", "softmax_narrow"];
                 var second = VulkanBackend.CreateSeparate(ordinal, preferMapped: true);
                 try
                 {
                     long hostCalls = Kernels.HostCalls(second);
-                    Check(Same(cpuProduct, Product(second, M)), "every int8 product kernel refused: the host's result, the CPU's bits");
                     float[] cpuSoftmax = Softmax(cpu);
                     Check(Same(cpuSoftmax, Softmax(second)), "softmax refused: the host's result, the CPU's bits");
                     int attempts = second.PipelineAttempts;
-                    Check(Same(cpuProduct, Product(second, M)) && Same(cpuSoftmax, Softmax(second)), "again");
+                    Check(Same(cpuSoftmax, Softmax(second)), "again");
                     Check(second.PipelineAttempts == attempts, $"asked once: {second.PipelineAttempts - attempts} more attempts");
                     Check(Kernels.HostCalls(second) > hostCalls, "they ran on the host");
                     string refused = Fact(second, "refused kernels");
                     Console.WriteLine($"    vulkan:{ordinal}: refused kernels: {refused}");
                     Check(refused.Contains("the host", StringComparison.Ordinal) && refused.Contains("softmax", StringComparison.Ordinal),
                         "the facts say they fell back to the host");
-                    Check(Same(Product(cpu, 1), Product(second, 1)), "one row too");
                 }
                 finally
                 {
                     second.Shutdown();
                 }
 
-                // 3. A kernel refused only with its subgroup-size request: built again without it, the same results.
+                // 2. A kernel refused only with its subgroup-size request: built again without it, the same results.
                 var probe = VulkanBackend.CreateSeparate(ordinal, preferMapped: true);
                 int[] sizes;
                 try

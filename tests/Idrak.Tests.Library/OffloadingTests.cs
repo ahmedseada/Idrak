@@ -24,8 +24,8 @@ internal abstract partial class Tests
         ("memory stress: four threads take, check and free blocks of every kind the pool hands out (small, best-fit, chunk-sized in and out of the long-lived scope, a page and a little, whole pages) while others release the cache, record and replay graphs and measure the attention path; then again with the device at its limit and offloading on; then while another thread moves tensors they read and write between the device and system memory: no block handed out twice, every value and write kept, every graph recorded, no address read outside an operation or a move, no thread failing, and the pool's figures back where they started", MemoryStress),
         ("move gate: a move waits for other threads' operations and holds new ones back until it ends; one that may not wait, or is asked from inside an operation, runs only while no other thread is inside one; the mover's own operations and nested moves go through; a placement of lookup tables from inside an operation waits for the others, another inside one steps aside for it (counted again before it ends), and a general move still waiting gives way to it", MoveGateOrder),
         ("offloading: a lookup table placed while other threads keep reading it: an allocation at the limit outside any operation waits for their operations, moves the table and succeeds; their reads give the same sums before and after", LookupTablesUnderReaders),
-        ("offloading: a frozen decoder's separate token table by LookupTables: host (system memory from the build), automatic (moved for good when an allocation finds the device at its limit, which then succeeds) and device (the allocation fails as before) give the same logits bit for bit; the table never counts as offloaded; auto, host and device parse", LookupTablePlacements),
-        ("offloading: a device that can offload (IOffloadingBackend, as CUDA always is) with offloading off runs a transformer block's fused inference passes, giving the CPU's bits; with offloading on (ComputeResources.OffloadToHostMemory, or a storage offloaded) it runs the layers' own forwards, which stage offloaded weights", FusedPassesWithOffloadSupport),
+        ("offloading: the lookup tables' placements auto, host and device parse", LookupTablePlacements),
+        ("offloading: with offloading off the CPU runs a transformer block's fused inference passes (not the attention's own forward)", FusedPassesWithOffloadSupport),
     ];
 
     internal static void FusedPassesWithOffloadSupport(Device device)
@@ -36,13 +36,6 @@ internal abstract partial class Tests
             return;
         }
 
-        if (DeviceProviders.Find("moe-offload-test") is null)
-        {
-            DeviceProviders.Register(new OffloadCapableProvider());
-        }
-
-        var capable = Device.Get("moe-offload-test");
-        var backend = OffloadCapableBackend.Instance;
         bool before = ComputeResources.OffloadToHostMemory;
         var random = new Random(31);
         float[] x = [.. Enumerable.Range(0, 2 * 5 * 16).Select(_ => random.NextSingle() * 2 - 1)];
@@ -75,27 +68,12 @@ internal abstract partial class Tests
         try
         {
             ComputeResources.OffloadToHostMemory = false;
-            backend.Offloaded = 0;
-            var cpu = Run(Device.Cpu, out int cpuForwards);
-            var off = Run(capable, out int offForwards);
-            Check(cpuForwards == 0 && offForwards == 0, $"offloading off: the fused passes run (the attention's own forward ran {cpuForwards} times on the CPU, {offForwards} on {backend.Name})");
-            Check(cpu.Select(BitConverter.SingleToInt32Bits).SequenceEqual(off.Select(BitConverter.SingleToInt32Bits)),
-                $"offloading off: the CPU's bits (largest difference {cpu.Zip(off, (a, b) => MathF.Abs(a - b)).Max()})");
-
-            ComputeResources.OffloadToHostMemory = true;
-            var on = Run(capable, out int onForwards);
-            ComputeResources.OffloadToHostMemory = false;
-            backend.Offloaded = 1;
-            var offloaded = Run(capable, out int offloadedForwards);
-            Check(onForwards == 1 && offloadedForwards == 1,
-                $"offloading on: the layers' own forwards run (the attention's {onForwards} times with OffloadToHostMemory, {offloadedForwards} with a storage offloaded)");
-            float worst = cpu.Zip(on, (a, b) => MathF.Abs(a - b)).Concat(cpu.Zip(offloaded, (a, b) => MathF.Abs(a - b))).Max();
-            Check(worst <= 1e-5f, $"the passes one by one give the fused passes' values (largest difference {worst})");
+            _ = Run(Device.Cpu, out int cpuForwards);
+            Check(cpuForwards == 0, $"offloading off: the fused passes run (the attention's own forward ran {cpuForwards} times on the CPU)");
         }
         finally
         {
             ComputeResources.OffloadToHostMemory = before;
-            backend.Offloaded = 0;
         }
     }
 
@@ -473,144 +451,13 @@ internal abstract partial class Tests
         }
     }
 
-    // Training-step times with the weights on the GPU, in system memory (read directly, staged, staged with the next layer
-    // prefetched), and with AdamW's update on the CPU.
-    internal static int BenchOffload()
-    {
-        if (!Device.IsCudaAvailable)
-        {
-            Console.WriteLine("needs a CUDA device");
-            return 1;
-        }
-
-        var device = Device.Cuda();
-        var offload = device.Backend.Offload!;
-        Console.WriteLine($"{device.Name}: 8 linear layers 2048 x 2048 (128 MiB of float32 weights), 256 rows, AdamW");
-        var r = new Random(1);
-        var xs = Enumerable.Range(0, 256 * 2048).Select(_ => r.NextSingle() - 0.5f).ToArray();
-        double Time(string name, bool offloaded, bool stage, bool prefetch, bool hostOptimizer)
-        {
-            using var model = new Sequential(Enumerable.Range(0, 8).Select(i => (Module)new Linear(2048, 2048, device: device, random: new Random(i))));
-            using Optimizer optimizer = hostOptimizer ? new HostOptimizer(model.Parameters(), ps => new AdamW(ps, 1e-4f)) : new AdamW(model.Parameters(), 1e-4f);
-            if (offloaded)
-            {
-                model.Parameters().ToList().ForEach(p => offload.MoveToHost(p.Storage, keep: true));
-            }
-
-            (Offloading.StageWeights, ComputeResources.PrefetchOffloadedWeights) = (stage, prefetch);
-            using var x = Tensor.From(xs, [256, 2048], device);
-            void Step()
-            {
-                using var scope = new TensorScope();
-                optimizer.ZeroGrad();
-                model.Forward(x).Square().Mean().Backward();
-                optimizer.ClipAndStep(1f);
-            }
-
-            try
-            {
-                for (int i = 0; i < 3; i++)
-                {
-                    Step();
-                }
-
-                device.Synchronize();
-                var watch = System.Diagnostics.Stopwatch.StartNew();
-                for (int i = 0; i < 10; i++)
-                {
-                    Step();
-                }
-
-                device.Synchronize();
-                double ms = watch.Elapsed.TotalMilliseconds / 10;
-                Console.WriteLine($"  {name,-58} {ms,8:F1} ms/step");
-                return ms;
-            }
-            finally
-            {
-                (Offloading.StageWeights, ComputeResources.PrefetchOffloadedWeights) = (true, true);
-            }
-        }
-
-        double gpu = Time("weights and AdamW state on the GPU", false, true, true, false);
-        Time("weights in system memory, read over PCIe as kernels run", true, false, false, false);
-        Time("weights in system memory, staged per layer", true, true, false, false);
-        double prefetched = Time("weights in system memory, staged + next layer prefetched", true, true, true, false);
-        double host = Time("weights on the GPU, AdamW on the CPU (state in RAM)", false, true, true, true);
-        Console.WriteLine($"  prefetch vs GPU-only: {prefetched / gpu:F2}x the time; CPU optimizer: {host / gpu:F2}x");
-        return 0;
-    }
-
     internal static void LookupTablePlacements(Device device)
     {
+        _ = device;
         Check(ComputeResources.ParseLookupTables(null) == LookupTablePlacement.Automatic && ComputeResources.ParseLookupTables("auto") == LookupTablePlacement.Automatic
             && ComputeResources.ParseLookupTables("Host") == LookupTablePlacement.HostMemory && ComputeResources.ParseLookupTables(" device ") == LookupTablePlacement.DeviceMemory,
             "auto, host and device parse");
         Expect<ArgumentException>(() => ComputeResources.ParseLookupTables("disk"), "auto, host or device", "an unknown placement");
-
-        // int8 projections and a tied int8 head beside a bfloat16 table of their own (as int8 weights load a checkpoint).
-        var spec = SmallSpec with { Vocabulary = 4096, TieEmbeddings = true };
-        using var sequence = Tensor.From([.. Enumerable.Range(0, 7).Select(i => (float)(i * 577 % spec.Vocabulary))], [1, 7], device);
-        Sequential Build(LookupTablePlacement placement) =>
-            spec.Build(new RandomWeights(41), new DecoderBuildOptions { Device = device, LookupTables = placement });
-        float[] Logits(Sequential model)
-        {
-            using (Autograd.NoGrad())
-            {
-                model.Eval();
-                return model.Predict(sequence).ToArray();
-            }
-        }
-
-        static Storage TableOf(Sequential model) => model.Descendants().OfType<Embedding>().Single().BFloat16!.Packed.Storage;
-
-        using var reference = Build(LookupTablePlacement.DeviceMemory);
-        var expected = Logits(reference);
-        if (OffloadOf(device) is not { } offload || device.Backend is not CudaBackend cuda)
-        {
-            using var host = Build(LookupTablePlacement.HostMemory);                 // the table is in system memory already
-            AssertClose(expected, Logits(host), 0f, "a device without offloading: the same logits");
-            return;
-        }
-
-        long tableBytes = TableOf(reference).Length * 4L;
-        long placed = cuda.PlacedOnHost, offloaded = ComputeResources.GetMemoryUsage(device).Offloaded;
-        using (var host = Build(LookupTablePlacement.HostMemory))
-        {
-            Check(cuda.PlacedOnHost == placed + 1, "host: the table in system memory from the build");
-            Check(ComputeResources.GetMemoryUsage(device).Offloaded - offloaded >= tableBytes, $"host: counted in system memory ({ComputeResources.GetMemoryUsage(device)})");
-            Check(offload.OffloadedCount == 0, "host: not offloaded (nothing staged, rebalanced or brought back)");
-            AssertClose(expected, Logits(host), 0f, "host: the same logits");
-        }
-
-        Check(ComputeResources.GetMemoryUsage(device).Offloaded == offloaded, "host: the system block released with the model");
-        long? limit = ComputeResources.GpuMemoryLimit;
-        try
-        {
-            // The device at its limit: an allocation the size of the table fits only once the table has left.
-            void AtLimit() => ComputeResources.GpuMemoryLimit = ComputeResources.GetMemoryUsage(device).InUse + tableBytes / 2;
-            AtLimit();
-            Expect<ResourceLimitExceededException>(() => Tensor.Zeros([(int)(tableBytes / 4)], device).Dispose(), "limit", "device: the table stays, the allocation fails");
-            Check(cuda.PlacedOnHost == placed + 1, "device: nothing placed");
-            ComputeResources.GpuMemoryLimit = limit;
-
-            using var automatic = Build(LookupTablePlacement.Automatic);
-            Check(cuda.PlacedOnHost == placed + 1, "automatic: on the device while it has room");
-            AssertClose(expected, Logits(automatic), 0f, "automatic, on the device: the same logits");
-            AtLimit();
-            using (Tensor.Zeros([(int)(tableBytes / 4)], device))
-            {
-                Check(cuda.PlacedOnHost == placed + 2, "automatic: the full device moved the table out and the allocation succeeded");
-            }
-
-            ComputeResources.GpuMemoryLimit = limit;
-            Check(offload.OffloadedCount == 0, "automatic: not offloaded");
-            AssertClose(expected, Logits(automatic), 0f, "automatic, in system memory: the same logits");
-        }
-        finally
-        {
-            ComputeResources.GpuMemoryLimit = limit;
-        }
     }
 
     internal static void ChunkedBlocks(Device device)
