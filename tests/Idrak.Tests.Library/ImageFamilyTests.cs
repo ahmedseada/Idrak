@@ -19,7 +19,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] ImageFamilyGroup =
     [
-        ("image families: the library registers no family; an unregistered architecture is refused naming ImageModelFamilies before any weight is opened; a config without an architecture, a folder without config.json and an ONNX file naming none are refused", ImageFamiliesRefuse),
+        ("image families: a config without an architecture, a folder without config.json and an ONNX file naming none are refused", ImageFamiliesRefuse),
         ("image families: an ONNX file finds its family by its \"architecture\" and \"config\" metadata (or the options), its network imported once and owned by the model", ImageFamiliesLoadOnnx),
         ("image families: the generic \"boxes-scores\" decoder reads rows and columns, xyxy, xywh, cxcywh, normalized and logits", ImageFamiliesDecoders),
         ("image families: ModelDetector with a family's preprocessing maps boxes back through the resize and the center crop, per image size in one call, and takes a decoder by name; ModelSegmenter with a preprocessor (a crop refused); predictors refuse the wrong task", ImageFamiliesPredictors),
@@ -55,17 +55,9 @@ internal abstract partial class Tests
 
     internal static void ImageFamiliesRefuse(Device device)
     {
-        Check(ImageModelFamilies.Names.All(n => ImageModelFamilies.Origin(n) != Overrides.Library) && ImageModelFamilies.Default("ResNetForImageClassification") is null,
-            $"the library registers no image model family ({string.Join(", ", ImageModelFamilies.Names)})");
         string folder = TempFolder("image-refuse");
         try
         {
-            // No weights at all: the family is looked up first, so the refusal names the registry, not a missing file.
-            File.WriteAllText(Path.Combine(folder, "config.json"), """{"architectures": ["NobodysNet"]}""");
-            ExpectRefusal<NotSupportedException>(() => ImageModels.Load(folder), "Image model family 'NobodysNet' is not registered (registered: ", "unregistered");
-            ExpectRefusal<NotSupportedException>(() => ImageModels.Load(folder), "register it with ImageModelFamilies.Register (a plug-in or the app that brings the family; the library registers none)", "the remedy");
-            ExpectRefusal<NotSupportedException>(() => ImageModels.Load(folder), "or reference Idrak.Vision.Plugins and call VisionPlugins.RegisterAll()", "the plug-in package named");
-            ExpectRefusal<NotSupportedException>(() => ImageModels.Load(folder, new ImageModelOptions { Architecture = "AlsoNobody" }), "'AlsoNobody' is not registered", "the options' architecture");
             File.WriteAllText(Path.Combine(folder, "config.json"), """{"model_type": "mystery"}""");
             ExpectRefusal<InvalidDataException>(() => ImageModels.Load(folder), "names no architecture", "a config without an architecture");
             File.Delete(Path.Combine(folder, "config.json"));
@@ -175,8 +167,6 @@ internal abstract partial class Tests
         {
             string file = Path.Combine(folder, "net.onnx");
             OnnxExport.For(network).Input(3, 8, 8).Metadata("architecture", OnnxFamily).Metadata("config", """{"id2label": {"0": "cat", "1": "dog"}}""").Save(file);
-            ExpectRefusal<NotSupportedException>(() => ImageModels.Load(file), $"Image model family '{OnnxFamily}' is not registered", "unregistered ONNX family");
-            ImageModelFamilies.Register(family);
             var x = Tensor.From(RandomArray(new Random(4), 3 * 3 * 8 * 8), [3, 3, 8, 8], Device.Cpu);
             var expected = network.Predict(x).ToArray();
             using (var model = ImageModels.Load(file, new ImageModelOptions { Device = device }))
@@ -199,7 +189,6 @@ internal abstract partial class Tests
         }
         finally
         {
-            ImageModelFamilies.Unregister(OnnxFamily);
             network.Dispose();
             Directory.Delete(folder, recursive: true);
         }

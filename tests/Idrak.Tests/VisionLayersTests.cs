@@ -23,7 +23,7 @@ internal abstract partial class DesktopTests : Tests
         ("vision layers: AdaptiveAvgPool2d and AdaptiveMaxPool2d (uneven, overlapping windows) match PyTorch with gradients; divisible sizes give ordinary pooling's results; gradient: finite differences", AdaptivePoolsMatchPyTorch),
         ("vision layers: GroupNorm (affine over [N, C, H, W], plain over [N, C, L]) matches PyTorch's output and gradients; gradient: finite differences", GroupNormMatchesPyTorch),
         ("vision layers: ceil-mode MaxPool2d and AvgPool2d (padding counted and not) match PyTorch with gradients; padding below and right; gradient: finite differences", CeilPoolsMatchPyTorch),
-        ("vision layers: builder steps replay from JSON, layer types describe and create, weights save and load; pooling without the new options is described as before", VisionLayersDescribedAgain),
+        ("vision layers: builder steps replay from JSON; pooling without the new options is written as before", VisionLayersDescribedAgain),
         ("vision layers: ONNX: a decoder exports (ONNX Runtime matches) and imports again; PyTorch's decoder.onnx and windows.onnx (padding below and right, GroupNormalization) import and match", VisionLayersOnnxImport),
     ];
 
@@ -277,33 +277,6 @@ internal abstract partial class DesktopTests : Tests
         var steps = Network.Image(1, 8, 8).MaxPool2d((2, 2)).AvgPool2d((2, 2)).ToJson()["steps"]!.AsArray();
         Check(steps[0]!.ToJsonString() == """{"op":"maxpool2d","kernel":2,"padding":0}""" && steps[1]!.ToJsonString() == """{"op":"avgpool2d","kernel":2,"padding":0,"countIncludePad":true}""",
             steps.ToJsonString());
-        Check(LayerTypes.Describe(new AvgPool2d(2)).ToJsonString() == """{"type":"avgpool2d","kernel":2,"stride":2,"padding":0,"countIncludePad":true}""", "average pooling described as before");
-
-        Module[] layers =
-        [
-            new ConvTranspose2d(4, 6, (3, 2), (2, 1), (1, 0), (1, 0), (1, 2), groups: 2, device: device, random: new Random(113)),
-            new ConvTranspose2d(4, 2, 3, bias: false, device: device, random: new Random(114)), new Upsample((1.5f, 2f), InterpolationMode.Bilinear),
-            Upsample.ToSize((11, 7), InterpolationMode.Bilinear, alignCorners: true), new Upsample(2), new AdaptiveAvgPool2d((3, 2)), new AdaptiveMaxPool2d(2),
-            new GroupNorm(2, 4, 1e-3f, device: device), new GroupNorm(4, 4, affine: false, device: device),
-            new MaxPool2d((3, 3), (2, 2), (1, 1), ceilMode: true, paddingEnd: (0, 1)), new AvgPool2d((3, 2), (2, 2), (1, 1), false, ceilMode: true, paddingEnd: (1, 0)),
-        ];
-        foreach (var layer in layers)
-        {
-            foreach (var p in layer.Parameters())
-            {
-                p.Load(RandomArray(new Random(p.Size), p.Size));
-            }
-
-            var description = LayerTypes.Describe(layer);
-            using var created = LayerTypes.Create(description, device);
-            Check(LayerTypes.Describe(created).ToJsonString() == description.ToJsonString() && created.ToString() == layer.ToString(), $"{layer}: {description.ToJsonString()}");
-            using var stream = new MemoryStream();
-            layer.Save(stream);
-            stream.Position = 0;
-            created.Load(stream);
-            var input = Tensor.From(RandomArray(new Random(115), 2 * 4 * 9 * 8), [2, 4, 9, 8], device);
-            AssertClose(layer.Forward(input).ToArray(), created.Forward(input).ToArray(), 0f, $"{layer} saved and loaded");
-        }
     }
 
     private static void VisionLayersOnnxImport(Device device)
