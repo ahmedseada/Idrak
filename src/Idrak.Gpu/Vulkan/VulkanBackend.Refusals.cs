@@ -8,17 +8,16 @@ using static Idrak.Gpu.Vulkan.VulkanDriver;
 namespace Idrak.Gpu.Vulkan;
 
 // A kernel the driver refuses never takes the device down. A driver may refuse to build a pipeline its device reports it
-// can run (vkCreateComputePipelines: VK_ERROR_UNKNOWN for one product kernel on one phone's driver, while another driver
-// of the same family built it). The ladder, once per kernel and backend (the refusal is kept, so the driver is asked once
+// can run (vkCreateComputePipelines: VK_ERROR_UNKNOWN for one kernel on one phone's driver, while another driver of the
+// same family built it). The ladder, once per kernel and backend (the refusal is kept, so the driver is asked once
 // per process; every later dispatch finds it in one lookup):
 //   1. the same SPIR-V without the required subgroup size and without whole subgroups, where the kernel allows it (its
 //      reductions read the subgroup size at run time; a kernel built for one size, such as an emulated cooperative
 //      matrix, keeps its request and is refused instead: rule 87);
-//   2. the kernel's next variant, where it has variants (the packed products: the other words per row of k, the other
-//      widths, then the smaller row blocks: VulkanBackend.Kernels.cs, PackedProduct), and a refused candidate of a
-//      measurement is left out of it (VulkanBackend.KernelTuning.cs) and a refused width out of the width probe;
-//   3. the operation's fallback through the dispatcher (Backend.BuildsKernelsWhenUsed): its host fallback, its composed
-//      path, or the caller's own path.
+//   2. a refused candidate of a measurement is left out of it (VulkanBackend.KernelTuning.cs) and a refused width out of
+//      the width probe;
+//   3. the operation's fallback through the dispatcher (Backend.BuildsKernelsWhenUsed): its composed path, or the
+//      caller's own path.
 // What was refused, how, and what it fell back to are in the device's facts ("refused kernels").
 internal sealed unsafe partial class VulkanBackend
 {

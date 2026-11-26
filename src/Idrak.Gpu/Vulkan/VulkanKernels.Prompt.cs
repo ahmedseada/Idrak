@@ -4,8 +4,7 @@
 namespace Idrak.Gpu.Vulkan;
 
 // Kernels for prompts (many query rows at once): tiled attention over a key/value cache, with and without each row's
-// log-sum-exp, and the packed weight products (int8, int4, bfloat16) tiled like batched_matmul, the weights expanded as
-// they are staged instead of into a float copy first.
+// log-sum-exp.
 internal static partial class VulkanKernels
 {
     private static IEnumerable<(string, Func<SpirvKernel>)> PromptKernels()
@@ -13,15 +12,8 @@ internal static partial class VulkanKernels
         yield return ("attention_tiled", () => TiledAttention("attention_tiled", logSumExp: false));
         yield return ("attention_tiled_lse", () => TiledAttention("attention_tiled_lse", logSumExp: true));
 
-        // attention_tiled for rows of different lengths (Backend.AttentionRows, AttentionRowsBFloat16): each row from its
-        // own start, over a float32 or a bfloat16 cache.
+        // attention_tiled for rows of different lengths (Backend.AttentionRows): each row from its own start.
         yield return ("attention_tiled_rows_f32", () => TiledAttention("attention_tiled_rows_f32", logSumExp: false, rowStarts: true));
-        yield return ("attention_tiled_rows_bf16", () => TiledAttention("attention_tiled_rows_bf16", logSumExp: false, rowStarts: true, bfloat16: true));
-        foreach (var format in new[] { PackedFormat.Int8, PackedFormat.Int4, PackedFormat.BFloat16 })
-        {
-            string name = PackedGemmName(format);
-            yield return (name, () => PackedGemm(name, format));
-        }
     }
 
     /// <summary>Query rows one workgroup of the tiled attention takes at a width (the side of batched_matmul's square).</summary>
@@ -62,9 +54,8 @@ internal static partial class VulkanKernels
     // With `rowStarts` (attention_tiled_rows_*: rows of different lengths), row i of head h also starts at its own
     // starts[(h / headsPerRow) · steps + i % steps] (a binding before the position, a push constant after softcap): the
     // tiles start at the lowest first position of the block's rows that see any (none: no tile), and a row that sees
-    // nothing (padding) keeps a total of 0 and gets zeros. With `bfloat16`, keys and values are [heads, capacity,
-    // ⌈dim / 2⌉ words], dimension d in the low (even d) or high (odd d) half of word d / 2, widened as they are staged.
-    private static SpirvKernel TiledAttention(string name, bool logSumExp, bool rowStarts = false, bool bfloat16 = false)
+    // nothing (padding) keeps a total of 0 and gets zeros.
+    private static SpirvKernel TiledAttention(string name, bool logSumExp, bool rowStarts = false)
     {
         int width = Block, rows = TiledAttentionRows(width), tile = TiledAttentionPositions(width);
         const int Depth = TiledAttentionDepth, Stride = Depth + 1;
@@ -78,12 +69,9 @@ internal static partial class VulkanKernels
         var scale = k.PushFloat("scale");
         var (window, softcap) = (k.PushInt("window"), k.PushFloat("softcap"));
         Val? headsPerRow = rowStarts ? k.PushInt("headsPerRow") : null;
-        Val? words = bfloat16 ? (dim + 1) / 2 : null;
 
         // Dimension d0 + e of cached row `slot` (= head · capacity + position).
-        Val Cached(Buf cache, Val slot, Val d0, Val e) => bfloat16
-            ? BFloat16At(k, cache, slot * words!.Value + ((d0 + e) >> 1), d0 + e)
-            : cache[slot * dim + d0 + e];
+        Val Cached(Buf cache, Val slot, Val d0, Val e) => cache[slot * dim + d0 + e];
 
         // The first position row `row` of head h sees (its window's start, its own start), given its limit.
         Val RowStart(Val h, Val row, Val limit)
@@ -239,9 +227,7 @@ internal static partial class VulkanKernels
                         {
                             var (vc, e) = (i / Depth, i % Depth);
                             var value = k.Local(0f);
-                            k.If((vc < positions) & (stage * Depth + e < dim), () => value.V = bfloat16
-                                ? Cached(values, first + c0 + vc, k.Int(stage * Depth), e)
-                                : values[(first + c0 + vc) * dim + stage * Depth + e]);
+                            k.If((vc < positions) & (stage * Depth + e < dim), () => value.V = values[(first + c0 + vc) * dim + stage * Depth + e]);
                             staged[vc * Depth + e] = value.V;
                         });
                         k.Barrier();
@@ -288,140 +274,6 @@ internal static partial class VulkanKernels
             });
             k.Barrier();                                                      // max and total read before the next block resets them
         }, k.GroupsX);
-        return k.Build();
-    }
-
-    /// <summary>The prompt-sized packed product kernel of a format.</summary>
-    public static string PackedGemmName(PackedFormat format) => format switch
-    {
-        PackedFormat.Int8 => "int8_gemm",
-        PackedFormat.Int4 => "int4_gemm",
-        _ => "bf16_gemm",
-    };
-
-    /// <summary>Rows and columns of y one workgroup of the packed product computes at a width (batched_matmul's block).</summary>
-    public static int PackedGemmEdge(int width) => MatPer * MatSide(width);
-
-    // y[m, n] = x[m, k] · w(k, n) for packed weights (layouts as PackedGemv's), many rows: batched_matmul's register-blocked
-    // tiling (S × S invocations, S = MatSide(width), each keeping 4 × 4 outputs of a T × T block of y, T = 4S; grid x =
-    // ⌈n / T⌉ column blocks, y = ⌈m / T⌉ row blocks), with the 16 × T tile of w staged from its packed words: invocation
-    // l takes word l of the tile (16 rows of k × T / (columns per word) words; T is a multiple of every format's columns
-    // per word, so a block starts on a word) and writes its columns as floats (int4 times the scale of their group of 32
-    // rows; int8's per-column scales multiply the sums at the end). Zeros past k, n or m. Every output adds its k terms
-    // in order, as batched_matmul does.
-    //
-    // Workgroup memory: tileA[kk · (T + 1) + r] and tileB[kk · (T + 1) + col] are written only between the barrier ending
-    // the previous step's reads and the barrier before this step's reads, each element by exactly one invocation.
-    private static SpirvKernel PackedGemm(string name, PackedFormat format)
-    {
-        int side = MatSide(Block), threads = side * side, Per = MatPer, tileEdge = Per * side, stride = tileEdge + 1;
-        int sideShift = System.Numerics.BitOperations.Log2((uint)side);
-        int perWord = ColumnsPerWord(format), tileWords = tileEdge / perWord, wordLoads = MatDepth * tileWords;
-        var k = new KernelBuilder(name, threads);
-        var x = k.Buffer("x");
-        var q = k.Buffer(format == PackedFormat.BFloat16 ? "packed" : "q");
-        var scales = format == PackedFormat.BFloat16 ? null : k.Buffer("scales");
-        var y = k.Buffer("y");
-        var (m, n, depth) = (k.PushInt("m"), k.PushInt("n"), k.PushInt("k"));
-        var tileA = k.Shared("tileA", MatDepth * stride);
-        var tileB = k.Shared("tileB", MatDepth * stride);
-        var tid = k.LocalX;
-        var (tx, ty) = (tid & (side - 1), tid >> sideShift);
-        var rowBase = k.GroupY * tileEdge;
-        var colBase = k.GroupX * tileEdge;
-        var words = (n + (perWord - 1)) / perWord;
-        var wordBase = k.GroupX * tileWords;
-        var acc = new Var[Per * Per];
-        for (int i = 0; i < acc.Length; i++)
-        {
-            acc[i] = k.Local(0f);
-        }
-
-        k.For(k.Int(0), depth, MatDepth, t =>
-        {
-            // x[rowBase + r, t + ka]: 16 consecutive invocations along k.
-            for (int p = 0; p < tileEdge * MatDepth / threads; p++)
-            {
-                var l = tid + p * threads;
-                var (r, ka) = (l >> 4, l & (MatDepth - 1));
-                var (row, kk) = (rowBase + r, t + ka);
-                var value = k.Local(0f);
-                k.If((row < m) & (kk < depth), () => value.V = x[row * depth + kk]);
-                tileA[ka * stride + r] = value.V;
-            }
-
-            // The tile's packed words: consecutive invocations along a row of k.
-            for (int p = 0; p * threads < wordLoads; p++)
-            {
-                var l = tid + p * threads;
-                void Load()
-                {
-                    var (kb, wv) = (l / tileWords, l % tileWords);
-                    var kk = t + kb;
-                    var bits = k.Local(k.Int(0));
-                    k.If((kk < depth) & (wordBase + wv < words), () => bits.V = q.Int(kk * words + wordBase + wv));
-                    var b = bits.V;
-                    for (int ci = 0; ci < perWord; ci++)
-                    {
-                        Val w = format switch
-                        {
-                            PackedFormat.Int8 => ((b << (24 - 8 * ci)) >> 24).ToFloat(),
-                            PackedFormat.Int4 => ((b << (28 - 4 * ci)) >> 28).ToFloat()
-                                * scales![k.Min(kk, depth - 1) / 32 * (words * 8) + k.Min(wordBase + wv, words - 1) * 8 + ci],
-                            _ => ci == 0 ? (b.AsUInt() << 16).AsFloat() : (b.AsUInt() & k.UInt(0xFFFF0000u)).AsFloat(),
-                        };
-                        tileB[kb * stride + wv * perWord + ci] = w;
-                    }
-                }
-
-                if ((p + 1) * threads <= wordLoads)
-                {
-                    Load();
-                }
-                else
-                {
-                    k.If(l < wordLoads, Load);
-                }
-            }
-
-            k.Barrier();
-            var sums = acc.Select(v => v.V).ToArray();
-            for (int e = 0; e < MatDepth; e++)
-            {
-                var av = new Val[Per];
-                var bv = new Val[Per];
-                for (int i = 0; i < Per; i++)
-                {
-                    av[i] = tileA[k.Int(e * stride + side * i) + ty];
-                    bv[i] = tileB[k.Int(e * stride + side * i) + tx];
-                }
-
-                for (int i = 0; i < Per; i++)
-                {
-                    for (int j = 0; j < Per; j++)
-                    {
-                        sums[i * Per + j] = k.Fma(av[i], bv[j], sums[i * Per + j]);
-                    }
-                }
-            }
-
-            for (int i = 0; i < acc.Length; i++)
-            {
-                acc[i].V = sums[i];
-            }
-
-            k.Barrier();
-        });
-
-        for (int i = 0; i < Per; i++)
-        {
-            for (int j = 0; j < Per; j++)
-            {
-                var (row, col, value) = (rowBase + ty + side * i, colBase + tx + side * j, acc[i * Per + j]);
-                k.If((row < m) & (col < n), () => y[row * n + col] = scales is not null && format == PackedFormat.Int8 ? value.V * scales[col] : value.V);
-            }
-        }
-
         return k.Build();
     }
 }

@@ -3,12 +3,11 @@
 
 namespace Idrak.Gpu.Vulkan;
 
-// Attention for rows of different lengths decoded together (Backend.AttentionRows over a float32 cache,
-// AttentionRowsBFloat16 over a bfloat16 one): each row of a padded batch attends from its own start, so a batch of
+// Attention for rows of different lengths decoded together (Backend.AttentionRows): each row of a padded batch attends from its own start, so a batch of
 // prompts of different lengths decodes on the device instead of copying the cache to the host every step. Two kernel
 // families serve it, each with the row's start read from the starts buffer: the decoding kernel (attention_rows_f32,
-// attention_rows_bf16: a workgroup per query row, the positions split as decoding attention's, its splits measured as
-// Attend's) and the tiled kernel (attention_tiled_rows_f32, attention_tiled_rows_bf16: a workgroup per block of query
+// a workgroup per query row, the positions split as decoding attention's, its splits measured as
+// Attend's) and the tiled kernel (attention_tiled_rows_f32: a workgroup per block of query
 // rows of a head, each key and value read once per block). Which one serves a shape is measured on the device
 // (VulkanTuneOp.RowsAttention: the tiled kernel at every candidate width against the decoding kernel), as attention over
 // many rows is (VulkanBackend.Prompt.cs); until measured, the formula's choice is the tiled kernel where a head has at
@@ -18,12 +17,14 @@ internal sealed partial class VulkanBackend : IRowAttentionBackend
     /// <summary>Tests and benchmarks only: attention for rows of different lengths, tiled (true) or the decoding kernel (false), instead of the measured choice.</summary>
     internal static bool? RowsAttentionKernel { get; set; }
 
-    // The kernels of each cache format: 0 float32, 1 bfloat16.
-    private static readonly string[] RowsDecodeKernels = ["attention_rows_f32", "attention_rows_bf16"];
-    private static readonly string[] RowsTiledKernels = ["attention_tiled_rows_f32", "attention_tiled_rows_bf16"];
+    // The two kernels.
+    private const string RowsDecodeKernel = "attention_rows_f32", RowsTiledKernel = "attention_tiled_rows_f32";
 
-    // Whether both formats' kernels bind on this device (their storages within maxPerStageDescriptorStorageBuffers).
-    private bool RowsBindable => Bindable(RowsDecodeKernels[0]) && Bindable(RowsDecodeKernels[1]) && Bindable(RowsTiledKernels[0]) && Bindable(RowsTiledKernels[1]);
+    // Whether the device binds as many storages per stage as the kernel declares (maxPerStageDescriptorStorageBuffers).
+    private bool Bindable(string kernel) => Kernel(kernel).Bindings <= _physical.Properties.MaxPerStageDescriptorStorageBuffers;
+
+    // Whether both kernels bind on this device.
+    private bool RowsBindable => Bindable(RowsDecodeKernel) && Bindable(RowsTiledKernel);
 
     // Both kernels take every head size up to AttentionMaxDim, a sliding window and soft-capped scores.
     bool IRowAttentionBackend.SupportsRows(int dim, AttentionVariant variant) =>
@@ -34,10 +35,10 @@ internal sealed partial class VulkanBackend : IRowAttentionBackend
     {
         if (!RowsFit(dim, steps, headsPerRow, q, keys, values, position, y, starts))
         {
-            return AttentionRowsOnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+            return false;
         }
 
-        AttendRows(0, [q, keys, values, starts, position, y], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        AttendRows([q, keys, values, starts, position, y], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         return true;
     }
 
@@ -47,7 +48,7 @@ internal sealed partial class VulkanBackend : IRowAttentionBackend
 
     // Runs attention for rows of different lengths (storages: q, keys, values, starts, position, y) with the forced,
     // stored, measured or formula's choice.
-    private void AttendRows(int format, Span<Storage> storages, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale,
+    private void AttendRows(Span<Storage> storages, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale,
         AttentionVariant variant)
     {
         int rows = heads * rowsPerHead;
@@ -68,14 +69,14 @@ internal sealed partial class VulkanBackend : IRowAttentionBackend
             bool windowed = variant.Window > 0 && variant.Window < capacity;
             // Sizes that follow the data by their class (TuneSizes), as decoding attention's; a class-mate's choice this
             // shape cannot take gives the formula's.
-            var key = new VulkanTuneKey(VulkanTuneOp.RowsAttention, format + (windowed ? 2 : 0), TuneSizes.Class(rows), TuneSizes.Class(rowsPerHead),
+            var key = new VulkanTuneKey(VulkanTuneOp.RowsAttention, windowed ? 2 : 0, TuneSizes.Class(rows), TuneSizes.Class(rowsPerHead),
                 TuneSizes.Class(steps), TuneSizes.Class(capacity), dim, windowed ? variant.Window : 0);
             if (!TryTuned(key, out choice))
             {
                 choice = fallback;
                 if (CanTune)
                 {
-                    choice = TuneRowsAttention(key, format, storages.ToArray(), fallback, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+                    choice = TuneRowsAttention(key, storages.ToArray(), fallback, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
                 }
             }
             else if (!RowsChoiceValid(choice))
@@ -84,7 +85,7 @@ internal sealed partial class VulkanBackend : IRowAttentionBackend
             }
         }
 
-        RunRowsAttention(choice, format, storages, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        RunRowsAttention(choice, storages, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     // Whether a choice (a stored one too) can run here: the tiled kernel at a candidate width, or the decoding kernel.
@@ -99,7 +100,7 @@ internal sealed partial class VulkanBackend : IRowAttentionBackend
     // read from a scratch storage holding capacity - steps, so the last step sees every position, where attention costs
     // most; the rows' own starts as given), the outputs written to a scratch storage. The decoding kernel's own choice
     // (its splits) is settled first, outside the timing. Kept apart from AttendRows so its usual calls make no closure.
-    private int TuneRowsAttention(VulkanTuneKey key, int format, Storage[] storages, int fallback, int heads, int headsPerRow, int rowsPerHead, int steps,
+    private int TuneRowsAttention(VulkanTuneKey key, Storage[] storages, int fallback, int heads, int headsPerRow, int rowsPerHead, int steps,
         int capacity, int dim, float scale, AttentionVariant variant)
     {
         if (!TunesOp(key.Op))
@@ -118,21 +119,21 @@ internal sealed partial class VulkanBackend : IRowAttentionBackend
                 bound[i] = scratch[i] ?? storages[i];
             }
 
-            RunRowsAttention(WithWidth(Width, TiledDecode), format, bound, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
-            chosen = Tune(key, candidates, fallback, c => RunRowsAttention(c, format, bound, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant));
+            RunRowsAttention(WithWidth(Width, TiledDecode), bound, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+            chosen = Tune(key, candidates, fallback, c => RunRowsAttention(c, bound, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant));
         });
         return chosen;
     }
 
     // Runs attention for rows of different lengths with `choice`: the decoding kernel (Attend, its splits measured under
-    // formats 6 and 7), or the tiled kernel at its width (a workgroup per block of TiledAttentionRows rows of a head, at
+    // format 6), or the tiled kernel at its width (a workgroup per block of TiledAttentionRows rows of a head, at
     // most what the device takes; the kernel loops over the rest).
-    private void RunRowsAttention(int choice, int format, Span<Storage> storages, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim,
+    private void RunRowsAttention(int choice, Span<Storage> storages, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim,
         float scale, AttentionVariant variant)
     {
         if ((choice & Rest) == TiledDecode)
         {
-            Attend(RowsDecodeKernels[format], 6 + format, storages, heads, rowsPerHead, steps, capacity, dim, scale, variant, headsPerRow);
+            Attend(RowsDecodeKernel, 6, storages, heads, rowsPerHead, steps, capacity, dim, scale, variant, headsPerRow);
             return;
         }
 
@@ -140,6 +141,6 @@ internal sealed partial class VulkanBackend : IRowAttentionBackend
         long blocks = (long)heads * ((rowsPerHead + rowsPerBlock - 1) / rowsPerBlock);
         Span<byte> b = stackalloc byte[36];
         var push = new Push(b).I(heads).I(rowsPerHead).I(steps).I(capacity).I(dim).F(scale).I(variant.Window).F(variant.Softcap).I(headsPerRow).Bytes;
-        RunAt(RowsTiledKernels[format], width, RowGroups(blocks), 1, 1, storages, push);
+        RunAt(RowsTiledKernel, width, RowGroups(blocks), 1, 1, storages, push);
     }
 }

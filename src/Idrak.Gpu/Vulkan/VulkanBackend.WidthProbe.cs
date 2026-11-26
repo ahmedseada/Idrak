@@ -96,15 +96,14 @@ internal sealed partial class VulkanBackend
         }
     }
 
-    // Times each candidate width on work of both kinds a model runs: prompt-shaped products (a 256³ float32 product, an
-    // int8 product of 64 rows 1024 -> 3072) and decoding-shaped work of one row (int8 products 1024 -> 3072 and 3072 -> 1024, an RMS norm of 1024,
-    // a softmax of 32768), eight back to back as in a decoding step. Each part is compared with its fastest width and the
+    // Times each candidate width on work of both kinds a model runs: a prompt-shaped product (a 256³ float32 product) and
+    // decoding-shaped work of one row (an RMS norm of 1024, a softmax of 32768), eight back to back as in a decoding step. Each part is compared with its fastest width and the
     // geometric mean of those ratios ranks the widths, so neither kind outweighs the other by its length. The formula's
     // width is kept unless another is clearly faster (WidthMargin).
     private int MeasureWidth(List<int> candidates, int formula)
     {
-        const int Size = 256, Dim = 1024, Wide = 3072, Classes = 32768, Prompt = 64;
-        int[] lengths = [Size * Size, Size * Size, Size * Size, Wide, Wide * Dim / 4, Wide, Dim, Dim, Classes, Prompt * Dim, Prompt * Wide];
+        const int Size = 256, Dim = 1024, Classes = 32768;
+        int[] lengths = [Size * Size, Size * Size, Size * Size, Dim, Dim, Classes];
         var s = new Storage[lengths.Length];
         int original = Limits.Width;
         bool timing = t_timing;
@@ -116,15 +115,13 @@ internal sealed partial class VulkanBackend
                 s[i] = Allocate(lengths[i], zeroed: true);
             }
 
-            var (a, b, c, x, q, scales, y, gain, logits) = (s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8]);
-            var (rows, wide) = (s[9], s[10]);
+            var (a, b, c, y, gain, logits) = (s[0], s[1], s[2], s[3], s[4], s[5]);
 
             // The operations as a model calls them (each picks its kernel at the width as it would in use), so a kernel
             // that does not fit a width is not timed as if it took no time.
             var parts = new List<Action>
             {
                 () => BatchedMatMul(a, b, c, 1, Size, Size, Size, false, false, 0f),
-                () => Int8MatMul(rows, q, scales, wide, Prompt, Wide, Dim),
             };
 
             void Eight(Action step)
@@ -135,8 +132,6 @@ internal sealed partial class VulkanBackend
                 }
             }
 
-            parts.Add(() => Eight(() => Int8MatMul(gain, q, scales, x, 1, Wide, Dim)));
-            parts.Add(() => Eight(() => Int8MatMul(x, q, scales, gain, 1, Dim, Wide)));
             parts.Add(() => Eight(() => RmsNormAffine(gain, y, gain, 1, Dim, 1e-6f, 0f)));
             parts.Add(() => Eight(() => Softmax(logits, logits, 1, Classes, false)));
 

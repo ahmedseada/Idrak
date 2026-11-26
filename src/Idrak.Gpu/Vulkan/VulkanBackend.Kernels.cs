@@ -799,27 +799,16 @@ internal sealed partial class VulkanBackend : IKernelAvailability
 
     // ------------------------------------------------------------------ products
 
-    /// <summary>Tests and benchmarks only: the k splits of the packed products instead of the measured or formula's.</summary>
-    internal static int? GemvSplits { get; set; }
-
-    /// <summary>Tests and benchmarks only: the words per row of k of the packed products (a <see cref="VulkanKernels.GemvWordCounts"/> value).</summary>
-    internal static int? GemvWords { get; set; }
-
     /// <summary>Tests and benchmarks only: the position splits of decoding attention instead of the measured or formula's.</summary>
     internal static int? AttentionSplits { get; set; }
 
     /// <summary>
-    /// Tests and benchmarks only: the float32 product kernel (0 small, 1 tiled, 2 register-blocked, 3 cooperative matrices,
-    /// 4 the reduced-precision cooperative matrices, only where MixedPrecision asks for reduced precision) when it fits.
+    /// Tests and benchmarks only: the float32 product kernel (0 small, 1 tiled, 2 register-blocked, 3 cooperative matrices)
+    /// when it fits.
     /// </summary>
     internal static int? MatMulKernel { get; set; }
 
-    // Fewest rows of k per split of a packed product (a format fact, not a device one): the partial sums written and
-    // added again (4 bytes per output and split) stay at most 1/16 of the int4 weights read, 1/32 of int8's, 1/64 of
-    // bfloat16's.
-    private const int GemvMinChunk = 128;
-
-    private const int MatSmall = 0, MatTiled = 1, MatBlocked = 2, MatCoop = 3, MatMixed = 4;
+    private const int MatSmall = 0, MatTiled = 1, MatBlocked = 2, MatCoop = 3;
 
     public override void BatchedMatMulKernel(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
@@ -856,8 +845,6 @@ internal sealed partial class VulkanBackend : IKernelAvailability
                     chosen = MeasureMatMul(key, fallback, a, b, c, batch, m, n, push);
                 }
             }
-
-            chosen = MixedMatMulChoice(chosen, a, b, c, batch, m, n, k, transA, transB, push);
         }
 
         RunMatMul(chosen, a, b, c, batch, m, n, push);
@@ -870,45 +857,6 @@ internal sealed partial class VulkanBackend : IKernelAvailability
         var pushed = push.ToArray();
         return TuneWithScratch(key, MatCandidates(m, n), fallback, [a, b, c], 1UL << 2,
             (choice, s) => RunMatMul(choice, s[0], s[1], s[2], batch, m, n, pushed));
-    }
-
-    // Reduced precision (MixedPrecision, VulkanBackend.Matrix.cs): the float32 choice or the single-pass cooperative-matrix
-    // kernel, measured per shape under a key of its own (the float32 choice stays what float32 products measured); the
-    // float32 choice while nothing is measured, in float32 mode and where the kernel cannot run.
-    private int MixedMatMulChoice(int chosen, Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, ReadOnlySpan<byte> push)
-    {
-        int mixed = WithWidth(Width, MatMixed);
-        if (!MatValid(mixed, m, n))
-        {
-            if (MixedPrecision.Current != MatMulPrecision.Float32 && MixedKernel(null) is null)
-            {
-                // No kernel of the asked type here: float32, counted (ReducedPrecision).
-                ReducedPrecision.InFloat32(this, Ops.BatchedMatMul, (long)batch * ((long)m * k + (long)k * n));
-            }
-
-            return chosen;
-        }
-
-        var key = new VulkanTuneKey(VulkanTuneOp.MixedMatMul, (transA ? 2 : 0) + (transB ? 1 : 0), batch, m, n, k);
-        if (!TryTuned(key, out int decided) || decided is not (0 or 1))
-        {
-            decided = 0;
-            if (CanTune)
-            {
-                decided = MeasureMixedMatMul(key, chosen, mixed, a, b, c, batch, m, n, push);
-            }
-        }
-
-        return decided == 1 ? mixed : chosen;
-    }
-
-    // Measures the float32 choice (0) against the reduced-precision kernel (1) on a scratch output, apart from the
-    // operation so its usual calls make no closure.
-    private int MeasureMixedMatMul(VulkanTuneKey key, int chosen, int mixed, Storage a, Storage b, Storage c, int batch, int m, int n, ReadOnlySpan<byte> push)
-    {
-        var pushed = push.ToArray();
-        return TuneWithScratch(key, [0, 1], 0, [a, b, c], 1UL << 2,
-            (choice, s) => RunMatMul(choice == 1 ? mixed : chosen, s[0], s[1], s[2], batch, m, n, pushed));
     }
 
     // At each candidate width: the small kernel (an invocation per output, any shape), the tiled one and the
@@ -945,8 +893,7 @@ internal sealed partial class VulkanBackend : IKernelAvailability
             MatSmall => true,
             MatTiled => MatFits(VulkanKernels.MatSide(width), m, n),
             MatBlocked => MatFits(VulkanKernels.MatPer * VulkanKernels.MatSide(width), m, n),
-            MatCoop => width == Width && MatFits(VulkanKernels.CoopBlock, m, n) && CoopKernel(null) is not null,
-            MatMixed => width == Width && MatFits(VulkanKernels.CoopBlock, m, n) && MixedKernel(null) is not null,
+            MatCoop => width == Width && MatFits(VulkanKernels.CoopBlock, m, n) && CoopKernel() is not null,
             _ => false,
         };
     }
@@ -966,341 +913,15 @@ internal sealed partial class VulkanBackend : IKernelAvailability
         }
 
         uint gz = (uint)Math.Min(batch, Limits.MaxGroupsZ);
-        if (variant is MatCoop or MatMixed)
+        if (variant == MatCoop)
         {
             const int Block = VulkanKernels.CoopBlock;
-            var kernel = variant == MatCoop ? CoopKernel(null)! : MixedKernel(null)!;
-            DispatchKernel(kernel, (uint)((n + Block - 1) / Block), (uint)((m + Block - 1) / Block), gz, [a, b, c], push);
+            DispatchKernel(CoopKernel()!, (uint)((n + Block - 1) / Block), (uint)((m + Block - 1) / Block), gz, [a, b, c], push);
             return;
         }
 
         int edge = VulkanKernels.MatSide(width) * (variant == MatBlocked ? VulkanKernels.MatPer : 1);
         RunAt(variant == MatBlocked ? "batched_matmul" : "batched_matmul_tile", width, (uint)((n + edge - 1) / edge), (uint)((m + edge - 1) / edge), gz, [a, b, c], push);
-    }
-
-    // Kernel names by (format · row blocks + row block) · word variants + word variant, built once.
-    private static readonly string[] GemvKernelNames =
-        [.. new[] { VulkanKernels.PackedFormat.Int8, VulkanKernels.PackedFormat.Int4, VulkanKernels.PackedFormat.BFloat16 }
-            .SelectMany(f => VulkanKernels.GemvRowBlocks.SelectMany(r => VulkanKernels.GemvWordCounts.Select(w => VulkanKernels.GemvName(f, r, w))))];
-
-    // y = x · w for packed weights (scales null for bfloat16): column blocks of L words × splits of k × row blocks of 1,
-    // 2, 4 or 8 rows (the smallest that holds m, else 8). The words per row of k (L) and the splits are measured per
-    // shape among those the device's workgroup counts take; the formula's choice is 32 words and as many splits as keep
-    // the partial sums within the weights' traffic and each chunk at least GemvMinChunk rows. Several splits write their
-    // partial sums to a temporary [splits, m, n] that gemv_reduce finishes. Every choice sums in the packed products'
-    // one order (VulkanKernels.Order.cs; GemvPlan fits the splits to k's leaves), so the measurement decides only speed.
-    // False when no variant fits the device's workgroup counts (the caller falls back).
-    private bool PackedProduct(VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
-    {
-        if (m <= 0 || n <= 0)
-        {
-            return true;
-        }
-
-        int block = GemvBlock(m);
-        int rows = VulkanKernels.GemvRowBlocks[block];
-        long rowBlocks = ((long)m + rows - 1) / rows;
-        if (rowBlocks > Limits.MaxGroupsZ || PackedWindowRows(format, weights, scales, m, n, k) < 0)
-        {
-            return false;                                                      // (or weights larger than a binding that cannot be windowed)
-        }
-
-        int chosen;
-        try
-        {
-            chosen = GemvChoice(format, block, x, weights, scales, y, m, n, k);
-        }
-        catch (KernelUnavailableException)
-        {
-            chosen = -1;                                                       // every candidate refused: the variants below
-        }
-
-        if (chosen >= 0 && !_anyRefused)
-        {
-            try
-            {
-                return RunPacked(format, block, chosen, x, weights, scales, y, m, n, k);
-            }
-            catch (KernelUnavailableException)
-            {
-                // The first refusal: the next variant (below).
-            }
-        }
-
-        return RunPackedVariant(format, block, chosen, x, weights, scales, y, m, n, k);
-    }
-
-    // A packed product whose chosen kernel may be refused here (VulkanBackend.Refusals.cs): the choice where its kernel
-    // builds, else the next variant that does (the other words per row of k, the other widths, then the smaller row
-    // blocks: each sums in the packed products' one order, so the result is the same), kept per shape so the search runs
-    // once; false when none builds (the caller's host fallback). `chosen` -1: no measured choice (all refused).
-    private bool RunPackedVariant(VulkanKernels.PackedFormat format, int block, int chosen, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
-    {
-        var key = (format, block, chosen, m, n, k);
-        if (_gemvInstead.TryGetValue(key, out var known))
-        {
-            return known.Block >= 0 && RunPacked(format, known.Block, known.Choice, x, weights, scales, y, m, n, k);
-        }
-
-        string first = chosen >= 0 ? GemvKernel(format, block, chosen) : GemvKernel(format, block, WithWidth(Width, 8));
-        foreach (var (b, choice) in GemvVariants(format, block, chosen, m, n, k))
-        {
-            if (IsRefused(GemvKernel(format, b, choice), WidthOf(choice)))
-            {
-                continue;
-            }
-
-            try
-            {
-                if (RunPacked(format, b, choice, x, weights, scales, y, m, n, k))
-                {
-                    _gemvInstead[key] = (b, choice);
-                    string used = GemvKernel(format, b, choice);
-                    if (used != first || WidthOf(choice) != WidthOf(chosen))
-                    {
-                        NoteInstead(first, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"the packed products: {used} at width {WidthOf(choice)}"));
-                    }
-
-                    return true;
-                }
-            }
-            catch (KernelUnavailableException)
-            {
-                // refused too: the next one
-            }
-        }
-
-        _gemvInstead[key] = (-1, 0);
-        NoteInstead(first, $"{format} products: the host");
-        return false;
-    }
-
-    // The packed-product kernel of a format, row block and choice (its word variant).
-    private static string GemvKernel(VulkanKernels.PackedFormat format, int block, int choice) =>
-        GemvKernelNames[((int)format * VulkanKernels.GemvRowBlocks.Length + block) * VulkanKernels.GemvWordCounts.Length + (choice & 7)];
-
-    // The variants a refused packed product tries, in order: the choice itself, then at its row block the other word
-    // variants and widths (its splits kept), then each smaller row block the device's workgroup counts take.
-    private IEnumerable<(int Block, int Choice)> GemvVariants(VulkanKernels.PackedFormat format, int block, int chosen, int m, int n, int k)
-    {
-        int perWord = VulkanKernels.ColumnsPerWord(format);
-        int rest = chosen >= 0 ? chosen & Rest : 8;
-        int splits = Math.Max(1, rest >> 3), variant = rest & 7;
-        int width = chosen >= 0 ? WidthOf(chosen) : Width;
-        int[] widths = [width, .. CandidateWidths.Where(w => w != width)];
-        for (int b = block; b >= 0; b--)
-        {
-            int rows = VulkanKernels.GemvRowBlocks[b];
-            if (((long)m + rows - 1) / rows > Limits.MaxGroupsZ)
-            {
-                break;
-            }
-
-            foreach (int w in widths)
-            {
-                for (int v = 0; v < VulkanKernels.GemvWordCounts.Length; v++)
-                {
-                    int word = v == 0 ? variant : v == variant ? 0 : v;
-                    int choice = WithWidth(w, splits * 8 + word);
-                    if (GemvValid(choice, perWord, n))
-                    {
-                        yield return (b, choice);
-                    }
-                }
-            }
-        }
-    }
-
-    // The variant each refused packed product runs instead, by format, row block, choice and shape (Block -1: none: the host).
-    private readonly ConcurrentDictionary<(VulkanKernels.PackedFormat, int, int, int, int, int), (int Block, int Choice)> _gemvInstead = new();
-
-    // The row block variant (index into GemvRowBlocks) for m rows: the smallest that holds them, else 8.
-    private static int GemvBlock(int m) => m switch { 1 => 0, 2 => 1, <= 4 => 2, _ => 3 };
-
-    // The choice (width, splits and word variant) of a packed product of this shape: measured, stored, forced by the
-    // test settings or the formula's (see PackedProduct). -1 when no variant fits the device's workgroup counts.
-    private int GemvChoice(VulkanKernels.PackedFormat format, int block, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
-    {
-        int perWord = VulkanKernels.ColumnsPerWord(format);
-        // Splits allowed: chunks of at least GemvMinChunk rows, partial sums no more bytes than the weights.
-        double weightBytes = (double)k * n * (format switch { VulkanKernels.PackedFormat.Int8 => 1, VulkanKernels.PackedFormat.Int4 => 0.5, _ => 2 });
-        int maxSplits = (int)Math.Clamp(Math.Min((k + GemvMinChunk - 1) / GemvMinChunk, weightBytes / (4.0 * m * n)), 1, Limits.MaxGroupsY);
-        // Formula: the device's width, 32 words, the most splits allowed. Measured: every candidate (GemvCandidates).
-        int most = LargestPowerOfTwo(maxSplits);
-        int fallback = WithWidth(Width, most * 8);
-        if (!GemvValid(fallback, perWord, n) && (fallback = LastGemvCandidate(perWord, n, maxSplits)) < 0)
-        {
-            return -1;
-        }
-
-        var counts = VulkanKernels.GemvWordCounts;
-        int chosen;
-        if (GemvSplits is not null || GemvWords is not null)
-        {
-            int variant = Math.Max(0, Array.IndexOf(counts, GemvWords ?? counts[0]));
-            chosen = WithWidth(Width, Math.Max(1, GemvSplits ?? most) * 8 + variant);
-            chosen = GemvValid(chosen, perWord, n) ? chosen : fallback;
-        }
-        else
-        {
-            var key = new VulkanTuneKey(VulkanTuneOp.Gemv, (int)format * VulkanKernels.GemvRowBlocks.Length + block, m, n, k);
-            if (!TryTuned(key, out chosen) || !GemvValid(chosen, perWord, n))
-            {
-                chosen = fallback;
-                if (CanTune)
-                {
-                    chosen = MeasureGemv(key, format, block, perWord, maxSplits, fallback, x, weights, scales, y, m, n, k);
-                }
-            }
-        }
-
-        return chosen;
-    }
-
-    // Measures a packed product's candidates (GemvCandidates) on a scratch output, apart from GemvChoice so its usual
-    // calls make no closure.
-    private int MeasureGemv(VulkanTuneKey key, VulkanKernels.PackedFormat format, int block, int perWord, int maxSplits, int fallback, Storage x, Storage weights,
-        Storage? scales, Storage y, int m, int n, int k)
-    {
-        Storage[] storages = scales is null ? [x, weights, y] : [x, weights, scales, y];
-        return TuneWithScratch(key, DistinctGemv(GemvCandidates(perWord, n, maxSplits), fallback, format, block, k, (long)m * n), fallback, storages,
-            1UL << (storages.Length - 1),
-            (c, s) => RunPacked(format, block, c, s[0], s[1], scales is null ? null : s[2], s[^1], m, n, k, measured: true));
-    }
-
-    // At each candidate width, each valid word variant with 1, 2, 4, … splits up to maxSplits.
-    private int[] GemvCandidates(int perWord, int n, int maxSplits)
-    {
-        var candidates = new List<int>();
-        foreach (int width in CandidateWidths)
-        {
-            for (int v = 0; v < VulkanKernels.GemvWordCounts.Length; v++)
-            {
-                foreach (int splits in PowersOfTwo(maxSplits))
-                {
-                    if (GemvValid(WithWidth(width, splits * 8 + v), perWord, n))
-                    {
-                        candidates.Add(WithWidth(width, splits * 8 + v));
-                    }
-                }
-            }
-        }
-
-        return [.. candidates];
-    }
-
-    // The last of GemvCandidates(perWord, n, maxSplits), or -1 when there are none, without building them (the formulas
-    // read it on every call where the device's own width cannot run their choice). Validity does not depend on the
-    // splits, so the last candidate is the last valid width and word variant with the most splits, LargestPowerOfTwo.
-    private int LastGemvCandidate(int perWord, int n, int maxSplits)
-    {
-        int last = -1, most = LargestPowerOfTwo(maxSplits);
-        foreach (int width in CandidateWidths)
-        {
-            for (int v = 0; v < VulkanKernels.GemvWordCounts.Length; v++)
-            {
-                if (GemvValid(WithWidth(width, most * 8 + v), perWord, n))
-                {
-                    last = WithWidth(width, most * 8 + v);
-                }
-            }
-        }
-
-        return last;
-    }
-
-    // Whether a choice (a stored one too) can run here: a candidate width, a word variant whose slices fit a scale group
-    // of 32 rows (int4 reads a row of each group per slice) and whose column blocks the device takes.
-    private bool GemvValid(int choice, int perWord, int n)
-    {
-        int width = WidthOf(choice), variant = choice & 7;
-        if (Array.IndexOf(CandidateWidths, width) < 0 || variant >= VulkanKernels.GemvWordCounts.Length)
-        {
-            return false;
-        }
-
-        int words = VulkanKernels.GemvWordCounts[variant];
-        long columnBlocks = ((long)(n + perWord - 1) / perWord + words - 1) / words;
-        return words <= width && width / words <= VulkanKernels.GemvChunkAlign && columnBlocks <= Limits.MaxGroupsX;
-    }
-
-    // Runs a packed product with `choice` = its width (WithWidth) and splits · 8 + word variant (the splits as GemvPlan
-    // fits them to the leaves of k); false when no plan fits the device.
-    // `measured`: a run of the measurement, whose partial sums take a pooled block (the candidates' larger splits are not
-    // kept); every other run's go to the kept block (no storage allocated a call).
-    private bool RunPacked(VulkanKernels.PackedFormat format, int block, int choice, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k,
-        bool measured = false)
-    {
-        int width = WidthOf(choice), variant = choice & 7, rows = VulkanKernels.GemvRowBlocks[block], words = VulkanKernels.GemvWordCounts[variant];
-        int perWord = VulkanKernels.ColumnsPerWord(format);
-        uint columnBlocks = (uint)(((long)(n + perWord - 1) / perWord + words - 1) / words), rowBlocks = (uint)((m + rows - 1) / rows);
-        string kernel = GemvKernelNames[((int)format * VulkanKernels.GemvRowBlocks.Length + block) * VulkanKernels.GemvWordCounts.Length + variant];
-        if (PackedWindowRows(format, weights, scales, m, n, k) is var window and > 0)
-        {
-            // Weights larger than a binding: one dispatch per window of rows, the choice's splits fitted to the windows.
-            return RunPackedWindows(format, block, choice, kernel, columnBlocks, (int)window, x, weights, scales, y, m, n, k, measured);
-        }
-
-        var (splits, chunk) = GemvPlan(choice, format, block, k, (long)m * n);
-        if (splits == 0)
-        {
-            return false;
-        }
-
-        Span<byte> b = stackalloc byte[32];
-        var push = new Push(b).I(m).I(n).I(k).I(chunk).I(0).I(splits).I(VulkanKernels.GemvChunkAlign).I(0).Bytes;
-        var output = splits == 1 ? y : measured ? Allocate(splits * m * n, zeroed: false) : _gemvPartials.Get(this, splits * m * n);
-        try
-        {
-            if (scales is null)
-            {
-                RunAt(kernel, width, columnBlocks, (uint)splits, rowBlocks, [x, weights, output], push);
-            }
-            else
-            {
-                RunAt(kernel, width, columnBlocks, (uint)splits, rowBlocks, [x, weights, scales, output], push);
-            }
-
-            if (splits > 1)
-            {
-                Span<byte> r = stackalloc byte[12];
-                var reducePush = new Push(r).I(m * n).I(n).I(splits).Bytes;
-                if (format == VulkanKernels.PackedFormat.Int8)
-                {
-                    Grid("int8_gemv_reduce", (long)m * n, [output, scales!, y], reducePush);
-                }
-                else
-                {
-                    Grid("gemv_reduce", (long)m * n, [output, y], reducePush);
-                }
-            }
-        }
-        finally
-        {
-            if (splits > 1 && measured)
-            {
-                output.Release();                                              // reused in queue order
-            }
-        }
-
-        return true;
-    }
-
-    // The partial sums of split packed products (RunPacked, RunPackedWindows), kept between calls and reused in queue order.
-    private readonly KeptScratch _gemvPartials = new();
-
-    // The int8 weights as floats without their column scales (the prompt-sized products' expanded weights); false when
-    // they do not fit the device (windowed weights included).
-    private bool Int8Expand(Storage q, Storage scales, Storage w, int k, int n)
-    {
-        if (!Fit(q, scales, w))
-        {
-            return DequantizeWindows(VulkanKernels.PackedFormat.Int8, q, scales, w, k, n, unscaled: true);
-        }
-
-        Span<byte> b = stackalloc byte[12];
-        Grid("int8_dequantize", (long)k * n, [q, scales, w], new Push(b).I(k).I(n).I(1).Bytes);
-        return true;
     }
 
     // ------------------------------------------------------------------ language models

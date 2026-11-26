@@ -11,29 +11,16 @@ namespace Idrak.Gpu.Vulkan;
 // and subgroups in compute, and among its matrix shapes one with 16-bit float operands, 32-bit float sums and subgroup
 // scope that the kernels tile (VulkanKernels.CoopShapeUsable), those features are enabled when the device is created and
 // the cooperative-matrix products (VulkanKernels.Coop.cs, as precise as the float32 kernels) join the candidates of the
-// float32 product and of the prompt-sized packed products: measured on the device like every other candidate, used only
-// where faster. Of several such shapes, the one with the most multiply-adds per operation (ties: the device's order). A
+// float32 product: measured on the device like every other candidate, used only where faster. Of several such shapes, the one with the most multiply-adds per operation (ties: the device's order). A
 // kernel the driver rejects is dropped. Devices without cooperative matrices, and IDRAK_VULKAN_MATRIX=0, keep every
 // product as it was.
-//
-// Reduced precision. When the thread's MixedPrecision asks for bfloat16 or float16 (a run computing in that type, or the
-// user's IDRAK_MATMUL), the float32 products and the prompt-sized packed products have one more candidate: a single-pass
-// cooperative-matrix kernel (VulkanKernels.Coop.cs: operands rounded once, one product per step, float32 sums) with
-// operands of exactly that type: bfloat16 where the device reports VK_KHR_shader_bfloat16 with shaderBFloat16Type and
-// shaderBFloat16CooperativeMatrix and lists a bfloat16 shape (bfloat16 A and B, float32 C and result, subgroup scope, one
-// the kernels tile); 16-bit floats after the power-of-two scaling for float16. A type is never multiplied in another's
-// place: a bfloat16 run on a device without bfloat16 matrices, or whose driver rejects that kernel, runs the float32
-// products, and the device's native types (NativeTypesReported) say so; fp8, which has no kernel here, runs float32
-// too. The candidate is measured against the float32 choice for the same shape (a tuning key of its own, so float32
-// choices are untouched) and used only where faster. With MixedPrecision at float32 none of this runs.
 internal sealed unsafe partial class VulkanBackend
 {
     /// <summary>What a device offers of cooperative matrices, as the products use them.</summary>
     /// <param name="Shape">The matrix shape the kernels are built for.</param>
     /// <param name="Float16Extension">16-bit floats enabled through VK_KHR_shader_float16_int8 (else as core Vulkan 1.2).</param>
     /// <param name="Emulated">Tests: the subgroup size of an emulation on a device without cooperative matrices (0: the device's own).</param>
-    /// <param name="BFloat16Shape">The bfloat16 matrix shape of the reduced-precision products, or null where the device has none.</param>
-    internal readonly record struct MatrixUnitSupport(VulkanKernels.CoopShape Shape, bool Float16Extension, int Emulated, VulkanKernels.CoopShape? BFloat16Shape = null);
+    internal readonly record struct MatrixUnitSupport(VulkanKernels.CoopShape Shape, bool Float16Extension, int Emulated);
 
     /// <summary>Tests: false makes backends created afterwards leave cooperative matrices off; IDRAK_VULKAN_MATRIX=0 sets it for a process.</summary>
     internal static bool? MatrixUnitsOverride { get; set; } =
@@ -46,35 +33,22 @@ internal sealed unsafe partial class VulkanBackend
     /// </summary>
     internal static VulkanKernels.CoopShape? EmulatedMatrixUnits { get; set; }
 
-    /// <summary>Tests only: with <see cref="EmulatedMatrixUnits"/>, the emulation also has bfloat16 matrices (of the same shape).</summary>
-    internal static bool EmulatedBFloat16 { get; set; }
-
-    /// <summary>
-    /// Tests and benchmarks only: the operands of the reduced-precision products (Float16 or BFloat16) instead of the type
-    /// the thread's MixedPrecision asks for; a type the device does not have leaves them off. Null: that type's operands
-    /// (bfloat16 for BFloat16, float16 for Float16), never another's.
-    /// </summary>
-    internal static VulkanKernels.CoopPrecision? MixedOperandsOverride { get; set; }
-
     /// <summary>Tests only: the cooperative-matrix products' workgroup width (a power of two from 16 to MaxWidth) instead of
     /// four default subgroups, so they run with fewer subgroups than blocks (several rounds) or more (some idle).</summary>
     internal static int? CoopWidthOverride { get; set; }
 
     private readonly MatrixUnitSupport? _matrix;
 
-    // The products' kernels by precision and format (precision · 4, plus 0 for float32, else the packed format + 1), null
-    // where unusable; guarded by itself.
-    private readonly VulkanKernel?[] _coopKernels = new VulkanKernel?[12];
-    private readonly bool[] _coopChecked = new bool[12];
+    // The product's kernel, null where unusable; and whether it was built (both guarded by _coopLock).
+    private VulkanKernel? _coopKernel;
+    private bool _coopChecked;
+    private readonly Lock _coopLock = new();
 
     /// <summary>The cooperative-matrix shape the products use here, or null without cooperative matrices.</summary>
     internal VulkanKernels.CoopShape? MatrixShape => _matrix?.Shape;
 
     /// <summary>Whether the cooperative-matrix products are emulated (tests).</summary>
     internal bool MatrixUnitsEmulated => _matrix is { Emulated: > 0 };
-
-    /// <summary>The bfloat16 cooperative-matrix shape of the reduced-precision products, or null where the device has none.</summary>
-    internal VulkanKernels.CoopShape? BFloat16MatrixShape => _matrix?.BFloat16Shape;
 
     /// <summary>
     /// Invocations per workgroup of the cooperative-matrix products: four subgroups of the device's default size (one per
@@ -121,14 +95,8 @@ internal sealed unsafe partial class VulkanBackend
             return null;
         }
 
-        bool bfloat16Extension = cooperative && HasExtension(physical.Handle, ShaderBFloat16Extension);
         var float16 = new VkPhysicalDeviceShaderFloat16Int8Features { SType = StructurePhysicalDeviceShaderFloat16Int8Features };
-        var bfloat16 = new VkPhysicalDeviceShaderBfloat16Features { SType = StructurePhysicalDeviceShaderBfloat16Features, PNext = &float16 };
-        var matrixFeatures = new VkPhysicalDeviceCooperativeMatrixFeatures
-        {
-            SType = StructurePhysicalDeviceCooperativeMatrixFeatures,
-            PNext = bfloat16Extension ? &bfloat16 : &float16,
-        };
+        var matrixFeatures = new VkPhysicalDeviceCooperativeMatrixFeatures { SType = StructurePhysicalDeviceCooperativeMatrixFeatures, PNext = &float16 };
         var features = new VkPhysicalDeviceFeatures2 { SType = StructurePhysicalDeviceFeatures2, PNext = cooperative ? &matrixFeatures : &float16 };
         vkGetPhysicalDeviceFeatures2(physical.Handle, &features);
         if (float16.ShaderFloat16 == 0)
@@ -144,7 +112,7 @@ internal sealed unsafe partial class VulkanBackend
             int subgroup = (int)physical.Facts.SubgroupSize;
             return EmulatedMatrixUnits is { } shape && subgroup > 0 && shape.M * shape.N % subgroup == 0 && VulkanKernels.CoopShapeUsable(shape)
                 && EmulationSubgroupFixed(physical.Facts, sizeControl, subgroup)
-                ? new MatrixUnitSupport(shape, float16Extension, subgroup, EmulatedBFloat16 ? shape : null) : null;
+                ? new MatrixUnitSupport(shape, float16Extension, subgroup) : null;
         }
 
         var stages = new VkPhysicalDeviceCooperativeMatrixProperties { SType = StructurePhysicalDeviceCooperativeMatrixProperties };
@@ -155,11 +123,7 @@ internal sealed unsafe partial class VulkanBackend
             return null;
         }
 
-        var reported = ReportedMatrixShapes(physical.Handle);
-        bool bfloat16Matrices = bfloat16Extension && bfloat16.ShaderBFloat16Type != 0 && bfloat16.ShaderBFloat16CooperativeMatrix != 0;
-        return ChooseMatrixShape(reported) is { } chosen
-            ? new MatrixUnitSupport(chosen, float16Extension, 0, bfloat16Matrices ? ChooseMatrixShape(reported, ComponentBFloat16) : null)
-            : null;
+        return ChooseMatrixShape(ReportedMatrixShapes(physical.Handle)) is { } chosen ? new MatrixUnitSupport(chosen, float16Extension, 0) : null;
     }
 
     // Whether an emulation's pipelines run in subgroups of exactly `subgroup` invocations: the device has one size, or
@@ -201,17 +165,17 @@ internal sealed unsafe partial class VulkanBackend
     }
 
     /// <summary>
-    /// The shape the products use among those a device reports: A and B of <paramref name="operands"/> (16-bit floats,
-    /// or bfloat16 for the reduced-precision products), 32-bit float C and result, subgroup scope, one the kernels tile; of
-    /// those the most multiply-adds per operation (M · N · K), ties to the first reported. Null when none qualifies.
+    /// The shape the products use among those a device reports: 16-bit float A and B, 32-bit float C and result, subgroup
+    /// scope, one the kernels tile; of those the most multiply-adds per operation (M · N · K), ties to the first reported.
+    /// Null when none qualifies.
     /// </summary>
-    internal static VulkanKernels.CoopShape? ChooseMatrixShape(IReadOnlyList<VkCooperativeMatrixProperties> reported, uint operands = ComponentFloat16)
+    internal static VulkanKernels.CoopShape? ChooseMatrixShape(IReadOnlyList<VkCooperativeMatrixProperties> reported)
     {
         VulkanKernels.CoopShape? best = null;
         foreach (var p in reported)
         {
             var shape = new VulkanKernels.CoopShape((int)Math.Min(p.MSize, 1024), (int)Math.Min(p.NSize, 1024), (int)Math.Min(p.KSize, 1024));
-            if (p.AType == operands && p.BType == operands && p.CType == ComponentFloat32 && p.ResultType == ComponentFloat32
+            if (p.AType == ComponentFloat16 && p.BType == ComponentFloat16 && p.CType == ComponentFloat32 && p.ResultType == ComponentFloat32
                 && p.Scope == ScopeSubgroup && VulkanKernels.CoopShapeUsable(shape)
                 && (best is not { } b || shape.M * shape.N * shape.K > b.M * b.N * b.K))
             {
@@ -222,26 +186,25 @@ internal sealed unsafe partial class VulkanBackend
         return best;
     }
 
-    // The cooperative-matrix product of `format` (null: float32) and `precision` for this device, built and its pipeline
-    // created on first use (at the deepest staging step that fits); null without cooperative matrices (bfloat16 ones for
-    // that precision), where its workgroup memory or width exceeds the device's, or where the driver rejects it (it is
-    // then never a candidate).
-    private VulkanKernel? CoopKernel(VulkanKernels.PackedFormat? format, VulkanKernels.CoopPrecision precision = VulkanKernels.CoopPrecision.Split)
+    // The cooperative-matrix product for this device, built and its pipeline created on first use (at the deepest staging
+    // step that fits); null without cooperative matrices, where its workgroup memory or width exceeds the device's, or
+    // where the driver rejects it (it is then never a candidate).
+    private VulkanKernel? CoopKernel()
     {
-        if (_matrix is not { } support || (precision == VulkanKernels.CoopPrecision.BFloat16 ? support.BFloat16Shape : support.Shape) is not { } shape)
+        if (_matrix is not { } support)
         {
             return null;
         }
 
-        int index = (int)precision * 4 + (format is { } f ? (int)f + 1 : 0);
-        lock (_coopKernels)
+        var shape = support.Shape;
+        lock (_coopLock)
         {
-            if (_coopChecked[index])
+            if (_coopChecked)
             {
-                return _coopKernels[index];
+                return _coopKernel;
             }
 
-            _coopChecked[index] = true;
+            _coopChecked = true;
             int width = CoopWidth;
             if (width % Math.Max(1, support.Emulated) != 0)
             {
@@ -252,7 +215,7 @@ internal sealed unsafe partial class VulkanBackend
             SpirvKernel? built = null;
             foreach (int depth in VulkanKernels.CoopDepths)
             {
-                if (depth >= shape.K && VulkanKernels.Coop(new VulkanKernels.CoopSpec(format, shape, width, support.Emulated, depth, precision)) is { } candidate
+                if (depth >= shape.K && VulkanKernels.Coop(new VulkanKernels.CoopSpec(shape, width, support.Emulated, depth)) is { } candidate
                     && candidate.SharedBytes <= Limits.SharedBytes)
                 {
                     built = candidate;
@@ -284,87 +247,22 @@ internal sealed unsafe partial class VulkanBackend
                 return null;                                                   // the driver rejects it (a VulkanException or a refusal): never a candidate
             }
 
-            _coopKernels[index] = kernel;
+            _coopKernel = kernel;
             return kernel;
         }
-    }
-
-    // The reduced-precision product of `format` (null: float32 weights) in the type the thread's MixedPrecision asks for:
-    // bfloat16 operands for BFloat16, 16-bit float operands (after scaling) for Float16, and never another type in its
-    // place (a run computing in bfloat16 never multiplies in float16; fp8, which has no kernel here, gets none). Null in
-    // float32 mode, without cooperative matrices, and where the device has no kernel of that type or its driver rejects
-    // it: the product then runs the float32 kernels, as the native types say (NativeTypesReported lists a 16-bit type only
-    // when the driver accepted its product kernel). MixedOperandsOverride (tests, benchmarks) names the operands itself.
-    private VulkanKernel? MixedKernel(VulkanKernels.PackedFormat? format)
-    {
-        var precision = MixedPrecision.Current;
-        if (precision == MatMulPrecision.Float32 || _matrix is null)
-        {
-            return null;
-        }
-
-        VulkanKernels.CoopPrecision? operands = MixedOperandsOverride ?? precision switch
-        {
-            MatMulPrecision.BFloat16 => VulkanKernels.CoopPrecision.BFloat16,
-            MatMulPrecision.Float16 => VulkanKernels.CoopPrecision.Float16,
-            _ => null,
-        };
-
-        return operands is VulkanKernels.CoopPrecision.BFloat16 or VulkanKernels.CoopPrecision.Float16 ? CoopKernel(format, operands.Value) : null;
-    }
-
-    /// <summary>
-    /// Not null: the products tensor cores serve on CUDA (fused training kernels, attention) run in float32 here; with
-    /// cooperative matrices, MixedPrecision products try the reduced-precision kernel per shape (VulkanBackend.Matrix.cs).
-    /// </summary>
-    public override string? TensorCoresUnavailable() => _matrix is null
-        ? base.TensorCoresUnavailable()
-        : "the device computes matrix products in float32, or with MixedPrecision on cooperative matrices where measured faster";
-
-    // The element types the products compute natively here (plan 37, T2): a 16-bit type where the device reported
-    // cooperative matrices of it when it was created and its driver accepted the product kernel of it (built here once
-    // and kept for the products, so a 16-bit run builds nothing again); float32 always. A type whose kernel the driver
-    // rejects is not listed, so a run selecting it is said to compute in float32, which is what its products then do.
-    private (IReadOnlyList<ElementType> Types, string Report) NativeTypesReported()
-    {
-        if (_matrix is not { } m)
-        {
-            return ([ElementType.Float32], "no cooperative matrices with 16-bit operands reported");
-        }
-
-        string emulated = m.Emulated > 0 ? " (emulated, tests)" : "";
-        bool bfloat16 = m.BFloat16Shape is not null && CoopKernel(null, VulkanKernels.CoopPrecision.BFloat16) is not null;
-        bool float16 = CoopKernel(null, VulkanKernels.CoopPrecision.Float16) is not null;
-        var types = new List<ElementType>(3);
-        if (bfloat16)
-        {
-            types.Add(ElementType.BFloat16);
-        }
-
-        if (float16)
-        {
-            types.Add(ElementType.Float16);
-        }
-
-        types.Add(ElementType.Float32);
-        string bf = m.BFloat16Shape is { } b ? $"bfloat16 {b} operands{(bfloat16 ? "" : " (the driver rejected the product kernel)")}" : "no bfloat16 ones";
-        string f16 = $"float16 {m.Shape} operands{(float16 ? "" : " (the driver rejected the product kernel)")}";
-        return (types, $"cooperative matrices: {bf}, {f16}, float32 sums{emulated}");
     }
 
     /// <summary>The cooperative matrices in one line, for benchmark headers.</summary>
     internal string DescribeMatrixUnits() => _matrix switch
     {
         null => "no cooperative matrices",
-        { Emulated: > 0 } m => $"cooperative matrices emulated (tests), {m.Shape}{(m.BFloat16Shape is { } b ? $", bfloat16 {b}" : "")}",
-        { } m => $"cooperative matrices {m.Shape} (float16 operands, float32 sums), workgroups of {CoopWidth}; reduced precision (MixedPrecision): "
-            + (m.BFloat16Shape is { } b ? $"bfloat16 operands {b}" : "float16 operands after power-of-two scaling (no bfloat16 matrices)"),
+        { Emulated: > 0 } m => $"cooperative matrices emulated (tests), {m.Shape}",
+        { } m => $"cooperative matrices {m.Shape} (float16 operands, float32 sums), workgroups of {CoopWidth}",
     };
 
     // The extensions and features to enable for cooperative matrices: appended to the device's extension names and
     // feature chain (the structures must outlive vkCreateDevice: the caller owns them).
-    private void* MatrixFeatures(VkPhysicalDeviceCooperativeMatrixFeatures* matrix, VkPhysicalDeviceShaderFloat16Int8Features* float16,
-        VkPhysicalDeviceShaderBfloat16Features* bfloat16, void* next)
+    private void* MatrixFeatures(VkPhysicalDeviceCooperativeMatrixFeatures* matrix, VkPhysicalDeviceShaderFloat16Int8Features* float16, void* next)
     {
         if (_matrix is not { } support)
         {
@@ -377,24 +275,10 @@ internal sealed unsafe partial class VulkanBackend
             return float16;
         }
 
-        void* chain = float16;
-        if (support.BFloat16Shape is not null)
-        {
-            *bfloat16 = new VkPhysicalDeviceShaderBfloat16Features
-            {
-                SType = StructurePhysicalDeviceShaderBfloat16Features,
-                PNext = float16,
-                ShaderBFloat16Type = 1,
-                ShaderBFloat16CooperativeMatrix = 1,
-            };
-            chain = bfloat16;
-        }
-
-        *matrix = new VkPhysicalDeviceCooperativeMatrixFeatures { SType = StructurePhysicalDeviceCooperativeMatrixFeatures, PNext = chain, CooperativeMatrix = 1 };
+        *matrix = new VkPhysicalDeviceCooperativeMatrixFeatures { SType = StructurePhysicalDeviceCooperativeMatrixFeatures, PNext = float16, CooperativeMatrix = 1 };
         return matrix;
     }
 
     private static readonly byte[] CooperativeMatrixName = Encoding.ASCII.GetBytes(CooperativeMatrixExtension + "\0");
     private static readonly byte[] ShaderFloat16Int8Name = Encoding.ASCII.GetBytes(ShaderFloat16Int8Extension + "\0");
-    private static readonly byte[] ShaderBFloat16Name = Encoding.ASCII.GetBytes(ShaderBFloat16Extension + "\0");
 }

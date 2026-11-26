@@ -54,40 +54,6 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        // gather from a bfloat16 table [vocabulary, dim] (rows of ⌈dim / 2⌉ words, low half first).
-        yield return ("gather_bf16", () =>
-        {
-            var k = new KernelBuilder("gather_bf16", Block);
-            var (packed, indices, y) = (k.Buffer("packed"), k.Buffer("indices"), k.Buffer("y"));
-            var (count, dim, vocabulary) = (k.PushInt("count"), k.PushInt("dim"), k.PushInt("vocabulary"));
-            var (first, rows) = (k.PushInt("first"), k.PushInt("rows"));
-            Grid(k, count * dim, i =>
-            {
-                var (row, d) = (i / dim, i % dim);
-                var index = k.Clamp(indices.Int(row), k.Int(0), vocabulary - 1) - first;
-                k.If((index >= 0) & (index < rows), () => y[i] = BFloat16At(k, packed, index * ((dim + 1) / 2) + (d >> 1), d));
-            });
-            return k.Build();
-        });
-
-        // gather of columns from a bfloat16 table [dim, vocabulary] (rows of ⌈vocabulary / 2⌉ words): y[t, d] =
-        // table[d, indices[t]], a tied head's weight read as the embedding table. The binding holds the table's rows
-        // [first, first + rows) (rows of the table are the outputs' columns d; windows as in gather).
-        yield return ("gather_bf16_columns", () =>
-        {
-            var k = new KernelBuilder("gather_bf16_columns", Block);
-            var (packed, indices, y) = (k.Buffer("packed"), k.Buffer("indices"), k.Buffer("y"));
-            var (count, dim, vocabulary) = (k.PushInt("count"), k.PushInt("dim"), k.PushInt("vocabulary"));
-            var (first, rows) = (k.PushInt("first"), k.PushInt("rows"));
-            Grid(k, count * dim, i =>
-            {
-                var (token, d) = (i / dim, i % dim - first);
-                var index = k.Clamp(indices.Int(token), k.Int(0), vocabulary - 1);
-                k.If((d >= 0) & (d < rows), () => y[i] = BFloat16At(k, packed, d * ((vocabulary + 1) / 2) + (index >> 1), index));
-            });
-            return k.Build();
-        });
-
         // cache[h, position + t, :] = source[h, t, :] for [heads, steps, dim] → [heads, capacity, dim].
         yield return ("key_value_write", () =>
         {
@@ -100,66 +66,6 @@ internal static partial class VulkanKernels
             {
                 var h = i / block;
                 cache[(h * capacity + start) * dim + i % block] = source[i];
-            });
-            return k.Build();
-        });
-
-        // key_value_write into a bfloat16 cache (rows of ⌈dim / 2⌉ words, rounded to nearest, ties to even). One
-        // invocation per cache word.
-        yield return ("key_value_write_bf16", () =>
-        {
-            var k = new KernelBuilder("key_value_write_bf16", Block);
-            var (source, cache, position) = (k.Buffer("source"), k.Buffer("cache"), k.Buffer("position"));
-            var (heads, steps, capacity, dim) = (k.PushInt("heads"), k.PushInt("steps"), k.PushInt("capacity"), k.PushInt("dim"));
-            var start = position[k.Int(0)].ToInt();
-            var words = (dim + 1) / 2;
-            Grid(k, heads * steps * words, i =>
-            {
-                var (row, w) = (i / words, i % words);                          // row = h · steps + t
-                var (h, t) = (row / steps, row % steps);
-                var from = row * dim + 2 * w;
-                var low = RoundBFloat16(k, source[from]);
-                var high = k.Local(k.UInt(0));
-                k.If(2 * w + 1 < dim, () => high.V = RoundBFloat16(k, source[from + 1]));
-                cache[(h * capacity + start + t) * words + w] = (low | high.V << 16).AsFloat();
-            });
-            return k.Build();
-        });
-
-        // Quantizes source [heads·steps, dim] into the int8 cache at positions position[0] + step: per row,
-        // scale = max|x| / 127 and bytes round(x / scale) (ties to even) in [-127, 127]. One invocation per row.
-        yield return ("key_value_write_int8", () =>
-        {
-            var k = new KernelBuilder("key_value_write_int8", Block);
-            var (source, cache, scales, position) = (k.Buffer("source"), k.Buffer("cache"), k.Buffer("scales"), k.Buffer("position"));
-            var (heads, steps, capacity, dim) = (k.PushInt("heads"), k.PushInt("steps"), k.PushInt("capacity"), k.PushInt("dim"));
-            var start = position[k.Int(0)].ToInt();
-            var words = (dim + 3) / 4;
-            Grid(k, heads * steps, row =>
-            {
-                var slot = row / steps * capacity + start + row % steps;
-                var o = row * dim;
-                var max = k.Local(0f);
-                k.For(k.Int(0), dim, 1, d => max.V = k.Max(max.V, k.Abs(source[o + d])));
-                var scale = max.V / 127f;
-                var inverse = k.Select(max.V > 0f, 1f / scale, k.Float(0f));
-                scales[slot] = scale;
-                k.For(k.Int(0), words, 1, w =>
-                {
-                    var bits = k.Local(k.Int(0));
-                    for (int b = 0; b < 4; b++)
-                    {
-                        int lane = b;
-                        var d = 4 * w + lane;
-                        k.If(d < dim, () =>
-                        {
-                            var q = k.Clamp(k.RoundEven(source[o + d] * inverse).ToInt(), k.Int(-127), k.Int(127));
-                            bits.V = bits.V | (q & 0xFF) << (8 * lane);
-                        });
-                    }
-
-                    cache[slot * words + w] = bits.V.AsFloat();
-                });
             });
             return k.Build();
         });
@@ -179,20 +85,11 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        yield return ("attention_decode", () => Attention("attention_decode", CacheFormat.Float));
+        yield return ("attention_decode", () => Attention("attention_decode"));
 
-        // attention_decode over a bfloat16 cache: keys and values [heads, capacity, ⌈dim / 2⌉ words].
-        yield return ("attention_bf16", () => Attention("attention_bf16", CacheFormat.BFloat16));
-
-        // attention_decode over an int8 cache: keys and values [heads, capacity, ⌈dim / 4⌉ words] of signed bytes, one scale
-        // per cached row (keyScales, valueScales [heads, capacity]).
-        yield return ("attention_int8", () => Attention("attention_int8", CacheFormat.Int8));
-
-        // attention_decode and attention_bf16 for rows of different lengths decoded together (Backend.AttentionRows,
-        // AttentionRowsBFloat16): each row from its own start, starts[(h / headsPerRow) · steps + t] (floats); a row that
-        // sees nothing (padding) gets zeros.
-        yield return ("attention_rows_f32", () => Attention("attention_rows_f32", CacheFormat.Float, rows: true));
-        yield return ("attention_rows_bf16", () => Attention("attention_rows_bf16", CacheFormat.BFloat16, rows: true));
+        // attention_decode for rows of different lengths decoded together (Backend.AttentionRows): each row from its own
+        // start, starts[(h / headsPerRow) · steps + t] (floats); a row that sees nothing (padding) gets zeros.
+        yield return ("attention_rows_f32", () => Attention("attention_rows_f32", rows: true));
 
         // Merges the splits of a split attention dispatch: part [rows, splits, dim + 2] holds each split's state (its
         // weighted values, then its max and total; total 0: no positions). y[row, d] = weighted values / total of the
@@ -228,13 +125,6 @@ internal static partial class VulkanKernels
     /// shorter contexts use fewer splits).</summary>
     public static int AttentionMinChunk(int width) => width / 8;
 
-    private enum CacheFormat
-    {
-        Float,
-        BFloat16,
-        Int8,
-    }
-
     // `value`'s low `bits` bits in reverse order (0 for no bits).
     private static Val BitReversed(KernelBuilder k, Val value, Val bits) =>
         k.Select(bits.Eq(0), k.Int(0), k.BitReverse(value).AsUInt().ShiftRight((32 - bits).AsUInt()).AsInt());
@@ -268,8 +158,7 @@ internal static partial class VulkanKernels
     // In decoding attention's one order (VulkanKernels.Order.cs), whatever the width or the splits: the row's positions
     // in blocks of B = the head size rounded up to a power of two (block b: positions lo + b·B …, the last one shorter),
     // and per block its scores' max m (q · k_c · scale, each dot product a fused multiply-add per dimension in turn,
-    // soft-capped when softcap > 0), the weights e_c = exp(score_c - m) (int8: times the value row's scale for the
-    // values), their total t and the weighted values a[d] = Σ e_c · v_c[d], each in position order from +0. The blocks
+    // soft-capped when softcap > 0), the weights e_c = exp(score_c - m), their total t and the weighted values a[d] = Σ e_c · v_c[d], each in position order from +0. The blocks
     // merge (AttentionMerge) in the tree of their indices' bits from the lowest: split s takes the blocks b ≡ s (mod
     // splits); within it the workgroup's parts (P = W / B parts of B invocations, or one part of all W when B > W) take
     // the next bits, part p the blocks b = s + splits · (p + P · i); a part walks its i in bit-reversed order through a
@@ -280,18 +169,17 @@ internal static partial class VulkanKernels
     //
     // Workgroup memory — every phase is separated by a barrier:
     //   query[max(256, W)] written at the start of a row (after the previous row's final barrier), read while scoring;
-    //   scores[max(256, W)], weights (and int8's exps): written by the invocation of a position, read after a barrier;
+    //   scores[max(256, W)], weights: written by the invocation of a position, read after a barrier;
     //   scratch[W]: the tile's maxima (shuffles, then a tree within each part, a barrier a level), then the parts' merge
     //   with scores and weights (each level writes, then after a barrier reads, then a barrier);
     //   totals[W]: a block's total by its part's first invocation, read by the part after the tile's last barrier and
     //   written again only after the next tile's barriers.
-    private static SpirvKernel Attention(string name, CacheFormat format, bool rows = false)
+    private static SpirvKernel Attention(string name, bool rows = false)
     {
         int lanes = Block, dimsPerLane = Math.Max(1, AttentionMaxDim / lanes), widthBits = System.Numerics.BitOperations.Log2((uint)lanes);
         int staged = dimsPerLane * lanes;
         var k = new KernelBuilder(name, lanes);
         var (q, keys, values) = (k.Buffer("q"), k.Buffer("keys"), k.Buffer("values"));
-        var (keyScales, valueScales) = format == CacheFormat.Int8 ? (k.Buffer("keyScales"), k.Buffer("valueScales")) : (null, null);
         var starts = rows ? k.Buffer("starts") : null;
         var (position, y) = (k.Buffer("position"), k.Buffer("y"));
         var (heads, rowsPerHead, steps, capacity, dim) = (k.PushInt("heads"), k.PushInt("rowsPerHead"), k.PushInt("steps"), k.PushInt("capacity"), k.PushInt("dim"));
@@ -301,19 +189,14 @@ internal static partial class VulkanKernels
         var query = k.Shared("query", staged);
         var scores = k.Shared("scores", staged);
         var weights = k.Shared("weights", staged);
-        var exps = format == CacheFormat.Int8 ? k.Shared("exps", staged) : weights;
+        var exps = weights;
         var scratch = k.Shared("scratch", lanes);
         var totals = k.Shared("totals", lanes);
         var lane = k.LocalX;
         var start = position[k.Int(0)].ToInt();
         var splits = k.GroupsY;
         var splitBits = k.FindMsb(k.Max(splits, k.Int(1)));
-        var words = format switch
-        {
-            CacheFormat.BFloat16 => (dim + 1) / 2,
-            CacheFormat.Int8 => (dim + 3) / 4,
-            _ => dim,
-        };
+        var words = dim;
 
         // Blocks of B = 2^blockBits positions; parts of 2^laneBits invocations.
         var blockBits = k.Select(dim > 1, k.FindMsb(dim - 1) + 1, k.Int(0));
@@ -327,50 +210,18 @@ internal static partial class VulkanKernels
         var perLane = block.ShiftRight(laneBits);                            // positions an invocation scores per block
 
         // Dimension dd of cached row `slot` (= head · capacity + position) of a cache.
-        Val At(Buf cache, Val slot, Val dd) => format switch
-        {
-            CacheFormat.BFloat16 => BFloat16At(k, cache, slot * words + (dd >> 1), dd),
-            CacheFormat.Int8 => Int8At(k, cache, slot * words, dd),
-            _ => cache[slot * dim + dd],
-        };
+        Val At(Buf cache, Val slot, Val dd) => cache[slot * dim + dd];
 
         // q · k_slot · scale, a word of the key row at a time (four words per step, loaded before they are used), each
-        // term a fused multiply-add in turn. Past dim, query[] holds zeros: the int8 row's padding bytes add +0;
-        // bfloat16's odd last half is never read.
+        // term a fused multiply-add in turn.
         Val Score(Val slot)
         {
             var dot = k.Local(0f);
             var rowStart = slot * words;
-            void Word(Val w, Val bits)
-            {
-                switch (format)
-                {
-                    case CacheFormat.Int8:
-                        for (int b = 0; b < 4; b++)
-                        {
-                            dot.V = k.Fma(query[4 * w + b], ((bits << (24 - 8 * b)) >> 24).ToFloat(), dot.V);
-                        }
+            void Word(Val w, Val bits) => dot.V = k.Fma(query[w], bits.AsFloat(), dot.V);
 
-                        break;
-                    case CacheFormat.BFloat16:
-                        dot.V = k.Fma(query[2 * w], (bits.AsUInt() << 16).AsFloat(), dot.V);
-                        dot.V = k.Fma(query[2 * w + 1], (bits.AsUInt() & k.UInt(0xFFFF0000u)).AsFloat(), dot.V);
-                        break;
-                    default:
-                        dot.V = k.Fma(query[w], bits.AsFloat(), dot.V);
-                        break;
-                }
-            }
-
-            // Words holding only dimensions below dim (bfloat16: the odd last dimension is added on its own).
-            var whole = format == CacheFormat.BFloat16 ? dim >> 1 : words;
-            Unrolled(k, whole, 4, w => keys.Int(rowStart + w), Word);
-            if (format == CacheFormat.BFloat16)
-            {
-                k.If((dim & 1).Eq(1), () => dot.V = k.Fma(query[dim - 1], (keys.UInt(rowStart + whole) << 16).AsFloat(), dot.V));
-            }
-
-            return Capped(k, keyScales is null ? dot.V * scale : dot.V * keyScales[slot] * scale, softcap);
+            Unrolled(k, words, 4, w => keys.Int(rowStart + w), Word);
+            return Capped(k, dot.V * scale, softcap);
         }
 
         var acc = Enumerable.Range(0, dimsPerLane).Select(_ => k.Local(0f)).ToArray();
@@ -453,10 +304,6 @@ internal static partial class VulkanKernels
                         var at = part.ShiftLeft(blockBits) + offset;
                         var e = k.Exp(scores[at] - blockMax.V);
                         exps[at] = e;
-                        if (valueScales is not null)
-                        {
-                            weights[at] = k.MulRounded(e, valueScales[first + begin + offset]);
-                        }
                     });
                 }
 

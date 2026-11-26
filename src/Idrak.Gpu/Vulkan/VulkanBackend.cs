@@ -11,8 +11,7 @@ namespace Idrak.Gpu.Vulkan;
 /// <summary>
 /// A GPU driven through Vulkan compute (Intel and AMD GPUs, and any other Vulkan 1.1 device). One compute queue; one
 /// buffer and memory allocation per storage, pooled by exact size; kernels are SPIR-V dispatched in order
-/// (<see cref="Dispatch"/>, VulkanBackend.Dispatch.cs). Operations without a kernel of their own run through the host
-/// fallback (<see cref="HostCall"/>).
+/// (<see cref="Dispatch"/>, VulkanBackend.Dispatch.cs).
 ///
 /// Memory: storages live in one of the memories the device reports a storage could use (<see cref="StorageCandidates(VkPhysicalDeviceMemoryProperties, uint, uint)"/>):
 /// device-local memory reached through a host-visible staging buffer, device-local memory the host maps (when about all
@@ -124,16 +123,14 @@ internal sealed unsafe partial class VulkanBackend : Backend
         _matrix = ProbeMatrixUnits(physical, _sizeControl);
         VkPhysicalDeviceCooperativeMatrixFeatures matrixFeatures;
         VkPhysicalDeviceShaderFloat16Int8Features float16Features;
-        VkPhysicalDeviceShaderBfloat16Features bfloat16Features;
-        void* features = MatrixFeatures(&matrixFeatures, &float16Features, &bfloat16Features, _sizeControl.Enabled ? &sizeFeatures : null);
+        void* features = MatrixFeatures(&matrixFeatures, &float16Features, _sizeControl.Enabled ? &sizeFeatures : null);
 
         // The memory budget only where the device reports it (VulkanBackend.MemoryBudget.cs): no features to ask for.
         _memoryBudget = UsesMemoryBudget(physical.Handle);
         fixed (byte* extensionName = "VK_KHR_push_descriptor\0"u8, sizeName = "VK_EXT_subgroup_size_control\0"u8,
-            matrixName = CooperativeMatrixName, float16Name = ShaderFloat16Int8Name, bfloat16Name = ShaderBFloat16Name,
-            budgetName = "VK_EXT_memory_budget\0"u8)
+            matrixName = CooperativeMatrixName, float16Name = ShaderFloat16Int8Name, budgetName = "VK_EXT_memory_budget\0"u8)
         {
-            byte** extensions = stackalloc byte*[6];
+            byte** extensions = stackalloc byte*[5];
             uint count = 0;
             if (push)
             {
@@ -158,11 +155,6 @@ internal sealed unsafe partial class VulkanBackend : Backend
             if (_matrix is { Float16Extension: true })
             {
                 extensions[count++] = float16Name;
-            }
-
-            if (_matrix is { Emulated: 0, BFloat16Shape: not null })
-            {
-                extensions[count++] = bfloat16Name;
             }
 
             var deviceInfo = new VkDeviceCreateInfo
@@ -229,9 +221,6 @@ internal sealed unsafe partial class VulkanBackend : Backend
         StartQueue();
         TuneRuntime(pushDescriptors);
         TuneStorage(decided);
-        ChooseWidth();                                                     // on the storage memory kept (VulkanBackend.WidthProbe.cs)
-        var (native, report) = NativeTypesReported();                      // the types its products compute natively (plan 37, T2)
-        Capabilities = Capabilities with { NativeTypes = native, NativeReport = report };
     }
 
     /// <summary>Whether dispatches push their descriptors (VK_KHR_push_descriptor) instead of allocating descriptor sets.</summary>
@@ -327,15 +316,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
     {
         DecodeAttentionHeadDim = Math.Min(Device.Cpu.Backend.Capabilities.DecodeAttentionHeadDim, VulkanKernels.AttentionMaxDim),
         TiledAttentionHeadDim = Math.Min(Device.Cpu.Backend.Capabilities.TiledAttentionHeadDim, VulkanKernels.AttentionMaxDim),
-        SpanAttentionHeadDim = VulkanKernels.AttentionMaxDim,              // VulkanBackend.Spans.cs: larger heads take the host fallback
-        StoresAnyFormat = false,                                           // weights kept as stored: the types it expands itself (plan 37, Q0)
-        StoredFormats = StoredTypes,
-        // Decisions 7 and 8 (plan 37), its own report: every kernel reads and writes float32 values (storage buffers of
-        // float words) and sums in float32, the cooperative-matrix products too (bfloat16 or 16-bit float operands,
-        // float32 accumulators).
-        DefaultValueTypes = [ElementType.Float32],
-        DefaultSumTypes = [ElementType.Float32],
-        ValueTypes = new Dictionary<Operation, IReadOnlyList<ElementType>> { [Ops.ConvertElements] = DeviceConversions.Types },   // its conversion kernels
+        SpanAttentionHeadDim = VulkanKernels.AttentionMaxDim,              // VulkanBackend.Spans.cs
     };
 
     /// <summary>The number of usable Vulkan devices (0 when there is no loader or driver).</summary>

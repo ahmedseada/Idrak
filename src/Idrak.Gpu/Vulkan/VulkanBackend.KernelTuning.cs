@@ -19,9 +19,6 @@ namespace Idrak.Gpu.Vulkan;
 /// <summary>Which choice a measurement is for.</summary>
 internal enum VulkanTuneOp : byte
 {
-    /// <summary>A packed product: words per row of k and splits of k (candidate = splits · 8 + word variant).</summary>
-    Gemv,
-
     /// <summary>Decoding attention: splits of the cached positions.</summary>
     Attention,
 
@@ -31,26 +28,14 @@ internal enum VulkanTuneOp : byte
     /// <summary>A row kernel: one invocation per row (1) or a workgroup per row (0).</summary>
     Rows,
 
-    /// <summary>A prompt-sized packed product: the tiled packed kernel (at a width), the few-rows kernels, expanding the weights or the cooperative-matrix kernel.</summary>
-    PackedPrompt,
-
     /// <summary>Attention over many query rows: the tiled kernel (at a width) or the decoding kernel.</summary>
     TiledAttention,
 
     /// <summary>A two-pass reduction (column sums, group statistics): the splits of each column or group.</summary>
     Splits,
 
-    /// <summary>A fused packed product (several sharing an input, the gate/up pair, the gated down projection): as <see cref="Gemv"/>.</summary>
-    FusedGemv,
-
     /// <summary>A kernel with subgroup operations: the subgroup size its pipeline requires (0: the device's default).</summary>
     SubgroupSize,
-
-    /// <summary>A float32 product in reduced precision (MixedPrecision): the float32 choice (0) or the single-pass cooperative-matrix kernel (1).</summary>
-    MixedMatMul,
-
-    /// <summary>A prompt-sized packed product in reduced precision (MixedPrecision): the float32 choice (0) or the single-pass cooperative-matrix kernel (1).</summary>
-    MixedPackedPrompt,
 
     /// <summary>Attention either way (Backend.PrefersComposedAttention): AttentionSpans (0) or the composed scores (1).</summary>
     AttentionPath,
@@ -68,7 +53,7 @@ internal enum VulkanTuneOp : byte
     Convolution,
 
     /// <summary>
-    /// Attention for rows of different lengths (Backend.AttentionRows, AttentionRowsBFloat16): the tiled kernel (at a
+    /// Attention for rows of different lengths (Backend.AttentionRows): the tiled kernel (at a
     /// width) or the decoding kernel (its splits measured apart, as <see cref="Attention"/>'s).
     /// </summary>
     RowsAttention,

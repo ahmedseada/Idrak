@@ -160,9 +160,9 @@ internal sealed partial class VulkanBackend : IMemoryReport
     public override bool PrefersComposedAttention(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage? mask, int heads, int rows,
         int keyRows, int dim, float scale, bool training = false)
     {
-        // 0 = AttentionSpans (the default, also while nothing can be measured), 1 = composed; keyed by the precision too
-        // (the products may run on cooperative matrices under MixedPrecision) and by whether the gradient is timed too.
-        var key = new VulkanTuneKey(VulkanTuneOp.AttentionPath, (int)MixedPrecision.Current, heads, rows, keyRows, dim, (mask is null ? 0 : 1) | (training ? 2 : 0));
+        // 0 = AttentionSpans (the default, also while nothing can be measured), 1 = composed; keyed by whether the gradient
+        // is timed too.
+        var key = new VulkanTuneKey(VulkanTuneOp.AttentionPath, 0, heads, rows, keyRows, dim, (mask is null ? 0 : 1) | (training ? 2 : 0));
         if (TryTuned(key, out int known) && known is 0 or 1)
         {
             return known == 1;

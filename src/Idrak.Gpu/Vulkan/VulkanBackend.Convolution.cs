@@ -234,7 +234,7 @@ internal sealed partial class VulkanBackend
         bool composed = patches <= int.MaxValue && BlockBytes((int)Math.Min(patches, int.MaxValue)) <= MaxStorageBytes
             && 4 * patches <= free * ComputeResources.WorkspaceShare;
         bool unfold = composed && pass == ConvolutionShapes.Weight;
-        if (composed && (pass != ConvolutionShapes.Weight || MixedPrecision.Current != MatMulPrecision.Float32))
+        if (composed && pass != ConvolutionShapes.Weight)
         {
             into[count++] = WithWidth(Width, ConvComposed);
             composed = false;

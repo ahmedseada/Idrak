@@ -4,53 +4,34 @@
 namespace Idrak.Gpu.Vulkan;
 
 // What the cooperative-matrix products need beyond 32-bit values: workgroup arrays of 16-bit floats (capability Float16,
-// for devices that report shaderFloat16) or of bfloat16 values (SPV_KHR_bfloat16, capability BFloat16TypeKHR, for devices
-// that report shaderBFloat16Type), and cooperative matrices of either (SPV_KHR_cooperative_matrix, capability
-// CooperativeMatrixKHR, subgroup scope; bfloat16 ones with BFloat16CooperativeMatrixKHR) loaded from and stored to
-// workgroup memory, row-major. Values in registers stay 32-bit: a 16-bit value exists only in workgroup memory and
-// inside a matrix.
+// for devices that report shaderFloat16), and cooperative matrices of them (SPV_KHR_cooperative_matrix, capability
+// CooperativeMatrixKHR, subgroup scope) loaded from and stored to workgroup memory, row-major. Values in registers stay
+// 32-bit: a 16-bit value exists only in workgroup memory and inside a matrix.
 internal sealed partial class KernelBuilder
 {
     /// <summary>A workgroup-shared array of 16-bit floats: stores round a float to the nearest 16-bit float, loads widen it.</summary>
-    public OperandArray SharedHalf(string name, int length) => SharedOperand(name, length, OperandType.Float16);
-
-    /// <summary>
-    /// A workgroup-shared array of matrix operands of <paramref name="type"/>: stores convert a float to it (the caller
-    /// rounds first where the result must not depend on the device's rounding), loads widen it to a float.
-    /// </summary>
-    public OperandArray SharedOperand(string name, int length, OperandType type)
+    public OperandArray SharedHalf(string name, int length)
     {
-        uint element = OperandElement(type);
+        uint element = OperandElement();
         uint array = _m.TypeArray(element, (uint)length);
         uint variable = _m.GlobalVariable(_m.TypePointer(StorageClass.Workgroup, array), StorageClass.Workgroup);
         _m.Name(variable, name);
-        _sharedBytes += (type == OperandType.Float32 ? 4 : 2) * length;
-        return new OperandArray(this, variable, length, type);
+        _sharedBytes += 2 * length;
+        return new OperandArray(this, variable, length);
     }
 
     /// <summary>Whether a float is infinite.</summary>
     public Val IsInf(Val x) => Op(SpirvOp.IsInf, ScalarKind.Bool, x);
 
     /// <summary>
-    /// A cooperative matrix type of <paramref name="rows"/> × <paramref name="columns"/>: <paramref name="operand"/>
-    /// components for the operands (<paramref name="use"/> A or B: 16-bit floats or bfloat16), 32-bit floats for the
-    /// accumulator. Declares the extensions and capabilities.
+    /// A cooperative matrix type of <paramref name="rows"/> × <paramref name="columns"/>: 16-bit float components for the
+    /// operands (<paramref name="use"/> A or B), 32-bit floats for the accumulator. Declares the extension and capability.
     /// </summary>
-    public uint MatrixType(int rows, int columns, MatrixUse use, OperandType operand = OperandType.Float16)
+    public uint MatrixType(int rows, int columns, MatrixUse use)
     {
-        if (operand == OperandType.Float32)
-        {
-            throw new ArgumentOutOfRangeException(nameof(operand), operand, "Matrix operands are 16-bit floats or bfloat16.");
-        }
-
         _m.Capability(6022);                                             // CooperativeMatrixKHR
         _m.Extension("SPV_KHR_cooperative_matrix");
-        if (operand == OperandType.BFloat16)
-        {
-            _m.Capability(5118);                                         // BFloat16CooperativeMatrixKHR
-        }
-
-        uint component = use == MatrixUse.Accumulator ? TypeOf(ScalarKind.Float) : OperandElement(operand);
+        uint component = use == MatrixUse.Accumulator ? TypeOf(ScalarKind.Float) : OperandElement();
         return _m.TypeCooperativeMatrix(component, (uint)rows, (uint)columns, (uint)use);
     }
 
@@ -81,25 +62,15 @@ internal sealed partial class KernelBuilder
         _m.Code(SpirvOp.CooperativeMatrixStoreKHR, target.Pointer(offset), value, _m.ConstantUInt(0), _m.ConstantUInt((uint)stride));
     }
 
-    // The scalar type of an operand array's elements, with its capability and extension declared.
-    internal uint OperandElement(OperandType type)
+    // The 16-bit float type of an operand array's elements, with its capability declared.
+    internal uint OperandElement()
     {
-        switch (type)
-        {
-            case OperandType.Float16:
-                _m.Capability(9);                                        // Float16
-                return _m.TypeHalf();
-            case OperandType.BFloat16:
-                _m.Capability(5116);                                     // BFloat16TypeKHR
-                _m.Extension("SPV_KHR_bfloat16");
-                return _m.TypeBFloat16();
-            default:
-                return TypeOf(ScalarKind.Float);
-        }
+        _m.Capability(9);                                                // Float16
+        return _m.TypeHalf();
     }
 
-    internal uint OperandPointer(uint variable, OperandType type, Val index) =>
-        _m.Value(SpirvOp.AccessChain, _m.TypePointer(StorageClass.Workgroup, OperandElement(type)), variable, index.Id);
+    internal uint OperandPointer(uint variable, Val index) =>
+        _m.Value(SpirvOp.AccessChain, _m.TypePointer(StorageClass.Workgroup, OperandElement()), variable, index.Id);
 }
 
 /// <summary>What a cooperative matrix is for (the Use operand of OpTypeCooperativeMatrixKHR).</summary>
@@ -110,51 +81,30 @@ internal enum MatrixUse : uint
     Accumulator = 2,
 }
 
-/// <summary>The element type of a workgroup array of matrix operands.</summary>
-internal enum OperandType
-{
-    /// <summary>16-bit IEEE floats (capability Float16).</summary>
-    Float16,
-
-    /// <summary>bfloat16 (SPV_KHR_bfloat16): float32's sign, exponent and first 7 mantissa bits.</summary>
-    BFloat16,
-
-    /// <summary>32-bit floats: only for emulated matrices (tests), holding values already rounded to bfloat16.</summary>
-    Float32,
-}
-
-/// <summary>A workgroup-shared array of matrix operands (16-bit floats, bfloat16 or, emulated, floats), read and written as floats.</summary>
-internal sealed class OperandArray(KernelBuilder builder, uint variable, int length, OperandType type)
+/// <summary>A workgroup-shared array of 16-bit float matrix operands, read and written as floats.</summary>
+internal sealed class OperandArray(KernelBuilder builder, uint variable, int length)
 {
     /// <summary>Elements.</summary>
     public int Length => length;
 
-    /// <summary>The element type.</summary>
-    public OperandType Type => type;
-
-    /// <summary>Element <paramref name="index"/>, widened to a float; a stored float is converted to the element type.</summary>
+    /// <summary>Element <paramref name="index"/>, widened to a float; a stored float is converted to a 16-bit float.</summary>
     public Val this[Val index]
     {
         get
         {
             var m = builder.Module;
             uint floatType = builder.TypeOf(ScalarKind.Float);
-            if (type == OperandType.Float32)
-            {
-                return new Val(builder, m.Value(SpirvOp.Load, floatType, Pointer(index)), ScalarKind.Float);
-            }
-
-            uint narrow = m.Value(SpirvOp.Load, builder.OperandElement(type), Pointer(index));
+            uint narrow = m.Value(SpirvOp.Load, builder.OperandElement(), Pointer(index));
             return new Val(builder, m.Value(SpirvOp.FConvert, floatType, narrow), ScalarKind.Float);
         }
         set
         {
             KernelBuilder.Expect(value, ScalarKind.Float);
             var m = builder.Module;
-            m.Code(SpirvOp.Store, Pointer(index), type == OperandType.Float32 ? value.Id : m.Value(SpirvOp.FConvert, builder.OperandElement(type), value.Id));
+            m.Code(SpirvOp.Store, Pointer(index), m.Value(SpirvOp.FConvert, builder.OperandElement(), value.Id));
         }
     }
 
     /// <summary>A pointer to element <paramref name="index"/> (where a cooperative matrix is loaded from).</summary>
-    internal uint Pointer(Val index) => builder.OperandPointer(variable, type, index);
+    internal uint Pointer(Val index) => builder.OperandPointer(variable, index);
 }

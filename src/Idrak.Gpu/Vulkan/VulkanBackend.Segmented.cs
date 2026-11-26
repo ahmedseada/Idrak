@@ -17,7 +17,7 @@ internal sealed partial class VulkanBackend : ISegmentedAttentionBackend
     {
         if (!SegmentsOnDevice(heads, headsPerRow, rowsPerHead, steps, dim) || !Fit(starts))
         {
-            return AttentionSegmentedOnHost(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+            return false;
         }
 
         var (spanStarts, spanEnds, origins) = SegmentSpans(starts, heads / headsPerRow, rowsPerHead, steps, variant.Window);
@@ -43,8 +43,7 @@ internal sealed partial class VulkanBackend : ISegmentedAttentionBackend
     {
         if (!SegmentsOnDevice(heads, headsPerRow, rowsPerHead, steps, dim) || !Fit(starts))
         {
-            return AttentionSegmentedBackwardOnHost(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow,
-                rowsPerHead, steps, dim, scale, variant);
+            return false;
         }
 
         var (spanStarts, spanEnds, origins) = SegmentSpans(starts, heads / headsPerRow, rowsPerHead, steps, variant.Window);

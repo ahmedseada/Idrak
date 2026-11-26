@@ -634,7 +634,7 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
     {
         if (result == ErrorDeviceLost)
         {
-            throw new VulkanException(DeviceLostMessage(call, Name, batch.Count, batch.Last, RetryOnHost));
+            throw new VulkanException(DeviceLostMessage(call, Name, batch.Count, batch.Last));
         }
 
         Check(result, call);

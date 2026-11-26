@@ -4,20 +4,12 @@
 namespace Idrak.Gpu.Vulkan;
 
 // One summation order per operation, whatever the tuned choice (docs/optimization.md rule 86): the choices the backend
-// measures per device (VulkanBackend.KernelTuning.cs: how many splits, which width, which word variant, which kernel)
+// measures per device (VulkanBackend.KernelTuning.cs: how many splits, which width, which kernel)
 // decide only how fast a result comes, never its bits, so two processes that measured different choices (two cluster
 // ranks, two drivers of one card) agree. The orders, fixed by the shapes alone:
 //
-//   - a packed product's dot products over k (VulkanTuneOp.Gemv, FusedGemv, and the fused epilogues' second passes):
-//     k in leaves of GemvChunkAlign (32) rows, each leaf's terms added in turn from +0 (one fused multiply-add each),
-//     the leaves combined in the pairwise tree of consecutive leaves (2i with 2i + 1, then aligned pairs of those, the
-//     last incomplete subtrees as if padded with -0). A split of k takes an aligned power of two of the leaves, a slice
-//     of its workgroup an aligned power of two of the split's, so each partial sum is a subtree's and every pass after
-//     (the slices in workgroup memory, gemv_reduce over the splits) finishes the same tree (PairwiseStack, Pairwise).
-//   - the prompt-sized products (PackedPrompt) and the float32 products (MatMul): every term added in turn along k
-//     from +0, one fused multiply-add each, as the tiled and register-blocked kernels do; the few-rows kernels take that
-//     order too (one leaf of all of k, their slices on rows of x), int8's column scales multiply the finished sums
-//     (expanding the weights keeps them apart until the product is done).
+//   - the float32 products (MatMul): every term added in turn along k from +0, one fused multiply-add each, as the
+//     tiled and register-blocked kernels do.
 //   - a two-pass reduction (Splits): rows (columns) or elements (groups) in leaves of SplitLeaf, each leaf's sums in
 //     turn (moments: its mean, then the squares about it), the leaves in the pairwise tree, moments merged as Chan et
 //     al. with the left operand first; a split takes an aligned power of two of the leaves, the workgroup's invocations
@@ -37,8 +29,7 @@ namespace Idrak.Gpu.Vulkan;
 //     sums its positions in turn: in float32 the unfolded product (im2col's patches, the tree) stands in for it.
 //
 // Choices whose order the hardware defines are the exception: the cooperative-matrix products (VulkanTuneOp.MatMul's
-// and PackedPrompt's cooperative-matrix candidates, MixedMatMul, MixedPackedPrompt, and the composed convolution through
-// them) accumulate as the device's matrix units do. The attention paths (AttentionPath, TiledAttention, SpanAttention, RowsAttention) are different algorithms, not orders of
+// cooperative-matrix candidate, and the composed convolution through it) accumulate as the device's matrix units do. The attention paths (AttentionPath, TiledAttention, SpanAttention, RowsAttention) are different algorithms, not orders of
 // one; cluster ranks agree on them by sharing the measured choices.
 internal static partial class VulkanKernels
 {
