@@ -112,8 +112,7 @@ internal abstract partial class DesktopTests
                     jpeg += stored.Encoding == DocumentImage.Jpeg ? 1 : 0;
                     exact += stored.Encoding == DocumentImage.Jpeg ? 0 : 1;
                     var expected = stored.Encoding == DocumentImage.Jpeg ? new JpegCodec().Decode(JpegEncoder.Encode(image, 90)).Pixels : image.Pixels;
-                    var storedPixels = stored.Encoding == DocumentImage.Jpeg ? new JpegCodec().Decode(stored.Bytes().Span).Pixels : stored.Decode().Pixels;
-                    if (!PdfSynthLevels(storedPixels).AsSpan().SequenceEqual(PdfSynthLevels(expected)))
+                    if (!PdfSynthLevels(stored.Decode().Pixels).AsSpan().SequenceEqual(PdfSynthLevels(expected)))
                     {
                         problems.Add($"{where}: the {stored.Encoding} image is not the page's pixels");
                     }

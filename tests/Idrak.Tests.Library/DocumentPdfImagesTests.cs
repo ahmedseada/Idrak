@@ -20,14 +20,10 @@ internal abstract partial class Tests
         ("documents pdf: images: every image of every sample that lists them (D4's colour spaces, bit depths, /Decode arrays, masks, JPEGs, inline images and placements; D1's predictors, D6's scans, D7's and D10's images) in content order with its encoding, size, box and matrix (turned, slanted, flipped, mirrored, on a turned page), its bytes as stored (a raw image's samples, a JPEG's file) and its pixels exactly (raw against the expected hashes, Lab within its tolerance, a JPEG as the jpeg codec decodes the same bytes), its mask as coverage (a soft mask's levels, an explicit mask and a stencil 255 where they paint, a colour key 0 inside its ranges)", PdfImagesSamples),
         ("documents pdf: images: the scan-like pages give their one JPEG over the whole page and their hidden OCR text, read together; every image page read in parallel gives the same images (boxes, matrices, pixels, masks) as read in order", PdfImagesScanAndParallel),
         ("documents pdf: images: embedded files (an EmbeddedFiles name tree with kids and limits, file-attachment annotations) with their names, media types, sizes and descriptions, their bytes read back exactly and again, none in the other samples, refused once the document is closed", PdfImagesAttachments),
-        ("documents pdf: images: hand-made files: an encrypted file's XObject and inline image decode; an image drawn by a form takes the form's matrix; JPEG 2000, CCITT and JBIG2 are handed over as stored and named (an issue, a NotSupportedException); the pixel limit is named; a damaged image is left out or refused as damaged with its place kept; a Separation image decodes through its tint transform (D7)", PdfImagesHandMade),
+        ("documents pdf: images: hand-made files: an encrypted file's XObject and inline image decode; an image drawn by a form takes the form's matrix; JPEG 2000, CCITT and JBIG2 are handed over as stored and named (an issue, a NotSupportedException); the pixel limit is named; a damaged image is left out or refused as damaged with its place kept; a Separation image decodes through its tint transform (D7); a JPEG whose size is not its dictionary's is refused naming both", PdfImagesHandMade),
     ];
 
     private static readonly float[] PdfImageLevels = [.. Enumerable.Range(0, 256).Select(k => k * (1f / 255f))];
-
-    // An image's pixels: as the format decodes them (DocumentImage.Decode), a JPEG's by the library's JPEG codec on its
-    // stored bytes, reached directly (the format took the codec by the encoding's name, which is not on the new design yet).
-    internal static ImageData PdfImagePixels(DocumentImage image) => image.Encoding == DocumentImage.Jpeg ? new JpegCodec().Decode(image.Bytes().Span) : image.Decode();
 
     // The readable samples whose JSON lists images (any phase).
     private static List<PdfSampleEntry> PdfImageSamples()
@@ -52,10 +48,10 @@ internal abstract partial class Tests
 
             // Cold: the scan's JPEG first (the first decode of the process's JPEG path), then every image once.
             long start = Stopwatch.GetTimestamp();
-            string scanFirst = PdfImageHash(PdfImagePixels(scan));
+            string scanFirst = PdfImageHash(scan.Decode());
             double scanCold = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             start = Stopwatch.GetTimestamp();
-            string first = string.Join(",", images.Select(i => PdfImageHash(PdfImagePixels(i))));
+            string first = string.Join(",", images.Select(i => PdfImageHash(i.Decode())));
             double cold = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 
             var warm = new List<double>();
@@ -64,7 +60,7 @@ internal abstract partial class Tests
             {
                 long before = GC.GetTotalAllocatedBytes(precise: true);
                 start = Stopwatch.GetTimestamp();
-                var decoded = images.Select(PdfImagePixels).ToList();
+                var decoded = images.Select(i => i.Decode()).ToList();
                 warm.Add(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
                 allocated = GC.GetTotalAllocatedBytes(precise: true) - before;
                 if (pass == 19)
@@ -79,7 +75,7 @@ internal abstract partial class Tests
             {
                 long before = GC.GetTotalAllocatedBytes(precise: true);
                 start = Stopwatch.GetTimestamp();
-                var pixels = PdfImagePixels(scan);
+                var pixels = scan.Decode();
                 scanWarm.Add(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
                 scanAllocated = GC.GetTotalAllocatedBytes(precise: true) - before;
                 if (pass == 19)
@@ -172,9 +168,15 @@ internal abstract partial class Tests
         Check(stored == (string?)(image.Encoding == DocumentImage.Jpeg ? e["jpegSha256"] : e["samplesSha256"]), $"{what}: its bytes' SHA-256 {stored}");
 
         var pixels = e["pixels"]!.AsObject();
-        var decoded = PdfImagePixels(image);
+        var decoded = image.Decode();
         Check(decoded.Channels == (int)pixels["channels"]! && decoded.Width == image.PixelWidth && decoded.Height == image.PixelHeight,
             $"{what}: decoded {decoded.Channels} x {decoded.Width} x {decoded.Height}, expected {pixels["channels"]} channels");
+        if (image.Encoding == DocumentImage.Jpeg)
+        {
+            // A JPEG's pixels are the codec's own decode of the same bytes.
+            var codec = new JpegCodec().Decode(image.Bytes().Span);
+            Check(PdfInterleaved(decoded).AsSpan().SequenceEqual(PdfInterleaved(codec)), $"{what}: not the jpeg codec's decode of its bytes");
+        }
 
         PdfCheckPixels(what, decoded, pixels, folder, invert: false);
         PdfCheckMask(what, image, e, folder);
@@ -354,9 +356,9 @@ internal abstract partial class Tests
                 var image = page.Images.Single();
                 Check(image.Encoding == DocumentImage.Jpeg && image.Order == 0 && image.Box.Within(page.Box, 0.01f) && image.Box.Width > page.Width - 0.01f && image.Box.Height > page.Height - 0.01f,
                     $"{what}: the image {image.Encoding} at {image.Box}, order {image.Order}, on a page of {page.Width} x {page.Height}");
-                var pixels = PdfImagePixels(image);
-                Check(pixels.Channels == 1 && pixels.Width == image.PixelWidth && pixels.Height == image.PixelHeight,
-                    $"{what}: the scan's pixels are {pixels.Channels} x {pixels.Width} x {pixels.Height}");
+                var pixels = image.Decode();
+                Check(pixels.Channels == 1 && pixels.Width == image.PixelWidth && PdfInterleaved(pixels).AsSpan().SequenceEqual(PdfInterleaved(new JpegCodec().Decode(image.Bytes().Span))),
+                    $"{what}: the scan's pixels are not the jpeg codec's decode");
                 Check(page.Runs.Count > 0 && page.Runs.All(r => r.Hidden), $"{what}: {page.Runs.Count} runs, hidden: {string.Join(" ", page.Runs.Select(r => r.Hidden))}");
                 if (expected["runs"] is JsonArray { Count: > 0 } && expected["lines"] is JsonArray)
                 {
@@ -602,8 +604,7 @@ internal abstract partial class Tests
     }
 
     // The pixel limit; damaged images (no size: left out, its place kept; an unknown colour space; data cut short); a
-    // Separation image through its tint transform. (A JPEG whose size is not its dictionary's was refused as the codec
-    // decoded it: the codec by the encoding's name is not on the new design yet.)
+    // Separation image through its tint transform; a JPEG whose size is not its dictionary's.
     private static void PdfImagesLimitsAndDamage()
     {
         byte[] jpeg;
@@ -659,6 +660,7 @@ internal abstract partial class Tests
 
         // A JPEG of 64 x 48 pixels whose dictionary says 32 x 48.
         PdfImagesRefused<InvalidDataException>(page.Images[4], "64 x 48");
+        PdfImagesRefused<InvalidDataException>(page.Images[4], "32 x 48");
     }
 
     private static void PdfImagesRefused<TException>(DocumentImage image, string named) where TException : Exception
