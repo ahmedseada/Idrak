@@ -26,8 +26,8 @@ internal sealed class RunCommand : Command
         and what crossed the bus a token (offloaded weights staged or read in place, activations between the GPU's layers
         and the CPU's when the model is split; with --json, a "bus" object).
         --image gives a vision-language model (Gemma 3 4B and larger) images, before the prompt's text; --audio gives an
-        audio-language model sounds (its audio family a plug-in, -P), after the images.
-        An encoder-decoder (a folder whose architecture a plug-in registers as one) answers its source text
+        audio-language model sounds, after the images.
+        An encoder-decoder (a folder whose architecture is an encoder-decoder family) answers its source text
         directly, without a chat template: the generation settings sample its answer (--temperature 0: greedy), or
         --beams N searches N beams; images, sounds, --system, --tools, --mcp and --schema are for chat models.
 

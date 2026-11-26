@@ -176,9 +176,9 @@ runs are reversed in the labels for training and back after decoding, and the ou
   bidirectional LSTM (`--hidden 128`, `--layers 2`), a linear layer to the alphabet and CTC's blank, built with the
   library's `NetworkBuilder`. Lines are scaled to `--height` (48) and keep their width; a batch is padded to its widest
   line and each line's length goes to `Losses.Ctc`.
-- Augmentations through the library's `Augmentations` registry, mild by default (`--augment`; `none` for none):
-  `shift(pixels=2), affine(degrees=1, translate=0.01, scale=0.95:1.05, shear=3), color-jitter(brightness=0.2, contrast=0.3), noise(std=0.03)`
-  (`noise` is the library's).
+- Augmentations, mild by default (`--augment`; `none` for none):
+  `shift(pixels=2), affine(degrees=1, translate=0.01, scale=0.95:1.05, shear=3), color-jitter(brightness=0.2, contrast=0.3), noise(std=0.03)`;
+  picking them by their names is not on the new design yet.
 - The model folder: `config.json` (the architecture `CrnnForLineRecognition`; alphabet, height, direction, reading order,
   sizes, preprocessing, and the run: every epoch's loss, CER and WER) and `model.safetensors` (the best epoch's weights),
   which the CRNN family reads, so `idrak predict MODEL LINES` reads lines with it too. A folder of the earlier layout

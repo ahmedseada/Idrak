@@ -35,8 +35,8 @@ internal sealed class PretrainCommand : Command
         Checkpoints (RUN/checkpoint-STEP) are model folders with the optimizer's state; Ctrl+C writes one, and idrak
         resume RUN continues where the run stopped. idrak pretrain init writes a pretrain.json to start from.
 
-        A speech model (its family registered by a plug-in, -P: a recognizer whose objective is ctc or seq2seq, or a
-        synthesizer) trains on transcribed speech instead: --data transcripts.jsonl ({"audio", "text"} rows; a folder or
+        A speech model (a recognizer whose objective is ctc or seq2seq, or a synthesizer; finding its family is not on
+        the new design yet) trains on transcribed speech instead: --data transcripts.jsonl ({"audio", "text"} rows; a folder or
         zip of name.wav beside name.txt) with --audio DIR|ZIP, the step, rate and checkpoint options below, and these:
         --batch-seconds S (audio seconds a step; auto, the default, as many as the device holds), --metric cer|wer (the held-out score), --decoder greedy|beam and
         --beam N (how a CTC model reads the held-out sounds), --augment speed,noise,spec-mask, --clean
@@ -151,7 +151,7 @@ internal sealed class PretrainCommand : Command
 
         if (SpeechPretraining.ValueOptions.FirstOrDefault(o => context.Option(o) is not null) is { } speech)
         {
-            throw new UsageException($"{speech} is for a speech model's training; {modelFolder} is not one (a speech family registered by a plug-in, -P, reads one).");
+            throw new UsageException($"{speech} is for a speech model's training; {modelFolder} is not one (a speech family reads one).");
         }
 
         var options = Options(context);

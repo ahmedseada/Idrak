@@ -22,8 +22,8 @@ internal static class HelpTopics
         ("env", "Every environment variable Idrak reads"),
         ("exit-codes", "What the tool's exit codes mean"),
         ("arabic", "Messages in Arabic (--lang ar) and how they are shown right to left in a terminal"),
-        ("audio", "Sound files, speech recognition and synthesis, voices: the commands and what is registered"),
-        ("reinforcement", "Reinforcement learning: idrak reinforce (language models, classic environments, DQN), what is registered"),
+        ("audio", "Sound files, speech recognition and synthesis, voices: the commands"),
+        ("reinforcement", "Reinforcement learning: idrak reinforce (language models, classic environments, DQN)"),
     ];
 
     /// <summary>The topic names.</summary>
@@ -102,10 +102,9 @@ internal static class HelpTopics
             idrak help audio
 
             Sound files are decoded and written in C#, with no outside program: WAV, FLAC and MP3 (MP2 read too) are
-            built in. Speech models are families, registered by plug-ins and never by the library: the tool registers
-            Idrak.Audio.Plugins' (Whisper, VITS with uroman's Arabic romanizer, OpenVoice, IdrakAudio, and the espeak-ng
-            phonemizer, which runs the espeak-ng program the user installs), another comes with -P, and a model whose
-            family is not registered is refused with "not registered" and the -P remedy.
+            built in. Speech models are families, never the library's: Idrak.Audio.Plugins has Whisper, VITS with uroman's
+            Arabic romanizer, OpenVoice, IdrakAudio, and the espeak-ng phonemizer, which runs the espeak-ng program the
+            user installs. Finding a model's family by its name is not on the new design yet.
 
               idrak transcribe MODEL AUDIO...       speech to text: text, JSON, SRT or WebVTT
               idrak speak MODEL TEXT -o OUT         text to speech, in a speaker or an installed voice (--voice)
@@ -140,11 +139,10 @@ internal static class HelpTopics
             the others of its group: the same situation played again) and updates the adapters with a policy loss. The
             general part (rollouts, advantages, losses, the trainer, checkpoints) is Idrak.Reinforcement; the language-model
             policy, the prompts environment and the text rewards are Idrak.Text's; environments several apps use (coding)
-            are plug-ins of Idrak.Reinforcement.Plugins, which the tool registers at startup. A name nobody registered is
-            refused with "not registered".
+            are Idrak.Reinforcement.Plugins'. Picking an environment by its name is not on the new design yet.
 
-            An environment whose observations are numbers (the classic plug-in's bandit, cartpole, pendulum and mountain-car,
-            or a plug-in's) needs no model: idrak reinforce builds a small network from --hidden, --activation and
+            An environment whose observations are numbers (the classic environments: bandit, cartpole, pendulum and
+            mountain-car) needs no model: idrak reinforce builds a small network from --hidden, --activation and
             --value-head and trains it on-policy (ppo, reinforce, grpo: a categorical policy for discrete actions, a
             Gaussian one for a box) or off-policy (dqn: a Q-network with a target network and a replay buffer, discrete
             actions only). DIR receives the policy or the Q-network and idrak-reinforce.json, its settings.
@@ -165,7 +163,6 @@ internal static class HelpTopics
                                                       DQN on CartPole (IDRAK_RL_DQN_* for its settings)
               idrak reinforce --env pendulum --algorithm ppo -o runs/pendulum
                                                       a Gaussian policy for a box of actions (dqn refuses a box)
-              idrak reinforce --list                  every registered name below, with its options
               idrak cluster sim --topology FILE -- reinforce MODEL ... -o DIR
                                                       on a simulated cluster: each rank plays its shards' episodes (--shards,
                                                       --spread), rank 0 writes the adapter, checkpoints and log (--cluster
@@ -207,9 +204,8 @@ internal static class HelpTopics
     private const string Plugins = """
         idrak help plugins
 
-        -P/--plugin PATH (repeatable), or the config's "plugins" list, named an assembly whose plug-ins registered
-        formats, families, ops or devices: loading plug-ins is not on the new design yet, and a command given one
-        stops saying so.
+        -P/--plugin PATH (repeatable), or the config's "plugins" list, names an assembly to load: loading one is not on
+        the new design yet, and a command given one stops saying so.
 
         Commands: idrak new plugin.
         """;

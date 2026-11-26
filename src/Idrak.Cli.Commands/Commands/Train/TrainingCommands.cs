@@ -31,7 +31,7 @@ internal sealed class TrainCommand : Command
           SPEC.json  the network as the builder writes it (NetworkBuilder.ToJson, idrak suggest's network.json):
                      {"format": "idrak-network/1", "input": "Features", "shape": [9], "steps": [...]}
           MODEL      an image model to fine-tune, read through its family (a folder with config.json and safetensors or
-                     an .onnx file; the family from a plug-in, -P PLUGIN.dll); its weights are written as .ikw
+                     an .onnx file; finding its family is not on the new design yet); its weights are written as .ikw
 
         Options:
               --data FILE        a CSV with a header (numbers; a class column may hold names), a folder with a folder of
@@ -81,8 +81,8 @@ internal sealed class TrainCommand : Command
 
         Image runs (an image model, --augment, --loss, --metric, --eval, --decoder, annotations or a [classes, h, w]
         output) read and augment samples on worker threads, stretched to the network's input; a fine-tuned family's
-        normalization is applied as its preprocessing gives it. A family, decoder or head no plug-in registered is
-        refused with its registry's message.
+        normalization is applied as its preprocessing gives it. Finding a family, decoder or head by its name is not on
+        the new design yet.
 
         Examples:
           idrak train network.json --data houses.csv -t price -o houses.ikm
@@ -90,7 +90,7 @@ internal sealed class TrainCommand : Command
           idrak train network.json --data houses.csv --config train.json
           idrak train cnn.json --data ./shapes --augment "flip, rotation(degrees=10)" --eval ./shapes-test
           idrak train unet.json --data ./scans --data-format masks --loss dice -o scans.ikm
-          idrak train -P MyFamilies.dll ./detector --data ./coco/train.json --eval ./coco/val.json --metric coco -o tuned.ikw
+          idrak train ./detector --data ./coco/train.json --eval ./coco/val.json --metric coco -o tuned.ikw
           idrak train crnn.json --task line-recognition --data ./lines --eval ./lines-test --direction rtl -o lines.ikm
           idrak train network.json --data houses.csv --run run --cluster lan.json
         """;
@@ -276,8 +276,7 @@ internal sealed class ResumeCommand : Command
                           continue the run as one rank of a real cluster (as idrak train and pretrain take them)
 
         The run's data, split, scalers and settings are reused and its log continues. The checkpoint holds the weights
-        only: the optimizer's moments and the learning-rate schedule start again. An image run that fine-tunes a model
-        needs its family's plug-in again (-P). A pretraining run (idrak pretrain) goes on from its latest checkpoint with
+        only: the optimizer's moments and the learning-rate schedule start again. A pretraining run (idrak pretrain) goes on from its latest checkpoint with
         its optimizer's state, data order and rate, as if it had not stopped.
 
         Examples:
@@ -615,16 +614,16 @@ internal sealed class PredictCommand : Command
               --batch N      an image model: at most N images at once (default: measured on the device; images whose
                              preprocessing gives the same size run together, as many as fit in half its free memory)
 
-        Image models run their family's preprocessing (resize, crop, normalization) on each image. A family or a decoder
-        no plug-in registered is refused with its registry's message. Tables follow --format (csv, md); -j gives JSON.
+        Image models run their family's preprocessing (resize, crop, normalization) on each image. Finding a family or a
+        decoder by its name is not on the new design yet. Tables follow --format (csv, md); -j gives JSON.
 
         Examples:
           idrak predict houses.ikm -i new-houses.csv
           idrak predict shapes.ikm -i ./unlabelled -o predictions.csv --top 3
-          idrak predict -P MyFamilies.dll ./resnet-tiny photo.png ./more --top 3
-          idrak predict -P MyFamilies.dll ./detector street/*.jpg --threshold 0.4 -o boxes.csv
-          idrak predict -P MyFamilies.dll ./detector street.jpg --decoder boxes-scores -j
-          idrak predict -P MyFamilies.dll ./segmenter ./scans -o ./masks --format md
+          idrak predict ./resnet-tiny photo.png ./more --top 3
+          idrak predict ./detector street/*.jpg --threshold 0.4 -o boxes.csv
+          idrak predict ./detector street.jpg --decoder boxes-scores -j
+          idrak predict ./segmenter ./scans -o ./masks --format md
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
@@ -637,7 +636,7 @@ internal sealed class PredictCommand : Command
         string modelPath = context.Argument(0, "MODEL (a model package written by idrak train or Predictor.Save, or an image model)");
         if (ImageModelFiles.IsCheckpoint(modelPath))
         {
-            // An image model read through its family (a plug-in's).
+            // An image model read through its family.
             List<string> images = [.. context.Positional.Skip(1), .. context.Options("--input")];
             if (images.Count == 0)
             {

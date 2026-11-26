@@ -39,7 +39,7 @@ internal static partial class Messages
         [Help.CommonOptions] =
             "خيارات عامة:\n" +
             "  -d, --device NAME   الجهاز: cpu أو cuda:0 أو vulkan:1 أو hip:0 (الافتراضي: الجهاز الافتراضي)\n" +
-            "  -P, --plugin PATH   تحميل مكتبة تسجل صيغا وعائلات نماذج وغير ذلك (يمكن تكراره)\n" +
+            "  -P, --plugin PATH   تحميل مكتبة إضافة (ليس على التصميم الجديد بعد)\n" +
             "  -j, --json          مخرجات تقرؤها البرامج (بالإنجليزية دائما)\n" +
             "  -q, --quiet         مخرجات أقل؛ و -v, --verbose: مخرجات أكثر وعمل المكتبة أثناء حدوثه (مرات قراءة الطلب،\n" +
             "                      وفك الترميز، واختيارات النوى المقيسة، والرجوع إلى المضيف؛ IDRAK_VERBOSE=1)\n" +
@@ -138,7 +138,7 @@ internal static partial class Messages
             "ثبت محمل Vulkan (libvulkan.so.1 أو vulkan-1.dll) ومشغل Vulkan لبطاقة الرسومات",
         ["install the AMD graphics driver (Windows) or ROCm's runtime (Linux; ROCM_PATH finds it)"] =
             "ثبت مشغل بطاقة الرسومات من AMD (على Windows) أو بيئة تشغيل ROCm (على Linux؛ ويجدها ROCM_PATH)",
-        ["install what the {0} backend needs (see the plug-in that registers it)"] = "ثبت ما تحتاجه الواجهة {0} (انظر الإضافة التي تسجلها)",
+        ["install what the {0} backend needs"] = "ثبت ما تحتاجه الواجهة {0}",
         ["CUDA drives GPUs through their CUDA driver; without it those GPUs can still run through Vulkan."] =
             "تشغل CUDA بطاقات الرسومات عبر مشغل CUDA؛ وبدونه يمكن لهذه البطاقات أن تعمل عبر Vulkan.",
         ["Vulkan compute runs Idrak's generated kernels on most GPUs (and on phones); it needs the loader and a driver."] =
@@ -180,8 +180,8 @@ internal static partial class Messages
         ["set: {0} (idrak env shows them)"] = "المعينة: {0} (يعرضها idrak env)",
         ["Environment variables change devices, tuning and memory for every Idrak program; a forgotten one explains surprises."] =
             "متغيرات البيئة تغير الأجهزة والضبط والذاكرة لكل برامج إدراك؛ ومتغير منسي يفسر المفاجآت.",
-        ["The config file gives defaults (device, cache, plug-ins, model aliases) for every command."] =
-            "ملف الإعدادات يعطي القيم الافتراضية (الجهاز والتخزين المؤقت والإضافات وأسماء النماذج المختصرة) لكل الأوامر.",
+        ["The config file gives defaults (device, cache, model aliases) for every command."] =
+            "ملف الإعدادات يعطي القيم الافتراضية (الجهاز والتخزين المؤقت وأسماء النماذج المختصرة) لكل الأوامر.",
         ["build Turnip with -Dfreedreno-kmds=kgsl and export VK_ICD_FILENAMES=<its icd.d/freedreno_icd*.json> (installation/android-termux.md, step 7)"] =
             "ابن Turnip بالخيار -Dfreedreno-kmds=kgsl ثم export VK_ICD_FILENAMES=<its icd.d/freedreno_icd*.json> (الملف installation/android-termux.md، الخطوة 7)",
         ["On the phone the Vulkan loader finds the GPU only through the Turnip driver file that VK_ICD_FILENAMES names."] =

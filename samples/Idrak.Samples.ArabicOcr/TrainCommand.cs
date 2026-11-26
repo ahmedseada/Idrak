@@ -16,8 +16,8 @@ namespace Idrak.Samples.ArabicOcr;
 /// <summary>
 /// <c>train</c>: the line recognizer from a folder of line images and their transcriptions. The alphabet is the data's
 /// characters (saved with the model). Lines are scaled to one height and keep their width; a batch is padded to its
-/// widest line and each line's steps go to the CTC loss. Augmentations come from the library's registry
-/// (<see cref="Augmentations"/>, "noise" among them), seeded per line and epoch, run in parallel off the step. A step
+/// widest line and each line's steps go to the CTC loss. Augmentations (picked by their names, which is not on the new
+/// design yet) are seeded per line and epoch and run in parallel off the step. A step
 /// the device has no room for is split into micro-batches whose gradients add up (halved again as needed), as the library's
 /// image training does. Each epoch reports the loss and, on <c>--eval</c>, CER and WER (<see cref="TuningMetrics"/>);
 /// the best epoch is kept. On the console a live line shows the epoch's progress (steps, loss, lines a second, data and
@@ -48,7 +48,8 @@ internal static class TrainCommand
                                cold (new memory blocks, new shapes measured), so a later step shows the warm cost
           --log FILE           every step and epoch as JSON Lines (the library's telemetry: loss, data and step time,
                                epoch summaries with CER, WER, lines a second and device memory)
-          --augment PIPELINE   the Augmentations registry's names ("none" for none); default:
+          --augment PIPELINE   the augmentations' names ("none" for none; picking them by their names is not on
+                               the new design yet); default:
                                shift(pixels=2), affine(degrees=1, translate=0.01, scale=0.95:1.05, shear=3),
                                color-jitter(brightness=0.2, contrast=0.3), noise(std=0.03)
         """;
@@ -82,15 +83,7 @@ internal static class TrainCommand
         }
 
         string augmentText = a.Option("--augment") ?? DefaultAugment;
-        IReadOnlyList<IAugmentation> augment;
-        try
-        {
-            augment = Augmentations.Parse(augmentText);
-        }
-        catch (ArgumentException e)
-        {
-            throw new UsageException($"--augment: {e.Message}");
-        }
+        IReadOnlyList<IAugmentation> augment = ParseAugmentations(augmentText);
 
         // Loading shows where it is: reading tens of thousands of transcriptions and decoding as many images takes a while.
         using var live = ProgressReporters.Start("loading", options: new ProgressOptions { Output = error });
@@ -387,6 +380,11 @@ internal static class TrainCommand
     }
 
     private static double Round(double value) => Math.Round(value, 5);
+
+    // The augmentations a pipeline names ("none" for none): picking them by their names is not on the new design yet.
+    private static IReadOnlyList<IAugmentation> ParseAugmentations(string text) =>
+        string.IsNullOrWhiteSpace(text) || text.Trim().Equals("none", StringComparison.OrdinalIgnoreCase) ? []
+            : throw new NotSupportedException($"Picking the augmentations '{text}' by their names is not on the new design yet.");
 
     // A learning-rate schedule by its name, and a metric by its name: picking either by its name is not on the new design yet.
     private static ILearningRateScheduler Schedule(string name) =>

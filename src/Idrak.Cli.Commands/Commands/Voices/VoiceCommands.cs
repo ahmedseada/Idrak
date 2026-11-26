@@ -91,8 +91,8 @@ internal sealed class VoiceAddCommand : Command
         and agreement, the converter) and the embedding. Each clip's agreement is the cosine of its embedding with the
         voice's: a clip far below the others is another speaker or noise, and is flagged. A voice is a person's
         likeness: --consent (who agreed, to what) is required, stored and shown by voice show; the library cannot verify
-        it. The converter family is a plug-in (Idrak.Audio.Plugins' OpenVoice is built in; another with -P): its folder
-        holds config.json and the weights.
+        it. The converter is a family's model (Idrak.Audio.Plugins' OpenVoice; finding its family by its name is not on
+        the new design yet): its folder holds config.json and the weights.
 
         Arguments:
           NAME                   the voice's name (letters, digits, . - _)

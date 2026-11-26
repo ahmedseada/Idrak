@@ -8,7 +8,7 @@ namespace Idrak.Cli.Commands.Developer;
 
 /// <summary>
 /// <c>idrak shell</c>: an interactive prompt for idrak commands (without the leading "idrak"), run in this process
-/// through <see cref="CommandLine.Run"/>, so plug-ins, loaded devices and kernel caches stay warm between commands.
+/// through <see cref="CommandLine.Run"/>, so loaded devices and kernel caches stay warm between commands.
 /// On a terminal it has a line editor with history (up and down arrows, kept in a file) and Tab completion of command
 /// names and options; otherwise (or when a test sets <see cref="Input"/>) it reads plain lines.
 /// </summary>
@@ -28,13 +28,13 @@ internal sealed class ShellCommand : Command
         "[--history FILE]\n\n" +
         "Type commands without 'idrak' (e.g. 'devices', 'demo xor -d vulkan:0'). Tab completes command names and\n" +
         "options; the arrows recall earlier lines. Inside the shell: 'history' lists the lines, '!N' runs line N again,\n" +
-        "'exit' or 'quit' (or end of input) leaves. The common options given to shell (--device, --plugin, --config,\n" +
-        "--cache, --verbose, --quiet) apply to every command typed.\n\n" +
+        "'exit' or 'quit' (or end of input) leaves. The common options given to shell (--device, --config, --cache,\n" +
+        "--verbose, --quiet) apply to every command typed.\n\n" +
         "Options:\n" +
         "      --history FILE  where the history is kept (default ~/.idrak/history; 'none' keeps none)\n\n" +
         "Examples:\n" +
         "  idrak shell\n" +
-        "  idrak shell -d vulkan:0 -P ./MyFormat.dll";
+        "  idrak shell -d vulkan:0";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--history"];
 

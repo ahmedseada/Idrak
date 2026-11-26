@@ -355,7 +355,7 @@ internal static class LineTraining
         context.Write($"Wrote     {settings.Output} · run {folder}");
         context.Write(builder is not null
             ? $"Next      idrak predict {settings.Output} LINE.png   ·   idrak runs show {folder}"
-            : $"Next      idrak predict -P PLUGIN {options.Model} LINE.png --weights {settings.Output}   ·   idrak runs show {folder}");
+            : $"Next      idrak predict {options.Model} LINE.png --weights {settings.Output}   ·   idrak runs show {folder}");
         context.WriteJson(new JsonObject
         {
             ["model"] = Path.GetFullPath(settings.Output),

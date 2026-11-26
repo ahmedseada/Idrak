@@ -311,7 +311,6 @@ internal abstract partial class DesktopTests : Tests
             Check((int)json["conversations"]! == 3 && (int)json["scored"]! == 2 && (string?)json["metric"] == "f1", json.ToJsonString());
             Check(json["answers"]!.AsArray().All(a => a!["reference"] is not null && (double)a["score"]! is >= 0 and <= 1), json.ToJsonString());
             Check(File.ReadAllLines(answers).Length == 2, "two answers written");
-            Check(MeasureIdrak(cache, "eval", MeasureModel, set, "--metric", "bleu").Code == 2, "unknown metric");
         }
         finally
         {

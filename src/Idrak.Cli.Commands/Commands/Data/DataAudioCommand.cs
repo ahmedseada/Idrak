@@ -72,7 +72,7 @@ internal sealed class DataAudioCommand : Command
                                  (or "transcript", "sentence"), or lines of NAME<tab>TEXT or NAME|TEXT; matched by file
                                  name, then by name without extension
               --stats            print the lengths, rates and channels (without -o: of the inputs, nothing is written)
-              --align MODEL      write alignments.jsonl from a CTC speech model (IdrakAudio's, or a -P plug-in's)
+              --align MODEL      write alignments.jsonl from a CTC speech model (IdrakAudio's)
               --align-seconds S  audio seconds in one pass of the model while aligning (default 60)
               --audio DIR|ZIP    where the sounds of transcripts files given to --align are (default: beside each file)
               --source KIND      the speech data's kind for --align (transcripts or audio-folder; told from the paths)

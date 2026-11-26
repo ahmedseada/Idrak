@@ -38,7 +38,7 @@ internal sealed class ChatCommand : Command
               --grayscale        turn the images grey first (some OCR fine-tunes ask for it; an alias can keep it);
                                  the same as the grayscale image transform first
               --audio FILE       give an audio-language model a sound with the first message (repeatable; /audio adds
-                                 more later; its family a plug-in, -P)
+                                 more later)
         """ + "\n" + ModelChoices.ImageTransformHelp + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
               --mcp SERVER      let the model call an MCP server's tools: an http(s) URL, or a command that starts
                                  the server ("npx -y some-server"); repeatable

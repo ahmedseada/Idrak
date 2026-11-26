@@ -191,8 +191,8 @@ internal sealed class OnnxCheckCommand : Command
         "Imports the model on the chosen device, runs N random samples (token ids for a model that starts with an\n" +
         "embedding) and compares Idrak's outputs with:\n" +
         "  - the model exported by Idrak and imported again (the round trip);\n" +
-        "  - ONNX Runtime, when the Idrak.Onnx.Runtime assembly is available: next to the tool, or loaded with\n" +
-        "    --plugin PATH/Idrak.Onnx.Runtime.dll (with Microsoft.ML.OnnxRuntime beside it). Without it the check says so;\n" +
+        "  - ONNX Runtime (Idrak.Onnx.Runtime): finding its loader is not on the new design yet, so the check says it is\n" +
+        "    unavailable;\n" +
         "  - the outputs another framework computed, from FILE.onnx.expected.json next to the model or --expected FILE\n" +
         "    ({\"inputs\": [[...], ...], \"outputs\": [[...], ...], \"inputShape\": [...]}, as tools/pytorch writes it).\n" +
         "Exits with 1 when a difference is larger than the tolerance.\n\n" +
@@ -203,7 +203,7 @@ internal sealed class OnnxCheckCommand : Command
         "      --expected FILE reference inputs and outputs to compare with (default FILE.onnx.expected.json when present)\n\n" +
         "Examples:\n" +
         "  idrak onnx check model.onnx\n" +
-        "  idrak onnx check model.onnx -d vulkan:0 --tolerance 1e-3 -P ./ort/Idrak.Onnx.Runtime.dll";
+        "  idrak onnx check model.onnx -d vulkan:0 --tolerance 1e-3";
 
     public override IReadOnlyCollection<string> ValueOptions => ["--shape", "--batch", "--tolerance", "--expected"];
 
@@ -244,7 +244,7 @@ internal sealed class OnnxCheckCommand : Command
         if (RuntimeLoader() is not { } loader)
         {
             checks.Add(("ONNX Runtime", "unavailable", null,
-                "Idrak.Onnx.Runtime is not loaded; pass --plugin PATH/Idrak.Onnx.Runtime.dll (Microsoft.ML.OnnxRuntime beside it) to compare with it"));
+                "finding Idrak.Onnx.Runtime's loader is not on the new design yet"));
         }
         else if (LoadRuntime(loader, bytes, out string? refused) is not { } runtime)
         {

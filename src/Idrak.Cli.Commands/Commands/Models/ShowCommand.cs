@@ -66,7 +66,7 @@ internal sealed class ShowCommand : Command
         }
 
         // A vision-language model's image side (vision_config), described without loading it: the keys most vision
-        // configs share, as written (no family's defaults), and whether a vision family is registered for it (-P PLUGIN).
+        // configs share, as written (no family's defaults), and whether its vision family is known.
         JsonObject? vision = null;
         if (info.Config["vision_config"] is JsonObject visionConfig)
         {
@@ -81,7 +81,7 @@ internal sealed class ShowCommand : Command
             string Part(string key, string label) => vision[key] is { } value ? $" · {label} {value}" : "";
             fields.Add(("Vision", $"{(string?)visionConfig["model_type"] ?? "vision encoder"}{Part("layers", "layers")}{Part("width", "width")}{Part("heads", "heads")}"
                 + $"{Part("imageSize", "image px")}{Part("patchSize", "patch px")} · "
-                + (registered ? $"vision family {architecture} registered" : $"vision family '{architecture}' not registered (load its plug-in with -P)")));
+                + (registered ? $"vision family {architecture} registered" : $"vision family '{architecture}': finding it is not on the new design yet")));
         }
 
         fields.Add(("Weights", $"{info.Format} · {Units.Bytes(info.WeightBytes)}"));

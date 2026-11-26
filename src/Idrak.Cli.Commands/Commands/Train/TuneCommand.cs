@@ -60,9 +60,9 @@ internal sealed class TuneCommand : Command
           idrak tune train -b qwen prefs.jsonl --loss dpo -o adapters/dpo -d cuda:0
           idrak tune evaluate adapters/chat held-out.jsonl --adapter adapters/chat
           idrak tune export adapters/chat -o merged
-          idrak tune -P plugins/MyVision.dll -b owner/vlm --data train.json --eval val.json --images images.zip
+          idrak tune -b owner/vlm --data train.json --eval val.json --images images.zip
               --train-projector --metric cer --metric-every 100 -o adapters/ocr
-          idrak tune evaluate owner/vlm val.json --images images.zip --adapter adapters/ocr --metric cer -P plugins/MyVision.dll
+          idrak tune evaluate owner/vlm val.json --images images.zip --adapter adapters/ocr --metric cer
           idrak tune train -b qwen chats.jsonl -o adapters/chat --rank 16 --cluster lan.json
         """;
 
@@ -274,14 +274,14 @@ internal sealed class TuneInitCommand : Command
 
         The values are the library's defaults (rank, alpha, learning rate, lengths); the device given with -d is written
         too. Sizing them to the data and the device's memory is what idrak suggest does, when it is available. With a
-        plug-in that registers a vision family (-P), the example tunes on images: train.json and val.json as LlamaFactory
-        writes them, the image settings (images, image-transform, vision, train-projector, feature-cache) and a score of
-        generated answers (metric cer), with the plug-in kept in "plugins".
+        vision family, the example would tune on images: train.json and val.json as LlamaFactory writes them, the image
+        settings (images, image-transform, vision, train-projector, feature-cache) and a score of generated answers
+        (metric cer); finding the vision families is not on the new design yet.
 
         Examples:
           idrak tune init -b Qwen/Qwen3-0.6B --data chats.jsonl
           idrak tune init -b qwen --data prefs.jsonl --loss dpo -o dpo.json && idrak tune --config dpo.json
-          idrak tune init -P plugins/MyVision.dll -b owner/vlm -o ocr.json && idrak tune --config ocr.json
+          idrak tune init -b owner/vlm -o ocr.json && idrak tune --config ocr.json
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } = ["--base", "--data", "--out", "--adapter-out", "--loss"];
@@ -315,9 +315,7 @@ internal sealed class TuneInitCommand : Command
 
         string model = context.Option("--base") ?? "owner/model";
 
-        // A plug-in given with -P that registers a vision family: the example tunes on images (LlamaFactory's ShareGPT
-        // train.json and val.json), and the plug-in is kept so idrak tune --config loads it again.
-        var plugins = context.Options("--plugin").Select(Path.GetFullPath).ToList();
+        // A vision family: the example tunes on images (LlamaFactory's ShareGPT train.json and val.json).
         List<string> families = [];                                     // the registered vision families: listing them is not on the new design yet
         bool images = families.Count > 0 && loss == "sft";
         var data = context.Options("--data").Count > 0 ? context.Options("--data") : [images ? "train.json" : loss == "sft" ? "chats.jsonl" : "preferences.jsonl"];
@@ -331,9 +329,8 @@ internal sealed class TuneInitCommand : Command
             ? $$"""
               // The evaluation data: its loss while training, and answers generated on it and scored.
               "eval": "val.json",
-              // Images (the vision family {{string.Join(", ", families)}}, from the plug-in below): conversations as messages or
+              // Images (the vision family {{string.Join(", ", families)}}): conversations as messages or
               // ShareGPT (an "images" list and <image> placeholders); the format told from the first record, or named.
-              "plugins": [{{string.Join(", ", plugins.Select(Json))}}],
               "data-format": "auto",
               // Where relative image paths are found: a folder or a .zip read in place (left out: the data file's folder).
               // "images": "images.zip",

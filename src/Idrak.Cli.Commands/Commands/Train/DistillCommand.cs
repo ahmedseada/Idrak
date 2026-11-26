@@ -84,8 +84,8 @@ internal sealed class DistillCommand : Command
               --batch-size N        with --generate: prompts answered together (default 8); with --on-policy: the
                                     prompts of each step (default 8)
               --on-policy           the student samples its own answers and learns the teacher's distributions on them
-              --divergence NAME     with --on-policy: forward, reverse (default) or jsd, or a registered one
-                                    (TeacherDivergences; IDRAK_RL_DIVERGENCE)
+              --divergence NAME     with --on-policy: forward, reverse (default) or jsd (TeacherDivergences;
+                                    IDRAK_RL_DIVERGENCE)
               --beta B              with --on-policy and jsd: the Jensen-Shannon weight, in (0, 1) (default 0.5)
               --mix L               with --on-policy: λ, the share of a step's prompts trained on the data's answers, 0 to 1
                                     (default 0; IDRAK_RL_DISTILL_MIX)
@@ -101,7 +101,7 @@ internal sealed class DistillCommand : Command
           --save-every, --system, --max-rows, --no-packing, --checkpointing, --no-checkpointing, --recompute,
           --no-activation-estimate, --no-graphs, --cpu-optimizer, --no-dedup, --offload, and for image
           records --data-format, --images, --image-transform, --vision, --parts and --feature-cache (a vision-language
-          teacher reads the student's images as they are prepared; its family's plug-in with -P). --json prints one JSON
+          teacher reads the student's images as they are prepared). --json prints one JSON
           document at the end with the output lines.
               --cluster FILE        train as one rank of a real cluster of the topology file (idrak cluster init writes
                                     one); on a node of several workers IDRAK_RANK names this process's (--rank stays the

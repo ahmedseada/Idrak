@@ -29,8 +29,8 @@ internal sealed class SearchCommand : Command
               --all          also models Idrak cannot load (marked)
               --token TOKEN  for private models (default: the config's hf_token, HF_TOKEN or the saved login)
 
-        A model is loadable when its family (config.json "architectures") is registered, or, for GGUF, its
-        architecture is; plug-ins (--plugin) add families. Then: idrak pull NAME.
+        A model is loadable when its family (config.json "architectures") is known, or, for GGUF, its
+        architecture is; listing the families is not on the new design yet, so --all shows them. Then: idrak pull NAME.
 
         Examples:
           idrak search qwen3

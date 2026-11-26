@@ -28,7 +28,7 @@ internal sealed class CreateCommand : Command
         as a checkpoint of its family (config.json, model.safetensors, the tokenizer and a chat template that takes
         images), so run, chat, serve, tune and pretrain read it like any model. The family must be one that writes a
         spec as config.json (LlamaForCausalLM, MistralForCausalLM, Qwen2ForCausalLM, Qwen3ForCausalLM,
-        GemmaForCausalLM, or one from a plug-in, -P). idrak create init writes a SPEC to start from.
+        GemmaForCausalLM). idrak create init writes a SPEC to start from.
 
         Arguments:
           SPEC.json  {"format": "idrak-create/1", "architecture": ..., "spec": {...}, "tokenizer": ..., ...}, or the
@@ -322,7 +322,7 @@ internal sealed class CreateInitCommand : Command
         {
           // idrak create's spec of a speech recognizer (plan 21, S6). Paths are read from this file's folder.
           "format": "idrak-create/1",
-          // The speech family (Idrak.Audio.Plugins' IdrakAudio, which the tool registers).
+          // The speech family (Idrak.Audio.Plugins' IdrakAudio).
           "architecture": "IdrakAudio",
           // The tokenizer (idrak data tokenizer transcripts.txt --vocab N -o tokenizer.json learns one from the texts).
           "tokenizer": "tokenizer.json",
@@ -348,8 +348,8 @@ internal sealed class CreateInitCommand : Command
 
         Writes a spec file for idrak create: the family, the network's sizes (small ones to change: nothing in Idrak
         prefers a size), the tokenizer and the special tokens, every key with a comment. With --vision, a
-        vision-language model of the IdrakVision family (Idrak.Vision.Plugins, registered at startup). With --audio, an
-        IdrakAudio model (Idrak.Audio.Plugins, built in): audio-language (a chat model that hears), ctc or seq2seq (a
+        vision-language model of the IdrakVision family (Idrak.Vision.Plugins). With --audio, an
+        IdrakAudio model (Idrak.Audio.Plugins): audio-language (a chat model that hears), ctc or seq2seq (a
         speech recognizer) or tts (a synthesizer). Comments and trailing commas are allowed in the file.
 
         Options:
@@ -419,7 +419,7 @@ internal sealed class CreateInitCommand : Command
               // idrak create's spec (plan 19). Paths are read from this file's folder.
               "format": "idrak-create/1",
               // The family: one that writes a spec as config.json (LlamaForCausalLM, MistralForCausalLM, Qwen2ForCausalLM,
-              // Qwen3ForCausalLM, GemmaForCausalLM, or one from a plug-in).
+              // Qwen3ForCausalLM, GemmaForCausalLM).
               "architecture": "LlamaForCausalLM",
               // The tokenizer (idrak data tokenizer corpus.txt --vocab N -o tokenizer.json learns one).
               "tokenizer": "tokenizer.json",
@@ -450,8 +450,8 @@ internal sealed class CreateInitCommand : Command
             }
 
             """.ReplaceLineEndings("\n").Replace("\"architecture\": \"LlamaForCausalLM\",", context.Flag("--vision")
-                ? "\"architecture\": \"IdrakVisionForConditionalGeneration\",   // from Idrak.Vision.Plugins, which the tool registers"
-                : audio is not null ? "\"architecture\": \"IdrakAudioForConditionalGeneration\",   // Idrak.Audio.Plugins' IdrakAudio, which the tool registers"
+                ? "\"architecture\": \"IdrakVisionForConditionalGeneration\",   // from Idrak.Vision.Plugins"
+                : audio is not null ? "\"architecture\": \"IdrakAudioForConditionalGeneration\",   // Idrak.Audio.Plugins' IdrakAudio"
                 : "\"architecture\": \"LlamaForCausalLM\",", StringComparison.Ordinal)
             .Replace("  \"seed\": 0\n}", context.Flag("--vision") ? VisionPart.ReplaceLineEndings("\n")
                 : audio is not null ? AudioPart.ReplaceLineEndings("\n") : "  \"seed\": 0\n}", StringComparison.Ordinal));

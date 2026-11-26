@@ -26,14 +26,14 @@ internal sealed class EvalCommand : Command
         "Options:\n" +
         "  -k, --kv FORMAT       the key/value cache format\n" +
         "      --context N       the context length; --adapter DIR: merge an adapter first\n" +
-        "      --metric NAME     auto (default: number for '#### n' references, else f1) or a registered metric:\n" +
-        $"                        {string.Join(", ", TuningMetrics.Names)}\n" +
+        "      --metric NAME     auto (default: number for '#### n' references, else f1) or a metric's name (picking\n" +
+        "                        one by its name is not on the new design yet)\n" +
         "      --max-tokens N    longest answer (default 512)\n" +
         "      --batch N         conversations answered together (default 1)\n" +
         "      --limit N         only the first N conversations\n" +
         "      --think / --no-think  the reasoning mode passed to the chat template (default: the template's)\n" +
         "  -o, --out FILE        write every answer with its score as JSON Lines\n\n" +
-        "A plug-in (-P) adds metrics to TuningMetrics; the error rates (cer, wer) are lower for better answers.\n\n" +
+        "The error rates (cer, wer) are lower for better answers.\n\n" +
         "Examples:\n" +
         "  idrak eval org/model test-set.jsonl --limit 100 --no-think\n" +
         "  idrak eval ./tuned held-out.jsonl --metric exact -o answers.jsonl -j";
@@ -59,7 +59,7 @@ internal sealed class EvalCommand : Command
         }
 
         string metric = context.Option("--metric") is not { } named || named.Equals(ChatEvaluation.Auto, StringComparison.OrdinalIgnoreCase) ? ChatEvaluation.Auto
-            : TuningMetrics.Find(named)?.Name ?? throw new UsageException($"--metric takes auto or a registered metric ({string.Join(", ", TuningMetrics.Names)}), not '{named}'.");
+            : named;
         if (context.Flag("--think") && context.Flag("--no-think"))
         {
             throw new UsageException("Choose --think or --no-think, not both.");
@@ -98,7 +98,6 @@ internal sealed class EvalCommand : Command
         }
 
         string metricName = report.Metric;
-        bool lowerIsBetter = TuningMetrics.Find(metricName)?.LowerIsBetter == true;
         context.Write($"{choice.Model} on {context.Device}: {report.Answers.Count} of {rows.Count} conversations scored ({rows.Count - report.Answers.Count} without a final assistant answer skipped)");
         context.Write(string.Create(CultureInfo.InvariantCulture, $"{metricName} {report.Score:P1} · {report.MeanTokens:F0} tokens per answer · {report.TokensPerSecond:F1} tokens/s · {report.Duration.TotalSeconds:F1} s"));
         if (context.Format is OutputFormat.Csv or OutputFormat.Markdown)
@@ -111,6 +110,7 @@ internal sealed class EvalCommand : Command
         }
         if (context.Verbose)
         {
+            bool lowerIsBetter = NotOnTheNewDesign.Yet<bool>($"Finding the metric '{metricName}' by its name");
             foreach (var wrong in report.Answers.Where(a => lowerIsBetter ? a.Score > 0 : a.Score < 1).Take(5))
             {
                 context.Detail($"  expected: {Shorten(wrong.Reference)}\n  answered: {Shorten(wrong.Answer)}");

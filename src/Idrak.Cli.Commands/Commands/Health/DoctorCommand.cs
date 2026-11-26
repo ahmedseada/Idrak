@@ -241,7 +241,7 @@ internal sealed class DoctorCommand : Command
         "cuda" => Messages.T("install a GPU driver with CUDA support (only for GPUs that have it); the other backends work without it"),
         "vulkan" => Messages.T("install the Vulkan loader (libvulkan.so.1, vulkan-1.dll) and the GPU's Vulkan driver"),
         "hip" => Messages.T("install the AMD graphics driver (Windows) or ROCm's runtime (Linux; ROCM_PATH finds it)"),
-        _ => Messages.T("install what the {0} backend needs (see the plug-in that registers it)", kind),
+        _ => Messages.T("install what the {0} backend needs", kind),
     };
 
     private static string Why(string kind) => kind switch
@@ -375,7 +375,7 @@ internal sealed class DoctorCommand : Command
             Messages.T("Environment variables change devices, tuning and memory for every Idrak program; a forgotten one explains surprises.")));
     }
 
-    private static string ConfigWhy => Messages.T("The config file gives defaults (device, cache, plug-ins, model aliases) for every command.");
+    private static string ConfigWhy => Messages.T("The config file gives defaults (device, cache, model aliases) for every command.");
 
     /// <summary>The phone checks; fixes add lines to <paramref name="rc"/> (the shell start-up file).</summary>
     internal static void Android(List<Check> checks, string rc)

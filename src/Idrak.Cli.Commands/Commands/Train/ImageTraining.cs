@@ -555,7 +555,7 @@ internal static class ImageTraining
         context.Write($"Wrote     {settings.Output} · run {folder}");
         context.Write(builder is not null
             ? $"Next      idrak predict {settings.Output} NEW.png   ·   idrak runs show {folder}"
-            : $"Next      idrak predict -P PLUGIN {options.Model} NEW.png --weights {settings.Output}   ·   idrak runs show {folder}");
+            : $"Next      idrak predict {options.Model} NEW.png --weights {settings.Output}   ·   idrak runs show {folder}");
         context.WriteJson(new JsonObject
         {
             ["model"] = Path.GetFullPath(settings.Output),

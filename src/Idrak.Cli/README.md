@@ -167,12 +167,11 @@ idrak transcribe ./whisper-small talk.wav -o talk.srt   # -j: segments and stage
 idrak transcribe ./whisper-small --live -l ar -o live.srt   # the microphone; --live - a pipe; --list-inputs
 idrak transcribe ./whisper-small --live --audio-clean "highpass=80, dehum=50, presence=3, agc"   # cleaned as it comes
 idrak speak ./mms-tts-eng "Hello." -o hello.wav            # -o hello.mp3 writes MP3
-idrak run -P MyAudioFamily.dll ./audio-model --audio clip.wav "What is said?"      # an audio-language model
+idrak run ./audio-model --audio clip.wav "What is said?"      # an audio-language model
 ```
 
-Speech families are plug-ins (`-P`), never the library's: a model whose family is not registered exits 1 with "not
-registered" and the `-P` remedy. `idrak help audio` lists the codecs, encoders, families, converters and splitters
-registered.
+Speech families are Idrak.Audio.Plugins', never the library's; finding a model's family by its name is not on the new
+design yet. `idrak help audio` describes the commands and the audio pipelines.
 
 ### Serve
 
@@ -384,8 +383,8 @@ idrak tune train qwen chats.jsonl -o adapters/chat
 idrak train network.json --data houses.csv -t price -o houses.ikm
 idrak train cnn.json --data ./shapes -d vulkan:0    # a folder of class folders of images
 idrak predict houses.ikm -i new-houses.csv -o priced.csv
-idrak predict -P MyFamilies.dll ./detector street/*.jpg --threshold 0.4 -o boxes.csv
-idrak train -P MyFamilies.dll ./detector --data ./coco/train.json --eval ./coco/val.json --augment "flip" --metric coco
+idrak predict ./detector street/*.jpg --threshold 0.4 -o boxes.csv
+idrak train ./detector --data ./coco/train.json --eval ./coco/val.json --augment "flip" --metric coco
 idrak runs list && idrak runs show NAME && idrak resume NAME --epochs 20
 idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl --alpha 0.8 -o adapters/distilled
 idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --algorithm grpo --group 8 -o runs/math
@@ -396,9 +395,8 @@ idrak reinforce --env cartpole --algorithm ppo --iterations 50 -o runs/cartpole
 idrak reinforce --env cartpole --algorithm dqn --steps 50000 -o runs/cartpole-dqn
 ```
 
-Image models (classifiers, detectors, segmenters, backbones) come from an image model family, which a plug-in registers
-(`-P`); the tool and the library register none, and a family, decoder or head no plug-in registered is refused with its
-registry's message. `idrak predict` reads a model folder, a .safetensors or .onnx file and prints classes (`--top`),
+Image models (classifiers, detectors, segmenters, backbones) come from an image model family; finding a family, decoder
+or head by its name is not on the new design yet. `idrak predict` reads a model folder, a .safetensors or .onnx file and prints classes (`--top`),
 boxes (`--decoder`, `--threshold`, `--iou`, `--max`), pixels per class (`-o DIR`: mask PNGs) or features (`-o DIR`:
 .npy files); how many images run at once is measured on the device (`--batch N` caps it). `idrak train` reads class
 folders, `images/` and `masks/`, or COCO, YOLO and Pascal VOC annotations (`--data-format`), augments on worker

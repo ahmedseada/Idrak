@@ -47,8 +47,8 @@ internal sealed class TraceCommand : Command
         "Runs COMMAND (any idrak command) with Idrak's telemetry subscribed: training epochs and batches, every layer's\n" +
         "forward pass, inference calls, tool calls and engine events, printed as they\n" +
         "happen (to the error output with --json), or written to FILE.jsonl with --out. Put '--' before COMMAND when it has\n" +
-        "options of its own; the common options given before it (--device, --json, --quiet, --verbose, --plugin, --config,\n" +
-        "--cache) are passed on to it.\n\n" +
+        "options of its own; the common options given before it (--device, --json, --quiet, --verbose, --config, --cache)\n" +
+        "are passed on to it.\n\n" +
         "Options:\n" +
         "  -o, --out FILE      write the events as JSON Lines to FILE instead of printing them\n" +
         "      --levels LIST   what to trace, separated by commas: training, batches, gradients, layers, operations\n" +
