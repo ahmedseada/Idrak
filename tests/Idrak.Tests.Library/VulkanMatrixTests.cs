@@ -19,7 +19,7 @@ internal abstract partial class Tests
     [
         ("vulkan matrix units: the cooperative-matrix shape comes from what the device reports (float16 operands, float32 sums, subgroup scope, a shape the kernels tile; the most multiply-adds per operation)", VulkanMatrixShapeChoice),
         ("vulkan matrix units: without cooperative matrices nothing changes (no matrix kernel is a candidate or runs; asking for one runs the float32 kernels, matching the CPU)", VulkanMatrixAbsent),
-        ("vulkan matrix units: the cooperative-matrix products match the CPU within float32 error (float32 every transpose, batches, beta; int8, int4, bfloat16 prompts; partial blocks; rows and columns from 1e-12 to 1e12 and past 65504; the device's matrices, or emulated in several shapes and subgroup counts)", VulkanMatrixProducts),
+        ("vulkan matrix units: the cooperative-matrix products match the CPU within float32 error (float32 every transpose, batches, beta; partial blocks; rows and columns from 1e-12 to 1e12 and past 65504; the device's matrices, or emulated in several shapes and subgroup counts)", VulkanMatrixProducts),
     ];
 
     internal static VkCooperativeMatrixProperties MatrixProperties(uint m, uint n, uint k, uint a = 0, uint b = 0, uint c = 1, uint result = 1, uint scope = 3) =>
@@ -63,7 +63,6 @@ internal abstract partial class Tests
                 foreach (int? kernel in new int?[] { 3, null })
                 {
                     VulkanBackend.MatMulKernel = kernel;
-                    VulkanBackend.PackedPromptKernel = kernel;
                     MatrixProductCases(backend, $"without cooperative matrices, kernel {kernel?.ToString() ?? "measured"}", full: false, expectMatrix: false);
                 }
             });
@@ -73,7 +72,6 @@ internal abstract partial class Tests
             (VulkanBackend.MatrixUnitsOverride, VulkanBackend.TuningCacheFile) = (saved, savedCache);
             File.Delete(cache);
             VulkanBackend.MatMulKernel = null;
-            VulkanBackend.PackedPromptKernel = null;
         }
     }
 
@@ -102,9 +100,9 @@ internal abstract partial class Tests
                 {
                     Console.WriteLine($"    ({backend.DescribeMatrixUnits()})");
                     Check(backend.MatrixShape == native, $"shape {backend.MatrixShape} on a second backend, {native} on the first");
-                    VulkanBackend.MatMulKernel = VulkanBackend.PackedPromptKernel = 3;
+                    VulkanBackend.MatMulKernel = 3;
                     MatrixProductCases(backend, $"{device} {native}", full: true, expectMatrix: true);
-                    VulkanBackend.MatMulKernel = VulkanBackend.PackedPromptKernel = null;
+                    VulkanBackend.MatMulKernel = null;
                     MatrixProductCases(backend, $"{device} {native}, measured", full: false, expectMatrix: false);
                 });
                 return;
@@ -130,7 +128,7 @@ internal abstract partial class Tests
                     }
 
                     ran = true;
-                    VulkanBackend.MatMulKernel = VulkanBackend.PackedPromptKernel = 3;
+                    VulkanBackend.MatMulKernel = 3;
                     // A depth of 32 (K = 32) needs about 36 KiB of workgroup memory: on a device with less, the float32
                     // kernels run instead (checked too).
                     bool fits = shape.K <= 16 || backend.Limits.SharedBytes >= 36 << 10;
@@ -149,22 +147,19 @@ internal abstract partial class Tests
             VulkanBackend.EmulatedMatrixUnits = null;
             VulkanBackend.CoopWidthOverride = null;
             VulkanBackend.MatMulKernel = null;
-            VulkanBackend.PackedPromptKernel = null;
             VulkanBackend.TuningCacheFile = savedCache;
             File.Delete(cache);
         }
     }
 
-    // The products through `backend` against the CPU: float32 (every transpose, batches, beta) and the packed prompts
-    // (int8, int4, bfloat16), on partial blocks and on rows and columns of very different magnitudes. With
+    // The products through `backend` against the CPU: float32 (every transpose, batches, beta), on partial blocks and on
+    // rows and columns of very different magnitudes. With
     // `expectMatrix`, a cooperative-matrix kernel must have run each of them; without it, none may run when the backend
     // has no cooperative matrices.
     internal static void MatrixProductCases(VulkanBackend backend, string label, bool full, bool expectMatrix)
     {
         var random = new Random(41);
         float[] R(int n, float lo = -1f, float hi = 1f) => [.. Enumerable.Range(0, n).Select(_ => lo + (hi - lo) * random.NextSingle())];
-        float[] Bits(int n) => [.. Enumerable.Range(0, n).Select(_ => BitConverter.Int32BitsToSingle(random.Next() ^ (random.Next() << 16)))];
-
         // Values whose rows (or columns, every `stride` values) span 1e-12 to 1e12 and some past 65504, some all zero.
         float[] Spread(int lines, int length, bool alongRows)
         {
@@ -177,29 +172,6 @@ internal abstract partial class Tests
             }
 
             return values;
-        }
-
-        // bfloat16 words from floats (low half first), rounded to nearest even, columns scaled by `columnScale`.
-        float[] BFloat16Words(int k, int n, Func<int, float> columnScale)
-        {
-            int words = (n + 1) / 2;
-            var packed = new float[k * words];
-            for (int r = 0; r < k; r++)
-            {
-                for (int w = 0; w < words; w++)
-                {
-                    uint Half(int col) => col < n ? Round((2 * random.NextSingle() - 1) * columnScale(col)) : 0;
-                    packed[r * words + w] = BitConverter.Int32BitsToSingle((int)(Half(2 * w) | Half(2 * w + 1) << 16));
-                }
-            }
-
-            return packed;
-
-            static uint Round(float v)
-            {
-                uint bits = BitConverter.SingleToUInt32Bits(v);
-                return (bits + 0x7FFF + ((bits >> 16) & 1)) >> 16;
-            }
         }
 
         // float32 products.
@@ -228,27 +200,6 @@ internal abstract partial class Tests
             MatrixCase(backend, $"{label}: float32 spread magnitudes, transA {ta}, transB {tb}", [a, b, new float[M * N]], 2,
                 (be, s) => be.BatchedMatMul(s[0], s[1], s[2], 1, M, N, K, ta, tb, 0f), AbsProduct(a, b, 1, M, N, K, ta, tb, 0f, null), expectMatrix);
         }
-
-        // Packed prompts.
-        var packedShapes = full ? new[] { (9, 64, 96), (33, 100, 65), (70, 33, 7), (130, 300, 200), (64, 257, 130) } : [(33, 100, 65)];
-        foreach (var (m, k, n) in packedShapes)
-        {
-            int words8 = (n + 3) / 4, words4 = (n + 7) / 8;
-            float[] x = R(m * k);
-            float[] q8 = Bits(k * words8), s8 = R(n, 0.001f, 0.02f);
-            float[] q4 = Bits(k * words4), s4 = R((k + 31) / 32 * words4 * 8, 0.01f, 0.2f);
-            float[] bf = BFloat16Words(k, n, _ => 1f);
-            PackedMatrixCase(backend, $"{label}: int8 {m}×{k}→{n}", PackedFormat.Int8, x, q8, s8, m, n, k, expectMatrix);
-            PackedMatrixCase(backend, $"{label}: int4 {m}×{k}→{n}", PackedFormat.Int4, x, q4, s4, m, n, k, expectMatrix);
-            PackedMatrixCase(backend, $"{label}: bfloat16 {m}×{k}→{n}", PackedFormat.BFloat16, x, bf, null, m, n, k, expectMatrix);
-        }
-
-        {
-            const int M = 72, K = 70, N = 81;
-            float[] x = Spread(M, K, alongRows: true);
-            float[] bf = BFloat16Words(K, N, col => new[] { 1e-12f, 1f, 1e9f, 9e4f, 2e-6f }[col % 5]);
-            PackedMatrixCase(backend, $"{label}: bfloat16 spread magnitudes", PackedFormat.BFloat16, x, bf, null, M, N, K, expectMatrix);
-        }
     }
 
     // Σ_k |op(a)[i, kk]| · |op(b)[kk, j]| (+ |beta · c|) per output, in double: what each output's float32 error is relative to.
@@ -275,86 +226,6 @@ internal abstract partial class Tests
         }
 
         return bound;
-    }
-
-    internal static void PackedMatrixCase(VulkanBackend backend, string what, PackedFormat format, float[] x, float[] packed, float[]? scales, int m, int n, int k, bool expectMatrix)
-    {
-        // The weights as the CPU expands them, for the bound.
-        var cpu = CpuBackend.Instance;
-        var w = new float[k * n];
-        var sw = cpu.Allocate(k * n, false);
-        var sq = cpu.Allocate(packed.Length, false);
-        var ss = scales is null ? null : cpu.Allocate(scales.Length, false);
-        try
-        {
-            cpu.Upload(packed, sq);
-            if (ss is not null)
-            {
-                cpu.Upload(scales!, ss);
-            }
-
-            switch (format)
-            {
-                case PackedFormat.Int8:
-                    cpu.Int8Dequantize(sq, ss!, sw, k, n);
-                    break;
-                case PackedFormat.Int4:
-                    cpu.Int4Dequantize(sq, ss!, sw, k, n);
-                    break;
-                default:
-                    cpu.BFloat16Dequantize(sq, sw, k, n);
-                    break;
-            }
-
-            cpu.Download(sw, w);
-        }
-        finally
-        {
-            sw.Release();
-            sq.Release();
-            ss?.Release();
-        }
-
-        float[][] inputs = scales is null ? [x, packed, new float[m * n]] : [x, packed, scales, new float[m * n]];
-        int output = inputs.Length - 1;
-        MatrixCase(backend, what, inputs, output, (b, s) =>
-        {
-            if (b is CpuBackend)
-            {
-                switch (format)
-                {
-                    case PackedFormat.Int8:
-                        b.Int8MatMul(s[0], s[1], s[2], s[3], m, n, k);
-                        break;
-                    case PackedFormat.Int4:
-                        b.Int4MatMul(s[0], s[1], s[2], s[3], m, n, k);
-                        break;
-                    default:
-                        b.BFloat16MatMul(s[0], s[1], s[2], m, n, k);
-                        break;
-                }
-            }
-            else if (!b.PackedMatMulLarge(format, s[0], s[1], scales is null ? null : s[2], s[output], m, n, k))
-            {
-                // Expanding the weights (measured faster, or the only path): as the tensor calls it.
-                var expanded = b.Allocate(k * n, false);
-                switch (format)
-                {
-                    case PackedFormat.Int8:
-                        b.Int8Dequantize(s[1], s[2], expanded, k, n);
-                        break;
-                    case PackedFormat.Int4:
-                        b.Int4Dequantize(s[1], s[2], expanded, k, n);
-                        break;
-                    default:
-                        b.BFloat16Dequantize(s[1], expanded, k, n);
-                        break;
-                }
-
-                b.MatMul(s[0], expanded, s[output], m, n, k, false, false, 0f);
-                expanded.Release();
-            }
-        }, AbsProduct(x, w, 1, m, n, k, false, false, 0f, null), expectMatrix);
     }
 
     // Runs `op` on the CPU and on `backend` (no host fallback) over copies of `inputs`, and checks storage `output`: every
