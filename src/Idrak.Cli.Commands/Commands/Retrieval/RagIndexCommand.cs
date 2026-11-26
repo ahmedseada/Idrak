@@ -34,7 +34,7 @@ internal sealed class RagIndexCommand : Command
         "      --sentences       count chunks in sentences rather than words\n" +
         "      --extensions LIST the files to read (default " + DefaultExtensions + "; '*' for every file)\n" +
         "      --max-tokens N    tokens of a chunk the model embeds (default 512)\n" +
-        "      --keywords NAME   the keyword index (default bm25; a plug-in's by its name)\n\n" +
+        "      --keywords NAME   the keyword index (default bm25)\n\n" +
         "Examples:\n" +
         "  idrak rag index ./docs -o docs.idx\n" +
         "  idrak rag index ./docs -o docs.idx -m org/model --chunk 120 --overlap 20";
@@ -83,10 +83,6 @@ internal sealed class RagIndexCommand : Command
 
         var watch = Stopwatch.StartNew();
         string keywords = context.Option("--keywords") ?? KeywordIndexes.Bm25;
-        if (KeywordIndexes.Find(keywords) is null)
-        {
-            throw new UsageException($"--keywords: no keyword index '{keywords}' is registered ({string.Join(", ", KeywordIndexes.Names)}).");
-        }
 
         var builder = RetrievalIndex.Create().Documents(documents, sentences ? ChunkUnit.Sentences : ChunkUnit.Words, size, overlap).Keywords(keywords);
         Recorder? recorder = null;

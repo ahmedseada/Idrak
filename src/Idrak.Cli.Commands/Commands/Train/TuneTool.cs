@@ -962,7 +962,7 @@ internal sealed class TuneTool(ToolConsole console)
         using var run = ConversationTuning.Prepare(model, files, new ConversationTuningOptions
         {
             Evaluation = evalFile, EvaluationFraction = evalFraction, Seed = seed, DataFormat = DataFormat, Images = imagesRoot, System = systemPrompt,
-            Preparation = model.Vision is null ? TuningImages.None : images, VisionParts = VisionPartsGiven, FeatureCache = featureCache ?? FeatureCaches.Memory, FeatureFolder = FeatureFolder,
+            Preparation = model.Vision is null ? TuningImages.None : images, VisionParts = VisionPartsGiven, FeatureFolder = FeatureFolder,
             Audios = audiosRoot, Prompt = audioPrompt, TrainedParts = OtherPartsGiven,
             Metric = tuningMetric, MetricEvery = metricEvery, MetricSamples = metricSamples, MaxNewTokens = maxNew, Think = noThink ? false : null, Tuning = tuning,
         }, new Reporter<TuningStage>(stage =>

@@ -12,7 +12,7 @@ namespace Idrak.AspNetCore;
 /// <summary>
 /// An /api/chat request. Unknown fields are ignored; any model name selects the served model. <c>vision_options</c>
 /// holds a vision model's family options for this request's images (<see cref="ChatRequest.VisionOptions"/>);
-/// <c>image_transforms</c> the image transforms run on them first (<see cref="ChatRequest.ImageTransforms"/>).
+/// <c>image_transforms</c> the image transforms run on them first (picking them by their names is not on the new design yet).
 /// </summary>
 public sealed record ChatApiRequest(
     [property: JsonPropertyName("model")] string? Model,
@@ -29,7 +29,7 @@ public sealed record ChatApiRequest(
 /// <summary>
 /// A chat message: role (system, user, assistant, tool), content, and optionally reasoning, tool calls or the tool name.
 /// The content is a string, or (in requests) a list of parts as the library's chat JSON writes them
-/// (<see cref="ChatParts.ContentFromJson"/>: <c>{"type": "text", "text"}</c>, <c>{"type": "image", "media_type",
+/// (<c>{"type": "text", "text"}</c>, <c>{"type": "image", "media_type",
 /// "data": base64}</c>); <c>images</c> adds images as base64 strings (or data URLs) before the content.
 /// </summary>
 public sealed record ChatApiMessage(
@@ -150,7 +150,13 @@ public static class ChatApiTranslation
 
         try
         {
-            parts.AddRange(ChatParts.ContentFromJson(message.Content));
+            parts.AddRange(message.Content switch                       // null: no content
+            {
+                null => [],
+                JsonValue v when v.TryGetValue(out string? text) => text.Length == 0 ? [] : [new ChatText(text)],
+                JsonValue => [],
+                _ => ContentPartsByKind(),
+            });
         }
         catch (FormatException ex)
         {
@@ -163,6 +169,11 @@ public static class ChatApiTranslation
 
         return parts;
     }
+
+    // A content given as a list of parts: they were read by their kinds' names (the registered chat part kinds), which is
+    // not on the new design yet.
+    private static IReadOnlyList<ChatPart> ContentPartsByKind() =>
+        throw new NotSupportedException("Reading a message's content parts by their kinds' names is not on the new design yet.");
 
     /// <summary>
     /// Maps the chat API's option names to <see cref="GenerationOptions"/> (unknown names are ignored), over the model's

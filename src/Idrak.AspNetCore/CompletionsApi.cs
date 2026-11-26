@@ -905,9 +905,6 @@ public static class CompletionsTranslation
                         case { } type when InputKind(type) is { } binary:
                             list.Add(Input(binary, type, p!.AsObject()));
                             break;
-                        case { } type when type != "image" && ChatParts.Find(type) is { } kind:
-                            list.Add(kind.Read(p!.AsObject()));                 // a registered kind's own JSON ("audio": {"media_type", "data"})
-                            break;
                         case var type:
                             throw new ArgumentException($"Content parts of type '{type}' are not supported; send text, image_url and input_audio parts.");
                     }
@@ -920,19 +917,9 @@ public static class CompletionsTranslation
     }
 
     // The binary kind whose requests' content parts have the type `type` (its RecordKeys.InputPart: "input_audio" for
-    // the audio kind the package that brings audio registers); null for none.
-    private static IBinaryPartKind? InputKind(string type)
-    {
-        foreach (var kind in ChatParts.BinaryKinds)
-        {
-            if (kind.RecordKeys.InputPart == type)
-            {
-                return kind;
-            }
-        }
-
-        return null;
-    }
+    // the audio kind): the binary kinds were registered and found by their part's type, which is not on the new design yet.
+    private static IBinaryPartKind? InputKind(string type) =>
+        throw new NotSupportedException($"Finding the binary part kind of '{type}' parts among the registered kinds is not on the new design yet.");
 
     // An input part of a binary kind, {"input_audio": {"data": "<base64>", "format": "wav"}}: a part of that kind made
     // from the bytes, a 400 when the data is bad.

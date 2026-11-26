@@ -44,17 +44,22 @@ internal static class ImageInputs
     /// <summary>
     /// How a chat generator reads <paramref name="model"/>'s images (<see cref="ChatGenerator.Images"/>), or null with
     /// the reason when it reads none (a text model). Everything comes from the model's vision family: the encoder (built
-    /// when the first image is read, disposed with the returned owner; <paramref name="transforms"/> run on every decoded
-    /// image first, unless a request gives its own; <paramref name="visionOptions"/> are the family's own options for every image, their keys checked against
-    /// the family's here), the prompt format and the attention rule.
+    /// when the first image is read, disposed with the returned owner; <paramref name="visionOptions"/> are the family's
+    /// own options for every image), the prompt format and the attention rule. <paramref name="grayscale"/> asked the
+    /// grayscale image transform, picked by its name: not on the new design yet.
     /// </summary>
-    public static ModelImages? For(PretrainedModel model, ImageTransformPipeline transforms, VisionOptions? visionOptions, out string? reason)
+    public static ModelImages? For(PretrainedModel model, bool grayscale, VisionOptions? visionOptions, out string? reason)
     {
         ArgumentNullException.ThrowIfNull(model);
         reason = null;
+        if (grayscale && model.Vision is not null)
+        {
+            return NotOnTheNewDesign.Yet<ModelImages?>("Turning the images grey (the grayscale image transform, picked by its name)");
+        }
+
         try
         {
-            return ModelImages.For(model, transforms, visionOptions, EncoderFactory);
+            return ModelImages.For(model, visionOptions, EncoderFactory);
         }
         catch (ArgumentException ex)
         {

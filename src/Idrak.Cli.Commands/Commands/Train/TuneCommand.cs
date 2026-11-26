@@ -198,10 +198,9 @@ internal sealed class TuneCommand : Command
         if (json["format"] is { } format && (format.GetValueKind() != JsonValueKind.String || (string?)format != Format))
         {
             string? name = format.GetValueKind() == JsonValueKind.String ? (string?)format : null;
-            if (name is null || !name.Equals("auto", StringComparison.OrdinalIgnoreCase) && TuningDataFormats.Find(name) is null
-                || json.ContainsKey("data-format") || json.ContainsKey("data_format"))
+            if (name is null || json.ContainsKey("data-format") || json.ContainsKey("data_format"))
             {
-                throw new UsageException($"{path}: format {format.ToJsonString()} is not a tune.json ({Format}) nor a data format (auto, {string.Join(", ", TuningDataFormats.Names)}).");
+                throw new UsageException($"{path}: format {format.ToJsonString()} is not a tune.json ({Format}) nor a data format (auto, or a data format's name).");
             }
 
             json.Remove("format");

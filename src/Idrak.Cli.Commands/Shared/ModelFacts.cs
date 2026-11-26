@@ -45,8 +45,6 @@ internal sealed class ModelFacts
 
     public string? TemplateSource { get; init; }
 
-    public string? ToolCallFormat { get; init; }
-
     public string? License { get; init; }
 
     public required IReadOnlyList<(string Name, long Bytes)> Files { get; init; }
@@ -101,7 +99,7 @@ internal sealed class ModelFacts
             notes.Add($"weights not readable: {e.Message}");
         }
 
-        string? template = null, templateSource = null, toolCalls = null;
+        string? template = null, templateSource = null;
         try
         {
             var tokenizer = PretrainedTokenizers.TryLoad(folder);
@@ -110,7 +108,6 @@ internal sealed class ModelFacts
                 template = chat.Source;
                 templateSource = File.Exists(Path.Combine(folder, "chat_template.jinja")) ? "chat_template.jinja"
                     : File.Exists(Path.Combine(folder, "chat_template.json")) ? "chat_template.json" : "tokenizer_config.json";
-                toolCalls = chat.ToolCallFormatName;
             }
         }
         catch (Exception e) when (e is not OutOfMemoryException)
@@ -139,7 +136,6 @@ internal sealed class ModelFacts
             Windows = spec is null ? "unknown" : DescribeWindows(spec),
             Template = template,
             TemplateSource = templateSource,
-            ToolCallFormat = toolCalls,
             License = FindLicense(folder, config, local.File),
             Files = [.. files.Select(f => (Path.GetFileName(f), new FileInfo(f).Length)).OrderBy(f => f.Item1, StringComparer.Ordinal)],
             Notes = notes,

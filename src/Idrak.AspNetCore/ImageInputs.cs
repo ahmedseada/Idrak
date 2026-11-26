@@ -499,29 +499,22 @@ internal static class ImageRequests
 
     /// <summary>
     /// The request with the image transforms a client sent (<c>"image_transforms"</c>: a pipeline's text such as
-    /// <c>"grayscale,max_width=1024,contrast=1.5"</c>, or a JSON array of steps; in a form field, either as text) for this
-    /// request's images (<see cref="ChatRequest.ImageTransforms"/>, run in the order given, replacing the server's own;
-    /// <c>"none"</c>: none). Absent, null or an empty field: the request as it is (the server's transforms).
+    /// <c>"grayscale,max_width=1024,contrast=1.5"</c>, or a JSON array of steps; in a form field, either as text): absent,
+    /// null, an empty field, an empty list or <c>"none"</c> give the request as it is. The transforms were registered and
+    /// picked by their names, which is not on the new design yet.
     /// </summary>
-    /// <exception cref="ArgumentException">An unknown transform or option, or a bad value: the message names the registered transforms (a 400).</exception>
+    /// <exception cref="NotSupportedException">Image transforms are given.</exception>
     public static ChatRequest WithImageTransforms(ChatRequest request, JsonNode? transforms)
     {
         ArgumentNullException.ThrowIfNull(request);
-        try
+        bool none = transforms switch
         {
-            var parsed = transforms switch
-            {
-                null => null,
-                JsonValue text when text.TryGetValue(out string? s) => string.IsNullOrWhiteSpace(s) ? null
-                    : s.TrimStart().StartsWith('[') ? ImageTransformPipeline.FromJson(JsonNode.Parse(s)) : ImageTransformPipeline.Parse(s),
-                _ => ImageTransformPipeline.FromJson(transforms),
-            };
-            return parsed is null ? request : request with { ImageTransforms = parsed };
-        }
-        catch (Exception ex) when (ex is ArgumentException or System.Text.Json.JsonException or FormatException)
-        {
-            throw new ArgumentException($"image_transforms: {ex.Message}");
-        }
+            null => true,
+            JsonValue text when text.TryGetValue(out string? s) => string.IsNullOrWhiteSpace(s) || s.Trim().Equals("none", StringComparison.OrdinalIgnoreCase),
+            JsonArray { Count: 0 } => true,
+            _ => false,
+        };
+        return none ? request : throw new NotSupportedException("image_transforms: picking the image transforms by their names is not on the new design yet.");
     }
 
     /// <summary>

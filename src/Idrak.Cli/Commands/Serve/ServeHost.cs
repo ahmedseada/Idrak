@@ -139,7 +139,7 @@ internal sealed class ServeHost
         var vision = Served.Where(m => m.ReadsImages).ToList();
         if (vision.Count > 0)
         {
-            _context.Write($"Images            {string.Join(", ", vision.Select(m => m.Name + (m.Choice.Transforms is { IsEmpty: false } t ? $" ({t})" : "")))}: image_url parts on /v1/chat/completions, "
+            _context.Write($"Images            {string.Join(", ", vision.Select(m => m.Name))}: image_url parts on /v1/chat/completions, "
                 + $"or a form upload to {url}/v1/chat/upload (up to {Settings.MaxImages} per request, {Settings.MaxRequestBytes / (1024 * 1024)} MB a request)");
         }
 
@@ -178,7 +178,6 @@ internal sealed class ServeHost
             ["models"] = new JsonArray([.. Served.Select(m => (JsonNode)new JsonObject
             {
                 ["name"] = m.Name, ["kind"] = m.Kind, ["source"] = m.Source, ["path"] = m.Path, ["images"] = m.ReadsImages, ["audio"] = m.ReadsAudio, ["grayscale"] = m.ReadsImages && m.Choice.Grayscale,
-                ["image_transforms"] = m.ReadsImages && !m.Choice.Transforms.IsEmpty ? m.Choice.Transforms.ToString() : null,
             })]),
         });
         _context.Output.Flush();
@@ -401,7 +400,7 @@ internal sealed class ServeHost
     private Idrak.Text.Generation.ChatImages Images(ServedModel model, TextGenerator generator)
     {
         var pretrained = _loaded.TryGetValue(generator, out var p) ? p : throw new InvalidOperationException($"{model.Name}: the loaded model is unknown.");
-        var images = ImageInputs.For(pretrained, model.Choice.Transforms, model.Choice.VisionOptions, out string? reason)
+        var images = ImageInputs.For(pretrained, model.Choice.Grayscale, model.Choice.VisionOptions, out string? reason)
             ?? throw new InvalidOperationException($"{model.Name} reads no images{(reason is null ? "" : $": {reason}")}.");
         return images.Images;
     }

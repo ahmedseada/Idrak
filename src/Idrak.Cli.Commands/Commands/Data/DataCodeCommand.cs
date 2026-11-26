@@ -186,16 +186,12 @@ internal sealed class DataCodeCommand : Command
         return options;
     }
 
-    // The folders skipped unless named: the reader's own, the registered coding languages' build and dependency folders, and
-    // the plain folder names the repository's .gitignore lists (test-output/, bin/ …: what the repository keeps out of itself).
+    // The folders skipped unless named: the reader's own and the plain folder names the repository's .gitignore lists
+    // (test-output/, bin/ …: what the repository keeps out of itself). The coding languages' build and dependency folders
+    // came from the registered languages: listing them is not on the new design yet.
     internal static IReadOnlyList<string> DefaultSkipped(string root)
     {
         var folders = new List<string>(ReadOptions.DefaultSkippedFolders);
-        foreach (var language in CodingLanguages.Registered)
-        {
-            folders.AddRange(language.IgnoredDirectories);
-            folders.AddRange(language.LinkedDirectories);
-        }
 
         string ignore = Path.Combine(root, ".gitignore");
         if (File.Exists(ignore))

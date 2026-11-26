@@ -178,7 +178,6 @@ internal sealed class RunCommand : Command
         {
             json["images"] = new JsonArray([.. context.Options("--image").Select(p => (JsonNode)p)]);
             json["grayscale"] = loaded.Choice.Grayscale;
-            json["image_transforms"] = loaded.Choice.Transforms.ToString();
             if (loaded.Choice.VisionOptions is { Count: > 0 } visionOptions)
             {
                 json["vision_options"] = visionOptions.ToJson();

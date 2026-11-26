@@ -238,7 +238,7 @@ internal sealed class TemplateCommand : Command
     public override string Usage => """
         MODEL [options]
 
-        Prints the template's source, its stop sequences, reasoning tags and detected tool-call format, then a sample
+        Prints the template's source, its stop sequences and reasoning tags, then a sample
         conversation (system, user, a tool call, its result, the answer) rendered by the template. Only the tokenizer
         files are read, not the weights.
 
@@ -294,11 +294,9 @@ internal sealed class TemplateCommand : Command
             rendered = $"(the template cannot render the sample: {e.Message})";
         }
 
-        string format = template.ToolCallFormatName;
         context.Write($"Template   {template.Source.Length} characters");
         context.Write($"Stops      {string.Join(", ", template.StopSequences.Select(s => $"\"{s}\""))}");
         context.Write($"Reasoning  {template.ThinkTags.Open} ... {template.ThinkTags.Close}");
-        context.Write($"Tool calls {format}");
         context.Write("");
         context.Write("Source:");
         context.Write(template.Source);
@@ -311,7 +309,6 @@ internal sealed class TemplateCommand : Command
             ["source"] = template.Source,
             ["stop_sequences"] = new JsonArray([.. template.StopSequences.Select(s => (JsonNode)s)]),
             ["think_tags"] = new JsonArray(template.ThinkTags.Open, template.ThinkTags.Close),
-            ["tool_call_format"] = format,
             ["sample"] = rendered,
         });
         return ExitCodes.Ok;

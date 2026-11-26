@@ -428,8 +428,7 @@ internal sealed class DistillCommand : Command
         string divergence = context.Option("--divergence") ?? o.Divergence;
         o = o with
         {
-            Divergence = TeacherDivergences.Find(divergence)?.Name ?? throw new UsageException(
-                $"{(context.Option("--divergence") is null ? LanguageModelPolicyOptions.DivergenceVariable + "=" : "--divergence ")}{divergence}: use {string.Join(", ", TeacherDivergences.Names)}."),
+            Divergence = divergence,
         };
         if (context.Option("--beta") is not null)
         {

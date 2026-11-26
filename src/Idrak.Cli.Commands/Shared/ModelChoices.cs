@@ -61,24 +61,20 @@ internal static class ModelChoices
     /// <summary>Help lines for <see cref="ImageTransformOption"/>, aligned as the commands' options are.</summary>
     public const string ImageTransformHelp = """
               --image-transform P image transforms run on every image first, in order, as Pillow does them (P such as
-                                 grayscale,max_width=1024,contrast=1.5; also max_height=N, resample=lanczos|bicubic|
-                                 bilinear|box|hamming after a size, brightness=F, sharpness=F, autocontrast[=CUT],
-                                 invert, jpeg=Q; for poor scans scale=F, pad=N, equalize, gamma=G, blur=R,
-                                 unsharp=R, median=N, min_filter=N, max_filter=N, binarize[=T]); "none" for none; an
-                                 alias can keep them ("image_transforms")
+                                 grayscale,max_width=1024,contrast=1.5); "none" for none: picking them by their names
+                                 is not on the new design yet
         """;
 
     /// <summary>Their short forms.</summary>
     public static readonly IReadOnlyDictionary<string, string> ShortForms = new Dictionary<string, string> { ["-k"] = "--kv" };
 
     /// <summary>What an alias or the options say: the model name and its settings.</summary>
-    public sealed record ModelChoice(string Model, string? Kv, int? Context, string? Adapter, bool Grayscale = false, VisionOptions? VisionOptions = null,
-        ImageTransformPipeline? ImageTransforms = null)
+    public sealed record ModelChoice(string Model, string? Kv, int? Context, string? Adapter, bool Grayscale = false, VisionOptions? VisionOptions = null)
     {
         /// <summary>
         /// The preparation saved with the adapter (<see cref="TuningImages.FileName"/>: how its images were prepared in
-        /// tuning, and for which vision family), or null. Its transforms, grayscale and vision options are in this choice
-        /// unless the command line gave its own.
+        /// tuning, and for which vision family), or null. Its grayscale and vision options are in this choice unless the
+        /// command line gave its own.
         /// </summary>
         public TuningImages? AdapterImages { get; init; }
 
@@ -87,11 +83,6 @@ internal static class ModelChoices
 
         /// <summary>Where a mixture-of-experts model's experts live (<c>--moe-experts</c>, or the alias's "moe_experts"), or null for IDRAK_MOE_EXPERTS, else auto.</summary>
         public string? MoeExperts { get; init; }
-
-        /// <summary>The transforms every image goes through: <c>grayscale</c> first when asked (and not already a step), then <see cref="ImageTransforms"/>.</summary>
-        public ImageTransformPipeline Transforms => Grayscale && ImageTransforms?.Contains("grayscale") != true
-            ? ImageTransformPipeline.Parse("grayscale").Then(ImageTransforms)
-            : ImageTransforms ?? ImageTransformPipeline.Empty;
     }
 
     /// <summary>The model named by <paramref name="name"/> with the command's options applied over the alias's settings.</summary>
@@ -101,7 +92,6 @@ internal static class ModelChoices
         string? kv = null, deviceLayers = null, moeExperts = null;
         bool grayscale = false;
         var vision = VisionOptions.Empty;
-        ImageTransformPipeline? transforms = null;
         if (context.Config.Object("aliases")?[name] is System.Text.Json.Nodes.JsonObject alias)
         {
             model = (string?)alias["model"] ?? name;
@@ -114,27 +104,24 @@ internal static class ModelChoices
                 vision = Parsed(() => VisionOptions.FromJson(saved), $"the alias {name}'s \"vision_options\"");
             }
 
-            if (alias["image_transforms"] is { } pipeline)
-            {
-                transforms = Parsed(() => ImageTransformPipeline.FromJson(pipeline), $"the alias {name}'s \"image_transforms\"");
-            }
+            NoImageTransforms(alias["image_transforms"]?.ToString(), $"the alias {name}'s \"image_transforms\"");
         }
 
-        // An adapter tuned on images: its preparation (transforms, grayscale, vision options) over the alias's; the command
-        // line's over both (--image-transform replaces its transforms and grayscale, --vision-option its options key by key).
+        // An adapter tuned on images: its preparation (grayscale, vision options) over the alias's; the command line's
+        // over both (--vision-option its options key by key).
+        NoImageTransforms(context.Options(ImageTransformOption) is { Count: > 0 } given ? string.Join(",", given) : null, ImageTransformOption);
         string? adapter = context.Option("--adapter");
         var tuned = AdapterImages(adapter);
-        var given = ImageTransformsOf(context);
         if (tuned is not null)
         {
             vision = vision.With(tuned.VisionOptions);
-            (transforms, grayscale) = given is null ? (tuned.Transforms, tuned.Grayscale) : (transforms, false);
+            grayscale = tuned.Grayscale;
         }
 
         vision = vision.With(VisionOptionsOf(context));
         return new ModelChoice(model, context.Option("--kv") ?? kv,
             context.Option("--context") is null ? null : context.IntOption("--context", 0), adapter,
-            grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null, given ?? transforms)
+            grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null)
         {
             AdapterImages = tuned,
             DeviceLayers = Parsed(() => Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(context.Option(DeviceLayersOption) ?? deviceLayers, DeviceLayersOption), DeviceLayersOption),
@@ -180,11 +167,17 @@ internal static class ModelChoices
         }
     }
 
-    /// <summary>The command's <c>--image-transform</c> pipeline (several joined in order), or null when not given.</summary>
-    public static ImageTransformPipeline? ImageTransformsOf(CommandContext context)
+    /// <summary>
+    /// Throws when image transforms are given (<paramref name="text"/>: not empty, "none" or an empty list): the image
+    /// transforms were registered and picked by their names, which is not on the new design yet.
+    /// </summary>
+    /// <exception cref="UsageException">Image transforms are given.</exception>
+    public static void NoImageTransforms(string? text, string where)
     {
-        var given = context.Options(ImageTransformOption);
-        return given.Count == 0 ? null : Parsed(() => ImageTransformPipeline.Parse(string.Join(",", given)), ImageTransformOption);
+        if (!string.IsNullOrWhiteSpace(text) && text.Trim() is not "[]" && !text.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UsageException($"{where}: picking the image transforms '{text}' by their names is not on the new design yet.");
+        }
     }
 
     /// <summary>The command's <c>--vision-option KEY=VALUE</c> options (empty when none).</summary>

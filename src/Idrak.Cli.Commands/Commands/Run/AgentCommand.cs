@@ -25,10 +25,9 @@ internal sealed class AgentCommand : Command
         IDRAK_AGENT_COMMANDS names others, such as node; paths cannot leave the folder, nor follow a link out of
         it). Commands run in the sandbox --sandbox names (IDRAK_SANDBOX, default process: a plain process with
         your rights, nothing isolated, said in the first line; container runs each in Docker or Podman, for a
-        model you do not trust). The coding languages (Idrak.Text.Plugins registers C#, TypeScript, Angular and Python) set the programs, the
-        folders skipped and the prompt's build and test commands: all registered ones by default, --languages
-        detected for those the folder shows, or names. A folder no chosen language detects gets a note naming
-        the plug-in to register. With a task it works on it and exits; without one it reads tasks line by line,
+        model you do not trust). The coding languages (Idrak.Text.Plugins' C#, TypeScript, Angular and Python) set the programs, the
+        folders skipped and the prompt's build and test commands (--languages: all, detected or names; picking them
+        by their names is not on the new design yet). With a task it works on it and exits; without one it reads tasks line by line,
         as chat does, keeping the conversation (/exit ends). Every command the model wants to run, every file
         it wants to write or edit and every call of a --tools tool is shown and asked about (y to go on) unless
         --yes is given; without a terminal and without --yes, they are refused. Calls the model writes as text (markdown json fences, JSON in its prose) naming an offered tool
@@ -87,8 +86,7 @@ internal sealed class AgentCommand : Command
         bool interactive = !StandardInput.IsRedirected;
         bool yes = context.Flag("--yes");
 
-        // Writes are asked about as commands are (the "ask" write policy, registered for this run), unless --yes.
-        using var asking = AskWrites(context, input, interactive);
+        // Writes are asked about as commands are (the "ask" write policy, picked by its name), unless --yes.
         CodingTools coding;
         try
         {
@@ -234,29 +232,4 @@ internal sealed class AgentCommand : Command
         return builder.Build();
     }
 
-    // The "ask" write policy for this run (WritePolicies.Ask): each write_file and edit_file shown and asked about on the
-    // terminal (y to write), refused without one; unregistered when the run ends.
-    private static AskRegistration AskWrites(CommandContext context, TextReader input, bool interactive)
-    {
-        WritePolicies.Register(new AskingWritePolicy((write, _) =>
-        {
-            string what = $"{(write.Tool == "edit_file" ? "Edit" : "Write")} '{write.Path}' ({(write.Creates ? "new file, " : "")}{write.Change})";
-            if (!interactive && StandardInput.Override is null)
-            {
-                context.Error($"Refused: {what}: no terminal to ask; give --yes to allow writes.");
-                return ValueTask.FromResult(false);
-            }
-
-            context.Output.Write($"{what}? [y/N] ");
-            context.Output.Flush();
-            string answer = input.ReadLine()?.Trim().ToLowerInvariant() ?? "";
-            return ValueTask.FromResult(answer is "y" or "yes");
-        }));
-        return new AskRegistration();
-    }
-
-    private sealed class AskRegistration : IDisposable
-    {
-        public void Dispose() => WritePolicies.Unregister(WritePolicies.Ask);
-    }
 }

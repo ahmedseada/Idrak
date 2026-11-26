@@ -74,10 +74,8 @@ internal sealed class AliasSetCommand : Command
             entry["grayscale"] = true;
         }
 
-        if (Shared.ModelChoices.ImageTransformsOf(context) is { IsEmpty: false } transforms)
-        {
-            entry["image_transforms"] = transforms.ToString();
-        }
+        Shared.ModelChoices.NoImageTransforms(context.Options(Shared.ModelChoices.ImageTransformOption) is { Count: > 0 } given ? string.Join(",", given) : null,
+            Shared.ModelChoices.ImageTransformOption);
 
         if (Shared.ModelChoices.VisionOptionsOf(context) is { Count: > 0 } vision)
         {

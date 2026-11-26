@@ -109,16 +109,9 @@ internal sealed class VlmCheckCommand : Command
         // encoder is given them; a run's own --vision-option goes over them.
         var visionOptions = (manifest["vision_options"] is JsonObject saved ? VisionOptions.FromJson(saved) : VisionOptions.Empty).With(ModelChoices.VisionOptionsOf(context));
 
-        // The image transforms the reference ran in Pillow before its processor (compare_real.py --image-transform), or the run's own.
-        ImageTransformPipeline transforms;
-        try
-        {
-            transforms = ModelChoices.ImageTransformsOf(context) ?? ImageTransformPipeline.FromJson(manifest["image_transforms"]);
-        }
-        catch (ArgumentException ex)
-        {
-            throw new UsageException($"image transforms of {manifestPath}: {ex.Message}");
-        }
+        // The image transforms the reference ran in Pillow before its processor (compare_real.py --image-transform): picking
+        // them by their names is not on the new design yet (the run's own stop in ModelChoices.Choose).
+        ModelChoices.NoImageTransforms(manifest["image_transforms"]?.ToString(), $"image transforms of {manifestPath}");
 
         // The reference's arrays.
         string Array(string file) => Path.Combine(folder, file);
@@ -139,11 +132,11 @@ internal sealed class VlmCheckCommand : Command
             throw new UsageException("--steps needs a positive number (and the reference at least one generated token).");
         }
 
-        var choice = ModelChoices.Choose(context, name) with { Grayscale = grayscale, VisionOptions = visionOptions.Count > 0 ? visionOptions : null, ImageTransforms = transforms };
+        var choice = ModelChoices.Choose(context, name) with { Grayscale = grayscale, VisionOptions = visionOptions.Count > 0 ? visionOptions : null };
         var device = context.Device;
         context.Write($"Reference  {folder}: transformers {manifest["versions"]?["transformers"]}, torch {manifest["versions"]?["torch"]}, "
                       + $"{manifest["dtype"]} (vision {manifest["vision_dtype"]}), logits {manifest["logits_dtype"]}, {manifest["image_processor_class"]}, "
-                      + $"grayscale {grayscale}, image transforms {(choice.Transforms.IsEmpty ? "none" : choice.Transforms)}, vision options {visionOptions}, {ids.Length} prompt tokens, {generated.Length} generated");
+                      + $"grayscale {grayscale}, vision options {visionOptions}, {ids.Length} prompt tokens, {generated.Length} generated");
         context.Write($"Idrak      {choice.Model} on {device}, KV cache {choice.Kv ?? "auto"}");
 
         using var noGrad = Autograd.NoGrad();
@@ -165,7 +158,6 @@ internal sealed class VlmCheckCommand : Command
             ["reference_dtype"] = manifest["dtype"]?.DeepClone(),
             ["reference_vision_dtype"] = manifest["vision_dtype"]?.DeepClone(),
             ["grayscale"] = grayscale,
-            ["image_transforms"] = choice.Transforms.ToString(),
             ["vision_options"] = visionOptions.ToJson(),
             ["steps"] = steps,
             ["tie"] = tie,
@@ -180,7 +172,8 @@ internal sealed class VlmCheckCommand : Command
         if (imagePath is not null && File.Exists(imagePath))
         {
             var chatImage = ChatImage.FromFile(imagePath);
-            var decoded = choice.Transforms.Apply((bool?)manifest["exif_applied"] == false ? ImageCodecs.Decode(chatImage.Data.Span) : ImageInputs.Decode(chatImage));
+            var decoded = (bool?)manifest["exif_applied"] == false
+                ? NotOnTheNewDesign.Yet<ImageData>("Decoding an image through the registered image codecs") : ImageInputs.Decode(chatImage);
             using (var own = stages.PixelValues(decoded, visionOptions))
             {
                 ownPixels = own.ToArray();

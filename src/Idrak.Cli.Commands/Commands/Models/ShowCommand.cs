@@ -85,7 +85,7 @@ internal sealed class ShowCommand : Command
         }
 
         fields.Add(("Weights", $"{info.Format} · {Units.Bytes(info.WeightBytes)}"));
-        fields.Add(("Chat", info.Template is null ? "no chat template" : $"chat template ({info.TemplateSource}), tool calls: {info.ToolCallFormat}"));
+        fields.Add(("Chat", info.Template is null ? "no chat template" : $"chat template ({info.TemplateSource})"));
         fields.Add(("License", info.License ?? "not stated"));
         fields.Add(("Files", string.Join(", ", info.Files.Select(f => $"{f.Name} {Units.Bytes(f.Bytes)}"))));
         fields.AddRange(info.Notes.Select(note => ("Note", note)));
@@ -114,7 +114,6 @@ internal sealed class ShowCommand : Command
             ["format"] = info.Format,
             ["weightBytes"] = info.WeightBytes,
             ["chatTemplate"] = info.Template is not null,
-            ["toolCallFormat"] = info.ToolCallFormat,
             ["license"] = info.License,
             ["files"] = new JsonArray([.. info.Files.Select(f => (JsonNode)new JsonObject { ["name"] = f.Name, ["bytes"] = f.Bytes })]),
             ["notes"] = new JsonArray([.. info.Notes.Select(n => (JsonNode?)JsonValue.Create(n))]),
