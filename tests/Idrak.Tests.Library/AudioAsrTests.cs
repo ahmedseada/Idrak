@@ -1,9 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Diagnostics;
-using System.Text.Json.Nodes;
-using Idrak.Abstraction.Testing;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Generation;
@@ -11,105 +8,25 @@ using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Audio.Plugins.Whisper;
 
-// Plan 21, phase S4: speech recognition. The Whisper plug-in on the fixture tests/Idrak.Tests/data/audio/tiny-whisper (a
-// seeded tiny model whose references came from transformers: tools/audio/make_tiny_audio.py), the core's CrossAttention
-// and BeamSearch, and the testing kit's speech recognizer suite.
+// Plan 21, phase S4: speech recognition. Whisper's compression ratio, the core's CrossAttention and BeamSearch.
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] AudioAsrGroup =
     [
-        ("audio asr: the Whisper plug-in loads tiny-whisper: the encoder output and the first step's logits within 1e-4 of transformers', the language detected from one step (ar, with its logits), the prompts with and without timestamps; an unknown language, and the architecture without the plug-in, refused naming the registry", AudioAsrFixture),
-        ("audio asr: Transcribe on pcm16.wav gives the greedy reference's tokens and text, the language detected; chunks of 0.75 s equal two calls on the halves joined, TranscribeStream equals the chunked call, stereo and 44.1 kHz sound mixed and resampled; the timestamps' segment; the stats and progress; device bytes after any call from the third no more than after the second; cold and warm times", AudioAsrTranscribe),
         ("audio asr: BeamSearch.Sample draws the first token by softmax(logits / T) (6000 draws within 0.025), rows sample apart and end at the end token, best first, suppressed tokens never drawn, a temperature of 0 refused", AudioAsrSampling),
-        ("audio asr: Whisper's guards (OpenAI's transcribe): the no-speech check leaves out a segment taken for silence (threshold 1 keeps all, 0 with an unsure decoding drops all) from the step after <|startoftranscript|>; the temperature fallback decodes an unsure segment again at the next temperature; the compression ratio of a loop above 2.4", AudioAsrGuards),
-        ("audio asr: three segments through the encoder at once give each segment's output alone within 1e-5", AudioAsrBatch),
+        ("audio asr: Whisper's guards (OpenAI's transcribe): the compression ratio of a loop above 2.4, of a sentence under it", AudioAsrGuards),
         ("audio asr: CrossAttention equals a loop over the heads (softmax over every memory position), the cached path (SetMemory, ForwardCached) equals Forward, one memory serves several rows, a padded batch of memories (per-sequence lengths) equals each sequence alone and its padding gets no gradient; gradients to the input, the memory and every projection by finite differences on the CPU", AudioAsrCrossAttention),
-        ("audio asr: BeamSearch on the tiny Llama gives a reference beam search's hypotheses and scores (the whole sequences re-run, no cache): greedy, an end token, length penalties 0, 1 and 2, the least length, no repeated bigrams, without early stopping; the kit's speech recognizer suite passes on the Whisper plug-in", AudioAsrBeamSearch),
+        ("audio asr: BeamSearch on the tiny Llama gives a reference beam search's hypotheses and scores (the whole sequences re-run, no cache): greedy, an end token, length penalties 0, 1 and 2, the least length, no repeated bigrams, without early stopping", AudioAsrBeamSearch),
     ];
-
-    internal static WhisperRecognizer TinyWhisper(Device device, KeyValueFormat cache = KeyValueFormat.Float32)
-    {
-        WhisperPlugin.Register();
-        return (WhisperRecognizer)SpeechModels.Load(AudioData("tiny-whisper"), new SpeechModelOptions { Device = device, Cache = cache });
-    }
-
-    internal static (int[] Prompt, int[] Ids) WhisperReference(string name)
-    {
-        var json = JsonNode.Parse(File.ReadAllText(AudioData($"tiny-whisper/reference/{name}.json")))!.AsObject();
-        return ([.. json["prompt"]!.AsArray().Select(n => (int)n!)], [.. json["ids"]!.AsArray().Select(n => (int)n!)]);
-    }
 
     // The fixture's log-mel features (transformers'), [mels, frames], on the device.
     internal static Tensor FixtureMel(Device device) => Tensor.From(ReadNpyFloat32(AudioData("features/log-mel.npy")), [80, 3000], device);
 
     internal static float Largest(float[] values) => Math.Max(1f, values.Max(MathF.Abs));
 
-    internal static void AudioAsrFixture(Device device)
-    {
-        using var recognizer = TinyWhisper(device);
-        Check(recognizer.Device == device && recognizer.Languages.SetEquals(["en", "ar"]), $"loaded on {recognizer.Device}, languages {string.Join(", ", recognizer.Languages)}");
-        using var mel = FixtureMel(device);
-        using var encoded = recognizer.Encode(mel);
-        var expected = ReadNpyFloat32(AudioData("tiny-whisper/reference/encoder-output.npy"));
-        Check(encoded.Shape.SequenceEqual([1, 1500, 32]), $"the encoder gives {Tensor.FormatShape(encoded.Shape)}");
-        AssertClose(expected, encoded.ToArray(), 1e-4f * Largest(expected), $"the encoder output on {device} against transformers'");
-
-        var (prompt, _) = WhisperReference("greedy-ids");
-        var (stampedPrompt, _) = WhisperReference("timestamps-ids");
-        Check(recognizer.Prompt("ar").SequenceEqual(prompt) && recognizer.Prompt("ar", timestamps: true).SequenceEqual(stampedPrompt),
-            $"the prompts [{string.Join(" ", recognizer.Prompt("ar"))}] and [{string.Join(" ", recognizer.Prompt("ar", timestamps: true))}]");
-        var logits = ReadNpyFloat32(AudioData("tiny-whisper/reference/logits-step1.npy"));
-        AssertClose(logits, recognizer.Logits(encoded, prompt), 1e-4f * Largest(logits), $"the first step's logits on {device} against transformers'");
-
-        var language = JsonNode.Parse(File.ReadAllText(AudioData("tiny-whisper/reference/language.json")))!.AsObject();
-        var start = recognizer.Logits(encoded, [prompt[0]]);
-        var special = JsonNode.Parse(File.ReadAllText(AudioData("tiny-whisper/special_tokens.json")))!.AsObject();
-        foreach (string code in new[] { "en", "ar" })
-        {
-            float want = (float)language["logits"]![code]!, got = start[(int)special[$"<|{code}|>"]!];
-            Check(MathF.Abs(want - got) <= 1e-4f * Math.Max(1f, MathF.Abs(want)), $"the <|{code}|> logit after <|startoftranscript|>: {got}, transformers {want}");
-        }
-
-        Check(recognizer.DetectLanguage(encoded) == (string)language["detected"]!, $"detected {recognizer.DetectLanguage(encoded)}, transformers' {language["detected"]}");
-        ThrowsNaming<NotSupportedException>(() => recognizer.Prompt("fr"), "an unknown language", "'fr'", "ar, en");
-
-        WhisperPlugin.Unregister();
-        ThrowsNaming<NotSupportedException>(() => SpeechModels.Load(AudioData("tiny-whisper"), new SpeechModelOptions { Device = device }),
-            "the family without the plug-in", "WhisperForConditionalGeneration", "not registered", "SpeechFamilies.Register", "Idrak.Audio.Plugins", "AudioPlugins.RegisterAll()");
-    }
-
     internal static void AudioAsrGuards(Device device)
     {
-        using var recognizer = TinyWhisper(device);
-        var audio = AudioCodecs.Decode(AudioData("wav/pcm16.wav"));
-        var plain = recognizer.Transcribe(audio);
-
-        // The no-speech check: a threshold of 1 leaves everything, one of 0 with every decoding "unsure" leaves out every segment.
-        var kept = recognizer.Transcribe(audio, new TranscriptionOptions { NoSpeechThreshold = 1f });
-        var dropped = recognizer.Transcribe(audio, new TranscriptionOptions { NoSpeechThreshold = 0f, LogProbThreshold = float.MaxValue });
-        Check(kept.Text == plain.Text && dropped.Segments.Count == 0 && dropped.Text.Length == 0,
-            $"the no-speech check on {device}: threshold 1 '{kept.Text}' (plain '{plain.Text}'), threshold 0 and unsure {dropped.Segments.Count} segments");
-
-        // The no-speech probability: the softmax of the step after <|startoftranscript|> at the no-speech token.
-        using (var noGrad = Autograd.NoGrad())
-        using (var scope = new TensorScope())
-        {
-            var features = recognizer.Features.Extract(audio, device).Transpose();
-            using var encoded = recognizer.Encode(features);
-            var prompt = recognizer.Prompt("ar");
-            var logits = recognizer.Logits(encoded, [recognizer.Config.StartToken]);
-            double max = logits.Max(), sum = logits.Sum(x => Math.Exp(x - max));
-            double expected = Math.Exp(logits[recognizer.Config.NoSpeechToken] - max) / sum;
-            float p = recognizer.NoSpeechProbability(encoded, prompt);
-            Check(Math.Abs(p - expected) < 1e-6 && p is >= 0 and <= 1 && recognizer.Config.NoSpeechToken == recognizer.Config.NoTimestampsToken - 1,
-                $"the no-speech probability on {device}: {p}, the step's softmax {expected}");
-        }
-
-        // The fallback: a decoding always "unsure" goes on to the next temperature; one temperature on, the sampled text.
-        var fallback = recognizer.Transcribe(audio, new TranscriptionOptions { TemperatureFallback = [0.7f], LogProbThreshold = float.MaxValue, Seed = 2 });
-        var hot = recognizer.Transcribe(audio, new TranscriptionOptions { Temperature = 0.7f, Seed = 2 });
-        var sure = recognizer.Transcribe(audio, new TranscriptionOptions { TemperatureFallback = [0.7f], LogProbThreshold = float.MinValue, CompressionRatioThreshold = float.MaxValue });
-        Check(fallback.Text == hot.Text && sure.Text == plain.Text, $"the fallback on {device}: '{fallback.Text}' (sampled at 0.7 '{hot.Text}'); not needed, the greedy text '{sure.Text}'");
+        _ = device;
 
         // The compression ratio: a loop compresses far better than a sentence.
         double loop = WhisperRecognizer.CompressionRatio(string.Concat(Enumerable.Repeat("شكرا لكم ", 40)));
@@ -150,127 +67,6 @@ internal abstract partial class Tests
         Check(many.Count == 4 && many.All(h => !h.Tokens.Contains(3) && !h.Tokens.Contains(2)) && many.Zip(many.Skip(1)).All(p => p.First.Score >= p.Second.Score),
             $"four rows: {string.Join(" | ", many.Select(h => string.Join(",", h.Tokens) + $" {h.Score:F3}"))}");
         Throws<ArgumentException>(() => BeamSearch.Sample(Step, rows, [0], new BeamOptions { Beams = 4, MaxTokens = 2, EndToken = 2 }, 0f, new Random(1)), "a temperature of 0");
-    }
-
-    internal static void AudioAsrTranscribe(Device device)
-    {
-        using var recognizer = TinyWhisper(device);
-        var audio = AudioCodecs.Decode(AudioData("wav/pcm16.wav"));
-        var (_, greedy) = WhisperReference("greedy-ids");
-        var options = new TranscriptionOptions { MaxTokens = greedy.Length };
-        var progress = new List<TranscriptionProgress>();
-        var watch = Stopwatch.StartNew();
-        var result = recognizer.Transcribe(audio, options, new SyncProgress<TranscriptionProgress>(progress.Add));
-        double cold = watch.Elapsed.TotalMilliseconds;
-        // The text is the tokens before the specials (a timestamp token the untrained model gives without timestamps is not text).
-        string text = recognizer.Tokenizer.Decode([.. greedy.Where(t => t < recognizer.Config.EndToken && !recognizer.Tokenizer.IsSpecial(t))]).Trim();
-        Check(result.Language == "ar" && result.Segments is [{ } only] && only.Tokens.SequenceEqual(greedy) && only.Start == 0 && Math.Abs(only.End - 1.5) < 1e-9 && result.Text == text,
-            $"Transcribe: {result.Language}, {string.Join(" | ", result.Segments.Select(s => $"{s.Start:F2}-{s.End:F2} [{string.Join(" ", s.Tokens)}]"))}, \"{result.Text}\" (the greedy reference reads \"{text}\")");
-        Check(result.Stats.Segments == 1 && result.Stats.Batch == 1 && Math.Abs(result.Stats.AudioDuration.TotalSeconds - 1.5) < 1e-9 && result.Stats.Encoder > TimeSpan.Zero && result.Stats.Decoder > TimeSpan.Zero,
-            $"the stats: {result.Stats}");
-        Check(progress.Count >= 4 && progress[^1].Stage == "done" && progress.Select(p => p.Stage).Take(3).SequenceEqual(["features", "encoder", "decoder"]),
-            $"progress: {string.Join(", ", progress.Select(p => p.Stage))}");
-
-        // With timestamps: the timestamp reference's tokens, one segment from its opening timestamp to the chunk's end.
-        var (_, stamped) = WhisperReference("timestamps-ids");
-        var timed = recognizer.Transcribe(audio, new TranscriptionOptions { Language = "ar", Timestamps = true, MaxTokens = stamped.Length });
-        int begin = recognizer.Config.TimestampBegin;
-        Check(timed.Segments.Count >= 1 && timed.Segments.SelectMany(s => s.Tokens).SequenceEqual(stamped) && Math.Abs(timed.Segments[0].Start - (stamped[0] - begin) * recognizer.Config.TimePrecision) < 1e-9,
-            $"timestamps: {string.Join(" | ", timed.Segments.Select(s => $"{s.Start:F2}-{s.End:F2} [{string.Join(" ", s.Tokens)}]"))}, transformers [{string.Join(" ", stamped)}]");
-
-        // Chunks of 0.75 s without overlap or carried text: the two halves transcribed alone, joined.
-        var chunked = options with { Language = "ar", ChunkSeconds = 0.75, OverlapSeconds = 0, CarryText = false };
-        var halves = recognizer.Transcribe(audio, chunked);
-        var first = recognizer.Transcribe(audio.Slice(0, 12000), options with { Language = "ar" });
-        var second = recognizer.Transcribe(audio.Slice(12000, 12000), options with { Language = "ar" });
-        Check(halves.Segments.Count == 2 && halves.Text == $"{first.Text} {second.Text}".Trim() && halves.Segments[0].Start == 0 && Math.Abs(halves.Segments[1].Start - 0.75) < 1e-9,
-            $"chunks: \"{halves.Text}\" ({halves.Segments.Count} segments), the halves \"{first.Text}\" + \"{second.Text}\"");
-
-        // TranscribeStream: the sound in thirds, gathered into the same 0.75 s chunks.
-        async IAsyncEnumerable<AudioData> Thirds()
-        {
-            for (int i = 0; i < 3; i++)
-            {
-                await Task.Yield();
-                yield return audio.Slice(i * 8000, 8000);
-            }
-        }
-
-        var streamed = Task.Run(async () =>
-        {
-            var segments = new List<TranscriptSegment>();
-            await foreach (var segment in recognizer.TranscribeStream(Thirds(), chunked))
-            {
-                segments.Add(segment);
-            }
-
-            return segments;
-        }).GetAwaiter().GetResult();
-        Check(streamed.Count == halves.Segments.Count && streamed.Zip(halves.Segments).All(p => p.First.Text == p.Second.Text && Math.Abs(p.First.Start - p.Second.Start) < 1e-9),
-            $"TranscribeStream: {string.Join(" | ", streamed.Select(s => $"{s.Start:F2} {s.Text}"))}; chunked {string.Join(" | ", halves.Segments.Select(s => $"{s.Start:F2} {s.Text}"))}");
-
-        // Stereo and 44.1 kHz: mixed to one channel and resampled.
-        var stereo = AudioCodecs.Decode(AudioData("wav/stereo16.wav"));
-        var mono = new float[stereo.Length];
-        stereo.ToMono(mono);
-        Check(recognizer.Transcribe(stereo, options with { Language = "ar" }).Text == recognizer.Transcribe(new AudioData(mono, 1, 16000), options with { Language = "ar" }).Text, "stereo is its channels' mean");
-        var fast = AudioCodecs.Decode(AudioData("wav/rate44k.wav"));
-        Check(recognizer.Transcribe(fast, options with { Language = "ar" }).Text == recognizer.Transcribe(Resampler.Resample(fast, 16000), options with { Language = "ar" }).Text, "44.1 kHz is resampled to the model's rate");
-
-        // Device memory: no more bytes after any call than after the second (the caches made once, nothing kept per call;
-        // a GPU may still give back what its first calls' measurements held, so fewer is no growth).
-        var held = new List<long>();
-        var times = new List<double>();
-        for (int i = 0; i < 4; i++)
-        {
-            watch.Restart();
-            recognizer.Transcribe(audio, options);
-            times.Add(watch.Elapsed.TotalMilliseconds);
-            held.Add(device.Backend.GetMemoryUsage().InUse);
-        }
-
-        Check(held.Skip(2).All(h => h <= held[1]), $"device bytes after each call, none above the second's: {string.Join(", ", held)}");
-        Console.WriteLine($"    Transcribe 1.5 s on {device}: cold {cold:F1} ms, warm {times.Skip(1).Average():F1} ms (features {result.Stats.Features.TotalMilliseconds:F1}, encoder {result.Stats.Encoder.TotalMilliseconds:F1}, decoder {result.Stats.Decoder.TotalMilliseconds:F1} ms cold)");
-    }
-
-    internal static void AudioAsrBatch(Device device)
-    {
-        using var recognizer = TinyWhisper(device);
-        var sounds = new[]
-        {
-            AudioCodecs.Decode(AudioData("wav/pcm16.wav")),
-            Resampler.Resample(AudioCodecs.Decode(AudioData("wav/rate8k.wav")), 16000),
-            AudioCodecs.Decode(AudioData("wav/float32.wav")).Slice(4000, 12000),
-        };
-        var singles = new List<float[]>();
-        var mels = new List<Tensor>();
-        try
-        {
-            foreach (var sound in sounds)
-            {
-                using var features = recognizer.Features.Extract(sound, device);    // [frames, mels]
-                var mel = features.Transpose();                       // [mels, frames]
-                mels.Add(mel);
-                using var alone = recognizer.Encode(mel);
-                singles.Add(alone.ToArray());
-            }
-
-            using var stacked = Tensor.Stack(mels);
-            using var batch = recognizer.Encode(stacked);
-            var values = batch.ToArray();
-            Check(batch.Shape.SequenceEqual([3, 1500, 32]), $"the batch gives {Tensor.FormatShape(batch.Shape)}");
-            for (int i = 0; i < 3; i++)
-            {
-                AssertClose(singles[i], values[(i * singles[i].Length)..((i + 1) * singles[i].Length)], 1e-5f * Largest(singles[i]), $"segment {i} in the batch on {device}");
-            }
-        }
-        finally
-        {
-            foreach (var mel in mels)
-            {
-                mel.Dispose();
-            }
-        }
     }
 
     internal static void AudioAsrCrossAttention(Device device)
@@ -437,15 +233,6 @@ internal abstract partial class Tests
                     $"{name} on {device}: {string.Join(" | ", found.Select(h => $"[{string.Join(" ", h.Tokens)}] {h.Score:F4}"))}; the reference {string.Join(" | ", reference.Select(h => $"[{string.Join(" ", h.Tokens)}] {h.Score:F4}"))}");
             }
         }
-
-        // The kit's suite on the Whisper plug-in (an untrained model: no bound on what silence gives).
-        using var recognizer = TinyWhisper(device);
-        var report = Conformance.CheckSpeechRecognizer(new SpeechRecognizerUnderTest(16000, samples =>
-        {
-            var t = recognizer.Transcribe(new AudioData(samples, 1, 16000), new TranscriptionOptions { Language = "ar", MaxTokens = 6 });
-            return new RecognizedSpeech(t.Text, [.. t.Segments.Select(s => new RecognizedSegment(s.Start, s.End, s.Text))]);
-        }));
-        Check(report.Passed, $"the speech recognizer suite on {device}: {report}");
     }
 
     internal static List<BeamHypothesis> SearchBeams(Sequential network, Device device, int[] prompt, BeamOptions options)

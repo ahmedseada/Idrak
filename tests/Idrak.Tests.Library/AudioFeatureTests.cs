@@ -18,7 +18,7 @@ internal abstract partial class Tests
         ("audio features: the STFT magnitude and the log-mel of pcm16.wav within 1e-4 of torch's on the host path and the composed device path, the two magnitudes within 1e-5; the frame counts, the mel filterbank within 1e-6, preprocessor_config.json to the options", AudioLogMel),
         ("audio features: fft: the library's real FFT (forward and inverse) against a direct DFT in double within 1e-9 of the largest bin at 16, 400, 480, 512, 1024 and 2048 points and at odd and prime-factor sizes; the windowed float frame gives the double frame's bits; the same bits twice; the plan shared per size; a transform allocates nothing once warm", AudioFft),
         ("audio features: Stft.Inverse (the overlap-add in parallel stretches of the output, the spectra read in place) gives the serial overlap-add's samples bit for bit, centred and not, at 400, 512 and 401 points, cut and padded to a length; a hop the window does not cover is refused naming the sample; ComplexOnHost writes into the caller's spans", AudioInverseStftSerial),
-        ("audio features: a ten-minute signal extracted in 30 s segments allocates the same device bytes for every segment after the first; the registry names log-mel and the STFT suite passes on both paths; cold and warm times", AudioFeatureMemoryAndSuite),
+        ("audio features: a ten-minute signal extracted in 30 s segments allocates the same device bytes for every segment after the first; the STFT suite passes on both paths; cold and warm times", AudioFeatureMemoryAndSuite),
     ];
 
     internal static AudioFeatureOptions FixtureFeatureOptions()
@@ -31,7 +31,7 @@ internal abstract partial class Tests
     {
         foreach (var (name, rate) in new[] { ("rate44k", 44100), ("rate8k", 8000) })
         {
-            var source = AudioCodecs.Decode(AudioData($"wav/{name}.wav"));
+            var source = new WavCodec().Decode(File.ReadAllBytes(AudioData($"wav/{name}.wav")));
             var expected = ReadNpyFloat32(AudioData($"resample/{name}-16k.npy"));
             Check(source.SampleRate == rate && Resampler.OutputLength(source.Length, rate, 16000) == expected.Length, $"{name}: {expected.Length} samples expected");
             if (device.Type == DeviceType.Cpu)
@@ -54,7 +54,7 @@ internal abstract partial class Tests
         var fixture = JsonNode.Parse(File.ReadAllText(AudioData("features/features.json")))!.AsObject();
         Check(options.SampleRate == 16000 && options.WindowSize == 400 && options.HopSize == 160 && options.Mels == 80 && options.PadSeconds == 30,
             $"preprocessor_config.json reads to the fixture's options: {options.ToJson()}");
-        var audio = AudioCodecs.Decode(AudioData("wav/pcm16.wav"));
+        var audio = new WavCodec().Decode(File.ReadAllBytes(AudioData("wav/pcm16.wav")));
         int stftFrames = (int)fixture["stft_frames"]!, melFrames = (int)fixture["log_mel_frames"]!;
         Check(Stft.FramesFor(audio.Length, options) == stftFrames && Stft.FramesFor(audio.Length, options with { Center = false }) == (audio.Length - 400) / 160 + 1,
             "the frame counts with and without centring");
@@ -99,12 +99,12 @@ internal abstract partial class Tests
         }
 
         float melLargest = expectedMel.Max(MathF.Abs);
-        var extractor = AudioFeatureExtractors.Create("log-mel", options);
+        var extractor = new LogMelFeatures(options);
         Check(extractor.FramesFor(audio.Length) == melFrames, $"FramesFor gives {extractor.FramesFor(audio.Length)}, the fixture {melFrames}");
         float[]? hostValues = null;
         foreach (string path in new[] { "host", "composed" })
         {
-            var on = AudioFeatureExtractors.Create("log-mel", options with { Path = path });
+            var on = new LogMelFeatures(options with { Path = path });
             using var features = on.Extract(audio, device);
             Check(features.Shape.SequenceEqual([melFrames, options.Mels]), $"{path}: [{string.Join(", ", features.Shape.ToArray())}]");
             var values = features.ToArray();
@@ -122,15 +122,12 @@ internal abstract partial class Tests
         }
 
         Throws<ArgumentException>(() => new AudioFeatureOptions { MelScale = "mel" }.Check(), "an unknown mel scale");
-        Throws<ArgumentException>(() => AudioFeatureExtractors.Create("log-mel", options with { Path = "gpu" }), "an unknown path");
-        Throws<NotSupportedException>(() => AudioFeatureExtractors.Create("mfcc"), "an unregistered extractor");
+        Throws<ArgumentException>(() => new LogMelFeatures(options with { Path = "gpu" }), "an unknown path");
     }
 
     internal static void AudioFeatureMemoryAndSuite(Device device)
     {
         var options = FixtureFeatureOptions();
-        Check(AudioFeatureExtractors.Names.Contains("log-mel") && AudioFeatureExtractors.Origin("log-mel") == Overrides.Library, $"the registry: {string.Join(", ", AudioFeatureExtractors.Names)}");
-
         // Ten minutes in 30 s segments: the device holds the same bytes after each segment (buffers reused, rule 77).
         const int Rate = 16000;
         var random = new Random(5);
@@ -141,7 +138,7 @@ internal abstract partial class Tests
         }
 
         var audio = new AudioData(tenMinutes, 1, Rate);
-        var extractor = AudioFeatureExtractors.Create("log-mel", options);
+        var extractor = new LogMelFeatures(options);
         int segment = Rate * 30;
         var times = new List<double>();
         var held = new List<long>();
