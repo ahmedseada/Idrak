@@ -337,13 +337,11 @@ public abstract class Storage
 /// of
 /// other operations, or "no such kernel" (it returns false and the caller takes another path, or it throws); a device
 /// overrides the ones it runs itself.
-/// Callers run an operation through <c>Name(...)</c> (<see cref="Fill"/>, <see cref="Softmax"/>, ...), which runs the
-/// kernel registered for the device's <see cref="Kind"/> in <see cref="Kernels"/> where there is one, else
+/// Callers run an operation through <c>Name(...)</c> (<see cref="Fill"/>, <see cref="Softmax"/>, ...), which runs
 /// <c>NameKernel</c>. What every device provides is <see cref="IDeviceBackend"/>; the optional capabilities are
 /// interfaces
 /// of their own (<see cref="IGraphCaptureBackend"/>, <see cref="IRecurrentKernels"/>, …),
-/// read once when the backend starts: the operations they hold reach the device's kernels through them. A device comes
-/// with an <c>IDeviceProvider</c>, which starts it.
+/// read once when the backend starts: the operations they hold reach the device's kernels through them.
 /// </summary>
 /// <remarks>
 /// Every operation works on contiguous row-major float32 buffers. Methods named "...Backward", <see cref="Axpy"/>,
@@ -406,14 +404,14 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     private void ThrowDisposed() =>
         throw new ObjectDisposedException(GetType().Name, $"The {Kind} backend '{Name}' was disposed: its memory and kernels were given back, so its storages and tensors can no longer be used.");
 
-    // The kernels registered for this device by operation index, null when there are none and nothing is traced (every
+    // The kernel slots by operation index (Kernels.Resolve leaves every one empty), null when nothing is traced (every
     // call then runs the device's own kernel after one field read), or an empty array when they must be resolved again.
     private Delegate?[]? _kernels = Operations.Kernels.Unresolved();
 
     // The trace counting this device's calls (Kernels.Trace), or null.
     private KernelTrace? _trace;
 
-    // Operations this device has run through the host fallback (HostCall), read through Kernels.HostCalls.
+    // Operations this device has run through the host fallback, read through Kernels.HostCalls.
     private long _hostCalls;
 
     // The operations whose first host fallback was reported to telemetry (HostFallback), made on the first report.
@@ -460,13 +458,13 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
         }
     }
 
-    /// <summary>The kind of device this drives ("cpu", "cuda", "vulkan", …): the kernels registered for it run here.</summary>
+    /// <summary>The kind of device this drives ("cpu", "cuda", "vulkan", …).</summary>
     public abstract string Kind { get; }
 
-    // The default of an operation this device has no kernel of its own for and none is registered for.
+    // The default of an operation this device has no kernel of its own for.
     private NotSupportedException NoKernel(string operation) => new($"The {Kind} device '{Name}' has no kernel for {operation}.");
 
-    /// <summary>Marks the registered kernels as changed: the next call to an operation resolves them again.</summary>
+    /// <summary>Marks the kernel slots as changed: the next call to an operation resolves them again.</summary>
     internal void KernelsChanged()
     {
         Volatile.Write(ref _kernels, IsDisposed ? s_disposedKernels : Operations.Kernels.Unresolved());
@@ -495,7 +493,7 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// dispatch), so its driver may refuse one (<see cref="KernelUnavailableException"/>). On such a device, unless
     /// IDRAK_REFUSED_KERNELS=throw, an operation whose kernel is refused falls back instead of failing: the operation's
     /// composed path, or "no kernel" (the caller's own path), whichever its default is. With nothing else taking its calls
-    /// off the inlined fast path (no kernel registered, no trace, no guarded moves), each
+    /// off the inlined fast path (no trace, no guarded moves), each
     /// call runs the device's kernel through NameGuarded: one call whose only addition is a try region (free until it
     /// throws), so the first refusal is caught too; which operations the device owns is looked up only when one is refused.
     /// Off by default.
@@ -528,8 +526,8 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
         }
     }
 
-    // The slots of a device whose only reason to leave the fast path is RefusedKernelsFallBack (none registered, no trace,
-    // no guarded moves): every slot empty, and the generated Name(...) sends its calls to NameGuarded
+    // The slots of a device whose only reason to leave the fast path is RefusedKernelsFallBack (no trace, no guarded
+    // moves): every slot empty, and the generated Name(...) sends its calls to NameGuarded
     // directly when it finds this instance. Stored in _kernels like the slots it stands for, so a change of the kernels
     // (KernelsChanged) ends it atomically.
     private static readonly Delegate?[] s_guardedKernels = new Delegate?[OperationIndex.Count];
@@ -611,8 +609,8 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
         }
     }
 
-    // The kernel registered for an operation on this device, or null for the device's own (off the fast path: counted
-    // when traced).
+    // The kernel in an operation's slot on this device, or null for the device's own (off the fast path: counted when
+    // traced).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private Delegate? Kernel(int operation)
     {
@@ -621,8 +619,8 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
         return kernels is null ? null : kernels.Length != 0 ? kernels[operation] : ResolveKernels(kernels)[operation];
     }
 
-    // Resolves the slots; stores them unless Kernels changed meanwhile (then the next call resolves again). With nothing
-    // registered and no trace the slots are dropped, so calls take the fast path again; or, on a
+    // Resolves the slots; stores them unless Kernels changed meanwhile (then the next call resolves again). With every
+    // slot empty and no trace the slots are dropped, so calls take the fast path again; or, on a
     // device whose refused kernels fall back, replaced by s_guardedKernels, so calls take NameGuarded (unless the device
     // guards its moves: then every call is an operation, NameRegistered, which runs NameGuarded inside it).
     private Delegate?[] ResolveKernels(Delegate?[] unresolved)

@@ -82,7 +82,7 @@ public interface IProgressReporter : IProgress<long>, IDisposable
     void Clear();
 }
 
-/// <summary>What a progress reporter is made for (see <c>Register</c>).</summary>
+/// <summary>What a progress reporter is made for.</summary>
 /// <param name="Label">What is in progress.</param>
 /// <param name="Total">The amount when known.</param>
 /// <param name="Unit">What the amounts are.</param>
@@ -110,7 +110,7 @@ public sealed record ProgressOptions
 }
 
 /// <summary>
-/// The progress reporters, by name (ignoring case). The library's:
+/// The progress reporters, a fixed list found by name (ignoring case):
 /// <list type="bullet">
 /// <item>"console": one line redrawn in place ("label  45%  12.3 MB / 27.0 MB  3.1 MB/s  4s left"), at most ten times a
 /// second, cut to the terminal's width; the time so far redrawn twice a second for <see cref="ProgressUnit.Elapsed"/>.</item>

@@ -18,8 +18,8 @@ public interface ITransportSelector
     string Summary { get; }
 
     /// <summary>
-    /// The transport (a <c>Transports</c> name) for ranks <paramref name="rankA"/> and <paramref name="rankB"/>,
-    /// from <paramref name="available"/> (every registered transport's answer for the pair), with the reason logged.
+    /// The transport (its name) for ranks <paramref name="rankA"/> and <paramref name="rankB"/>,
+    /// from <paramref name="available"/> (each transport's answer for the pair), with the reason logged.
     /// </summary>
     /// <exception cref="NotSupportedException">None of them can join the pair; the message lists each one's
     /// reason.</exception>
@@ -27,11 +27,10 @@ public interface ITransportSelector
 }
 
 /// <summary>
-/// The transport joining each pair of ranks of a group (plan 23, phase C3), made once when the group starts: every
-/// registered transport says whether it can join the pair here (<see cref="ITransportProvider.Availability"/>), and the
-/// selector <see cref="ClusterOptions.Selector"/> names picks among them, so different pairs may use different pipes (peer
-/// copies inside a machine, TCP between machines). A transport <see cref="ClusterOptions.Transport"/> forces wins over the
-/// selector for every pair it can join. Each choice is published once per pair as <see cref="TransportChosen"/>.
+/// The transport joining each pair of ranks of a group (plan 23, phase C3), and why, so different pairs may use different
+/// pipes (peer copies inside a machine, TCP between machines). Picking them (each transport saying whether it can join
+/// the pair here, <see cref="ITransportProvider.Availability"/>, and the selector <see cref="ClusterOptions.Selector"/>
+/// names picking among them) is not on the new design yet.
 /// </summary>
 public sealed class TransportPlan
 {

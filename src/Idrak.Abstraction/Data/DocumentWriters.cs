@@ -408,8 +408,8 @@ public interface IDocumentEditor : IDisposable
 }
 
 /// <summary>
-/// Writes one document format; register it with <c>Register</c>. The reading side of a format is
-/// its <see cref="IDocumentFormat"/> in <see cref="DocumentFormats"/>: a format may read without writing or write
+/// Writes one document format. The reading side of a format is
+/// its <see cref="IDocumentFormat"/>: a format may read without writing or write
 /// without reading.
 /// </summary>
 public interface IDocumentWriter
@@ -436,8 +436,8 @@ public interface IDocumentWriter
 }
 
 /// <summary>
-/// The document writers, by name (ignoring case). Built in (Idrak.Data): "pdf" (pages of images, vector paths and text
-/// with their fonts embedded).
+/// The document writers. The library's (Idrak.Data): "pdf" (pages of images, vector paths and text with their fonts
+/// embedded). Picking one by its name is not on the new design yet.
 /// </summary>
 public static class DocumentWriters
 {

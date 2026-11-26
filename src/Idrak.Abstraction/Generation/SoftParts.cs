@@ -18,7 +18,7 @@ namespace Idrak.Abstraction.Generation;
 /// </summary>
 public interface ISoftPartSource
 {
-    /// <summary>The kind of part it reads (<see cref="ChatParts.Audio"/>, say), as registered in <see cref="ChatParts"/>.</summary>
+    /// <summary>The kind of part it reads (<see cref="ChatParts.Audio"/>, say).</summary>
     string Kind { get; }
 
     /// <summary>The width of the features: the decoder's (one embedding per soft token).</summary>

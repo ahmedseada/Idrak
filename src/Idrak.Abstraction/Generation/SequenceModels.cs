@@ -47,12 +47,12 @@ public interface ISequenceEncoder : IDisposable
 
 /// <summary>
 /// How a padded batch of hidden states [batch, time, width] becomes one vector per sequence [batch, width], looking at
-/// each sequence's own positions only (registered by name in <see cref="SequencePoolers"/>: "first", "mean", "max"). An
+/// each sequence's own positions only (the library's, named in <see cref="SequencePoolers"/>: "first", "mean", "max"). An
 /// empty sequence (length 0) pools its first position. Pooling is differentiable.
 /// </summary>
 public interface ISequencePooler
 {
-    /// <summary>Its name in <see cref="SequencePoolers"/>.</summary>
+    /// <summary>Its name ("first", "mean", "max" for the library's, <see cref="SequencePoolers"/>).</summary>
     string Name { get; }
 
     /// <summary>One vector per sequence, [batch, width], from <paramref name="hidden"/> [batch, time, width].</summary>
@@ -63,10 +63,10 @@ public interface ISequencePooler
 }
 
 /// <summary>
-/// The sequence poolers, by name. The library registers "first" (the first position's state), "mean" (the average of
-/// each sequence's states: Idrak.Text's <c>TextEncoder</c> default) and "max" (each feature's largest value over the
-/// sequence); a family or an app registers others. A pooled vector feeds a head or an index trained with it, so a pooler
-/// is used whole: the registry has no fallback.
+/// The names of the library's sequence poolers: "first" (the first position's state), "mean" (the average of each
+/// sequence's states: Idrak.Text's <c>TextEncoder</c> default) and "max" (each feature's largest value over the
+/// sequence). A pooled vector feeds a head or an index trained with it, so a pooler is used whole, never another in its
+/// place. Picking one by its name is not on the new design yet.
 /// </summary>
 public static class SequencePoolers
 {
@@ -128,7 +128,7 @@ internal sealed class FirstPooler : ISequencePooler
 /// <summary>
 /// The mean pooler ("mean"): a weighted sum over time with each real position weighing 1 / length (an empty sequence: its
 /// first position), as one batched product [batch, 1, time] · [batch, time, width]; the same arithmetic as TextEncoder's
-/// average always had. Public so its users reach it directly (the poolers' registry is gone).
+/// average always had. Public so its users reach it directly.
 /// </summary>
 public sealed class MeanPooler : ISequencePooler
 {

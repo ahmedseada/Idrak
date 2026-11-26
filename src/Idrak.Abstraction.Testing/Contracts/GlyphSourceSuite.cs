@@ -39,7 +39,7 @@ public sealed record GlyphSourceSample(ImageData Image, string? Text = null)
 }
 
 /// <summary>
-/// The checks of a glyph source (<see cref="IGlyphSource"/>, registered in <see cref="GlyphSources"/>) on images of its
+/// The checks of a glyph source (<see cref="IGlyphSource"/>) on images of its
 /// own (<see cref="GlyphSourceSample"/>), each as given, padded with paper by random margins, and blank:
 /// <list type="bullet">
 /// <item>every glyph lies on the image with ink, its region on the image too;</item>

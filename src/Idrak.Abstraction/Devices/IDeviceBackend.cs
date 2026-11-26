@@ -15,7 +15,7 @@ namespace Idrak.Abstraction.Devices;
 /// </summary>
 public interface IDeviceBackend
 {
-    /// <summary>The kind of device this drives ("cpu", "cuda", "vulkan", …): the kernels registered for it run here.</summary>
+    /// <summary>The kind of device this drives ("cpu", "cuda", "vulkan", …).</summary>
     string Kind { get; }
 
     /// <summary>A human-readable name of the device, such as the GPU model.</summary>

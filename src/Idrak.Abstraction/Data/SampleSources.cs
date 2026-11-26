@@ -6,7 +6,8 @@ using System.Runtime.CompilerServices;
 namespace Idrak.Abstraction.Data;
 
 /// <summary>
-/// Sample sources by name (ignoring case), for tools and configuration files that name their data. The built-ins:
+/// The sample sources tools and configuration files name their data with (picking one by its name is not on the new
+/// design yet). The library's:
 /// <list type="bullet">
 /// <item><c>csv</c>: <c>CsvSource</c> (Idrak); options <c>target</c> (required, comma-separated), <c>ignore</c>,
 /// <c>delimiter</c>, <c>header</c> (true or false).</item>

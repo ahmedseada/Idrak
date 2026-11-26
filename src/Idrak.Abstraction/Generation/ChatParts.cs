@@ -11,14 +11,14 @@ namespace Idrak.Abstraction.Generation;
 /// <summary>
 /// One part of a message's content (<see cref="ChatMessage.Parts"/>): text (<see cref="ChatText"/>), an image
 /// (<see cref="ChatImage"/>), or a kind of one's own (audio, a video, a document). Every part has a
-/// <see cref="Kind"/>, the name its <see cref="IChatPartKind"/> is registered under in <see cref="ChatParts"/>, which
-/// writes and reads it as JSON. A chat model says which kinds it takes (<see cref="IChatModel.PartKinds"/>) and a chat
+/// <see cref="Kind"/>, the name of its <see cref="IChatPartKind"/>, which writes and reads it as JSON. A chat model says
+/// which kinds it takes (<see cref="IChatModel.PartKinds"/>) and a chat
 /// template which it renders (<see cref="ChatTemplate.PartKinds"/>); either fails on any other kind, never drops it.
 /// Parts are immutable and compare by value.
 /// </summary>
 public abstract record ChatPart
 {
-    /// <summary>The part's kind: "text", "image", or the name of a kind registered with <c>Register</c>.</summary>
+    /// <summary>The part's kind: "text", "image", or the name of a kind of one's own.</summary>
     public abstract string Kind { get; }
 }
 
@@ -171,10 +171,11 @@ public sealed record ChatImage : ChatPart
 }
 
 /// <summary>
-/// A kind of message part, registered in <see cref="ChatParts"/> under its name: how parts of this kind are written to
-/// and read from the chat JSON (the content-part objects of saved conversations, <c>{"type": name, …}</c>). The
-/// library's are "text" and "image"; a plug-in adds its own (audio, video, documents) with <c>Register</c> and makes its own <see cref="ChatPart"/> type for them. Its <c>Name</c> is
-/// the <see cref="ChatPart.Kind"/> of its parts and the "type" of their JSON.
+/// A kind of message part: how parts of this kind are written to and read from the chat JSON (the content-part objects
+/// of saved conversations, <c>{"type": name, …}</c>). The library's are "text" and "image"; a plug-in makes its own
+/// (audio, video, documents) with its own <see cref="ChatPart"/> type for them. Its <c>Name</c> is the
+/// <see cref="ChatPart.Kind"/> of its parts and the "type" of their JSON. Finding a kind by its name is not on the new
+/// design yet.
 /// </summary>
 public interface IChatPartKind
 {
@@ -191,7 +192,7 @@ public interface IChatPartKind
 /// <summary>
 /// A kind of message part whose parts are made from bytes as received (a sound, a video, a document): what a bridge
 /// that holds the bytes of a block it cannot name the type of (the MCP bridge's audio blocks, a tuning data file's
-/// <c>"audios"</c> list) makes a part with, through the kind registered under the name alone (<c>Find</c>), so nothing names the package that brings the part type.
+/// <c>"audios"</c> list) makes a part with. Finding the kind by its name alone is not on the new design yet.
 /// </summary>
 public interface IBinaryPartKind : IChatPartKind
 {
@@ -202,7 +203,7 @@ public interface IBinaryPartKind : IChatPartKind
     /// <summary>
     /// The keys data records and request bodies name parts of this kind by (a tuning record's <c>"audios"</c> list and
     /// <c>&lt;audio&gt;</c> markers, a completions request's <c>"input_audio"</c> part), so the readers find them through
-    /// the registered kind instead of names of their own.
+    /// the kind instead of names of their own.
     /// </summary>
     BinaryPartRecordKeys RecordKeys { get; }
 }
@@ -231,7 +232,7 @@ public sealed record BinaryPartRecordKeys(string List, string Marker, string? In
 /// <list type="bullet">
 /// <item>"text" (<see cref="ChatText"/>): <c>{"type": "text", "text": "…"}</c>.</item>
 /// <item>"image" (<see cref="ChatImage"/>): <c>{"type": "image", "media_type": "image/png", "data": "&lt;base64&gt;"}</c>.</item>
-/// <item>"audio" (Idrak.Audio's <c>ChatAudio</c>, registered by that package when the application ships it):
+/// <item>"audio" (Idrak.Audio's <c>ChatAudio</c>):
 /// <c>{"type": "audio", "media_type": "audio/wav", "data": "&lt;base64&gt;"}</c>.</item>
 /// </list>
 /// </summary>

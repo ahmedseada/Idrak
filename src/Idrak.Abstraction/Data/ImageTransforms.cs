@@ -11,8 +11,8 @@ namespace Idrak.Abstraction.Data;
 
 /// <summary>
 /// One step done to a decoded image before a model's own preprocessing (turn it grey, shrink it, raise its contrast,
-/// re-encode it): decoded pixels in, decoded pixels out. The library's are Pillow's operations, byte for byte (core
-/// registers them): <c>grayscale</c>, <c>max_width</c>, <c>max_height</c>, <c>scale</c>, <c>pad</c>, <c>contrast</c>,
+/// re-encode it): decoded pixels in, decoded pixels out. The library's are Pillow's operations, byte for byte (in
+/// core): <c>grayscale</c>, <c>max_width</c>, <c>max_height</c>, <c>scale</c>, <c>pad</c>, <c>contrast</c>,
 /// <c>brightness</c>, <c>sharpness</c>, <c>autocontrast</c>, <c>equalize</c>, <c>gamma</c>, <c>blur</c>,
 /// <c>unsharp</c>, <c>median</c>, <c>min_filter</c>, <c>max_filter</c>, <c>binarize</c>, <c>invert</c>, <c>jpeg</c>;
 /// and scan degradations for pages made to look scanned (Idrak.Imaging): <c>rotate</c>, <c>perspective</c>,
@@ -185,9 +185,9 @@ public sealed class ImageTransformStep
 }
 
 /// <summary>
-/// The image transforms a pipeline can name, by name (ignoring case). The library's (core registers them as library
-/// defaults, Pillow's operations byte for byte): <c>grayscale</c>, <c>max_width</c>, <c>max_height</c>,
-/// <c>contrast</c>, <c>brightness</c>, <c>sharpness</c>, <c>autocontrast</c>, <c>invert</c>, <c>jpeg</c>.
+/// The image transforms. The library's (in core, Pillow's operations byte for byte): <c>grayscale</c>,
+/// <c>max_width</c>, <c>max_height</c>, <c>contrast</c>, <c>brightness</c>, <c>sharpness</c>, <c>autocontrast</c>,
+/// <c>invert</c>, <c>jpeg</c>. Picking one by its name (a pipeline written as text) is not on the new design yet.
 /// </summary>
 public static class ImageTransforms
 {

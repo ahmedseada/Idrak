@@ -12,7 +12,7 @@ namespace Idrak.Abstraction;
 /// as NaN. The converters (<see cref="FiniteSingleJsonConverter"/>, <see cref="FiniteDoubleJsonConverter"/>) serve
 /// <see cref="JsonSerializer"/>; <see cref="WriteNumber(Utf8JsonWriter, string, double)"/> and
 /// <see cref="WriteNumberValue(Utf8JsonWriter, double)"/> serve a hand-written <see cref="Utf8JsonWriter"/> (the profile
-/// and telemetry writers). One fixed meaning, so a helper and not a registry.
+/// and telemetry writers). One fixed meaning, so a helper.
 /// </summary>
 /// <example>
 /// <code>

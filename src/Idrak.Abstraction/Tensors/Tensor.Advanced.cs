@@ -61,8 +61,8 @@ public sealed partial class Tensor
     }
 
     /// <summary>
-    /// x·w + bias for x [..., k], w [k, n], bias [n]: one pass where the device has one (bfloat16 tensor cores),
-    /// otherwise a product and a bias addition. Same gradients as <c>x.MatMul(w) + bias</c>.
+    /// x·w + bias for x [..., k], w [k, n], bias [n]: one pass where the device has one, otherwise a product and a bias
+    /// addition. Same gradients as <c>x.MatMul(w) + bias</c>.
     /// </summary>
     public static Tensor MatMulBias(Tensor x, Tensor w, Tensor bias)
     {

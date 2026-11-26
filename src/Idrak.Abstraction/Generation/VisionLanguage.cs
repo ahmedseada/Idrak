@@ -177,7 +177,7 @@ public interface IVisionEncoderStages
 /// How a vision-language model's prompt holds its images: the chat template writes one marker per image part, and the
 /// model reads more than the marker (the image's tokens, and whatever its processor puts around them). <see cref="Expand"/>
 /// does that second step on the rendered text, before it is tokenized; the embeddings of the
-/// <see cref="ImageToken"/> runs are then replaced by the images' features. Each family's registration gives its own
+/// <see cref="ImageToken"/> runs are then replaced by the images' features. Each family gives its own
 /// (with its token ids from its configuration); <see cref="ImageTokenFormat"/> is a building block that covers the
 /// common shapes.
 /// </summary>
@@ -345,12 +345,11 @@ public interface IImageAttentionRule
 }
 
 /// <summary>
-/// The attention rules for image tokens, by name. The library has two: <see cref="Causal"/> (image rows attend as the
+/// The names of the attention rules for image tokens. The library has two: <see cref="Causal"/> (image rows attend as the
 /// decoder's text rows do, the decoder's own behaviour) and <see cref="ImageBlocks"/> (each image's rows see their whole
 /// image, through <see cref="KeySpans.ImageBlocks"/>, causal elsewhere; within the window on sliding-window layers). A
-/// family names the rule its image tokens attend by in its vision part; a family whose tokens attend otherwise registers
-/// its own rule here, and an app can take any name's place. Nothing falls back to another rule: an unknown name is an
-/// error naming this registry.
+/// family names the rule its image tokens attend by in its vision part. Nothing falls back to another rule; picking a
+/// rule by its name is not on the new design yet.
 /// </summary>
 public static class ImageAttentionRules
 {
@@ -427,9 +426,9 @@ public interface IImagePositionRule
 }
 
 /// <summary>
-/// The image position rules, by name. The library has one, <see cref="Grid"/>, the multi-axis placement of Qwen2-VL and
-/// Qwen2.5-VL's <c>get_rope_index</c>, which a prompt whose image features carry axis positions uses; an app may take its
-/// place (or register another rule for its own use). An unknown name is an error naming this registry.
+/// The names of the image position rules. The library has one, <see cref="Grid"/>, the multi-axis placement of Qwen2-VL
+/// and Qwen2.5-VL's <c>get_rope_index</c>, which a prompt whose image features carry axis positions uses. Picking a rule
+/// by its name is not on the new design yet.
 /// </summary>
 public static class ImagePositionRules
 {

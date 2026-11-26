@@ -106,7 +106,7 @@ public sealed class PenStroke : IDisposable
 /// draws, points with a width and an ink per point, as a hand with a ballpoint would (a slow wobble, a little jitter,
 /// pressure along the stroke, an overshoot at its ends) or exactly (<c>ideal</c>). Its settings are read once per page
 /// (<see cref="Read"/>), then every stroke of the page is drawn with them. The same path, settings and seed give the
-/// same stroke, and no point strays from the path further than <see cref="Stray"/> says. Register one with <c>Register</c>.
+/// same stroke, and no point strays from the path further than <see cref="Stray"/> says.
 /// </summary>
 public interface IPen
 {
@@ -127,9 +127,10 @@ public interface IPen
 }
 
 /// <summary>
-/// The pens, by name (ignoring case). Built in (Idrak.Imaging): <c>ideal</c> (the path exactly, at its width) and
+/// The pens. The library's (Idrak.Imaging): <c>ideal</c> (the path exactly, at its width) and
 /// <c>ballpoint</c> (a hand's ballpoint: a slow wobble, a little jitter, pressure along the stroke, an overshoot or a
 /// short stop at its ends, a slight drift; its keys pen-wobble, pen-jitter, pen-pressure, pen-overshoot and pen-tilt).
+/// Picking one by its name is not on the new design yet.
 /// </summary>
 public static class Pens
 {

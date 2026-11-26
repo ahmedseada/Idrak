@@ -130,7 +130,7 @@ public interface IFontFace
     ReadOnlyMemory<byte> Table(string tag);
 }
 
-/// <summary>Reads one kind of font file into its faces; register it with <c>Register</c>.</summary>
+/// <summary>Reads one kind of font file into its faces.</summary>
 public interface IFontFormat
 {
     /// <summary>The format's name, e.g. "opentype" (names ignore case).</summary>
@@ -152,9 +152,9 @@ public interface IFontFormat
 }
 
 /// <summary>
-/// The font file formats, by name (ignoring case). Built in (Idrak.Imaging): "opentype" (.ttf, .otf, .ttc: TrueType and
-/// CFF outlines, single fonts and collections), and "cff" and "type1" (bare CFF and Type 1 programs, as documents embed
-/// them: read by their first bytes, no file extension).
+/// What the font file formats share. The library's (Idrak.Imaging): "opentype" (.ttf, .otf, .ttc: TrueType and CFF
+/// outlines, single fonts and collections), and "cff" and "type1" (bare CFF and Type 1 programs, as documents embed
+/// them: read by their first bytes, no file extension). Picking one for a file is not on the new design yet.
 /// </summary>
 public static class FontFormats
 {
@@ -183,7 +183,7 @@ public enum OutlineFill : byte
 }
 
 /// <summary>
-/// Fills outlines into coverage: how much of each pixel the shape covers, 0 to 1. Register one with <c>Register</c>.
+/// Fills outlines into coverage: how much of each pixel the shape covers, 0 to 1.
 /// </summary>
 public interface IOutlineRasterizer
 {
@@ -235,8 +235,9 @@ public interface IOutlineRasterizer
 }
 
 /// <summary>
-/// The outline rasterizers, by name. Built in (Idrak.Imaging): "coverage" (exact area coverage per pixel, no hinting; the
-/// glyph rule by default, and the nonzero and even-odd rules for contours that overlap, <see cref="OutlineFill"/>).
+/// The name of the library's outline rasterizer (Idrak.Imaging): "coverage" (exact area coverage per pixel, no hinting;
+/// the glyph rule by default, and the nonzero and even-odd rules for contours that overlap, <see cref="OutlineFill"/>).
+/// Picking one by its name is not on the new design yet.
 /// </summary>
 public static class OutlineRasterizers
 {

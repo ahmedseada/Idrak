@@ -43,12 +43,9 @@ public readonly record struct TuningScore(double Numerator, double Denominator)
 /// <summary>
 /// A score of generated text against its reference, for a fine-tune's evaluation set (an answer generated every few
 /// steps
-/// and compared with the expected one): character or word error rate, exact match, or a metric of one's own. Registered
-/// in
-/// <see cref="TuningMetrics"/> under its <c>Name</c> ("cer", "wer", "f1"), with the option keys
-/// <see cref="Score"/> takes (<c>Keys</c>; any other is refused, naming these). Thread-safe:
-/// one
-/// metric scores many answers at once.
+/// and compared with the expected one): character or word error rate, exact match, or a metric of one's own (the
+/// library's are named in <see cref="TuningMetrics"/>: "cer", "wer", "f1"). Thread-safe: one metric scores many answers
+/// at once.
 /// </summary>
 public interface ITuningMetric
 {
@@ -62,8 +59,9 @@ public interface ITuningMetric
 }
 
 /// <summary>
-/// The metrics a fine-tune's evaluation, a chat evaluation or a reward can score generated text with, by name (ignoring
-/// case). The library's error rates, lower is better, are Unicode-aware (both texts NFC-normalized first, so a letter
+/// The names of the library's metrics a fine-tune's evaluation, a chat evaluation or a reward can score generated text
+/// with (picking one by its name is not on the new design yet), and the helpers they share. The library's error rates,
+/// lower is better, are Unicode-aware (both texts NFC-normalized first, so a letter
 /// written precomposed or as a base and its marks counts the same; Arabic letters and their marks are characters like
 /// any other): <list type="bullet"> <item><see cref="CharacterErrorRate"/> ("cer"): the edit distance between the
 /// texts' characters (Unicode scalar values, so a character outside the basic plane is one) over the reference's

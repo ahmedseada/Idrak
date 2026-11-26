@@ -312,8 +312,8 @@ public sealed record ClusterOptions
     public bool Overlap { get; init; } = true;
 
     /// <summary>
-    /// How a gradient bucket is compressed on its way: a <c>GradientCompressions</c> name of Idrak.Network ("none",
-    /// "top-k", or a plug-in's), or null: "top-k" when <see cref="TopK"/> is set, else "none" (<c>IDRAK_CLUSTER_COMPRESSION</c>).
+    /// How a gradient bucket is compressed on its way: the name of one of Idrak.Network's compressions ("none",
+    /// "top-k"), or null: "top-k" when <see cref="TopK"/> is set, else "none" (<c>IDRAK_CLUSTER_COMPRESSION</c>).
     /// </summary>
     public string? Compression { get; init; }
 
@@ -332,7 +332,7 @@ public sealed record ClusterOptions
     public double TopK { get; init; }
 
     /// <summary>
-    /// Whether what a compression did not send (the values top-k leaves out, the rounding error of int8 and fp8) is added
+    /// Whether what a compression did not send (the values top-k leaves out) is added
     /// to the next step's values (<c>IDRAK_CLUSTER_ERROR_FEEDBACK</c>: 1 or 0).
     /// </summary>
     public bool ErrorFeedback { get; init; } = true;

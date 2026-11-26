@@ -26,13 +26,9 @@ public interface IOutOfMemoryPolicy
 }
 
 /// <summary>
-/// The out-of-memory policies of training steps, by name (ignoring case). The library registers <see cref="Split"/>
-/// (the
-/// step cut in twice as many parts after each failure, down to one sample a part: the default) and <see cref="None"/>
-/// (no
-/// recovery). A trainer takes its policy from its options, else <c>EnvironmentVariable</c> (IDRAK_OOM_POLICY), else
-/// <see cref="Split"/>; a name nobody registered is refused with "not registered". An allocation failure is told apart
-/// from
+/// The out-of-memory policies of training steps. The library's: <see cref="Split"/> (the step cut in twice as many parts
+/// after each failure, down to one sample a part) and <see cref="None"/> (no recovery). Picking a trainer's policy by
+/// its name is not on the new design yet. An allocation failure is told apart from
 /// any other error by its type alone (<see cref="IsAllocationFailure"/>, rule 90), and every recovery is reported to
 /// the
 /// telemetry (<see cref="Report"/>, <see cref="OutOfMemoryRecovered"/>) by every trainer that recovers, whatever its

@@ -45,13 +45,13 @@ public sealed record ModelPullProgress(string Model, long Received, long Total, 
 }
 
 /// <summary>
-/// A kind of model name ("store:qwen3:8b", "owner/name", a folder …) that loading a model resolves (Idrak's
-/// <c>ModelSource.Resolve</c> asks the registered sources): it says which names are its own and turns one into a local
-/// folder (or a path a checkpoint format reads, such as a .gguf file's prepared folder). Register new ones with <c>Register</c>.
+/// A kind of model name ("store:qwen3:8b", "owner/name", a folder …) that loading a model resolves: it says which names
+/// are its own and turns one into a local folder (or a path a checkpoint format reads, such as a .gguf file's prepared
+/// folder). Picking the source of a name among several is not on the new design yet.
 /// </summary>
 public interface IModelSource
 {
-    /// <summary>The source's name ("folder", "store", "gguf", "huggingface", …): registering another under it replaces this one.</summary>
+    /// <summary>The source's name ("folder", "store", "gguf", "huggingface", …).</summary>
     string Name { get; }
 
     /// <summary>Whether <paramref name="model"/> is a name this source resolves.</summary>

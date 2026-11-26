@@ -8,7 +8,7 @@ using Idrak.Abstraction.Data;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The checks of a glyph pose (<see cref="IGlyphPose"/>, registered in <see cref="GlyphPoses"/>) along lines of several
+/// The checks of a glyph pose (<see cref="IGlyphPose"/>) along lines of several
 /// text sizes, with its default settings and the settings given:
 /// <list type="bullet">
 /// <item>the same input gives the same pose, so every glyph of a cluster (asking with its cluster's place) gets one pose;</item>

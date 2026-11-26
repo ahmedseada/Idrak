@@ -83,7 +83,7 @@ public sealed record FeatureCacheOptions
 /// </summary>
 public interface IFeatureCache : IDisposable
 {
-    /// <summary>The cache's kind, as registered ("memory", "disk").</summary>
+    /// <summary>The cache's kind ("memory", "disk").</summary>
     string Name { get; }
 
     /// <summary>The entries kept.</summary>
@@ -109,7 +109,8 @@ public interface IFeatureCache : IDisposable
 }
 
 /// <summary>
-/// The kinds of feature cache, by name (ignoring case). The library's (Idrak.Text registers them).
+/// What the kinds of feature cache share. The library's are Idrak.Text's ("memory", "disk"); picking one by its name is
+/// not on the new design yet.
 /// </summary>
 public static class FeatureCaches
 {

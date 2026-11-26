@@ -32,7 +32,6 @@ public sealed record BoundText(IReadOnlyList<string> Texts, IReadOnlyList<string
 /// a region left empty draws nothing and its units are absent from the label; units placed nowhere are absent from the
 /// label; the label is exactly the drawn text, one line per group that has text, in reading order (groups in the order
 /// of their numbers, a group's regions in the order of their indexes). The same input and seed give the same binding.
-/// Register one with <c>Register</c>.
 /// </summary>
 public interface ITextBinding
 {
@@ -46,9 +45,9 @@ public interface ITextBinding
 }
 
 /// <summary>
-/// The text bindings, by name (ignoring case). Built in (Idrak.Imaging): <c>sequence</c> (each line fills one group of
-/// regions in reading order, a unit a region unless <c>take</c> says otherwise; <c>blank</c> and <c>blank-at</c> leave
-/// regions empty).
+/// The name of the library's text binding (Idrak.Imaging): <c>sequence</c> (each line fills one group of regions in
+/// reading order, a unit a region unless <c>take</c> says otherwise; <c>blank</c> and <c>blank-at</c> leave regions
+/// empty). Picking one by its name is not on the new design yet.
 /// </summary>
 public static class TextBindings
 {

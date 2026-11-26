@@ -33,7 +33,7 @@ public interface ITokenizer
 /// <summary>
 /// A tokenizer a model ships with (a Hugging Face <c>tokenizer.json</c>, a SentencePiece model, a vocabulary file), or one
 /// a trainer learned: a vocabulary of named tokens with special ones, written back as a <c>tokenizer.json</c>. The library's
-/// models (BPE, and the others registered by name) implement it, so code that loads, pads, saves or looks tokens up works
+/// models (BPE and the others) implement it, so code that loads, pads, saves or looks tokens up works
 /// with any of them.
 /// </summary>
 public interface IPretrainedTokenizer : ITokenizer

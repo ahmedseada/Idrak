@@ -9,7 +9,7 @@ public enum OffloadPriority : byte
     /// <summary>Used all the time (activations, trained weights): stays on the device while anything colder can move.</summary>
     Hot = 0,
 
-    /// <summary>Weights no step changes (frozen layers, packed int8 / int4 / bfloat16 weights): read once per pass.</summary>
+    /// <summary>Weights no step changes (frozen layers): read once per pass.</summary>
     Frozen = 1,
 
     /// <summary>Optimizer state (moments): read and written once per optimizer step.</summary>

@@ -10,8 +10,8 @@ namespace Idrak.Abstraction.Generation;
 /// How a <see cref="KeyValueCache"/> stores keys and values and attends over them: the attention layers write and read
 /// a
 /// cache through its layout instead of branching on the format. Chosen once when the cache is created (decoding steps
-/// recorded as CUDA graphs keep the same kernels). Registered by its <c>Name</c> in
-/// <see cref="KeyValueLayouts"/>. <see cref="KeyValueLayout"/> is a base that attends through basic operations every
+/// recorded as CUDA graphs keep the same kernels). The built-in format's layout comes from
+/// <see cref="KeyValueLayouts.For"/>. <see cref="KeyValueLayout"/> is a base that attends through basic operations every
 /// backend has; what a format can do beyond that is an interface of its own, tested once when the cache is made
 /// (<see cref="IScaledLayout"/>, <see cref="IRecordableLayout"/>, <see cref="ISlidingWindowLayout"/>,
 /// <see cref="IFusedWriteLayout"/>, <see cref="IRowStartsLayout"/>).
@@ -132,12 +132,12 @@ public interface IFusedWriteLayout : IKeyValueLayout;
 
 /// <summary>
 /// A base for a key/value cache format of one's own (<see cref="IKeyValueLayout"/>): it implements <see cref="RowWidth"/>, <see cref="Write"/> and <see cref="Expand"/>, and attends through the default <see cref="Attend"/> (keys and values expanded to float32, then masked products), which runs on every backend. The
-/// built-in formats (<see cref="KeyValueFormat"/>) use their own kernels. Register a format by its name with <c>Register</c>; what it can do beyond the base is the interface of that capability (<see cref="IScaledLayout"/> when its rows have scales, <see cref="IRecordableLayout"/> when it only queues device work).
+/// built-in formats (<see cref="KeyValueFormat"/>) use their own kernels. A format of one's own is passed as its layout; what it can do beyond the base is the interface of that capability (<see cref="IScaledLayout"/> when its rows have scales, <see cref="IRecordableLayout"/> when it only queues device work).
 /// </summary>
 /// <example>
-/// <code> KeyValueLayouts.Register(new MyLayout()); // its Name: "my-format" using var context = new
-/// DecodingContext(device, batch: 1, capacity: 512, KeyValueLayouts.Get("my-format")); var generator = new
-/// TextGenerator(model, tokenizer, 512) { CacheLayout = KeyValueLayouts.Get("my-format") };
+/// <code> var layout = new MyLayout(); // its Name: "my-format" using var context = new
+/// DecodingContext(device, batch: 1, capacity: 512, layout); var generator = new
+/// TextGenerator(model, tokenizer, 512) { CacheLayout = layout };
 /// </code>
 /// </example>
 public abstract class KeyValueLayout : IKeyValueLayout

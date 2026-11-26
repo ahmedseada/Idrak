@@ -3,8 +3,8 @@
 
 namespace Idrak.Abstraction.Devices;
 
-// The product routes (ProductRoutes): the passes a device may fuse over weights stored in their file's layout
-// (StoredWeight), outside the generated operations.
+// The product routes (ProductRoutes): the passes a device may fuse over weights stored in their file's layout, outside
+// the generated operations.
 public abstract partial class Backend
 {
     /// <summary>

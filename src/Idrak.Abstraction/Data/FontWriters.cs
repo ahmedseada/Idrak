@@ -109,8 +109,8 @@ public sealed record FontWriteOptions
 }
 
 /// <summary>
-/// Writes a face as one font file format; register it with <c>Register</c>. The reading side of a
-/// format is its <see cref="IFontFormat"/> in <see cref="FontFormats"/>: what a writer writes reads back there with the
+/// Writes a face as one font file format. The reading side of a
+/// format is its <see cref="IFontFormat"/>: what a writer writes reads back there with the
 /// same outlines, advances, characters and shaping.
 /// </summary>
 public interface IFontWriter
@@ -131,8 +131,8 @@ public interface IFontWriter
 }
 
 /// <summary>
-/// The font file writers, by name (ignoring case), beside <see cref="FontFormats"/>. Built in (Idrak.Imaging):
-/// "truetype" (.ttf, whole fonts and subsets, the format Idrak works from).
+/// The font file writers. The library's (Idrak.Imaging): "truetype" (.ttf, whole fonts and subsets, the format Idrak
+/// works from). Picking one by its name is not on the new design yet.
 /// </summary>
 public static class FontWriters
 {

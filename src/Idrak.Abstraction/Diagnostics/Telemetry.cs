@@ -53,7 +53,7 @@ public enum TelemetryLevel
 
     /// <summary>
     /// Settings suggested from what the device reports and what a run measured (<see cref="SettingSuggestion"/>: a vision
-    /// reader's encoder and prompt precision where the device has tensor cores, the pages that fit together, the cache's
+    /// reader's encoder and prompt precision, the pages that fit together, the cache's
     /// and the weights' format). Each once per reader; the built-in <see cref="ConsoleLogger"/> and
     /// <see cref="JsonLinesLogger"/> always include them.
     /// </summary>

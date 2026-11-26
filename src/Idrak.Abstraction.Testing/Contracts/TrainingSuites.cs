@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The checks of an optimizer kind (<see cref="IOptimizerKind"/>, registered in <c>OptimizerKinds</c>), each case a
+/// The checks of an optimizer kind (<see cref="IOptimizerKind"/>), each case a
 /// few parameters of random values pulled towards targets at least 0.2 away by a squared loss for a few steps (rates up to
 /// 0.03, momentum up to 0.5, so a descent method moves towards them):
 /// <list type="bullet">
@@ -164,8 +164,8 @@ public sealed class OptimizerKindSuite(IOptimizerKind? reference = null, Device?
 }
 
 /// <summary>
-/// The checks of a learning-rate schedule kind (<see cref="ILearningRateSchedule"/>, registered in
-/// <see cref="LearningRateSchedules"/>), each case a schedule of an optimizer over a number of steps:
+/// The checks of a learning-rate schedule kind (<see cref="ILearningRateSchedule"/>), each case a schedule of an optimizer
+/// over a number of steps:
 /// <list type="bullet">
 /// <item>the schedule works from the optimizer it was given and its rate (its base);</item>
 /// <item>every rate is finite, not negative, and not above the optimizer's own rate (the peak a schedule works from);</item>

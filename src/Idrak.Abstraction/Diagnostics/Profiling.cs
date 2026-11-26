@@ -176,7 +176,7 @@ public sealed record ProfileOptions
     public int WarmRuns { get; init; } = 3;
 
     /// <summary>
-    /// The probes to measure with, by name (<see cref="ProfileProbes"/>); null for every registered probe the device
+    /// The probes to measure with, by name (<see cref="ProfileProbes"/>); null for every probe of that list the device
     /// supports (in a watched run, <see cref="Profiler.Watch"/>, those that do not change it). A named probe the device does
     /// not support is skipped and listed in <see cref="ProfileReport.Skipped"/>.
     /// </summary>
@@ -194,7 +194,7 @@ public sealed record ProfileOptions
     /// <summary>
     /// <paramref name="defaults"/> (or the defaults) with what the environment sets: <c>IDRAK_PROFILE_COLD</c> (1 or 0),
     /// <c>IDRAK_PROFILE_WARM</c> (the warm runs), <c>IDRAK_PROFILE_PROBES</c> (names separated by commas, "all" for every
-    /// registered probe by name, the intrusive ones included in a watched run too, "none" for none), <c>IDRAK_PROFILE_STATISTIC</c> (median, mean, min or max), <c>IDRAK_PROFILE_FORMAT</c>
+    /// probe, the intrusive ones included in a watched run too, "none" for none), <c>IDRAK_PROFILE_STATISTIC</c> (median, mean, min or max), <c>IDRAK_PROFILE_FORMAT</c>
     /// (a writer's name) and <c>IDRAK_PROFILE_OUT</c> (a file).
     /// </summary>
     /// <exception cref="ArgumentException">A value that does not parse.</exception>
@@ -249,7 +249,7 @@ public sealed record ProfileOptions
 
 /// <summary>
 /// A profile: the workload's runs (cold, warm, and one pass for each intrusive probe) with what was measured, summed up by
-/// <see cref="ProfileOptions.Statistic"/>. Written by any registered writer (<see cref="Write(TextWriter, string?)"/>).
+/// <see cref="ProfileOptions.Statistic"/>. Written by any of <see cref="ProfileWriters"/> (<see cref="Write(TextWriter, string?)"/>).
 /// </summary>
 public sealed class ProfileReport
 {
@@ -355,8 +355,7 @@ public sealed class ProfileReport
 
 /// <summary>
 /// Measures something around each run of a profiled workload: time on the processor, the managed heap, device memory, the
-/// operations run, the device's kernels, or anything of one's own. Registered in <see cref="ProfileProbes"/> under
-/// <see cref="Name"/>.
+/// operations run, the device's kernels. <see cref="ProfileProbes"/> lists the library's under their <see cref="Name"/>.
 /// </summary>
 public interface IProfileProbe
 {
@@ -393,7 +392,7 @@ public interface IProfileProbe
 
 /// <summary>
 /// Writes a <see cref="ProfileReport"/>: a table for people, JSON, CSV or Markdown for tools and documents, or a format
-/// of one's own. Registered in <see cref="ProfileWriters"/> under <see cref="Name"/>.
+/// of one's own. <see cref="ProfileWriters"/> lists the library's under their <see cref="Name"/>.
 /// </summary>
 public interface IProfileWriter
 {
@@ -427,7 +426,7 @@ public interface IProfileWriter
 public static class Profiler
 {
     /// <summary>Profiles <paramref name="workload"/> on <paramref name="device"/> by <paramref name="options"/>.</summary>
-    /// <exception cref="NotSupportedException">A probe named in the options is not registered (the message names the registered ones).</exception>
+    /// <exception cref="NotSupportedException">A probe named in the options is not one of <see cref="ProfileProbes"/> (the message names them).</exception>
     public static ProfileReport Run(string name, Device device, Action<ProfileRun> workload, ProfileOptions? options = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -499,11 +498,11 @@ public static class Profiler
     /// (<see cref="ProfileRunKind.Once"/>) with its wall time ("wall", ms: host time; the device's queued work is not waited
     /// for, so a watch can end from another thread, at Ctrl+C). <see cref="ProfileOptions.Cold"/>,
     /// <see cref="ProfileOptions.WarmRuns"/> and <see cref="ProfileOptions.Statistic"/> do not apply. With no probes named,
-    /// the registered probes that are <see cref="IProfileProbe.Watched"/> are measured; the others are listed in a note.
+    /// the probes that are <see cref="IProfileProbe.Watched"/> are measured; the others are listed in a note.
     /// An intrusive probe cannot have a run of its own here: named in <see cref="ProfileOptions.Probes"/>, it measures the
     /// same run, and a note says the times include its cost.
     /// </summary>
-    /// <exception cref="NotSupportedException">A probe named in the options is not registered (the message names the registered ones).</exception>
+    /// <exception cref="NotSupportedException">A probe named in the options is not one of <see cref="ProfileProbes"/> (the message names them).</exception>
     /// <example>
     /// <code>
     /// using var watch = Profiler.Watch("idrak reinforce …", device, ProfileOptions.FromEnvironment());
@@ -643,7 +642,7 @@ public sealed class ProfileSession : IDisposable
 }
 
 /// <summary>
-/// The probes a <see cref="Profiler"/> measures with, by name (ignoring case). The library's, in this order:
+/// The probes a <see cref="Profiler"/> measures with, a fixed list found by name (ignoring case), in this order:
 /// <list type="bullet">
 /// <item>"bandwidth": the device's memory bandwidth ("device bandwidth", GB/s): copies through device memory, measured once
 /// per device before its first run, so a run's rate of bytes read (a decoding step's weights) has its ceiling beside it.

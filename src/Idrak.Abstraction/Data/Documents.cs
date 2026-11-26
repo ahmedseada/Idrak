@@ -259,8 +259,8 @@ public interface IDocument : IDisposable
     /// Page <paramref name="index"/> drawn to pixels: read with the parts drawing needs and drawn by
     /// <see cref="DocumentPageDrawers"/> (<c>DrawPage</c> does it for a format).
     /// </summary>
-    /// <exception cref="NotSupportedException">The format's pages cannot be drawn (the message says why), or no drawer
-    /// is registered.</exception>
+    /// <exception cref="NotSupportedException">The format's pages cannot be drawn (the message says why), or the options
+    /// name a drawer other than the library's (by its name: not on the new design yet).</exception>
     DocumentDrawing DrawPage(int index, DocumentDrawOptions options);
 
     /// <summary>The form's fields (empty for a document without a form, or a format that reads none).</summary>
@@ -287,7 +287,7 @@ public interface IDocument : IDisposable
 }
 
 /// <summary>
-/// Reads one document format; register it with <c>Register</c>. A format decides from a file's
+/// Reads one document format. A format decides from a file's
 /// first bytes whether the file is in its format, so the extension only decides which files a folder picks up.
 /// </summary>
 public interface IDocumentFormat
@@ -321,8 +321,8 @@ public interface IDocumentFormat
 }
 
 /// <summary>
-/// The document formats, by name (ignoring case), the most recently registered asked first. A format is chosen by a
-/// file's first bytes.
+/// What the document formats share. A format decides from a file's first bytes; picking one for a file is not on the
+/// new design yet.
 /// </summary>
 public static class DocumentFormats
 {

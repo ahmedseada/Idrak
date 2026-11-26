@@ -7,7 +7,7 @@ using Idrak.Abstraction.Data;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The checks of a text binding (<see cref="ITextBinding"/>, registered in <see cref="TextBindings"/>) on lines of words
+/// The checks of a text binding (<see cref="ITextBinding"/>) on lines of words
 /// and numbers put into rows of regions (a grid's), single regions (a box's) and groups out of order, with its default
 /// settings and the settings given:
 /// <list type="bullet">

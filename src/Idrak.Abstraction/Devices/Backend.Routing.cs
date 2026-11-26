@@ -47,7 +47,7 @@ public abstract partial class Backend
     public virtual void ExpertMatMulKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n) => throw NoKernel(nameof(ExpertMatMul));
 
     /// <summary>
-    /// Whether this device runs the mixture-of-experts operations (<see cref="RouteTopK"/>, <see cref="ExpertGatedPair"/> and <see cref="ExpertMatMul"/>) with kernels of its own or registered ones (<c>Register</c>). Where it does not, a mixture-of-experts layer reads its routing back and routes on
+    /// Whether this device runs the mixture-of-experts operations (<see cref="RouteTopK"/>, <see cref="ExpertGatedPair"/> and <see cref="ExpertMatMul"/>) with kernels of its own. Where it does not, a mixture-of-experts layer reads its routing back and routes on
     /// the host, counted as a host fallback of <see cref="RouteTopK"/> (<see cref="CountHostFallback"/>), instead of
     /// mirroring every expert's weights through the operations' host fallbacks.
     /// </summary>
@@ -66,8 +66,8 @@ public abstract partial class Backend
         HostCalled(operation.Name);
     }
 
-    // Whether a library operation runs a kernel of the device's own or a registered one here (not its default body).
-    // The slots already resolved are read as they are (null: nothing registered, the guarded slots: none either).
+    // Whether a library operation runs a kernel of the device's own here, or one in its resolved slot (not its default
+    // body). The slots already resolved are read as they are (null and the guarded slots: none).
     private bool RunsKernel(int operation)
     {
         if (OwnsKernel(operation))

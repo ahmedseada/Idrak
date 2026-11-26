@@ -173,7 +173,7 @@ public class OutlineTracerSettings
 /// so the nonzero and even-odd rules fill it alike; holes are kept. Filled again with the same placement, it covers the
 /// coverage's ink to within <see cref="Tolerance"/>. Its settings (thresholds, smoothing, corner angle, simplification)
 /// are read once (<see cref="Read"/>) and declare that tolerance. The same coverage, placement and settings give the
-/// same outline, from any thread. Register one with <c>Register</c>.
+/// same outline, from any thread.
 /// </summary>
 public interface IOutlineTracer
 {
@@ -197,9 +197,9 @@ public interface IOutlineTracer
 }
 
 /// <summary>
-/// The outline tracers, by name (ignoring case). Built in (Idrak.Imaging): "contour" (<see cref="Contour"/>: the ink's
-/// edge at a level, Otsu's unless set, traced in one pass, simplified into lines and quadratic curves with its corners
-/// kept).
+/// The name of the library's outline tracer (Idrak.Imaging): "contour" (<see cref="Contour"/>: the ink's edge at a
+/// level, Otsu's unless set, traced in one pass, simplified into lines and quadratic curves with its corners kept).
+/// Picking one by its name is not on the new design yet.
 /// </summary>
 public static class OutlineTracers
 {

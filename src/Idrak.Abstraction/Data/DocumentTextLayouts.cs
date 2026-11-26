@@ -22,7 +22,7 @@ public enum DocumentTextDirection : byte
 
 /// <summary>
 /// Arranges a page's text runs into lines and text, from their places on the page and the reading order the options
-/// name; register one with <c>Register</c>. Formats call the layout <see cref="DocumentOptions.Layout"/> names (<c>Arrange</c>). Safe to use from several threads
+/// name. Formats call the layout <see cref="DocumentOptions.Layout"/> names (<c>Arrange</c>). Safe to use from several threads
 /// at once.
 /// </summary>
 public interface IDocumentTextLayout
@@ -31,16 +31,17 @@ public interface IDocumentTextLayout
     /// The lines and text of a page of <paramref name="width"/> x <paramref name="height"/> points holding
     /// <paramref name="runs"/> (in content order).
     /// </summary>
-    /// <exception cref="Exception">The reading order the options name is not registered.</exception>
+    /// <exception cref="Exception">The reading order the options name cannot be used.</exception>
     DocumentText Arrange(IReadOnlyList<DocumentTextRun> runs, float width, float height, DocumentOptions options);
 }
 
 /// <summary>
-/// The document text layouts, by name (ignoring case). The library's, in Idrak.Abstraction: <see cref="Lines"/> (runs
+/// The names of the library's document text layouts, in Idrak.Abstraction: <see cref="Lines"/> (runs
 /// grouped into lines by baseline and size, each line's direction from its first strong character by Unicode's rule
 /// through the reading order, runs ordered by their places in that direction, words split where a gap passes a share of
 /// the font size, then the reading order for logical order), <see cref="Content"/> (the runs in content order, joined,
-/// no layout) and <see cref="Tagged"/> (the order a tagged document's author gave).
+/// no layout) and <see cref="Tagged"/> (the order a tagged document's author gave). Picking one by its name is not on
+/// the new design yet.
 /// </summary>
 public static class DocumentTextLayouts
 {

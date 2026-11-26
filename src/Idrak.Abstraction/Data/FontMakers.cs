@@ -120,8 +120,8 @@ public sealed record MadeFont(IFontFace Face, FontMap Map, MadeFontMetrics Metri
 /// several fills are kept, the first as its glyph and the others as its alternates (<see cref="MadeGlyph.Fill"/>), or
 /// reported left out with why; every glyph given is made or reported. Which characters and forms there are is data (the
 /// labels): nothing here names a script. Its settings are read once (<see cref="Read"/>); the same glyphs and settings
-/// make the same face, from any thread. The face it makes is written through <see cref="FontWriters"/> and read back
-/// through <see cref="FontFormats"/> like any font. Register one with <c>Register</c>.
+/// make the same face, from any thread. The face it makes is written by a font writer and read back by a font format
+/// like any font.
 /// </summary>
 public interface IFontMaker
 {
@@ -136,9 +136,10 @@ public interface IFontMaker
 }
 
 /// <summary>
-/// The font makers, by name (ignoring case). Built in (Idrak.Imaging): "traced" (<see cref="Traced"/>: each glyph
+/// The name of the library's font maker (Idrak.Imaging): "traced" (<see cref="Traced"/>: each glyph
 /// traced, the metrics and advances measured from the ink, the forms, ligatures, marks and alternates made into a font
-/// map's layout tables, the digits and marks the glyphs lack drawn).
+/// map's layout tables, the digits and marks the glyphs lack drawn). Picking one by its name is not on the new design
+/// yet.
 /// </summary>
 public static class FontMakers
 {

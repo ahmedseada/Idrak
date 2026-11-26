@@ -7,7 +7,7 @@ using System.Runtime.CompilerServices;
 namespace Idrak.Abstraction.Data;
 
 /// <summary>
-/// The scan profiles, by name.
+/// The scan profiles. Picking one by its name is not on the new design yet.
 /// </summary>
 public static class ScanProfiles
 {

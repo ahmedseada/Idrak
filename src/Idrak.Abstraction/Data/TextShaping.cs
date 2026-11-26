@@ -49,8 +49,8 @@ public enum TextClusters
 }
 
 /// <summary>
-/// Turns a run of text into positioned glyphs of a font, for the scripts it is registered under in
-/// <see cref="TextShapers"/>: the characters mapped to glyphs, substituted and positioned by the font's layout tables as the
+/// Turns a run of text into positioned glyphs of a font, for the scripts it shapes: the characters mapped to glyphs,
+/// substituted and positioned by the font's layout tables as the
 /// script's rules say. The glyphs come back in the order they are drawn, left to right (a right-to-left run reversed).
 /// </summary>
 public interface ITextShaper
@@ -69,11 +69,12 @@ public interface ITextShaper
 }
 
 /// <summary>
-/// The text shapers, by script (ISO 15924 code, ignoring case). A script with no shaper of its own is shaped by the one
-/// registered under <see cref="AnyScript"/>. Built in (Idrak.Imaging): "general" under <see cref="AnyScript"/> (the
+/// The text shapers, keyed by script (ISO 15924 code). A script with no shaper of its own is shaped by the one for
+/// <see cref="AnyScript"/>. The library's (Idrak.Imaging): "general" for <see cref="AnyScript"/> (the
 /// character map, then the font's GSUB and GPOS features for the script: right for scripts that neither join nor
 /// reorder, such as Latin, Greek, Cyrillic, Armenian, Georgian, Hebrew and the CJK scripts) and "arabic" for Arab,
-/// Syrc, Nkoo, Mong, Mand, Mani, Phlp, Adlm, Rohg, Sogd and Ougr (cursive joining).
+/// Syrc, Nkoo, Mong, Mand, Mani, Phlp, Adlm, Rohg, Sogd and Ougr (cursive joining). Picking one by its script is not on
+/// the new design yet.
 /// </summary>
 public static class TextShapers
 {

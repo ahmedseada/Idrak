@@ -793,7 +793,7 @@ public sealed record FontMapDrawing
 /// Applies a <see cref="FontMap"/> to a font: gives back a face that answers the map's Unicode code points with the
 /// font's glyphs and carries the layout tables (GSUB, GDEF, GPOS) made from the map, which the text shapers read as
 /// they
-/// read any font's. Registered in <see cref="FontMappers"/> under its <c>Name</c>; thread-safe.
+/// read any font's. Thread-safe.
 /// </summary>
 public interface IFontMapper
 {
@@ -808,8 +808,9 @@ public interface IFontMapper
 }
 
 /// <summary>
-/// The font mappers, by name (ignoring case). Built in (Idrak.Imaging): "opentype" (the map's substitutions, classes
-/// and mark positions as OpenType tables, with mark anchors measured from the font's ink).
+/// The name of the library's font mapper (Idrak.Imaging): "opentype" (the map's substitutions, classes and mark
+/// positions as OpenType tables, with mark anchors measured from the font's ink). Picking one by its name is not on the
+/// new design yet.
 /// </summary>
 public static class FontMappers
 {
@@ -818,8 +819,8 @@ public static class FontMappers
 }
 
 /// <summary>
-/// The font maps fonts are matched against as they are read (<c>Read</c>), by name (ignoring
-/// case). A font file with a map beside it (FONT.ttf and FONT<see cref="SidecarSuffix"/>) is mapped by that map.
+/// The settings of the font maps fonts are matched against as they are read. A font file with a map beside it
+/// (FONT.ttf and FONT<see cref="SidecarSuffix"/>) is mapped by that map.
 /// Nothing is fixed: the library's maps (<see cref="Builtin"/>), the maps beside fonts (<see cref="Sidecars"/>), the
 /// drawn glyphs (<see cref="Drawing"/>) and the mapper (<see cref="Mapper"/>) are settings. A font no map fits is given
 /// back as it was read: the same face.

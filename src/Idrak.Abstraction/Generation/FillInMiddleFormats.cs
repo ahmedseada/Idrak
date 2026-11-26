@@ -67,10 +67,8 @@ public sealed record FillInMiddlePrompt(string Text, IReadOnlyList<int> Ids, IRe
     : IFillInMiddlePrompt;
 
 /// <summary>
-/// A fill-in-the-middle format, registered by its <c>Name</c> in <see cref="FillInMiddleFormats"/>:
-/// <see cref="Detect"/> says from a model's tokenizer (its special tokens) whether the model was trained to fill in
-/// this
-/// way, and <c>Create</c> lays a context out as a prompt. The library's two layouts
+/// A fill-in-the-middle format: <see cref="Detect"/> says from a model's tokenizer (its special tokens) whether the
+/// model was trained to fill in this way. The library's two layouts
 /// (<see cref="FillInMiddleLayout"/>) are the building blocks; a family's plug-in names its tokens.
 /// </summary>
 public interface IFillInMiddleFormat
@@ -387,8 +385,9 @@ public sealed class FillInMiddleLayout : IFillInMiddleFormat
 }
 
 /// <summary>
-/// The fill-in-the-middle formats by name (<see cref="IFillInMiddleFormat"/>). The library registers none: each is a
-/// family's (Idrak.Text.Plugins registers "qwen", "deepseek", "gemma" and "mistral", each with its family, on <see cref="FillInMiddleLayout"/>), or an app's.
+/// The fill-in-the-middle formats' helpers (<see cref="IFillInMiddleFormat"/>). The library has no format of its own:
+/// each is a family's (Idrak.Text.Plugins has "qwen", "deepseek", "gemma" and "mistral", each with its family, on
+/// <see cref="FillInMiddleLayout"/>), or an app's. Picking one by its name is not on the new design yet.
 /// </summary>
 public static class FillInMiddleFormats
 {

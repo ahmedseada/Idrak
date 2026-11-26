@@ -354,7 +354,7 @@ public readonly record struct KeyValuePagesReported(string Device, int PageToken
 /// <param name="Value">The suggested value, as text ("3", "true").</param>
 /// <param name="Reason">Why, with the figures it came from.</param>
 /// <param name="Device">The device it is for.</param>
-/// <param name="Source">The advisor that suggested it (a registered name).</param>
+/// <param name="Source">The advisor that suggested it (its name).</param>
 public readonly record struct SettingSuggestion(string Setting, string Value, string Reason, string Device, string Source);
 
 /// <summary>
@@ -374,14 +374,13 @@ public readonly record struct OutOfMemoryRecovered(string Where, string Policy, 
 
 /// <summary>
 /// Published when a device fails (<c>Devices.DeviceException</c>), to the hooks listening at
-/// <c>TelemetryLevel.Devices</c>: once when the error is raised, or once by the dispatcher when it retried the operation
-/// on the CPU (<c>Backend.RetryOnHost</c>).
+/// <c>TelemetryLevel.Devices</c>: once when the error is raised.
 /// </summary>
 /// <param name="Device">The kind of device that failed ("cuda", "vulkan", "hip", …).</param>
 /// <param name="Operation">The operation whose kernel failed (as <c>Operation.Name</c>), or null when not known.</param>
 /// <param name="Message">What failed.</param>
-/// <param name="RetriedOnHost">True when the operation ran again on the CPU and the caller got its result.</param>
-/// <param name="Hint">How to turn the retry on, when it is off for the device; null otherwise.</param>
+/// <param name="RetriedOnHost">Whether the operation ran again on the CPU: running a failed operation again is not on the new design yet, so false.</param>
+/// <param name="Hint">A hint for the failure, or null.</param>
 public readonly record struct DeviceFailed(string Device, string? Operation, string Message, bool RetriedOnHost, string? Hint);
 
 /// <summary>
@@ -497,7 +496,7 @@ public readonly record struct CollectiveCompleted(string Collective, string Oper
 /// backward pass went on, and how much of the network time the step still waited for after it.
 /// </summary>
 /// <param name="Sync">The synchronisation ("all-reduce", "local-sgd", …).</param>
-/// <param name="Compression">The compression of its buckets ("none", "bf16", "top-k", …).</param>
+/// <param name="Compression">The compression of its buckets ("none", "top-k").</param>
 /// <param name="Rank">The rank reporting, in the step's group.</param>
 /// <param name="WorldSize">The ranks of the step's group.</param>
 /// <param name="Step">The training step (as the trainer began it), or -1 when the trainer began none.</param>

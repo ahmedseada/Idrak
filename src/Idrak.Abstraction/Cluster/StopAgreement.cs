@@ -95,7 +95,7 @@ public interface ICarriedStopAgreement : IStopAgreement
     void Carried(float sum);
 }
 
-/// <summary>One way of agreeing on a stop, registered by name in <see cref="StopAgreements"/>.</summary>
+/// <summary>One way of agreeing on a stop. Picking one by its name is not on the new design yet.</summary>
 public interface IStopAgreementProvider
 {
     /// <summary>The name ("all-reduce").</summary>
@@ -301,14 +301,11 @@ public abstract class StopAgreement : IStopAgreement
 }
 
 /// <summary>
-/// The stop agreements, by name (Plan 27, R7). Idrak.Network registers "all-reduce" (the flag carried in the gradient
-/// reduction's header, else a one-value all-reduce at the boundary: for ranks that are processes of their own, on one
-/// machine or many); Idrak.Cluster registers "shared" (an in-process simulated cluster's ranks agree through the run's
-/// memory, no message, whatever ranks take part in a step). <c>StopAgreement</c> names the one a
-/// run
-/// uses; "auto" takes "shared" for collectives whose group can change from step to step (<see cref="IStepGroup"/>) when
-/// it
-/// is registered, else "all-reduce".
+/// What the stop agreements share (Plan 27, R7). The library's: Idrak.Network's "all-reduce" (the flag carried in the
+/// gradient reduction's header, else a one-value all-reduce at the boundary: for ranks that are processes of their own,
+/// on one machine or many) and Idrak.Cluster's "shared" (an in-process simulated cluster's ranks agree through the run's
+/// memory, no message, whatever ranks take part in a step). Picking a run's agreement by its name is not on the new
+/// design yet.
 /// </summary>
 public static class StopAgreements
 {

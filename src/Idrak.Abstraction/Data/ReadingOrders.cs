@@ -37,9 +37,9 @@ public interface IReadingOrder
 }
 
 /// <summary>
-/// The reading orders, by name (ignoring case). Built in (Idrak.Imaging): <see cref="Bidi"/> (the Unicode bidirectional
+/// The names of the library's reading orders (Idrak.Imaging): <see cref="Bidi"/> (the Unicode bidirectional
 /// algorithm, UAX #9: levels resolved for a paragraph of the line's direction, reordered by rules L1 and L2) and <see cref="Runs"/> (in a right-to-left line, each run of digits and left-to-right letters, with the spaces and separators
-/// inside it, reversed; its own inverse).
+/// inside it, reversed; its own inverse). Picking one by its name is not on the new design yet.
 /// </summary>
 public static class ReadingOrders
 {

@@ -159,7 +159,7 @@ public sealed record GlyphSourceRequest(ImageData Image, string? Text, GlyphSour
 /// cut from, its baseline and size (<see cref="LabelledGlyph"/>), and reports each character it was asked for and gave
 /// no glyph for (<see cref="GlyphLeftOut"/>). Every glyph is labelled once and lies inside its region. Its settings
 /// (ink level, specks, the character list) are read once (<see cref="Read"/>). The same image, text and settings give
-/// the same glyphs, from any thread. Register one with <c>Register</c>.
+/// the same glyphs, from any thread.
 /// </summary>
 public interface IGlyphSource
 {
@@ -173,7 +173,7 @@ public interface IGlyphSource
 }
 
 /// <summary>
-/// The glyph sources, by name (ignoring case).
+/// The glyph sources. Picking one by its name is not on the new design yet.
 /// </summary>
 public static class GlyphSources
 {

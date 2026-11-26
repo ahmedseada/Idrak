@@ -108,8 +108,8 @@ public sealed record ClusterContext(IClusterTopology Topology, int Rank, Cluster
 }
 
 /// <summary>
-/// One kind of transport, registered by name in <c>Transports</c>: it says whether it can join two ranks here and
-/// connects a rank's end. Ranks rendezvous at <see cref="ClusterOptions.Coordinator"/>, an address for a network
+/// One kind of transport: it says whether it can join two ranks here and connects a rank's end. Picking one by its name
+/// is not on the new design yet. Ranks rendezvous at <see cref="ClusterOptions.Coordinator"/>, an address for a network
 /// transport, a name for one inside a process.
 /// </summary>
 public interface ITransportProvider
@@ -139,7 +139,7 @@ public interface ITransportProvider
     string Carrier => Name;
 }
 
-// The registered names for "not registered" messages.
+// A list of names for messages.
 internal static class ClusterNames
 {
     public static string List(IReadOnlyCollection<string> names) => names.Count == 0 ? "none" : string.Join(", ", names);

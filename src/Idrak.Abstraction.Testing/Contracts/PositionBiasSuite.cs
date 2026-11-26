@@ -98,7 +98,7 @@ public sealed class PositionBiasSuite(IAttentionPositionBias? reference = null, 
 }
 
 /// <summary>
-/// The checks of a sequence pooler (<see cref="ISequencePooler"/>, registered in <see cref="SequencePoolers"/>) on padded
+/// The checks of a sequence pooler (<see cref="ISequencePooler"/>) on padded
 /// batches of random states:
 /// <list type="bullet">
 /// <item>one vector per sequence, [batch, width], every value finite;</item>

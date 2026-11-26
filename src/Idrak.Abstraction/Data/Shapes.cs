@@ -619,7 +619,7 @@ public sealed class ShapeStep : IEquatable<ShapeStep>
 }
 
 /// <summary>
-/// The shapes a pipeline can name, by name (ignoring case). Built in (Idrak.Imaging): <c>line</c>, <c>polyline</c>,
+/// The shapes. The library's (Idrak.Imaging): <c>line</c>, <c>polyline</c>,
 /// <c>polygon</c>, <c>box</c>, <c>grid</c>, <c>circle</c>, <c>ellipse</c>, <c>arc</c>, <c>arrow</c>, <c>fill</c> and
 /// <c>hatch</c>. Every shape also takes the common options (<c>CommonKeys</c>): <c>at=X:Y</c> and <c>size=W:H</c>
 /// (shares of the box it is placed in, X from the start side), <c>in=page|last</c> (<c>last</c>: drawn once inside each
@@ -630,7 +630,8 @@ public sealed class ShapeStep : IEquatable<ShapeStep>
 /// (center|top|bottom|a share: where wrapped paragraphs sit down their region). Built in also: <c>text</c> (no lines
 /// drawn, one region of wrapped paragraphs), and the emblems', stamps' and signatures' pieces: <c>ring-text</c> (a text
 /// round a ring), <c>lettering</c> (a line of text across its box), <c>star</c>, <c>shield</c> and <c>scribble</c> (a
-/// hand's signature-like scribble, never text).
+/// hand's signature-like scribble, never text). Picking one by its name (a pipeline written as text) is not on the new
+/// design yet.
 /// </summary>
 public static class Shapes
 {

@@ -640,7 +640,7 @@ public readonly record struct DocumentIssue(string Kind, string Detail, int Coun
     /// <summary>Glyphs with no code point (their text is U+FFFD).</summary>
     public const string UnmappedGlyphs = "unmapped-glyphs";
 
-    /// <summary>An image in an encoding no registered image codec reads.</summary>
+    /// <summary>An image in an encoding the library has no decoder for.</summary>
     public const string ImageEncoding = "image-encoding";
 
     /// <summary>A part of the page whose data is damaged (skipped).</summary>

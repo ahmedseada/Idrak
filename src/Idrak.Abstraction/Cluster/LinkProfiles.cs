@@ -146,9 +146,9 @@ public sealed record LinkProfile : ILinkProfile
 }
 
 /// <summary>
-/// The link profiles, by name (plan 23). Idrak.Cluster registers the built-ins; a name may end in a rate that sets the
-/// bandwidth of the profile before it (<c>direct-link-10g</c>: "direct-link" at 10 Gb/s; <c>wifi-300m</c>: 300 Mb/s),
-/// in bits a second as links are sold, powers of 1,000.
+/// The link profiles' names (plan 23): a name may end in a rate that sets the bandwidth of the profile before it
+/// (<c>direct-link-10g</c>: "direct-link" at 10 Gb/s; <c>wifi-300m</c>: 300 Mb/s), in bits a second as links are sold,
+/// powers of 1,000. Resolving a name to its profile is not on the new design yet.
 /// </summary>
 public static class LinkProfiles
 {

@@ -97,7 +97,7 @@ public interface IPreferencePairSource
     int Choose<TObservation, TAction>(IReadOnlyList<Trajectory<TObservation, TAction>> episodes, List<PreferenceChoice> into);
 }
 
-/// <summary>A name nobody registered fails "not registered". Idrak.Abstraction holds the contract and its built-ins
+/// <summary>The names of the library's preference pair sources. Idrak.Abstraction holds the contract and its built-ins
 /// (they read only <see cref="Trajectory{TObservation, TAction}"/>), so any package's policy uses them; the pairs'
 /// token sequences are the policy's (Idrak.Text's language-model policy encodes them).
 /// </summary>
@@ -298,7 +298,7 @@ public static class PreferenceReferences
 public interface IPreferencePolicy<TObservation, TAction> : IPolicy<TObservation, TAction>
 {
     /// <summary>Checks, before any rollout, that <paramref name="loss"/> is a preference loss the policy has, that it takes <paramref name="lossOptions"/>, and the reference's name.</summary>
-    /// <exception cref="NotSupportedException">No preference loss of that name is registered ("not registered").</exception>
+    /// <exception cref="NotSupportedException">The policy has no preference loss of that name (by its name: not on the new design yet).</exception>
     /// <exception cref="ArgumentException">An option the loss does not take, a bad value, or an unknown reference.</exception>
     void CheckPreferences(string loss, IReadOnlyDictionary<string, string>? lossOptions = null, string reference = PreferenceReferences.Previous);
 

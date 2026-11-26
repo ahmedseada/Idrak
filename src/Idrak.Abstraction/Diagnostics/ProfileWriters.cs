@@ -9,7 +9,7 @@ using System.Text.Json;
 namespace Idrak.Abstraction.Diagnostics;
 
 /// <summary>
-/// The writers of a <see cref="ProfileReport"/>, by name (ignoring case). The library's:
+/// The writers of a <see cref="ProfileReport"/>, a fixed list found by name (ignoring case):
 /// <list type="bullet">
 /// <item>"table" (<see cref="Table"/>): aligned text for people: the title and the report's notes, the summary (cold, the
 /// statistic, least and most of the warm runs; for a watched run its values), then each run's tables (the kernels, the

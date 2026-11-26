@@ -67,8 +67,8 @@ public interface ICollectives : IDisposable
     ClusterContext? Context => null;
 }
 
-/// <summary>One collective algorithm, registered by name in <c>Collectives</c>: it builds a rank's collectives over a
-/// connected transport.</summary>
+/// <summary>One collective algorithm: it builds a rank's collectives over a connected transport. Picking one by its name
+/// is not on the new design yet.</summary>
 public interface ICollectivesProvider
 {
     /// <summary>The algorithm's name ("ring").</summary>

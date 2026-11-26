@@ -232,9 +232,8 @@ public sealed class ClusterTopology : IOverridingTopology, ISavableTopology
     /// <summary>The first node's address, where rank 0 listens, or null when the file gives none.</summary>
     public string? Coordinator => Nodes[0].Address;
 
-    /// <summary>A topology from its parts, checked as a file is (link names resolved through <see cref="LinkProfiles"/>).</summary>
+    /// <summary>A topology from its parts (its links named; resolving a name to its profile is not on the new design yet).</summary>
     /// <exception cref="InvalidDataException">A part is missing or inconsistent; the message names it.</exception>
-    /// <exception cref="NotSupportedException">A link name is not registered.</exception>
     public static ClusterTopology Create(IReadOnlyList<ClusterNodeSpec> nodes, string? intraNode, string? interNode,
         IReadOnlyList<ClusterLinkOverride>? overrides = null, ClusterSimulationSpec? simulation = null)
     {

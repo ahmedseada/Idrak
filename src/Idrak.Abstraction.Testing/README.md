@@ -1,9 +1,9 @@
 # Idrak.Abstraction.Testing
 
 The conformance and stress kit for the contracts of [Idrak](https://www.nuget.org/packages/Idrak): it checks your
-implementation of a contract (a device, a tokenizer, or a contract of your own) against
+implementation of a contract (a tokenizer, or a contract of your own) against
 the library default, stresses it, and keeps the cases that once failed as regression tests. Built on
-`Idrak.Abstraction` alone, so an outside device or an app's override is checked without the rest of the library.
+`Idrak.Abstraction` alone, so an app's implementation is checked without the rest of the library.
 
 ```bash
 dotnet add package Idrak.Abstraction.Testing   # in your test project
@@ -17,13 +17,11 @@ a readable `ToString()`, `ThrowIfFailed()`), so xunit, NUnit, MSTest or a plain 
 ```csharp
 using Idrak.Abstraction.Testing;
 
-Conformance.Check(Device.Get("mydevice")).ThrowIfFailed();          // a device, operation by operation
 Conformance.Check(myTokenizer, reference: libraryTokenizer).ThrowIfFailed();
 ```
 
 | Check | What it compares |
 |---|---|
-| Devices (`Check(Device)`, `Check(Backend)`) | The built-in cases (`DeviceCases.All`: element-wise, products, norms, rotary positions, convolution, layout, optimizer steps, packed weights and their fused products, gated activations, key/value caches, every attention kernel, sampling, autograd) run on the CPU with every operation call recorded; each call then runs on your device through its dispatcher (`Backend.Name(...)`: a registered kernel, the device's own, a composition, or the host fallback) on copies of the same values, and everything it writes must agree with the CPU within the operation's tolerance. Operations the CPU has no single kernel for (the fused products) are compared with their composition, and those it has none for at all (FP8 weights and products, attention read in place from strided rows and its gradients) with plain-loop references written from their contracts. The report has one entry per operation with the kernel that ran (`Kernels.Chain`); operations with no kernel on the device, or that no case reaches, are listed as skipped. |
 | Tokenizers (`TokenizerSuite`) | Ids in range; the same ids every time; decoding a span as a list; the round trip (exact, or stable); `TokenOf` past the end; with a reference, the same ids and text. Texts: empty, whitespace, accents, Arabic, Chinese, emoji, combining marks, control characters, long runs, random Unicode, and yours (`ExtraTexts`). |
 | Fine-tuning data formats (`TuningDataFormatSuite`, `Conformance.CheckTuningDataFormat`) | On data files of the format's own (`TuningDataSample`): valid files read without failing, every conversation with messages of known roles and image parts with their bytes; the same conversations on a second reading, from two readings at once, and when a reading stops early; the expected conversations when given; invalid files refused with an error naming the file and saying what is wrong. |
 | Image model families (`ImageModelFamilySuite`, `Conformance.CheckImageModelFamily`) | On checkpoints of the family's own (`ImageFamilySample`): each loads, with a known task and labels that are not empty (a classifier one output per label); every image's outputs finite, the same on a second prediction, from two predictions at once, alone as in the batch, and after loading again; the reference's outputs when given; random images of many sizes and channel counts mixed in; invalid checkpoints refused saying why. |
@@ -64,8 +62,8 @@ Conformance.CheckImageModelFamily(path =>
 }, [new ImageFamilySample("models/tiny-resnet", images, expectedLogits), new ImageFamilySample("models/broken", Error: "conv1.weight")]).ThrowIfFailed();
 ```
 
-Fixed cases come first, then random ones (`DeviceCheckOptions.RandomRuns`, `ContractCheckOptions.RandomCases`, a seed).
-Tolerances are per operation (`DeviceCheckOptions.Tolerances`); the comparisons themselves are public (`Comparisons`, in Idrak.Abstraction, which the override loop's shadow mode uses too).
+Fixed cases come first, then random ones (`ContractCheckOptions.RandomCases`, a seed). The comparisons themselves are
+public (`Comparisons`, in Idrak.Abstraction).
 
 ### A contract of your own
 
@@ -78,14 +76,9 @@ sealed class MyParserSuite : ContractSuite<IToolCallParser> { ... }
 Conformance.Check(myParser, new MyParserSuite()).ThrowIfFailed();
 ```
 
-A device check can take cases of yours too (`DeviceCheckOptions.Cases = [.. DeviceCases.All, mine]`): a `DeviceCase`
-is a small program on the CPU, and `DeviceCaseContext.Composed` gives an operation the CPU has no kernel for a reference
-made of other operations.
-
 ## Stress
 
 ```csharp
-Stress.Run(device, new StressOptions { Duration = TimeSpan.FromMinutes(5), Threads = 4 }).ThrowIfFailed();
 Stress.Run(myTokenizer, new TokenizerSuite(), new StressOptions { Iterations = 10_000 }).ThrowIfFailed();
 ```
 
@@ -97,17 +90,12 @@ number of iterations, compared as the conformance check compares; the memory in 
 ## Regression cases
 
 ```csharp
-var report = Conformance.Check(device);
+var report = Conformance.Check(myTokenizer);
 report.SaveFailures("regressions");                         // one small JSON file per failing case
-Regression.Replay("regressions", device).ThrowIfFailed();   // in your tests from then on
-Regression.Replay("regressions", myTokenizer, new TokenizerSuite()).ThrowIfFailed();
+Regression.Replay("regressions", myTokenizer, new TokenizerSuite()).ThrowIfFailed();   // in your tests from then on
 ```
 
-A saved operation call holds the operation, its arguments and the values of its storages before and after (exact
-bits); a saved contract case holds the case's data. The case that made an app write its override stays its test, and
-the library's once the fix moves there.
-
-`tests/Idrak.PluginTests` has a plain-loop device written outside the library that passes the device check.
+A saved contract case holds the case's data.
 
 ## Status
 

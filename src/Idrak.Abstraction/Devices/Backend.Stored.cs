@@ -3,7 +3,7 @@
 
 namespace Idrak.Abstraction.Devices;
 
-// Weights stored as their file lays them out (StoredWeight): the product of a weight whose values a type description
+// Weights stored as their file lays them out: the product of a weight whose values a type description
 // reads (Storage.Description), run by a device's described lane, which reads any type from its description alone.
 // tools/operations/generate.py reads this file after Backend.Elements.cs: its operations come after those in the slot order.
 public abstract partial class Backend

@@ -8,7 +8,7 @@ using Idrak.Abstraction.Data;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The checks of a page layout (<see cref="IPageLayout"/>, registered in <see cref="PageLayouts"/>) drawing the contents
+/// The checks of a page layout (<see cref="IPageLayout"/>) drawing the contents
 /// given in the style given (its fonts are the caller's: the kit has none) from several seeds:
 /// <list type="bullet">
 /// <item>the same seed draws the same page: the same pixels, text and parts;</item>

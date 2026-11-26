@@ -73,7 +73,7 @@ public sealed record ToolCallProbe(string? Source, string? Call)
 }
 
 /// <summary>
-/// A tool-call format chat output is parsed in, registered by its <c>Name</c> in <see cref="ToolCallFormats"/>:
+/// A tool-call format chat output is parsed in:
 /// <see cref="Detect"/> says from a chat template (its source and a rendered probe call) whether the model writes calls
 /// this way, and <c>Create</c> makes one reply's parser.
 /// </summary>
@@ -84,13 +84,13 @@ public interface IToolCallFormat
 }
 
 /// <summary>
-/// The tool-call formats chat output is parsed in, by name (<see cref="IToolCallFormat"/>). A chat template names its
-/// format (<c>ToolCallFormatName</c>); a model's own Jinja template is detected, asking the most
-/// recently registered format first and "json" last. Registered: <list type="bullet"> <item>"json": JSON calls in the
-/// template's <see cref="ToolCallFormat"/> (tags, a bare answer, a list); asked last, it takes any template.</item>
-/// <item>"pythonic": a Python list of calls, <c>[get_weather(city="Paris"), now()]</c>.</item> </list> A family's own
-/// format is its plug-in's (Idrak.Text.Plugins registers "qwen3-coder", "mistral", "harmony" and "deepseek", each with
-/// its family, on <see cref="MarkedToolCallParser"/> and <see cref="ToolCallText"/>).
+/// The names of the library's tool-call formats chat output is parsed in (<see cref="IToolCallFormat"/>):
+/// <list type="bullet"> <item>"json": JSON calls in the template's <see cref="ToolCallFormat"/> (tags, a bare answer, a
+/// list); it takes any template.</item> <item>"pythonic": a Python list of calls,
+/// <c>[get_weather(city="Paris"), now()]</c>.</item> </list> A family's own format is its plug-in's (Idrak.Text.Plugins
+/// has "qwen3-coder", "mistral", "harmony" and "deepseek", each with its family, on <see cref="MarkedToolCallParser"/> and
+/// <see cref="ToolCallText"/>). Picking one by its name, or detecting one from a template among several, is not on the
+/// new design yet.
 /// </summary>
 public static class ToolCallFormats
 {

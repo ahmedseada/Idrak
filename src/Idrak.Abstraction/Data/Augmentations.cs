@@ -14,7 +14,7 @@ namespace Idrak.Abstraction.Data;
 /// </summary>
 public interface IAugmentation
 {
-    /// <summary>The name it is registered under (<c>flip</c>).</summary>
+    /// <summary>Its name (<c>flip</c>).</summary>
     string Name { get; }
 
     /// <summary>
@@ -122,9 +122,7 @@ public sealed class AugmentationOptions
 }
 
 /// <summary>
-/// A kind of augmentation, registered by its <c>Name</c> in <see cref="Augmentations"/>: the augmentation
-/// for
-/// its options.
+/// A kind of augmentation: the augmentation for its options.
 /// </summary>
 public interface IAugmentationKind
 {
@@ -138,11 +136,10 @@ public interface IAugmentationKind
 public delegate IAugmentation AugmentationFactory(AugmentationOptions options);
 
 /// <summary>
-/// The augmentations of detection and segmentation samples, by name (ignoring case), each a factory taking its options.
-/// The library's (registered by the assemblies that hold them, as library defaults): <c>flip</c> and <c>shift</c>
-/// (core's <c>RandomFlip</c> and <c>RandomShift</c>), and from Idrak.Vision <c>resized-crop</c>, <c>rotation</c>,
-/// <c>affine</c>, <c>color-jitter</c>, <c>cutout</c>, <c>mosaic</c>, <c>mixup</c> and <c>resize</c>. A pipeline is
-/// written <c>flip, rotation(degrees=10), resized-crop(width=320, height=320, scale=0.5:1)</c> (<c>Parse</c>).
+/// Runs a pipeline of augmentations of detection and segmentation samples (<see cref="Apply"/>). The library's:
+/// <c>flip</c> and <c>shift</c> (core's <c>RandomFlip</c> and <c>RandomShift</c>), and from Idrak.Vision
+/// <c>resized-crop</c>, <c>rotation</c>, <c>affine</c>, <c>color-jitter</c>, <c>cutout</c>, <c>mosaic</c>, <c>mixup</c>
+/// and <c>resize</c>. Picking them by their names (a pipeline written as text) is not on the new design yet.
 /// </summary>
 public static class Augmentations
 {

@@ -76,8 +76,7 @@ public class GlyphPoseSettings
 /// the line, a slant, a little noise in size and ink), or exactly (<c>none</c>). Its settings are read once per page
 /// (<see cref="Read"/>) and declare their bounds (<see cref="Bounds"/>); then each cluster of each line gets its pose
 /// (<see cref="Pose"/>), the same for the same input, within the bounds. Joined script stays joined: between
-/// neighbouring clusters the move, slant and turn change only smoothly with the distance along the line. Register one
-/// with <c>Register</c>.
+/// neighbouring clusters the move, slant and turn change only smoothly with the distance along the line.
 /// </summary>
 public interface IGlyphPose
 {
@@ -94,9 +93,9 @@ public interface IGlyphPose
 }
 
 /// <summary>
-/// The glyph poses, by name (ignoring case). Built in (Idrak.Imaging): <c>none</c> (every glyph as set; the default)
-/// and <c>drift</c> (a slow drift along the line and a little noise per cluster; its keys pose-slant, pose-size,
-/// pose-baseline, pose-rotate and pose-pressure).
+/// The glyph poses. The library's (Idrak.Imaging): <c>none</c> (every glyph as set; the default) and <c>drift</c> (a
+/// slow drift along the line and a little noise per cluster; its keys pose-slant, pose-size, pose-baseline, pose-rotate
+/// and pose-pressure). Picking one by its name is not on the new design yet.
 /// </summary>
 public static class GlyphPoses
 {

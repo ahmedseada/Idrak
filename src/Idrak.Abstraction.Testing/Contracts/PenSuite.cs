@@ -8,7 +8,7 @@ using Idrak.Abstraction.Data;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The checks of a pen (<see cref="IPen"/>, registered in <see cref="Pens"/>) on straight, bent and closed paths and a
+/// The checks of a pen (<see cref="IPen"/>) on straight, bent and closed paths and a
 /// single point, at several widths, with its default settings and the settings given:
 /// <list type="bullet">
 /// <item>the same path, settings and seed give the same stroke;</item>

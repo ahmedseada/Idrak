@@ -51,9 +51,8 @@ public sealed record SignatureServiceRequest(Uri Address, SignatureServiceKind K
 
 /// <summary>
 /// Reaches the services a signature needs on a network: a timestamp authority, a revocation list's distribution point, a
-/// status responder. Registered in <see cref="SignatureServices"/> under the address scheme it serves ("http", "https"), so
-/// an app reaches them its own way (a proxy, credentials, an offline cache) by registering its own under that scheme. A
-/// service is asked only for what the app named (a timestamp authority) or turned on (fetching revocation data).
+/// status responder, for the address scheme it serves ("http", "https"). A service is asked only for what the app named
+/// (a timestamp authority) or turned on (fetching revocation data).
 /// </summary>
 public interface ISignatureService
 {
@@ -63,8 +62,8 @@ public interface ISignatureService
 }
 
 /// <summary>
-/// The signature services by the address scheme they serve (ignoring case). Built in (Idrak.Data): "http" and "https",
-/// over the base library's HTTP client.
+/// The signature services. The library's (Idrak.Data): "http" and "https", over the base library's HTTP client. Picking
+/// one by the address scheme it serves is not on the new design yet.
 /// </summary>
 public static class SignatureServices
 {

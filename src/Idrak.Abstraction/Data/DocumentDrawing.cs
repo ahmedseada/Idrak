@@ -81,7 +81,7 @@ public sealed record DocumentDrawing(ImageData Image, IReadOnlyList<DocumentIssu
 
 /// <summary>
 /// Draws any <see cref="DocumentPage"/> (its paths, glyph runs and images, in content order, under their clips) to
-/// pixels, whatever format read it; register one with <c>Register</c>. Safe to use from
+/// pixels, whatever format read it. Safe to use from
 /// several threads at once.
 /// </summary>
 public interface IDocumentPageDrawer
@@ -95,7 +95,8 @@ public interface IDocumentPageDrawer
 }
 
 /// <summary>
-/// The page drawers, by name (ignoring case). Built in (Idrak.Imaging): <see cref="Coverage"/>.
+/// The page drawers' helpers and the library's drawer's name (Idrak.Imaging): <see cref="Coverage"/>, the one
+/// <see cref="IDocument.DrawPage"/> reaches directly; picking another by its name is not on the new design yet.
 /// </summary>
 public static class DocumentPageDrawers
 {

@@ -23,8 +23,8 @@ public sealed record ImageEncodeOptions
 }
 
 /// <summary>
-/// Writes one image format; register it with <c>Register</c>. The reading side of a format is its
-/// <see cref="IImageCodec"/> in <see cref="ImageCodecs"/>.
+/// Writes one image format. The reading side of a format is its
+/// <see cref="IImageCodec"/>.
 /// </summary>
 public interface IImageEncoder
 {
@@ -49,10 +49,11 @@ public interface IImageEncoder
 }
 
 /// <summary>
-/// The image formats files are written in, by name (ignoring case). Built in (Idrak.Imaging): "png" (8-bit grey or RGB,
+/// The image formats files are written in. The library's (Idrak.Imaging): "png" (8-bit grey or RGB,
 /// deflated with the zlib in .NET), "jpeg" (baseline, the quality from <see cref="ImageEncodeOptions.Quality"/>, 75
 /// unless given) and "netpbm" (binary PGM for grey, PPM for colour). A segmentation mask, for example, is an 8-bit grey
-/// image whose level is the class (<c>idrak predict --out</c> writes them).
+/// image whose level is the class (<c>idrak predict --out</c> writes them). Picking one by its name is not on the new
+/// design yet.
 /// </summary>
 public static class ImageEncoders
 {

@@ -6,9 +6,8 @@ namespace Idrak.Abstraction.Devices;
 /// <summary>
 /// Weight offloading as tensors and modules see it (see <see cref="IMemoryOffload"/>, which devices implement). The library
 /// that ships the layers (Idrak) stages their weights between device and system memory; tensors only record which layer
-/// produced them, and modules and tensors call the hooks (<see cref="ITensorOffloadingHooks"/>) that library registers
-/// when the device registry fills (<see cref="Register"/>). <see cref="Hooks"/> is null until then (always, without
-/// Idrak), and costs a field read.
+/// produced them, and modules and tensors call the hooks (<see cref="ITensorOffloadingHooks"/>) set with
+/// <see cref="Register"/>. <see cref="Hooks"/> is null until one is set, and costs a field read.
 /// </summary>
 public static class TensorOffloading
 {
@@ -17,7 +16,7 @@ public static class TensorOffloading
 
     private static ITensorOffloadingHooks? s_hooks;
 
-    /// <summary>The registered hooks, or null when none are (nothing stages weights).</summary>
+    /// <summary>The hooks set, or null when none are (nothing stages weights).</summary>
     public static ITensorOffloadingHooks? Hooks => s_hooks;
 
     /// <summary>Registers the hooks modules and tensors call (one set: a later registration replaces it).</summary>

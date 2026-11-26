@@ -6,8 +6,7 @@ using System.Runtime.CompilerServices;
 namespace Idrak.Abstraction.Training;
 
 /// <summary>
-/// What a learning-rate schedule is made with, by name (<see cref="LearningRateSchedules"/>). A schedule reads what it uses
-/// and leaves the rest.
+/// What a learning-rate schedule is made with. A schedule reads what it uses and leaves the rest.
 /// </summary>
 /// <param name="WarmupFraction">The share of the steps the rate rises over, linearly to the optimizer's own (step i of w uses (i + 1) / (w + 1) of it).</param>
 /// <param name="MinLearningRate">The rate a decaying schedule ends at.</param>
@@ -21,17 +20,15 @@ public sealed record LearningRateScheduleSettings(float WarmupFraction = 0.03f, 
 public sealed record LearningRateScheduleRequest(IOptimizer Optimizer, int Steps, LearningRateScheduleSettings Settings);
 
 /// <summary>
-/// A kind of learning-rate schedule, made by name: the scheduler of an optimizer over a run's number of optimizer
-/// steps,
-/// with <see cref="LearningRateScheduleSettings"/>. The scheduler is stepped once per optimizer step and works from the
-/// optimizer's own rate, its peak. Registered in <see cref="LearningRateSchedules"/> under its <c>Name</c>
-/// ("cosine", "wsd"). Thread-safe: one kind makes the schedulers of several runs.
+/// A kind of learning-rate schedule: the scheduler of an optimizer over a run's number of optimizer steps, with
+/// <see cref="LearningRateScheduleSettings"/>. The scheduler is stepped once per optimizer step and works from the
+/// optimizer's own rate, its peak. The library's are named in <see cref="LearningRateSchedules"/> ("cosine", "wsd").
+/// Thread-safe: one kind makes the schedulers of several runs.
 /// </summary>
 public interface ILearningRateSchedule
 {
     /// <summary>
-    /// Refuses settings the schedule cannot use before a run starts (<c>Factory</c> asks
-    /// it as the schedule is chosen); nothing by default, for a schedule that takes any.
+    /// Refuses settings the schedule cannot use before a run starts; nothing by default, for a schedule that takes any.
     /// </summary>
     /// <exception cref="ArgumentException">A setting the schedule cannot use (a decay share outside [0, 1],
     /// say).</exception>
@@ -45,8 +42,9 @@ public interface ILearningRateSchedule
 }
 
 /// <summary>
-/// The learning-rate schedules trainers make by name (ignoring case), each with a warm-up over <see cref="LearningRateScheduleSettings.WarmupFraction"/> of the steps. The library's: A schedule sets the optimizer's
-/// rate at every step of a run from where it is, so another cannot take over half-way: the registry has no fallback.
+/// The names of the library's learning-rate schedules, each with a warm-up over <see cref="LearningRateScheduleSettings.WarmupFraction"/> of the steps. A schedule sets the optimizer's
+/// rate at every step of a run from where it is, so another cannot take over half-way. Picking one by its name is not on
+/// the new design yet.
 /// </summary>
 public static class LearningRateSchedules
 {

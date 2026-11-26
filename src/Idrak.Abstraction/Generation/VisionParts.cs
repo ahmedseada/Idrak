@@ -14,7 +14,7 @@ namespace Idrak.Abstraction.Generation;
 /// </summary>
 public interface IPretrainedVision
 {
-    /// <summary>The family it was read by: its name in core's <c>VisionFamilies</c> (the architecture name).</summary>
+    /// <summary>The family it was read by: its name (the architecture name).</summary>
     string Family { get; }
 
     /// <summary>The width of the image features: the text decoder's (one embedding per image token).</summary>
@@ -81,7 +81,7 @@ public sealed record VisionEncoderOptions
     public bool Grayscale { get; init; }
 
     /// <summary>
-    /// The family's own options for every image the encoder reads (its keys, <c>VisionOptionKeys</c>),
+    /// The family's own options for every image the encoder reads (its keys),
     /// over the family's defaults from the checkpoint's files; a request's options go over these per key. Null: none.
     /// </summary>
     /// <remarks>The family refuses a key it does not take, naming those it does, when it builds the encoder.</remarks>

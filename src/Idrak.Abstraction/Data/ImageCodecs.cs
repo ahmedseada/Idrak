@@ -14,7 +14,7 @@ namespace Idrak.Abstraction.Data;
 public readonly record struct ImageInfo(int Width, int Height, int Channels, string Format);
 
 /// <summary>
-/// Reads one image format; register it with <c>Register</c>. A codec decides from a file's first
+/// Reads one image format. A codec decides from a file's first
 /// bytes whether the file is in its format, so the extension only decides which files a folder source picks up.
 /// </summary>
 public interface IImageCodec
@@ -42,11 +42,11 @@ public interface IImageCodec
 }
 
 /// <summary>
-/// The image formats that <c>ImageFolderSource</c> and the command-line tool read, by name (ignoring case). Built in,
-/// without dependencies: "png" (every bit depth and colour type, interlaced or not, inflated with the zlib in .NET),
+/// What the image formats share. The library's (Idrak.Imaging), without dependencies: "png" (every bit depth and
+/// colour type, interlaced or not, inflated with the zlib in .NET),
 /// "jpeg" (baseline and progressive, grey, YCbCr, RGB, CMYK and YCCK, any whole sampling ratio, decoded to Pillow's
 /// RGB; not 12-bit or arithmetic-coded), "bmp" (1, 4, 8, 16, 24 and 32 bits, uncompressed or with bit fields) and
-/// "netpbm" (PGM and PPM, text or binary). Alpha is dropped.
+/// "netpbm" (PGM and PPM, text or binary). Alpha is dropped. Picking one for a file is not on the new design yet.
 /// </summary>
 public static class ImageCodecs
 {

@@ -39,8 +39,8 @@ public enum FeedForwardActivation
 /// token embedding (optionally scaled) → <see cref="Layers"/> × decoder block (normalization, causal
 /// self-attention with grouped-query heads, rotary embeddings, feed-forward block) → final normalization → output head.
 /// Idrak's <c>DecoderBuilder.Build</c> (<c>spec.Build(weights, options)</c>) creates it with random weights or from an
-/// <c>IWeightSource</c>, as a network that works with text generation, the KV cache, int8 quantization and LoRA.
-/// A spec is data: model families (<c>PretrainedArchitectures</c> in Idrak) read it from a checkpoint's configuration, and
+/// <c>IWeightSource</c>, as a network that works with text generation, the KV cache and LoRA.
+/// A spec is data: model families (Idrak's architectures) read it from a checkpoint's configuration, and
 /// model packages store it as JSON (<see cref="ToJson"/>).
 /// <para>
 /// Weight names (Idrak layout): <c>embed</c> [vocabulary, dim]; for each layer i, <c>layers.i.attn_norm</c>,
@@ -380,7 +380,7 @@ public sealed record DecoderSpec
 /// </summary>
 public interface IDescribedModel
 {
-    /// <summary>The architecture the network was built as: its registered name (config.json's "architectures"), or the family's own.</summary>
+    /// <summary>The architecture the network was built as: its name (config.json's "architectures"), or the family's own.</summary>
     string Architecture { get; }
 
     /// <summary>The spec the network follows: its sizes (vocabulary, width, layers, heads, context length) and layout.</summary>

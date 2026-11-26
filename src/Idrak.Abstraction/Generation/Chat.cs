@@ -92,7 +92,7 @@ public sealed record ToolCall(string Name, JsonObject Arguments);
 /// itself is the JSON, as Llama 3 writes it), <paramref name="Close"/> after it (empty: the call runs to the end of the
 /// turn), whether the JSON is a list of calls (Mistral's [TOOL_CALLS] [{…}, …]), and the key of the arguments
 /// ("arguments", or "parameters" for Llama 3). Each call is {"name": …, key: {…}}. This is the shape of the "json"
-/// tool-call format; formats that are not JSON are registered in <see cref="ToolCallFormats"/>.
+/// tool-call format; the formats that are not JSON are named in <see cref="ToolCallFormats"/>.
 /// </summary>
 public sealed record ToolCallFormat(string Open, string Close, bool List = false, string ArgumentsKey = "arguments")
 {
@@ -102,8 +102,8 @@ public sealed record ToolCallFormat(string Open, string Close, bool List = false
 
 /// <summary>
 /// Formats a conversation (and the available tools) as the prompt text a chat model was trained on, and says how the
-/// model's answers are read back: the text that ends a turn, the reasoning tags, and the registered tool-call format its
-/// calls are parsed in (<see cref="ToolCallFormats"/>). Models carry one (a loaded model's from its folder, read by
+/// model's answers are read back: the text that ends a turn, the reasoning tags, and the tool-call format its calls are
+/// parsed in (<see cref="ToolCallFormats"/>). Models carry one (a loaded model's from its folder, read by
 /// <see cref="ChatTemplates"/>); <see cref="ChatTemplate"/> is a base with the common defaults.
 /// </summary>
 public interface IChatTemplate

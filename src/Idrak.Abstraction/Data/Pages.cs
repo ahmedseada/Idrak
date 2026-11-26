@@ -215,7 +215,7 @@ public sealed record RenderedPage(ImageData Image, string Text, IReadOnlyList<Pa
     public IPageVectors? Vectors { get; init; }
 }
 
-/// <summary>Draws a page's content in one arrangement (a letter, a plain page); register one with <c>Register</c>.</summary>
+/// <summary>Draws a page's content in one arrangement (a letter, a plain page).</summary>
 public interface IPageLayout
 {
     /// <summary>The layout's name ("letter").</summary>
@@ -229,10 +229,11 @@ public interface IPageLayout
 }
 
 /// <summary>
-/// The page layouts, by name. Built in (Idrak.Imaging): "letter" (an official letter: a header of three places with an
+/// The page layouts. The library's (Idrak.Imaging): "letter" (an official letter: a header of three places with an
 /// optional emblem, a rule, subject, body, a signature block with a pen-drawn signature, an optional stamp, footer),
 /// "plain" (header lines, title, body, footer, no ornament) and "shapes" (shapes drawn by a pen, <see cref="Shapes"/>
 /// and <see cref="Pens"/>, the body's lines set in the regions they make, <see cref="TextBindings"/>; it reads <see cref="PageStyle.Options"/>).
+/// Picking one by its name is not on the new design yet.
 /// </summary>
 public static class PageLayouts
 {

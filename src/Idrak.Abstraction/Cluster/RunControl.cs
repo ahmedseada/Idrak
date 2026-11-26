@@ -209,7 +209,7 @@ public interface IRunSteering
     ClusterControlCommand Boundary(long step, CancellationToken cancellationToken = default);
 }
 
-/// <summary>One way of steering a run at its trainer's boundaries, registered by name in <see cref="RunSteerings"/>.</summary>
+/// <summary>One way of steering a run at its trainer's boundaries. Picking one by its name is not on the new design yet.</summary>
 public interface IRunSteeringProvider
 {
     /// <summary>The name ("in-process").</summary>
@@ -223,11 +223,12 @@ public interface IRunSteeringProvider
 }
 
 /// <summary>
-/// The ways a run is steered at its trainer's boundaries (Plan 27, R11), by name, asked in registration order:
-/// Idrak.Cluster registers "in-process" (a simulated run's ranks, held and stopped through the run's
-/// <c>ClusterRunControl</c>, the dashboard's in-process control), Idrak.Network "control-file" (a launcher's control file,
+/// What the ways a run is steered at its trainer's boundaries share (Plan 27, R11). The library's: Idrak.Cluster's
+/// "in-process" (a simulated run's ranks, held and stopped through the run's
+/// <c>ClusterRunControl</c>, the dashboard's in-process control), Idrak.Network's "control-file" (a launcher's control file,
 /// <see cref="SimulationOptions.Control"/>: read by rank 0 at each boundary and told to every rank in one broadcast of one
-/// value; in one process read as it is, at most every <see cref="SimulationOptions.ControlPoll"/>).
+/// value; in one process read as it is, at most every <see cref="SimulationOptions.ControlPoll"/>). Picking one is not on
+/// the new design yet.
 /// </summary>
 public static class RunSteerings
 {

@@ -41,13 +41,13 @@ public sealed class ImageModelUnderTest(string task, IReadOnlyList<string>? labe
 /// <param name="Tolerance">How far the outputs may be from <paramref name="Expected"/>, and an image alone from the same image in a batch.</param>
 /// <param name="Error">
 /// When set, the checkpoint is not readable: loading it must fail with a <see cref="NotSupportedException"/> or an
-/// <see cref="InvalidDataException"/> whose message contains this text (an unregistered architecture names its registry).
+/// <see cref="InvalidDataException"/> whose message contains this text.
 /// </param>
 public sealed record ImageFamilySample(string Path, IReadOnlyList<ImageData>? Images = null, IReadOnlyList<float[]>? Expected = null, float Tolerance = 1e-4f,
     string? Error = null);
 
 /// <summary>
-/// The checks of an image model family (Idrak.Vision's <c>IImageModelFamily</c>, registered in <c>ImageModelFamilies</c>) on
+/// The checks of an image model family (Idrak.Vision's <c>IImageModelFamily</c>) on
 /// checkpoints of its own. The implementation is the loading, as a delegate: a checkpoint's path in, the loaded model out
 /// (<see cref="ImageModelUnderTest"/>; <c>path =&gt; Wrap(ImageModels.Load(path))</c>). For each sample:
 /// <list type="bullet">

@@ -58,7 +58,7 @@ public interface ITensorStore : IDisposable
 
     /// <summary>
     /// A text that changes whenever the stored values of the tensor <paramref name="name"/> may change (the file holding it,
-    /// its size and time of change, the tensor's place and type in it), for caches of what is made from it (packed weights);
+    /// its size and time of change, the tensor's place and type in it), for caches of what is made from it;
     /// null when the store cannot say (the default), and nothing made from the tensor is cached.
     /// </summary>
     string? IdentityOf(string name) => null;

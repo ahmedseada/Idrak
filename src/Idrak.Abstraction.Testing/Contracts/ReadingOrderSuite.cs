@@ -7,7 +7,7 @@ using Idrak.Abstraction.Data;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The checks of a reading order (<see cref="IReadingOrder"/>, registered in <see cref="ReadingOrders"/>) on lines of
+/// The checks of a reading order (<see cref="IReadingOrder"/>) on lines of
 /// Arabic and Hebrew words, Latin words, European and Arabic-Indic numbers and separators, in both directions:
 /// <list type="bullet">
 /// <item>the columns hold the line's characters, each once (a reordering, nothing added or lost);</item>

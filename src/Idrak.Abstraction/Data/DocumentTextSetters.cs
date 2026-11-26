@@ -46,7 +46,7 @@ public sealed record DocumentSetLine(string Text, float Width, bool RightToLeft,
 /// <summary>
 /// Sets text into lines of positioned glyphs, for a writer that places text itself (a form field's appearance): each
 /// paragraph through the reading order, shaped by its script's shaper in the first face that has its characters.
-/// Register one with <c>Register</c>. Safe to use from several threads at once.
+/// Safe to use from several threads at once.
 /// </summary>
 public interface IDocumentTextSetter
 {
@@ -59,7 +59,8 @@ public interface IDocumentTextSetter
 }
 
 /// <summary>
-/// The text setters, by name (ignoring case). Built in (Idrak.Imaging): <see cref="Shaped"/>.
+/// The name of the library's text setter (Idrak.Imaging): <see cref="Shaped"/>. Picking one by its name is not on the
+/// new design yet.
 /// </summary>
 public static class DocumentTextSetters
 {

@@ -421,7 +421,7 @@ public sealed partial class Tensor : IDisposable
 
     /// <summary>
     /// Creates a tensor that no <see cref="TensorScope"/> captures, for long-lived state such as parameters, buffers of a
-    /// cache or a packed weight format, or optimizer state: it lives until it is disposed, even when created inside a scope.
+    /// cache, or optimizer state: it lives until it is disposed, even when created inside a scope.
     /// </summary>
     public static Tensor Persistent(ReadOnlySpan<float> values, ReadOnlySpan<int> shape, Device? device = null, bool requiresGrad = false)
     {

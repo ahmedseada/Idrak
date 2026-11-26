@@ -55,7 +55,7 @@ public interface IModelPart
     bool In(JsonObject config);
 
     /// <summary>The checkpoint tensors (by their stored names) the part owns, the shapes checked.</summary>
-    /// <exception cref="NotSupportedException">No family of the part is registered for the architecture (the message names its registry).</exception>
+    /// <exception cref="NotSupportedException">The part's family for the architecture cannot be picked (by its name: not on the new design yet).</exception>
     /// <exception cref="InvalidDataException">A tensor is missing or its shape disagrees with the part's configuration.</exception>
     IReadOnlySet<string> StoredTensors(ModelPartCheckpoint checkpoint);
 
