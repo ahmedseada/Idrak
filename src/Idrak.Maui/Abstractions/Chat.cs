@@ -112,12 +112,12 @@ public sealed class ChatLease : IDisposable
 /// The Chat lab's models: a model from the model store loaded once through the <see cref="IModelService"/> (its "chat"
 /// host: shared, kept for the keep-alive, released on memory pressure) on the device of the settings, its weights in the
 /// format they ask for, after checking that it fits the memory the device has now. The families are the app's: a model
-/// whose family is not registered fails as the library does (<see cref="NotRegisteredException"/>).
+/// whose family is not registered fails as the library does (<c>NotRegisteredException</c>).
 /// </summary>
 public interface IChatModelService
 {
     /// <summary>What <paramref name="request"/>'s model needs against what its device has now (reads its config; loads nothing).</summary>
-    /// <exception cref="NotRegisteredException">The model's family is not registered.</exception>
+    /// <exception cref="NotSupportedException">The model's family is not registered.</exception>
     ChatMemoryEstimate Estimate(ChatLoadRequest request);
 
     /// <summary>
@@ -126,7 +126,7 @@ public interface IChatModelService
     /// loaded with its own chat template. Runs on a worker thread.
     /// </summary>
     /// <exception cref="ModelDoesNotFitException">It does not fit the memory measured (nothing was loaded).</exception>
-    /// <exception cref="NotRegisteredException">Its family is not registered.</exception>
+    /// <exception cref="NotSupportedException">Its family is not registered.</exception>
     /// <exception cref="InvalidOperationException">It has no chat template, or the device cannot start.</exception>
     Task<ChatLease> AcquireAsync(ChatLoadRequest request, CancellationToken cancellationToken = default);
 }

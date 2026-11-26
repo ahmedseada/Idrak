@@ -309,7 +309,7 @@ public static class TranscribeSettings
             new("pre_roll_s", "Pre-roll (s)", "Seconds of the quiet before speech kept with it (PreRollSeconds).",
                 TranscribeSettingKind.Number, Show(live.PreRollSeconds), o => Show(o.PreRollSeconds), (o, t) => o.PreRollSeconds = Real(t, atLeast: 0)),
             new("policy", "Commit policy", "Which words are final before a segment ends (LiveCommitPolicies).", TranscribeSettingKind.Choice, $"default ({live.Policy})",
-                o => o.Policy ?? "", (o, t) => o.Policy = Policy(t), () => ["default", .. LiveCommitPolicies.Names.Order(StringComparer.OrdinalIgnoreCase)]),
+                o => o.Policy ?? "", (o, t) => o.Policy = Policy(t), () => ["default", .. NotOnTheNewDesign.Names("live commit policies").Order(StringComparer.OrdinalIgnoreCase)]),
             new("agreement", "Agreement", "How many readings in a row a word must keep to be final (Agreement).",
                 TranscribeSettingKind.Number, Show(live.Agreement), o => Show(o.Agreement), (o, t) => o.Agreement = Whole(t, 1)),
             new("prompt_chars", "Carried text (characters)", "The characters of the finished text given to the next segment as its prompt; 0: none (PromptCharacters).",
@@ -323,7 +323,7 @@ public static class TranscribeSettings
             new("pipeline", "Cleaning pipeline", "Audio processors run on the sound as it comes, before it is read: live steps only, such as highpass=80, dehum=50, agc (AudioPipeline).",
                 TranscribeSettingKind.Text, "none", o => o.Pipeline ?? "", (o, t) => o.Pipeline = Pipeline(t)),
             new("capture", "Capture", "The system's sound input (AudioCaptures); default: the first that can run here (aaudio on Android).", TranscribeSettingKind.Choice, "default",
-                o => o.Capture ?? "", (o, t) => o.Capture = Capture(t), () => ["default", .. AudioCaptures.Names]),
+                o => o.Capture ?? "", (o, t) => o.Capture = Capture(t), () => ["default", .. NotOnTheNewDesign.Names("audio captures")]),
             new("input_device", "Input device", "The input device's id as the capture lists it; empty: the system's default.",
                 TranscribeSettingKind.Text, "the system's default", o => o.InputDevice ?? "", (o, t) => o.InputDevice = t.Length == 0 ? null : t),
             new("sample_rate", "Sample rate (Hz)", "The rate the microphone is asked for (AudioCaptureOptions.SampleRate).",
@@ -384,13 +384,13 @@ public static class TranscribeSettings
 
     private static string? Policy(string text) =>
         text.Length == 0 || text.Equals("default", StringComparison.OrdinalIgnoreCase) ? null
-        : LiveCommitPolicies.Find(text) is not null ? text
-        : throw new FormatException($"'{text}' is not a commit policy (registered: {string.Join(", ", LiveCommitPolicies.Names)}).");
+        : NotOnTheNewDesign.Names("live commit policies").Contains(text, StringComparer.OrdinalIgnoreCase) ? text
+        : throw new FormatException($"'{text}' is not a commit policy (registered: {string.Join(", ", NotOnTheNewDesign.Names("live commit policies"))}).");
 
     private static string? Capture(string text) =>
         text.Length == 0 || text.Equals("default", StringComparison.OrdinalIgnoreCase) ? null
-        : AudioCaptures.Find(text) is not null ? text
-        : throw new FormatException($"'{text}' is not an audio capture (registered: {string.Join(", ", AudioCaptures.Names)}).");
+        : NotOnTheNewDesign.Names("audio captures").Contains(text, StringComparer.OrdinalIgnoreCase) ? text
+        : throw new FormatException($"'{text}' is not an audio capture (registered: {string.Join(", ", NotOnTheNewDesign.Names("audio captures"))}).");
 
     private static TranscribeFileMode FileMode(string text) =>
         text.Length == 0 || text.Equals("live", StringComparison.OrdinalIgnoreCase) ? TranscribeFileMode.Live

@@ -114,7 +114,7 @@ public static class GenerateSettings
     public static IReadOnlyList<LabSetting<GenerateLabOptions>> Definitions { get; } = Define();
 
     /// <summary>The image formats a page is written in: jpeg, then the registered encoders.</summary>
-    public static IReadOnlyList<string> Formats => ["jpeg", .. ImageEncoders.Names.Where(n => !n.Equals("jpeg", StringComparison.OrdinalIgnoreCase))];
+    public static IReadOnlyList<string> Formats => ["jpeg", .. NotOnTheNewDesign.Names("image encoders").Where(n => !n.Equals("jpeg", StringComparison.OrdinalIgnoreCase))];
 
     /// <summary>The options saved in <paramref name="store"/> over <paramref name="defaults"/> (a copy; the library's when null); a value that no longer reads is skipped and named.</summary>
     public static GenerateLabOptions Load(ISettingsStore store, out IReadOnlyList<string> skipped, GenerateLabOptions? defaults = null)
@@ -202,6 +202,6 @@ public static class GenerateSettings
 
     private static string? Format(string text) =>
         text.Length == 0 || text.Equals("jpeg", StringComparison.OrdinalIgnoreCase) || text.Equals("jpg", StringComparison.OrdinalIgnoreCase) ? null
-        : ImageEncoders.Names.FirstOrDefault(n => n.Equals(text, StringComparison.OrdinalIgnoreCase))
+        : NotOnTheNewDesign.Names("image encoders").FirstOrDefault(n => n.Equals(text, StringComparison.OrdinalIgnoreCase))
           ?? throw new FormatException($"'{text}' is not an image format ({string.Join(", ", Formats)}).");
 }

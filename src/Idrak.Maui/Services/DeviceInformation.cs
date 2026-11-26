@@ -38,10 +38,7 @@ public sealed class DeviceInformation : IDeviceInformation
         try
         {
             memory = ComputeResources.GetMemoryUsage(device);
-            if (MeasuredChoiceProviders.All.FirstOrDefault(p => p.Handles(device.Backend)) is { } provider)
-            {
-                choices = provider.Export(device.Backend).Entries.Count;
-            }
+            choices = NotOnTheNewDesign.Yet<int>("Counting the device's measured choices through their registered providers");
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or UnauthorizedAccessException or NotSupportedException)
         {

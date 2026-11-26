@@ -195,11 +195,11 @@ public sealed class HomeViewModel : ViewModel
         {
             await _navigator.OpenSettingsAsync().ConfigureAwait(true);
         }
-        else if (AppSections.Find(target) is not null && await _navigator.OpenSectionAsync(target).ConfigureAwait(true))
+        else if (NotOnTheNewDesign.Yet<IAppSection?>($"The section '{target}' by name") is not null && await _navigator.OpenSectionAsync(target).ConfigureAwait(true))
         {
             return;
         }
-        else if (MobileFeatures.Find(target) is not null)
+        else if (NotOnTheNewDesign.Yet<IMobileFeature?>($"The feature '{target}' by name") is not null)
         {
             await _navigator.OpenFeatureAsync(target).ConfigureAwait(true);
         }

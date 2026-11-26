@@ -1,16 +1,13 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Maui.Abstractions;
 
 /// <summary>
 /// A clock that ticks once a display frame on the UI thread, for live drawing (the waveform, the level meters): a view
-/// subscribes while it draws live and leaves when it stops, so nothing ticks while no view is live. The library registers
+/// subscribes while it draws live and leaves when it stops, so nothing ticks while no view is live. The library's are
 /// "display" (the display's own frames: Android's Choreographer, WinUI's CompositionTarget.Rendering on Windows) and
-/// "timer" (a dispatcher timer at the display's refresh rate) in <see cref="FrameClocks"/>; an app adds its own or replaces
-/// one by name.
+/// "timer" (a dispatcher timer at the display's refresh rate), named in <see cref="FrameClocks"/>.
 /// </summary>
 public interface IFrameClock
 {
@@ -31,8 +28,8 @@ public interface IFrameClock
 }
 
 /// <summary>
-/// The frame clocks (a <see cref="SlotTable{TKey, TValue}"/>): "display" on Android and Windows, "timer" everywhere. <see cref="Current"/>
-/// is the one live views tick on: the one <see cref="IdrakMauiOptions.FrameClock"/> names, else the first that can tick here.
+/// The frame clocks' names: "display" on Android and Windows, "timer" everywhere. <see cref="Current"/> is the one live
+/// views tick on: the one chosen (<see cref="Use"/>), else the library's timer clock.
 /// </summary>
 public static class FrameClocks
 {
@@ -42,48 +39,17 @@ public static class FrameClocks
     /// <summary>A dispatcher timer at the display's refresh rate.</summary>
     public const string Timer = "timer";
 
-    private static readonly SlotTable<string, IFrameClock> Table = BuiltIn();
+    // The library's timer clock: what picking the first registered clock that can tick here fell back on, reached
+    // directly (the display clocks were registered and picked among, which is not on the new design yet).
+    private static readonly IFrameClock TimerClock = new Idrak.Maui.Controls.TimerFrameClock();
     private static IFrameClock? _current;
 
-    private static SlotTable<string, IFrameClock> BuiltIn()
-    {
-        var table = new SlotTable<string, IFrameClock>(nameof(FrameClocks), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a frame clock drives a view's drawing across frames, with no call to fall back at");
-#if ANDROID
-        table.RegisterDefault(Display, new Idrak.Maui.Platforms.Android.ChoreographerFrameClock());
-#elif WINDOWS
-        table.RegisterDefault(Display, new Idrak.Maui.Platforms.Windows.CompositionFrameClock());
-#endif
-        table.RegisterDefault(Timer, new Idrak.Maui.Controls.TimerFrameClock());
-        return table;
-    }
+    /// <summary>The clock live views tick on unless one is chosen: the library's timer clock.</summary>
+    public static IFrameClock ForThisApp() => TimerClock;
 
-    /// <summary>Registers <paramref name="clock"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IFrameClock clock)
-    {
-        ArgumentNullException.ThrowIfNull(clock);
-        ArgumentException.ThrowIfNullOrWhiteSpace(clock.Name);
-        Table.Register(clock.Name, clock, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's clock of that name (the library's, if any, answers again); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in registration order.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The clock of that name, or null.</summary>
-    public static IFrameClock? Find(string name) => Table.Find(name);
-
-    /// <summary>The clock of that name.</summary>
-    /// <exception cref="NotRegisteredException">None is registered under that name (the message names those that are).</exception>
-    public static IFrameClock Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(FrameClocks), name, Table.Keys,
-            $"Frame clock '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with FrameClocks.Register.");
-
-    /// <summary>The first registered clock that can tick here.</summary>
-    public static IFrameClock ForThisApp() => Table.Values.FirstOrDefault(c => c.IsAvailable(out _)) ?? Table.Find(Timer)!;
+    // The clocks were registered (FrameClocks.Register) and picked by name, which is not on the new design yet.
+    private static IFrameClock ClockNamed(string name) =>
+        throw new NotSupportedException($"The frame clock '{name}' by name is not on the new design yet.");
 
     /// <summary>
     /// The clock live views tick on: the one <see cref="Use"/> chose (<c>UseIdrak</c> chooses the one the options name),
@@ -98,8 +64,7 @@ public static class FrameClocks
     /// Makes the clock <paramref name="name"/> the one live views tick on ("auto", empty or null: the first that can tick
     /// here); a clock that cannot tick here is refused with its reason.
     /// </summary>
-    /// <exception cref="NotRegisteredException">None is registered under that name.</exception>
-    /// <exception cref="NotSupportedException">It cannot tick here.</exception>
+    /// <exception cref="NotSupportedException">It cannot tick here, or a clock is named: picking one by name is not on the new design yet.</exception>
     public static IFrameClock Use(string? name)
     {
         if (string.IsNullOrWhiteSpace(name) || name.Equals("auto", StringComparison.OrdinalIgnoreCase))
@@ -108,7 +73,7 @@ public static class FrameClocks
             return ForThisApp();
         }
 
-        var clock = Get(name);
+        var clock = ClockNamed(name);
         if (!clock.IsAvailable(out string reason))
         {
             throw new NotSupportedException($"The {clock.Name} frame clock cannot tick here: {reason}.");

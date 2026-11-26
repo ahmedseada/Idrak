@@ -1513,8 +1513,6 @@ public sealed class ChatViewModel : ViewModel
         return error switch
         {
             ModelDoesNotFitException => first,
-            NotRegisteredException missing => $"{model}: '{missing.Name}' is not registered in {missing.Registry} (registered: "
-                + $"{(missing.Registered.Count == 0 ? "none" : string.Join(", ", missing.Registered))}). The app registers the families it shows, each plug-in by its own Register call. {first}",
             OperationCanceledException => "Stopped.",
             FileNotFoundException or DirectoryNotFoundException => $"{model}'s files are not there any more ({first}); pull it again in Models.",
             _ => $"{model}: {first}",

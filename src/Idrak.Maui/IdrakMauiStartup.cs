@@ -100,7 +100,7 @@ public static class IdrakMauiStartup
         {
             Abstractions.FrameClocks.Use(options.FrameClock);
         }
-        catch (Exception e) when (e is NotRegisteredException or NotSupportedException)
+        catch (NotSupportedException e)
         {
             Abstractions.FrameClocks.Use(null);
             problems.Add($"{e.Message.Split('\n')[0]} Live drawing takes the first clock that ticks here.");

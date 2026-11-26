@@ -164,7 +164,7 @@ public sealed class IdrakMauiOptions
     /// </summary>
     public bool? ChatEnterSends { get; set; }
 
-    /// <summary>The chat's key/value cache format (a registered one, <see cref="KeyValueLayouts.Names"/>); null: the library's (float32). Taken at the next load.</summary>
+    /// <summary>The chat's key/value cache format (a registered one, <c>KeyValueLayouts.Names</c>); null: the library's (float32). Taken at the next load.</summary>
     public string? ChatKeyValueFormat { get; set; }
 
     /// <summary>

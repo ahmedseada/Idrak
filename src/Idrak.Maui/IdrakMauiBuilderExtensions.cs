@@ -56,13 +56,6 @@ public static class IdrakMauiBuilderExtensions
         }
 
         var progress = new ProgressCenter(options.ProgressInterval);
-        ProgressReporters.Register(new MauiProgressReporterKind(progress));
-        if (options.UseMauiProgress && string.IsNullOrEmpty(Environment.GetEnvironmentVariable(ProgressReporters.EnvironmentVariable)))
-        {
-            Environment.SetEnvironmentVariable(ProgressReporters.EnvironmentVariable, MauiProgressReporterKind.ReporterName);
-        }
-
-        _ = MobileFeatures.Names;                                                   // the library's features, registered first
 
         var services = builder.Services;
         services.AddSingleton(options);

@@ -43,7 +43,7 @@ public sealed class SegmentedSectionViewModel : ViewModel
         Title = section.Title;
         foreach (string name in section.Features)
         {
-            if (options.IsFeatureEnabled(name) && MobileFeatures.Find(name) is { } feature)
+            if (options.IsFeatureEnabled(name) && NotOnTheNewDesign.Yet<IMobileFeature?>($"The feature '{name}' by name") is { } feature)
             {
                 Segments.Add(new SegmentItem(feature.Name, feature.Title, feature.Icon.Length > 0 ? feature.Icon : "grid", new Command(() => Select(feature.Name))));
             }

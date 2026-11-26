@@ -49,7 +49,7 @@ public sealed class ChatModelService : IChatModelService
         var (folder, spec) = Read(request.Path);
         int context = Math.Min(request.Context, spec.MaxPositions);
         long weights = WeightBytes(spec);
-        var layout = request.KeyValueFormat is { } name ? KeyValueLayouts.Get(name) : KeyValueLayouts.For(KeyValueFormat.Float32);
+        var layout = request.KeyValueFormat is { } name ? NotOnTheNewDesign.Yet<IKeyValueLayout>($"The key/value layout '{name}' by name") : KeyValueLayouts.For(KeyValueFormat.Float32);
         long cache = ModelMemory.KeyValueCacheBytes(spec, context, layout);
         var (available, limit) = Available(device);
         return (new ChatMemoryEstimate(request.Model, device.ToString(), weights, cache, available, limit), folder);
@@ -126,7 +126,7 @@ public sealed class ChatModelService : IChatModelService
                 throw new InvalidOperationException($"{request.Model} has no chat template (tokenizer_config.json, chat_template.jinja): it is not a chat model.");
             }
 
-            var layout = request.KeyValueFormat is { } kv ? KeyValueLayouts.Get(kv) : KeyValueLayouts.For(KeyValueFormat.Float32);
+            var layout = request.KeyValueFormat is { } kv ? NotOnTheNewDesign.Yet<IKeyValueLayout>($"The key/value layout '{kv}' by name") : KeyValueLayouts.For(KeyValueFormat.Float32);
             int context = Math.Min(request.Context, model.MaxPositions);
             var chat = model.CreateChat(layout, context);
             var info = new ChatModelInfo(request.Model, device.ToString(), request.KeyValueFormat ?? "float32", context,
@@ -168,10 +168,10 @@ public sealed class ChatModelService : IChatModelService
         string configPath = Path.Combine(folder, "config.json");
         var config = JsonNode.Parse(File.ReadAllText(configPath)) as JsonObject ?? throw new InvalidDataException($"{configPath} is not a JSON object.");
         string architecture = (string?)config["architectures"]?[0] ?? throw new InvalidDataException($"{configPath} names no architecture.");
-        return (folder, PretrainedArchitectures.Get(architecture).Spec(config, []));
+        return (folder, NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"The architecture '{architecture}' by name").Spec(config, []));
     }
 
-    private static string Prepared(string path) => CheckpointFormats.For(path).Prepare(path);
+    private static string Prepared(string path) => NotOnTheNewDesign.Yet<ICheckpointFormat>($"{path}: a checkpoint format found by the path").Prepare(path);
 
     internal static Device DeviceOf(string device) => IdrakMauiSettings.IsAuto(device) ? Device.Default : Device.Parse(device);
 

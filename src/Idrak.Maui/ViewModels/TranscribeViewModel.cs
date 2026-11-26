@@ -27,7 +27,7 @@ public sealed class SpeechModelEntry
     /// <summary>The stored model.</summary>
     public StoredModel Model { get; }
 
-    /// <summary>The architecture its config.json names, a registered <see cref="SpeechFamilies"/> name.</summary>
+    /// <summary>The architecture its config.json names, a registered <c>SpeechFamilies</c> name.</summary>
     public string Architecture { get; }
 
     /// <summary>How the settings keep it: "owner/name@revision".</summary>
@@ -121,7 +121,7 @@ public sealed class TranscribeSettingEntry : ViewModel
 /// The Transcribe page (plan 34, M5): live transcription from the microphone through the library's
 /// <see cref="LiveTranscriber"/>, or a file decoded by the library's own codecs (<see cref="AudioCodecs"/>) through the same
 /// live path or whole. A speech model is picked from the model store's complete models whose architecture a registered
-/// <see cref="SpeechFamilies"/> family reads, and loaded once through the <see cref="IModelService"/> (the host
+/// <c>SpeechFamilies</c> family reads, and loaded once through the <see cref="IModelService"/> (the host
 /// <see cref="ModelHostName"/>) on the settings' device. The microphone permission is asked first
 /// (<see cref="IPermissionService"/>; a refusal is shown with how to allow it); the sound is captured through
 /// <see cref="AudioCaptures"/> (<see cref="AudioCaptures.ForThisMachine"/> by default: aaudio on Android), cleaned by the
@@ -690,7 +690,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable, ILiveLevelSour
 
     /// <summary>
     /// Reads the speech models on a worker thread: the store's complete models whose config.json names an architecture a
-    /// registered <see cref="SpeechFamilies"/> family reads. The model kept in the settings is picked again (else the first).
+    /// registered <c>SpeechFamilies</c> family reads. The model kept in the settings is picked again (else the first).
     /// </summary>
     public async Task RefreshAsync()
     {
@@ -711,7 +711,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable, ILiveLevelSour
             }
 
             var speech = SpeechModels;
-            var families = SpeechFamilies.Names;
+            var families = NotOnTheNewDesign.Names("speech families");
             ModelsText = speech.Count > 0 ? $"{speech.Count} speech model{(speech.Count == 1 ? "" : "s")} on this phone."
                 : families.Count == 0 ? "No speech family is registered: the app registers the families it shows (SpeechFamilies.Register, a plug-in's own Register call)."
                 : $"No speech model on this phone{(others > 0 ? $" among the {others} other model{(others == 1 ? "" : "s")}" : "")}: pull one in Models, "
@@ -909,7 +909,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable, ILiveLevelSour
         {
             pipeline = _options.ToPipeline();
             live = Checked(_options.ToLive(microphone: true));
-            capture = _options.Capture is { Length: > 0 } name ? AudioCaptures.Get(name) : AudioCaptures.ForThisMachine();
+            capture = _options.Capture is { Length: > 0 } name ? NotOnTheNewDesign.Yet<IAudioCapture>($"The audio capture '{name}' by name") : AudioCaptures.ForThisMachine();
             if (!capture.IsAvailable(out string reason))
             {
                 throw new NotSupportedException($"The {capture.Name} capture cannot record here: {reason}.");
@@ -1285,7 +1285,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable, ILiveLevelSour
         int others = 0;
         foreach (var model in store.List())
         {
-            if (model.Complete && Architecture(model.Folder) is { } architecture && SpeechFamilies.Find(architecture) is not null)
+            if (model.Complete && Architecture(model.Folder) is { } architecture && NotOnTheNewDesign.Yet<object?>($"The speech family '{architecture}' by name") is not null)
             {
                 speech.Add(new SpeechModelEntry(model, architecture));
             }
@@ -1323,13 +1323,13 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable, ILiveLevelSour
     private static LiveTranscriptionOptions Checked(LiveTranscriptionOptions live)
     {
         live.Check();
-        _ = LiveCommitPolicies.Get(live.Policy);
+        _ = NotOnTheNewDesign.Yet<object>($"The live commit policy '{live.Policy}' by name");
         return live;
     }
 
     private static FilePickerFileType AudioFileTypes()
     {
-        string[] extensions = [.. AudioCodecs.Extensions.Select(e => e.StartsWith('.') ? e : "." + e)];
+        string[] extensions = [.. NotOnTheNewDesign.Names("audio codecs' extensions").Select(e => e.StartsWith('.') ? e : "." + e)];
         return new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
         {
             [DevicePlatform.Android] = ["audio/*"],

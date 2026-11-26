@@ -8,7 +8,7 @@ namespace Idrak.Maui;
 
 /// <summary>
 /// What is in progress in the app, for views to bind: one <see cref="ProgressItem"/> a piece of work, made by the "maui"
-/// progress reporter (<see cref="MauiProgressReporterKind"/>, registered in <see cref="ProgressReporters"/> by
+/// progress reporter (<c>MauiProgressReporterKind</c>, registered in <see cref="ProgressReporters"/> by
 /// <c>UseIdrak</c>). Every change reaches <see cref="Items"/> and the items on the UI thread, at most once an
 /// <see cref="Interval"/> a piece of work: a report between showings stores its amount and nothing else.
 /// </summary>
@@ -92,24 +92,3 @@ public sealed class ProgressCenter
     internal void Remove(ProgressItem item) => Items.Remove(item);
 }
 
-/// <summary>The "maui" progress reporter kind: each piece of work an item of the app's <see cref="ProgressCenter"/>.</summary>
-public sealed class MauiProgressReporterKind(ProgressCenter center) : IProgressReporterKind
-{
-    /// <summary>Its name in <see cref="ProgressReporters"/> (and <c>IDRAK_PROGRESS</c>).</summary>
-    public const string ReporterName = "maui";
-
-    /// <summary>The center its reporters show on.</summary>
-    public ProgressCenter Center { get; } = center ?? throw new ArgumentNullException(nameof(center));
-
-    /// <inheritdoc />
-    public string Name => ReporterName;
-
-    /// <inheritdoc />
-    public string Summary => "an app's bindable progress (what, how far, speed, time left), updated on the UI thread at most once a progress interval";
-
-    /// <inheritdoc />
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
-    /// <inheritdoc />
-    public IProgressReporter Create(ProgressRequest request) => new MauiProgressReporter(Center, request ?? throw new ArgumentNullException(nameof(request)), Center.Time);
-}

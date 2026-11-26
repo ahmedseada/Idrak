@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Maui.Abstractions;
 
 /// <summary>What a feature needs from the phone, asked for when it opens.</summary>
@@ -28,7 +26,7 @@ public enum PhoneNeeds
 /// <summary>Where a feature stands: built, or placed in the menu ahead of the phase that builds it.</summary>
 public enum FeatureState
 {
-    /// <summary>Built: its page does what <see cref="IKind.Summary"/> says.</summary>
+    /// <summary>Built: its page does what <c>IKind.Summary</c> says.</summary>
     Ready = 0,
 
     /// <summary>
@@ -57,12 +55,18 @@ public enum FeatureGroup
 
 /// <summary>
 /// One feature of the app: a page and its view model, listed in the app's menu. Registered by its
-/// <see cref="IKind.Name"/> in <see cref="MobileFeatures"/>; the library registers its own as defaults and an app adds its
+/// <c>IKind.Name</c> in <see cref="MobileFeatures"/>; the library registers its own as defaults and an app adds its
 /// own or replaces one by name. A feature says what it needs from the phone (<see cref="Needs"/>) and from the library
 /// (<see cref="Packages"/>, <see cref="ModelFamilies"/>), so the app asks for a permission or a model before it opens.
 /// </summary>
-public interface IMobileFeature : IKind
+public interface IMobileFeature
 {
+    /// <summary>Its name ("devices"): what the app's settings and links name it by.</summary>
+    string Name { get; }
+
+    /// <summary>One line on it, for listings.</summary>
+    string Summary { get; }
+
     /// <summary>The name in the menu and the page's title ("Devices").</summary>
     string Title { get; }
 
@@ -85,7 +89,7 @@ public interface IMobileFeature : IKind
     /// <summary>Where it is listed among the labs (<see cref="FeatureGroup.Device"/> unless it says).</summary>
     FeatureGroup Group => FeatureGroup.Device;
 
-    /// <summary>A few words for a lab's card ("Live speech to text"); "" uses <see cref="IKind.Summary"/> (the default).</summary>
+    /// <summary>A few words for a lab's card ("Live speech to text"); "" uses <c>IKind.Summary</c> (the default).</summary>
     string Tagline => "";
 
     /// <summary>The name of its icon among Idrak's (<c>Idrak.Maui.Theme.IdrakIcons</c>: "chat", "mic"); "" draws <see cref="Glyph"/> (the default).</summary>
@@ -123,7 +127,7 @@ public interface IMobileFeature : IKind
 /// speaker, played as each sentence is made), "audio-process" (a recording through a pipeline of the library's
 /// processors, heard before and after), "ocr" (a photo read by a vision-language model of the store, streamed; the vision
 /// families are the app's) and "image" (transforms and scan profiles on a photo, cold and warm). Register
-/// another with <see cref="Register"/>; one under a library name shadows the library's, which <see cref="Unregister"/>
+/// another with <c>Register</c>; one under a library name shadows the library's, which <c>Unregister</c>
 /// brings back. <see cref="Enabled"/> lists them in menu order without those the settings turn off.
 /// </summary>
 public static class MobileFeatures
@@ -133,8 +137,6 @@ public static class MobileFeatures
 
     /// <summary>The library's models page.</summary>
     public const string Models = "models";
-
-    private static readonly SlotTable<string, IMobileFeature> Table = BuiltIn();
 
     /// <summary>The <see cref="IMobileFeature.Order"/> of a feature that sets none: after every ordered one.</summary>
     public const int Unordered = int.MaxValue;
@@ -166,45 +168,12 @@ public static class MobileFeatures
     /// <summary>The library's retrieval page (planned).</summary>
     public const string Search = "search";
 
-    private static SlotTable<string, IMobileFeature> BuiltIn()
-    {
-        var table = new SlotTable<string, IMobileFeature>(nameof(MobileFeatures), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a feature is a page the user has open, with no call to fall back at");
-        Idrak.Maui.Views.PlannedFeatures.RegisterDefaults(table);
-        table.RegisterDefault(Devices, new Idrak.Maui.Views.DevicesFeature());
-        table.RegisterDefault(Models, new Idrak.Maui.Views.ModelsFeature());
-        table.RegisterDefault(Chat, new Idrak.Maui.Views.ChatFeature());
-        table.RegisterDefault(Transcribe, new Idrak.Maui.Views.TranscribeFeature());
-        table.RegisterDefault(Speak, new Idrak.Maui.Views.SpeakFeature());
-        table.RegisterDefault(AudioProcess, new Idrak.Maui.Views.AudioProcessFeature());
-        table.RegisterDefault(Ocr, new Idrak.Maui.Views.OcrFeature());
-        table.RegisterDefault(Image, new Idrak.Maui.Views.ImageFeature());
-        table.RegisterDefault(Generate, new Idrak.Maui.Views.GenerateFeature());
-        table.RegisterDefault(Terminal, new Idrak.Maui.Views.TerminalFeature());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="feature"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IMobileFeature feature)
-    {
-        ArgumentNullException.ThrowIfNull(feature);
-        ArgumentException.ThrowIfNullOrWhiteSpace(feature.Name);
-        Table.Register(feature.Name, feature, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's feature of that name (the library's, if any, answers again); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in registration order.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
     /// <summary>
     /// Every registered feature in menu order (<see cref="Place"/>, then the title): the ready and the planned
     /// (<see cref="IMobileFeature.State"/>) alike.
     /// </summary>
     public static IReadOnlyList<IMobileFeature> All =>
-        [.. Table.Values.OrderBy(Place).ThenBy(f => f.Title, StringComparer.CurrentCultureIgnoreCase)];
+        [.. Registered().OrderBy(Place).ThenBy(f => f.Title, StringComparer.CurrentCultureIgnoreCase)];
 
     /// <summary>
     /// Where <paramref name="feature"/> stands in the menu: its <see cref="IMobileFeature.Order"/>, or, when it sets none,
@@ -215,23 +184,16 @@ public static class MobileFeatures
     {
         ArgumentNullException.ThrowIfNull(feature);
         int order = feature.Order;
-        return order == Unordered && Table.Default(feature.Name) is { } library ? library.Order : order;
+        return order == Unordered && LibraryFeature(feature.Name) is { } library ? library.Order : order;
     }
 
-    /// <summary>The feature of that name, or null.</summary>
-    public static IMobileFeature? Find(string name) => Table.Find(name);
+    // The features were registered (MobileFeatures.Register: the library's as defaults, an app's over them) and listed or
+    // found by name, which is not on the new design yet.
+    private static IEnumerable<IMobileFeature> Registered() => throw new NotSupportedException("The app's registered features are not on the new design yet.");
 
-    /// <summary>The feature of that name.</summary>
-    /// <exception cref="NotRegisteredException">None is registered under that name (the message names those that are).</exception>
-    public static IMobileFeature Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(MobileFeatures), name, Table.Keys,
-            $"Feature '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with MobileFeatures.Register.");
+    private static IMobileFeature? LibraryFeature(string name) => throw new NotSupportedException($"The library's feature '{name}' by name is not on the new design yet.");
 
-    /// <summary>The library's feature of that name, or null.</summary>
-    public static IMobileFeature? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the feature of that name: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
+    private static IMobileFeature FeatureNamed(string name) => throw new NotSupportedException($"The feature '{name}' by name is not on the new design yet.");
 
     /// <summary>The features in menu order, without those <paramref name="options"/> turn off.</summary>
     public static IReadOnlyList<IMobileFeature> Enabled(IdrakMauiOptions options)
@@ -241,11 +203,11 @@ public static class MobileFeatures
     }
 
     /// <summary>The page of feature <paramref name="name"/>, bound to a new view model of it.</summary>
-    /// <exception cref="NotRegisteredException">No feature has that name.</exception>
+    /// <exception cref="NotSupportedException">Always for now: the feature by its name is not on the new design yet.</exception>
     public static Page Open(string name, IServiceProvider services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        var feature = Get(name);
+        var feature = FeatureNamed(name);
         object viewModel = feature.CreateViewModel(services);
         var page = feature.CreatePage(services, viewModel);
         page.BindingContext ??= viewModel;

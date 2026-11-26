@@ -21,7 +21,7 @@ public sealed class ProcessorChip
         AddCommand = new Command(() => add(this));
         Name = processor.Name;
         Label = processor.Label;
-        Summary = processor.Summary;
+        Summary = "";                                                   // the processors' summaries went with their registry
         Live = processor.Live;
         LiveAlternative = processor.LiveAlternative;
         Parameters = [.. processor.Parameters.Select(Describe)];
@@ -620,9 +620,9 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable, ILiveLevelSo
     public void RefreshProcessors()
     {
         Processors.Clear();
-        foreach (string name in AudioProcessors.Names)
+        foreach (string name in NotOnTheNewDesign.Names("audio processors"))
         {
-            if (AudioProcessors.Find(name) is { } processor)
+            if (NotOnTheNewDesign.Yet<IAudioProcessor?>($"The audio processor '{name}' by name") is { } processor)
             {
                 Processors.Add(new ProcessorChip(processor, AddStep));
             }
@@ -1096,7 +1096,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable, ILiveLevelSo
         format ??= _options.SaveFormat ?? "wav";
         try
         {
-            var encoder = AudioEncoders.Get(format);
+            var encoder = NotOnTheNewDesign.Yet<IAudioEncoder>($"The audio encoder '{format}' by name");
             var encode = encoder.Name.Equals("wav", StringComparison.OrdinalIgnoreCase) ? _options.ToEncode() : new AudioEncodeOptions();
             string folder = Path.Combine(ComputeResources.CacheFolder, "audio-process");
             string path = Path.Combine(folder, $"processed-{_time.GetLocalNow():yyyyMMdd-HHmmss}{encoder.Extension}");
@@ -1241,7 +1241,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable, ILiveLevelSo
 
     private static FilePickerFileType AudioFileTypes()
     {
-        string[] extensions = [.. AudioCodecs.Extensions.Select(e => e.StartsWith('.') ? e : "." + e)];
+        string[] extensions = [.. NotOnTheNewDesign.Names("audio codecs' extensions").Select(e => e.StartsWith('.') ? e : "." + e)];
         return new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
         {
             [DevicePlatform.Android] = ["audio/*"],
@@ -1264,7 +1264,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable, ILiveLevelSo
                 return;
             }
 
-            var whole = pipeline.Steps.Where(s => !AudioProcessors.Get(s.Name).Live).Select(s => s.Name).ToList();
+            var whole = pipeline.Steps.Where(s => !NotOnTheNewDesign.Yet<IAudioProcessor>($"The audio processor '{s.Name}' by name").Live).Select(s => s.Name).ToList();
             PipelineCheck = $"{pipeline.Steps.Count} step{(pipeline.Steps.Count == 1 ? "" : "s")}: "
                 + (whole.Count == 0 ? "all live (monitoring takes it)" : $"{string.Join(", ", whole)} need{(whole.Count == 1 ? "s" : "")} the whole recording (monitoring takes live steps only)");
         }
@@ -1291,7 +1291,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable, ILiveLevelSo
 
         try
         {
-            var capture = _options.Capture is { Length: > 0 } name ? AudioCaptures.Get(name) : AudioCaptures.ForThisMachine();
+            var capture = _options.Capture is { Length: > 0 } name ? NotOnTheNewDesign.Yet<IAudioCapture>($"The audio capture '{name}' by name") : AudioCaptures.ForThisMachine();
             if (!capture.IsAvailable(out string reason))
             {
                 throw new NotSupportedException($"The {capture.Name} capture cannot record here: {reason}.");

@@ -8,12 +8,6 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Idrak.Maui;
 
-/// <summary>The library's start-up steps, registered as defaults in <see cref="StartupSteps"/>.</summary>
-internal static class LibraryStartupSteps
-{
-    public static IEnumerable<IStartupStep> All() => [new CpuStartupStep(), new GpuStartupStep(), new SectionsStartupStep()];
-}
-
 /// <summary>The CPU described (<see cref="IDeviceInformation.Read"/> of "cpu"): its facts and memory, read once for the app.</summary>
 public sealed class CpuStartupStep : IStartupStep
 {

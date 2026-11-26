@@ -14,7 +14,7 @@ namespace Idrak.Maui;
 /// </summary>
 public sealed class ImageLabOptions
 {
-    /// <summary>The pipeline of the page's box (<see cref="ImageTransformPipeline"/> text); null: none.</summary>
+    /// <summary>The pipeline of the page's box (<c>ImageTransformPipeline</c> text); null: none.</summary>
     public string? Pipeline { get; set; }
 
     /// <summary>The scan profile picked (a <see cref="ScanProfiles"/> name, or profiles joined with '+'); null: none.</summary>
@@ -41,10 +41,6 @@ public sealed class ImageLabOptions
     /// <summary>The save format in effect ("png" when none is set).</summary>
     public string Format => SaveFormat ?? ImageSettings.Png;
 
-    /// <summary>The pipeline of <see cref="Pipeline"/>, checked against the registered transforms (empty when none).</summary>
-    /// <exception cref="ArgumentException">An unknown transform or option, or a value the transform refuses (the message names the registered ones).</exception>
-    public ImageTransformPipeline ToPipeline() => ImageTransformPipeline.Parse(Pipeline);
-
     /// <summary>
     /// <paramref name="image"/> as a file of <see cref="Format"/>: the library's JPEG encoder at <see cref="JpegQuality"/>
     /// (the library's quality when none), else the registered encoder of that name.
@@ -54,11 +50,11 @@ public sealed class ImageLabOptions
         ArgumentNullException.ThrowIfNull(image);
         return Format == ImageSettings.Jpeg
             ? JpegQuality is { } quality ? JpegEncoder.Encode(image, quality) : JpegEncoder.Encode(image)
-            : ImageEncoders.Get(Format).Encode(image);
+            : NotOnTheNewDesign.Yet<IImageEncoder>($"The image encoder '{Format}' by name").Encode(image);
     }
 
     /// <summary>The file extension of <see cref="Format"/> (".png", ".jpg").</summary>
-    public string Extension => Format == ImageSettings.Jpeg ? ".jpg" : ImageEncoders.Get(Format).Extensions.FirstOrDefault() ?? "." + Format;
+    public string Extension => Format == ImageSettings.Jpeg ? ".jpg" : NotOnTheNewDesign.Yet<IImageEncoder>($"The image encoder '{Format}' by name").Extensions.FirstOrDefault() ?? "." + Format;
 
     /// <summary>The media type of <see cref="Format"/> for the share sheet.</summary>
     public string MediaType => Format switch
@@ -93,7 +89,7 @@ public static class ImageSettings
     public static IReadOnlyList<LabSetting<ImageLabOptions>> Definitions { get; } = Define();
 
     /// <summary>The formats a result is saved in: png, jpeg, then the other registered encoders.</summary>
-    public static IReadOnlyList<string> Formats => [Png, Jpeg, .. ImageEncoders.Names.Where(n => !n.Equals(Png, StringComparison.OrdinalIgnoreCase) && !n.Equals(Jpeg, StringComparison.OrdinalIgnoreCase))];
+    public static IReadOnlyList<string> Formats => [Png, Jpeg, .. NotOnTheNewDesign.Names("image encoders").Where(n => !n.Equals(Png, StringComparison.OrdinalIgnoreCase) && !n.Equals(Jpeg, StringComparison.OrdinalIgnoreCase))];
 
     /// <summary>
     /// The options saved in <paramref name="store"/>, over <paramref name="defaults"/> (a copy; the library's defaults when
@@ -130,7 +126,7 @@ public static class ImageSettings
     private static IReadOnlyList<LabSetting<ImageLabOptions>> Define() =>
     [
         new("profile", "Scan profile", "The scan profile Apply profile draws from (ScanProfiles; several joined with '+', such as damaged+marked).", LabSettingKind.Choice, "none",
-            o => o.Profile ?? "", (o, t) => o.Profile = Profile(t), () => ["none", .. ScanProfiles.Names]),
+            o => o.Profile ?? "", (o, t) => o.Profile = Profile(t), () => ["none", .. NotOnTheNewDesign.Names("scan profiles")]),
         new("seed", "Profile seed", "The seed a scan profile draws its steps from: the same seed, the same steps; empty: a new one each time (shown).",
             LabSettingKind.Number, "a new one each time", o => LabSettings.Show(o.Seed), (o, t) => o.Seed = LabSettings.Whole(t, 0)),
         new("save_format", "Save as", "The format a result is saved and shared in (png: the library's PNG encoder; jpeg: its JPEG encoder; or another registered encoder).",
@@ -155,7 +151,7 @@ public static class ImageSettings
 
         try
         {
-            _ = ScanProfiles.Resolve(text);
+            _ = NotOnTheNewDesign.Yet<object>($"The scan profile '{text}' by name");
             return text;
         }
         catch (Exception e) when (e is NotSupportedException or ArgumentException)
@@ -167,6 +163,6 @@ public static class ImageSettings
     private static string? Format(string text) =>
         text.Length == 0 || text.Equals(Png, StringComparison.OrdinalIgnoreCase) ? null
         : text.Equals(Jpeg, StringComparison.OrdinalIgnoreCase) || text.Equals("jpg", StringComparison.OrdinalIgnoreCase) ? Jpeg
-        : ImageEncoders.Names.FirstOrDefault(n => n.Equals(text, StringComparison.OrdinalIgnoreCase))
+        : NotOnTheNewDesign.Names("image encoders").FirstOrDefault(n => n.Equals(text, StringComparison.OrdinalIgnoreCase))
           ?? throw new FormatException($"'{text}' is not a format a result is saved in ({string.Join(", ", Formats)}).");
 }

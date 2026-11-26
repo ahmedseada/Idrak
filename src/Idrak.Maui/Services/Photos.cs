@@ -138,7 +138,7 @@ public static class Photos
     }
 
     /// <summary>The formats the library's codecs read, with their extensions: "png (.png), jpeg (.jpg, .jpeg), …".</summary>
-    public static string Readable() => string.Join(", ", ImageCodecs.Names.Select(n => $"{n} ({string.Join(", ", ImageCodecs.Get(n).Extensions)})"));
+    public static string Readable() => NotOnTheNewDesign.Yet<string>("The registered image codecs");
 
     /// <summary>The brand of a HEIF-family file (an ISO media "ftyp" box naming heic, heif, avif and the like), or null.</summary>
     public static string? HeifBrand(ReadOnlySpan<byte> file)
@@ -183,7 +183,7 @@ public static class Photos
         var shown = side is { } s && Math.Max(image.Width, image.Height) > s
             ? resampling is { } filter ? PillowImageOps.ScaleDown(image, s, s, filter) : PillowImageOps.ScaleDown(image, s, s)
             : image;
-        byte[] png = ImageEncoders.Get(ImageSettings.Png).Encode(shown);
+        byte[] png = NotOnTheNewDesign.Yet<IImageEncoder>("The PNG encoder by name").Encode(shown);
         return new PhotoPreview(png, shown.Width, shown.Height, Stopwatch.GetElapsedTime(start));
     }
 

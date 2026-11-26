@@ -102,25 +102,3 @@ public sealed class PlannedFeature : IMobileFeature
         new PlaceholderView(viewModel as PlaceholderViewModel ?? throw new ArgumentException($"The placeholder view takes a {nameof(PlaceholderViewModel)}.", nameof(viewModel)));
 }
 
-/// <summary>
-/// The library's planned features (plan 34's labs, in its menu order), registered as defaults in <see cref="MobileFeatures"/>.
-/// Orders leave room: Devices is 0, the Models lab 10, Chat 20, Transcribe 30, Speak 40, Audio process 50, OCR 60 and Image 70 (built, so no longer here); the Bench (held) and an app's own come after.
-/// </summary>
-internal static class PlannedFeatures
-{
-    public static readonly PlannedFeature[] Library =
-    [
-        new(MobileFeatures.Search, "Search", "⌕", 80,
-            "Retrieval over your own notes",
-            "Embeddings of your own notes and retrieval over them, on the phone",
-            PhoneNeeds.Model | PhoneNeeds.Network, ["Idrak.Text"], group: FeatureGroup.Language, icon: "search", tagline: "Retrieval over your notes"),
-    ];
-
-    public static void RegisterDefaults(SlotTable<string, IMobileFeature> table)
-    {
-        foreach (var feature in Library)
-        {
-            table.RegisterDefault(feature.Name, feature);
-        }
-    }
-}

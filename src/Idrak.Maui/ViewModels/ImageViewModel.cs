@@ -13,13 +13,13 @@ namespace Idrak.Maui.ViewModels;
 /// <summary>A registered image transform as a chip on the Image page: tapping it adds a step of it to the pipeline.</summary>
 public sealed class TransformChip
 {
-    internal TransformChip(IImageTransform transform, Action<TransformChip> add)
+    internal TransformChip(string name, string label, string summary, IImageTransform transform, Action<TransformChip> add)
     {
-        Name = transform.Name;
-        Label = transform.Label;
-        Summary = transform.Summary;
+        Name = name;
+        Label = label;
+        Summary = summary;
         Parameters = Describe(transform.Parameters);
-        Step = StepOf(transform);
+        Step = StepOf(name, transform);
         AddCommand = new Command(() => add(this));
     }
 
@@ -61,14 +61,19 @@ public sealed class TransformChip
         return $"{name}{(p.Optional ? "?" : "")}: {what}";
     }));
 
+    // The image transforms' pipeline went with their registry: a step is checked by parsing it, which is not on the new
+    // design yet.
+    private static object PipelineNamed(string text) =>
+        throw new NotSupportedException($"The image pipeline '{text}': image transforms by name are not on the new design yet.");
+
     // The step a tap adds: the transform's name, with a value when it needs one (the first choice, or the middle of its range
     // on its increments), checked as a pipeline checks it; the name alone when that value is refused.
-    internal static string StepOf(IImageTransform transform)
+    internal static string StepOf(string name, IImageTransform transform)
     {
         var value = transform.Parameters.FirstOrDefault(p => p.Key.Length == 0);
         if (value is null || value.Optional)
         {
-            return transform.Name;
+            return name;
         }
 
         string? text = value.Input switch
@@ -80,18 +85,18 @@ public sealed class TransformChip
         };
         if (text is null)
         {
-            return transform.Name;
+            return name;
         }
 
-        string step = $"{transform.Name}={text}";
+        string step = $"{name}={text}";
         try
         {
-            _ = ImageTransformPipeline.Parse(step);
+            _ = PipelineNamed(step);
             return step;
         }
         catch (ArgumentException)
         {
-            return transform.Name;
+            return name;
         }
 
         static double Middle(double min, double max, double? increment)
@@ -141,7 +146,6 @@ public sealed class ImageViewModel : ViewModel
     private ImageLabOptions _options;
     private Photo? _photo;
     private ImageData? _result;
-    private string? _warmFor;
     private (ImageData Image, string Format, string Path)? _saved;
     private PhotoPreview? _original, _shown;
     private ImageSource? _originalSource, _resultSource;
@@ -167,19 +171,8 @@ public sealed class ImageViewModel : ViewModel
             _settingsMessage = "A saved setting was not read: " + string.Join("; ", skipped);
         }
 
-        foreach (string name in ImageTransforms.Names)
-        {
-            if (ImageTransforms.Find(name) is { } transform)
-            {
-                Transforms.Add(new TransformChip(transform, chip => AddStep(chip.Step)));
-            }
-        }
-
-        foreach (string name in ScanProfiles.Names.Order(StringComparer.OrdinalIgnoreCase))
-        {
-            Profiles.Add(name);
-        }
-
+        // The transforms' chips and the profiles were listed from their registries (ImageTransforms, ScanProfiles), which
+        // are not on the new design yet: none is listed.
         foreach (var setting in ImageSettings.Definitions)
         {
             Settings.Add(new LabSettingEntry(setting, setting.Get(_options)));
@@ -233,7 +226,7 @@ public sealed class ImageViewModel : ViewModel
         private set => SetProperty(ref _profileText, value);
     }
 
-    /// <summary>The pipeline's text (<see cref="ImageTransformPipeline"/>: <c>grayscale,max_width=1024,contrast=1.5</c>).</summary>
+    /// <summary>The pipeline's text (<c>ImageTransformPipeline</c>: <c>grayscale,max_width=1024,contrast=1.5</c>).</summary>
     public string Pipeline
     {
         get => _pipeline;
@@ -577,10 +570,8 @@ public sealed class ImageViewModel : ViewModel
         try
         {
             int seed = _options.Seed ?? Random.Shared.Next();
-            var steps = ScanProfiles.Resolve(name).Sample(seed);
-            Pipeline = steps.ToString();
-            Status = steps.IsEmpty ? $"{name} took no step from seed {seed}: draw again, or set a seed in the settings."
-                : $"{name} drew {steps.Steps.Count} step{(steps.Steps.Count == 1 ? "" : "s")} from seed {seed}.";
+            Pipeline = ProfileDrawn(name, seed);
+            Status = $"{name} drew its steps from seed {seed}.";
             return true;
         }
         catch (Exception e) when (e is NotSupportedException or ArgumentException)
@@ -595,88 +586,25 @@ public sealed class ImageViewModel : ViewModel
     /// time; the run is cold when a transform of it had not run in this process, else warm; the result's picture made once.
     /// The pipeline is checked first (an unknown step names the registered ones) and kept in the settings. True when it ran.
     /// </summary>
-    public async Task<bool> ApplyAsync()
+    public Task<bool> ApplyAsync()
     {
         if (IsBusy)
         {
-            return false;
+            return Task.FromResult(false);
         }
 
         Error = "";
-        if (_photo is not { } photo)
+        if (_photo is null)
         {
             Error = "Take or pick a photo first.";
-            return false;
+            return Task.FromResult(false);
         }
 
-        ImageTransformPipeline pipeline;
-        try
-        {
-            pipeline = ImageTransformPipeline.Parse(Pipeline);
-        }
-        catch (ArgumentException e)
-        {
-            Error = e.Message;
-            return false;
-        }
-
-        _options.Pipeline = pipeline.IsEmpty ? null : pipeline.ToString();
-        Keep();
-        IsBusy = true;
-        Status = pipeline.IsEmpty ? "No step: the photo as decoded." : $"Running {pipeline.Steps.Count} step{(pipeline.Steps.Count == 1 ? "" : "s")}…";
-        try
-        {
-            int? side = _options.PreviewPixels;
-            var resampling = _options.Resampling;
-            var (result, steps, total, cold, preview) = await Task.Run(() =>
-            {
-                bool cold;
-                lock (RanGate)
-                {
-                    cold = pipeline.Steps.Any(s => !Ran.Contains(s.Name));
-                }
-
-                var image = photo.Pixels;
-                var times = new List<StepTime>(pipeline.Steps.Count);
-                long start = _time.GetTimestamp();
-                foreach (var step in pipeline.Steps)
-                {
-                    bool first;
-                    lock (RanGate)
-                    {
-                        first = Ran.Add(step.Name);
-                    }
-
-                    long at = _time.GetTimestamp();
-                    image = ImageTransforms.Get(step.Name).Apply(image, step);
-                    times.Add(new StepTime(step.ToString(), _time.GetElapsedTime(at), first));
-                }
-
-                var took = _time.GetElapsedTime(start);
-                return (image, times, took, cold, Photos.Preview(image, side, resampling));
-            }).ConfigureAwait(true);
-            _result = result;
-            _saved = null;
-            _shown = preview;
-            ResultSource = preview.Source();
-            Steps = steps;
-            StepsText = string.Join("\n", steps.Select(s => s.Text));
-            ResultText = string.Create(CultureInfo.InvariantCulture, $"{result.Width:N0} x {result.Height:N0}, {(result.Channels == 1 ? "grey" : "colour")}")
-                + (pipeline.IsEmpty ? ", as decoded" : $", from {pipeline}");
-            Report(total, cold, pipeline);
-            Status = $"Done in {Photos.Milliseconds(total)}.";
-            return true;
-        }
-        catch (Exception e) when (e is ArgumentException or InvalidDataException or NotSupportedException or InvalidOperationException)
-        {
-            Status = "";
-            Error = $"The pipeline stopped: {e.Message}";
-            return false;
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        // The pipeline's steps were image transforms registered by name (ImageTransforms) and run through them, which is
+        // not on the new design yet.
+        Status = "";
+        Error = "The pipeline stopped: image transforms by name are not on the new design yet.";
+        return Task.FromResult(false);
     }
 
     /// <summary>
@@ -765,38 +693,24 @@ public sealed class ImageViewModel : ViewModel
         return true;
     }
 
+    // The scan profiles and image transforms were registered (ScanProfiles, ImageTransforms) and found by name, which is not
+    // on the new design yet.
+    private static string ProfileDrawn(string name, int seed) =>
+        throw new NotSupportedException($"The scan profile '{name}' by name is not on the new design yet.");
+
+    private static string ProfileSummary(string name) => throw new NotSupportedException($"The scan profile '{name}' by name is not on the new design yet.");
+
     private void Keep() => ImageSettings.Save(_settings, _options);
 
     private void UpdateProfileText()
     {
         try
         {
-            ProfileText = _profile is { Length: > 0 } name ? ScanProfiles.Resolve(name).Summary : "";
+            ProfileText = _profile is { Length: > 0 } name ? ProfileSummary(name) : "";
         }
         catch (Exception e) when (e is NotSupportedException or ArgumentException)
         {
             ProfileText = e.Message;
-        }
-    }
-
-    // The run's time onto the cold or the warm line.
-    private void Report(TimeSpan total, bool cold, ImageTransformPipeline pipeline)
-    {
-        string what = pipeline.IsEmpty ? "no step" : string.Join(", ", pipeline.Steps.Select(s => s.Name).Distinct(StringComparer.OrdinalIgnoreCase));
-        if (cold)
-        {
-            ColdText = $"Cold (the first run of {what} in this app: compiling its methods): {Photos.Milliseconds(total)}";
-        }
-        else
-        {
-            if (_warmFor != pipeline.ToString())
-            {
-                _warm.Clear();                                                  // another pipeline: its own mean
-                _warmFor = pipeline.ToString();
-            }
-
-            _warm.Add(total.TotalMilliseconds);
-            WarmText = string.Create(CultureInfo.InvariantCulture, $"Warm: {Photos.Milliseconds(total)} last, {_warm.Average():F1} ms mean over {_warm.Count} run{(_warm.Count == 1 ? "" : "s")} of this pipeline");
         }
     }
 }

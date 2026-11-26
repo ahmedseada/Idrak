@@ -79,7 +79,7 @@ public partial class AppHostPage : ContentPage
             _keyboard.VisibilityChanged += (_, visible) => Dispatcher.Dispatch(() => ViewModel.IsKeyboardOpen = visible);
         }
 
-        Show(AppSections.Get(AppSections.Home), null);
+        Show(NotOnTheNewDesign.Yet<IAppSection>("The Home section by name"), null);
         _startup = services.GetService<StartupRun>();
         if (_startup is not null && _options.ShowSplash && _options.Splash != SplashLength.Off)
         {
@@ -377,7 +377,7 @@ public partial class AppHostPage : ContentPage
 
         if (!string.Equals(ViewModel.Selected, AppSections.Home, StringComparison.OrdinalIgnoreCase))
         {
-            Show(AppSections.Get(AppSections.Home), null);
+            Show(NotOnTheNewDesign.Yet<IAppSection>("The Home section by name"), null);
             return true;
         }
 

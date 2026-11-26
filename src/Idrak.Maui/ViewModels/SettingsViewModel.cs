@@ -624,21 +624,7 @@ public sealed class SettingsViewModel : ViewModel
     // "auto", "cpu", then every device of every backend (counted, not started), and the current one if none of these.
     private static IReadOnlyList<string> DeviceChoices(string current)
     {
-        var names = new List<string> { "auto", "cpu" };
-        try
-        {
-            foreach (var provider in DeviceProviders.All)
-            {
-                for (int i = 0; i < provider.Count; i++)
-                {
-                    names.Add($"{provider.Name}:{i}");
-                }
-            }
-        }
-        catch (Exception e) when (e is InvalidOperationException or DllNotFoundException or EntryPointNotFoundException)
-        {
-            // A backend that cannot count its devices lists none.
-        }
+        var names = new List<string> { "auto", "cpu" };                       // the device is the CPU (the device providers are gone)
 
         if (current.Length > 0 && !names.Contains(current, StringComparer.OrdinalIgnoreCase))
         {

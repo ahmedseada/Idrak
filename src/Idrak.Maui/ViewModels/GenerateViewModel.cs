@@ -211,7 +211,7 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
             _chosen.Add(path);
         }
 
-        foreach (string name in ScanProfiles.Names)
+        foreach (string name in NotOnTheNewDesign.Names("scan profiles"))
         {
             Effects.Add(new EffectChip(name, Summary(name), new Command(() => ToggleEffect(name))));
         }
@@ -226,7 +226,7 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
 
         var keptLayouts = Split(settings.Get(GenerateSettings.LayoutsKey), ',').ToHashSet(StringComparer.OrdinalIgnoreCase);
         var defaultLayouts = Library.Layouts.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (string name in PageLayouts.Names)
+        foreach (string name in NotOnTheNewDesign.Names("page layouts"))
         {
             Layouts.Add(new LayoutChip(name, new Command(() => ToggleLayout(name))) { IsSelected = keptLayouts.Count > 0 ? keptLayouts.Contains(name) : defaultLayouts.Contains(name) });
         }
@@ -844,9 +844,9 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
         string format = _options.ImageFormat ?? Library.ImageFormat;
         int quality = _options.Quality ?? Library.Quality;
         bool jpeg = format.Equals("jpeg", StringComparison.OrdinalIgnoreCase);
-        string extension = jpeg ? ".jpg" : ImageEncoders.Get(format).Extensions.FirstOrDefault() ?? "." + format;
+        string extension = jpeg ? ".jpg" : NotOnTheNewDesign.Yet<IImageEncoder>($"The image encoder '{format}' by name").Extensions.FirstOrDefault() ?? "." + format;
         string name = string.Create(CultureInfo.InvariantCulture, $"page-{Seed()}-{variant.Index + 1}{(ShowClean ? "-clean" : "")}{extension}");
-        byte[] bytes = await Task.Run(() => jpeg ? JpegEncoder.Encode(image, quality) : ImageEncoders.Get(format).Encode(image)).ConfigureAwait(true);
+        byte[] bytes = await Task.Run(() => jpeg ? JpegEncoder.Encode(image, quality) : NotOnTheNewDesign.Yet<IImageEncoder>($"The image encoder '{format}' by name").Encode(image)).ConfigureAwait(true);
         return (bytes, name, jpeg ? "image/jpeg" : format.Equals("png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "application/octet-stream");
     }
 
@@ -1015,15 +1015,15 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
             foreach (var (name, bytes) in files)
             {
                 string safe = Path.GetFileName(name);
-                if (!FontFormats.Extensions.Contains(Path.GetExtension(safe).ToLowerInvariant()))
+                if (!NotOnTheNewDesign.Names("font formats' extensions").Contains(Path.GetExtension(safe).ToLowerInvariant()))
                 {
-                    bad.Add($"{safe}: not a font file ({string.Join(", ", FontFormats.Extensions)})");
+                    bad.Add($"{safe}: not a font file ({string.Join(", ", NotOnTheNewDesign.Names("font formats' extensions"))})");
                     continue;
                 }
 
                 try
                 {
-                    var faces = FontFormats.Read(bytes, Path.GetFileNameWithoutExtension(safe));
+                    var faces = NotOnTheNewDesign.Yet<IReadOnlyList<IFontFace>>("Reading a font through the registered font formats");
                     string path = Path.Combine(folder, safe);
                     File.WriteAllBytes(path, bytes);
                     lock (_facesGate)
@@ -1236,7 +1236,7 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
         IReadOnlyList<IFontFace> faces;
         try
         {
-            faces = FontFormats.Read(path);
+            faces = NotOnTheNewDesign.Yet<IReadOnlyList<IFontFace>>("Reading a font through the registered font formats");
         }
         catch (InvalidDataException)
         {
@@ -1253,7 +1253,7 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
 
     private static List<(string Path, long Bytes, bool Added)> FindFonts(string added, IReadOnlyList<string> phone)
     {
-        var extensions = FontFormats.Extensions.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var extensions = NotOnTheNewDesign.Names("font formats' extensions").ToHashSet(StringComparer.OrdinalIgnoreCase);
         var found = new List<(string, long, bool)>();
         foreach (var (folder, isAdded) in phone.Select(f => (f, false)).Prepend((added, true)))
         {
@@ -1352,9 +1352,9 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
     {
         try
         {
-            return ScanProfiles.Get(name).Summary;
+            return NotOnTheNewDesign.Yet<string>($"The scan profile '{name}' by name");
         }
-        catch (Exception e) when (e is NotSupportedException or NotRegisteredException)
+        catch (NotSupportedException)
         {
             return "";
         }

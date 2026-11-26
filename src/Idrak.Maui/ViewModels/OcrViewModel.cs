@@ -472,7 +472,7 @@ public sealed class OcrViewModel : ViewModel
             }
 
             var vision = VisionModels;
-            var families = VisionFamilies.Names;
+            var families = NotOnTheNewDesign.Names("vision families");
             ModelsText = vision.Count > 0 ? $"{vision.Count} vision-language model{(vision.Count == 1 ? "" : "s")} on this phone."
                 : families.Count == 0 ? "No vision family is registered: the app registers the families it shows (a vision plug-in's own Register call)."
                 : $"No vision-language model on this phone{(others > 0 ? $" among the {others} other model{(others == 1 ? "" : "s")}" : "")}: pull one in Models, "
@@ -599,18 +599,15 @@ public sealed class OcrViewModel : ViewModel
             return false;
         }
 
-        ImageTransformPipeline pipeline;
-        try
+        // The preprocessing's steps were image transforms registered by name (ImageTransforms), which is not on the new
+        // design yet: a pipeline given stops; with none, the page is the photo as decoded.
+        if (Pipeline.Trim() is { Length: > 0 } given && !given.Equals("none", StringComparison.OrdinalIgnoreCase))
         {
-            pipeline = ImageTransformPipeline.Parse(Pipeline);
-        }
-        catch (ArgumentException e)
-        {
-            Error = e.Message;
+            Error = "The preprocessing stopped: image transforms by name are not on the new design yet.";
             return false;
         }
 
-        string key = pipeline.ToString();
+        string key = "";
         if (_prepared is not null && _preparedFor == key)
         {
             return true;                                                        // done once already
@@ -624,18 +621,18 @@ public sealed class OcrViewModel : ViewModel
             long start = _time.GetTimestamp();
             var (page, preview) = await Task.Run(() =>
             {
-                var prepared = pipeline.IsEmpty ? photo.Pixels : pipeline.Apply(photo.Pixels);
+                var prepared = photo.Pixels;
                 return (prepared, Photos.Preview(prepared, side));
             }).ConfigureAwait(true);
             var took = _time.GetElapsedTime(start);
             _prepared = page;
             _preparedFor = key;
-            _options.Pipeline = pipeline.IsEmpty ? null : key;
+            _options.Pipeline = null;
             Keep();
             Settings.FirstOrDefault(e => e.Key == "pipeline")?.Text = _options.Pipeline ?? "";
             PageSource = preview.Source();
             PageText = string.Create(CultureInfo.InvariantCulture, $"The page as the model sees it: {page.Width:N0} x {page.Height:N0}, {(page.Channels == 1 ? "grey" : "colour")}")
-                + (pipeline.IsEmpty ? ", as decoded" : $", after {key} ({Photos.Milliseconds(took)})");
+                + $", as decoded ({Photos.Milliseconds(took)})";
             Status = $"{photo.Name} is ready to read.";
             return true;
         }
@@ -682,7 +679,7 @@ public sealed class OcrViewModel : ViewModel
         ImageReadRequest request;
         try
         {
-            request = _options.ToRequest(photo.File) with { Transforms = ImageTransformPipeline.Parse(_preparedFor) };
+            request = _options.ToRequest(photo.File);
         }
         catch (ArgumentException e)
         {

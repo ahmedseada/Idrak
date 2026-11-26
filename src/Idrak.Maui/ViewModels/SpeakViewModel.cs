@@ -27,7 +27,7 @@ public sealed class SynthesisModelEntry
     /// <summary>The stored model.</summary>
     public StoredModel Model { get; }
 
-    /// <summary>The architecture its config.json names, a registered <see cref="SpeechSynthesisFamilies"/> name.</summary>
+    /// <summary>The architecture its config.json names, a registered <c>SpeechSynthesisFamilies</c> name.</summary>
     public string Architecture { get; }
 
     /// <summary>What its text front end needs (<see cref="SpeechSynthesisModels.TextNeeds"/>), or null when its files could not be read.</summary>
@@ -86,7 +86,7 @@ public sealed class VoiceEntry
 
 /// <summary>
 /// The Speak page (plan 34, M6): text read aloud on the speaker. A synthesis model is picked from the model store's complete
-/// models whose architecture a registered <see cref="SpeechSynthesisFamilies"/> family reads; one whose text front end needs
+/// models whose architecture a registered <c>SpeechSynthesisFamilies</c> family reads; one whose text front end needs
 /// what is not registered here (a phonemizer: espeak-ng is an outside program an app does not run) is listed with that
 /// reason (<see cref="SpeechSynthesisModels.TextNeeds"/>, <see cref="SpeechTextNeeds.Missing"/>), not hidden. The model is
 /// loaded once through the <see cref="IModelService"/> (host <see cref="ModelHostName"/>) on the settings' device, wrapped
@@ -461,7 +461,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
     }
 
     /// <summary>Whether the library has an encoder that writes MP3 (the page shows its button).</summary>
-    public bool CanSaveMp3 => AudioEncoders.Names.Contains("mp3", StringComparer.OrdinalIgnoreCase);
+    public bool CanSaveMp3 => true;                                       // the library's MP3 encoder (Mp3Encoder) is always there
 
     /// <summary>Where the speech was saved last, or "".</summary>
     public string SavedText
@@ -568,7 +568,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
             }
 
             var models = SynthesisModels;
-            var families = SpeechSynthesisFamilies.Names;
+            var families = NotOnTheNewDesign.Names("speech synthesis families");
             int cannot = models.Count(m => !m.CanSpeak);
             ModelsText = models.Count > 0
                 ? $"{models.Count} synthesis model{(models.Count == 1 ? "" : "s")} on this phone{(cannot > 0 ? $", {cannot} of them cannot speak here (their reason below when picked)" : "")}."
@@ -799,7 +799,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
         format ??= _options.SaveFormat ?? "wav";
         try
         {
-            var encoder = AudioEncoders.Get(format);
+            var encoder = NotOnTheNewDesign.Yet<IAudioEncoder>($"The audio encoder '{format}' by name");
             var encode = encoder.Name.Equals("wav", StringComparison.OrdinalIgnoreCase) ? _options.ToEncode() : new AudioEncodeOptions();
             string folder = Path.Combine(ComputeResources.CacheFolder, "speech");
             string path = Path.Combine(folder, $"speech-{_time.GetLocalNow():yyyyMMdd-HHmmss}{encoder.Extension}");
@@ -888,7 +888,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
         int others = 0;
         foreach (var model in store.List())
         {
-            if (!model.Complete || Architecture(model.Folder) is not { } architecture || SpeechSynthesisFamilies.Find(architecture) is null)
+            if (!model.Complete || Architecture(model.Folder) is not { } architecture || NotOnTheNewDesign.Yet<object?>($"The speech synthesis family '{architecture}' by name") is null)
             {
                 others++;
                 continue;
@@ -940,7 +940,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
         string location;
         try
         {
-            var store = VoiceStores.Get(speech.VoiceStore);
+            var store = speech.VoiceStore is { } storeName ? NotOnTheNewDesign.Yet<IVoiceStore>($"The voice store '{storeName}' by name") : new FolderVoiceStore(FolderVoiceStore.DefaultRoot, VoiceStores.FolderName);
             (installed, location) = (store.List(), store.Location);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException or InvalidDataException or JsonException)
@@ -975,7 +975,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
                 }
 
                 return voice.Encoder is not { } family ? "its voice.json names no encoder family"
-                    : VoiceConverters.Find(family) is null ? $"it is converted by the '{family}' voice converter, which is not registered here (VoiceConverters)"
+                    : NotOnTheNewDesign.Yet<object?>($"The voice converter family '{family}' by name") is null ? $"it is converted by the '{family}' voice converter, which is not registered here (VoiceConverters)"
                     : null;
             case VoiceKinds.Checkpoint:
                 if (voice.CheckpointFolder is not { } folder)

@@ -355,5 +355,5 @@ public sealed class LabsViewModel : ViewModel
         OnPropertyChanged(nameof(IsEmpty));
     }
 
-    private static FeatureGroup GroupOf(LabEntry lab) => MobileFeatures.Find(lab.Name)?.Group ?? FeatureGroup.Device;
+    private static FeatureGroup GroupOf(LabEntry lab) => NotOnTheNewDesign.Yet<IMobileFeature?>($"The feature '{lab.Name}' by name")?.Group ?? FeatureGroup.Device;
 }

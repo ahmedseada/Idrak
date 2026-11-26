@@ -60,7 +60,7 @@ public sealed class VisionReaderService : IVisionReaderService
         try
         {
             return JsonNode.Parse(File.ReadAllBytes(path)) is JsonObject config && config["architectures"] is JsonArray { Count: > 0 } names
-                   && names[0] is JsonValue first && first.TryGetValue(out string? name) && VisionFamilies.Find(name) is not null
+                   && names[0] is JsonValue first && first.TryGetValue(out string? name) && NotOnTheNewDesign.Yet<object?>($"The vision family '{name}' by name") is not null
                 ? name : null;
         }
         catch (Exception e) when (e is System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
@@ -73,16 +73,16 @@ public sealed class VisionReaderService : IVisionReaderService
     private static (ChatMemoryEstimate Estimate, string Folder, string Architecture) Measure(VisionLoadRequest request)
     {
         var device = ChatModelService.DeviceOf(request.Device);
-        string folder = CheckpointFormats.For(request.Path).Prepare(request.Path);
+        string folder = NotOnTheNewDesign.Yet<ICheckpointFormat>($"{request.Path}: a checkpoint format found by the path").Prepare(request.Path);
         string configPath = Path.Combine(folder, "config.json");
         var config = JsonNode.Parse(File.ReadAllText(configPath)) as JsonObject ?? throw new InvalidDataException($"{configPath} is not a JSON object.");
         string architecture = (string?)config["architectures"]?[0] ?? throw new InvalidDataException($"{configPath} names no architecture.");
-        if (VisionFamilies.For(architecture, config) is null)
+        if (NotOnTheNewDesign.Yet<object?>($"The vision family '{architecture}' by name") is null)
         {
             throw new InvalidOperationException($"{request.Model} reads text only (no vision part in its config.json): give a vision-language model.");
         }
 
-        var spec = PretrainedArchitectures.Get(architecture).Spec(config, []);
+        var spec = NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"The architecture '{architecture}' by name").Spec(config, []);
         int context = Math.Min(request.Context, spec.MaxPositions);
         long vision = VisionParameters.GetOrAdd(Path.GetFullPath(folder), _ => CountVision(folder, spec));
         long weights = ChatModelService.WeightBytes(spec) + vision * sizeof(float);
@@ -95,7 +95,7 @@ public sealed class VisionReaderService : IVisionReaderService
     // weights' headers (nothing is read into memory), less the decoder's parameters.
     private static long CountVision(string folder, DecoderSpec spec)
     {
-        using var store = CheckpointFormats.For(folder).Open(folder);
+        using var store = NotOnTheNewDesign.Yet<ICheckpointFormat>($"{folder}: a checkpoint format found by the path").Open(folder);
         long total = 0;
         foreach (string name in store.Names)
         {

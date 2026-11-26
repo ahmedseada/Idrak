@@ -235,6 +235,11 @@ public static class LabSettings
         : choices.FirstOrDefault(c => c.Equals(text, StringComparison.OrdinalIgnoreCase))
           ?? throw new FormatException($"'{text}' is not one of {string.Join(", ", choices)}.");
 
+    // The image transforms were registered (ImageTransforms) and a pipeline's steps found by name, which is not on the new
+    // design yet.
+    private static string PipelineNamed(string text) =>
+        throw new NotSupportedException($"The image pipeline '{text}': image transforms by name are not on the new design yet.");
+
     // An image transform pipeline's text, checked against the registered transforms and written as the library writes
     // it; empty or "none": none.
     internal static string? Pipeline(string text)
@@ -246,7 +251,7 @@ public static class LabSettings
 
         try
         {
-            return ImageTransformPipeline.Parse(text).ToString();
+            return PipelineNamed(text);
         }
         catch (ArgumentException e)
         {

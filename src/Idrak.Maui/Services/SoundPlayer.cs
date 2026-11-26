@@ -120,7 +120,7 @@ public sealed class SoundPlayer : ISoundPlayer, IDisposable, ILiveLevelSource
     private async Task<SoundPlayback> PlayCoreAsync(IAsyncEnumerable<AudioData> blocks, SoundPlayRequest request, CancellationToken token)
     {
         long started = _time.GetTimestamp();
-        var playback = request.Playback is { Length: > 0 } name ? AudioPlaybacks.Get(name) : AudioPlaybacks.ForThisMachine();
+        var playback = request.Playback is { Length: > 0 } name ? NotOnTheNewDesign.Yet<IAudioPlayback>($"The audio playback '{name}' by name") : AudioPlaybacks.ForThisMachine();
         if (!playback.IsAvailable(out string reason))
         {
             throw new NotSupportedException($"The {playback.Name} playback cannot play here: {reason}.");

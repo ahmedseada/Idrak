@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Maui.Abstractions;
 
 /// <summary>Where a start-up step runs.</summary>
@@ -39,11 +37,17 @@ public sealed record StartupContext(IServiceProvider Services, Page? Host);
 /// <summary>
 /// One piece of the app's real start-up work, run once when the window first shows (<see cref="StartupRun.RunAsync"/>) and
 /// shown by the splash while it runs: its <see cref="Title"/> is the splash's line. Registered by its
-/// <see cref="IKind.Name"/> in <see cref="StartupSteps"/>; the library's read the CPU, start the GPU and make the tabs ahead,
+/// <c>IKind.Name</c> in <see cref="StartupSteps"/>; the library's read the CPU, start the GPU and make the tabs ahead,
 /// and an app adds its own or replaces one by name.
 /// </summary>
-public interface IStartupStep : IKind
+public interface IStartupStep
 {
+    /// <summary>Its name ("gpu"): what the app's settings and links name it by.</summary>
+    string Name { get; }
+
+    /// <summary>One line on it, for listings.</summary>
+    string Summary { get; }
+
     /// <summary>The splash's line while it runs ("Reading the CPU").</summary>
     string Title { get; }
 
@@ -61,7 +65,7 @@ public interface IStartupStep : IKind
 }
 
 /// <summary>
-/// The start-up steps (a <see cref="SlotTable{TKey, TValue}"/>), by name ignoring case: "cpu" (the CPU described), "gpu"
+/// The start-up steps' names, ignoring case: "cpu" (the CPU described), "gpu"
 /// (every GPU backend started, and Home's device summary and model list read) and "sections" (the tabs' views made ahead,
 /// when <see cref="IdrakMauiOptions.PrebuildSections"/> is on) are the library's. <see cref="All"/> lists them in order.
 /// </summary>
@@ -76,49 +80,12 @@ public static class StartupSteps
     /// <summary>The tabs' views made ahead, one a turn of the UI thread.</summary>
     public const string Sections = "sections";
 
-    private static readonly SlotTable<string, IStartupStep> Table = BuiltIn();
-
-    private static SlotTable<string, IStartupStep> BuiltIn()
-    {
-        var table = new SlotTable<string, IStartupStep>(nameof(StartupSteps), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a start-up step runs once, while the app starts, with no call to fall back at");
-        foreach (var step in Idrak.Maui.LibraryStartupSteps.All())
-        {
-            table.RegisterDefault(step.Name, step);
-        }
-
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="step"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IStartupStep step)
-    {
-        ArgumentNullException.ThrowIfNull(step);
-        ArgumentException.ThrowIfNullOrWhiteSpace(step.Name);
-        Table.Register(step.Name, step, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's step of that name (the library's, if any, answers again); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in registration order.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
     /// <summary>Every registered step in order (<see cref="IStartupStep.Order"/>, then the name).</summary>
-    public static IReadOnlyList<IStartupStep> All => [.. Table.Values.OrderBy(s => s.Order).ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)];
+    public static IReadOnlyList<IStartupStep> All => [.. Registered().OrderBy(s => s.Order).ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)];
 
-    /// <summary>The step of that name, or null.</summary>
-    public static IStartupStep? Find(string name) => Table.Find(name);
-
-    /// <summary>The step of that name.</summary>
-    /// <exception cref="NotRegisteredException">None is registered under that name (the message names those that are).</exception>
-    public static IStartupStep Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(StartupSteps), name, Table.Keys,
-            $"Start-up step '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with StartupSteps.Register.");
-
-    /// <summary>Who registered the step of that name: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
+    // The steps were registered (StartupSteps.Register: the library's as defaults, an app's over them) and listed, which
+    // is not on the new design yet.
+    private static IEnumerable<IStartupStep> Registered() => throw new NotSupportedException("The app's registered start-up steps are not on the new design yet.");
 }
 
 /// <summary>

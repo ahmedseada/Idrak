@@ -92,7 +92,7 @@ public sealed class VisionReaderLease : IDisposable
 public interface IVisionReaderService
 {
     /// <summary>What <paramref name="request"/>'s model needs against what its device has now (reads its config and its weights' shapes; loads nothing).</summary>
-    /// <exception cref="NotRegisteredException">The model's text decoder is not registered.</exception>
+    /// <exception cref="NotSupportedException">The model's text decoder is not registered.</exception>
     /// <exception cref="NotSupportedException">The model's vision family is not registered.</exception>
     ChatMemoryEstimate Estimate(VisionLoadRequest request);
 
@@ -102,7 +102,7 @@ public interface IVisionReaderService
     /// loaded with its vision part. Runs on a worker thread.
     /// </summary>
     /// <exception cref="ModelDoesNotFitException">It does not fit the memory measured (nothing was loaded).</exception>
-    /// <exception cref="NotRegisteredException">Its text decoder is not registered.</exception>
+    /// <exception cref="NotSupportedException">Its text decoder is not registered.</exception>
     /// <exception cref="NotSupportedException">Its vision family is not registered.</exception>
     /// <exception cref="InvalidOperationException">It reads text only, or the device cannot start.</exception>
     Task<VisionReaderLease> AcquireAsync(VisionLoadRequest request, CancellationToken cancellationToken = default);

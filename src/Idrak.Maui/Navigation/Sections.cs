@@ -6,22 +6,6 @@ using Idrak.Maui.Views;
 
 namespace Idrak.Maui.Navigation;
 
-/// <summary>The library's sections of the app's navigation, registered as defaults in <see cref="AppSections"/>.</summary>
-internal static class LibrarySections
-{
-    public static IEnumerable<IAppSection> All() =>
-    [
-        new HomeSection(),
-        new FeatureSection(AppSections.Chat, "Chat", "chat", 10, MobileFeatures.Chat, "A model from the store chats on this device"),
-        new SegmentedSection(AppSections.Voice, "Voice", "mic", 20, [MobileFeatures.Transcribe, MobileFeatures.Speak, MobileFeatures.AudioProcess],
-            "Speech into text, text into speech, a recording through the library's processors"),
-        new SegmentedSection(AppSections.Vision, "Vision", "vision", 30, [MobileFeatures.Ocr, MobileFeatures.Image, MobileFeatures.Generate],
-            "A photo read by a model; transforms and scan looks on a photo; text drawn as scanned pages"),
-        new LabsSection(),
-        new SettingsSection(),
-    ];
-}
-
 /// <summary>Home: the library and the app, the device measured, the labs to try (<see cref="HomeView"/>).</summary>
 public sealed class HomeSection : IAppSection
 {
@@ -178,11 +162,11 @@ public sealed class SettingsSection : IAppSection
 public static class FeatureViews
 {
     /// <summary>The view of the feature <paramref name="name"/>, bound to a new view model of it (or the app's shared one).</summary>
-    /// <exception cref="NotRegisteredException">No feature has that name.</exception>
+    /// <exception cref="NotSupportedException">No feature has that name.</exception>
     public static View Create(IServiceProvider services, string name)
     {
         ArgumentNullException.ThrowIfNull(services);
-        var feature = MobileFeatures.Get(name);
+        var feature = NotOnTheNewDesign.Yet<IMobileFeature>($"The feature '{name}' by name");
         object viewModel = feature.CreateViewModel(services);
         var view = feature.CreateView(services, viewModel) ?? new FeatureLinkView(feature, services);
         view.BindingContext ??= viewModel;

@@ -26,7 +26,7 @@ public sealed class OcrLabOptions
     /// <summary>A system turn before the page (<see cref="ImageReadRequest.System"/>); null: none.</summary>
     public string? System { get; set; }
 
-    /// <summary>The preprocessing pipeline run on the page before the family's own processor (<see cref="ImageTransformPipeline"/> text); null: none.</summary>
+    /// <summary>The preprocessing pipeline run on the page before the family's own processor (<c>ImageTransformPipeline</c> text); null: none.</summary>
     public string? Pipeline { get; set; }
 
     /// <summary>The most tokens the answer takes (<see cref="ImageReadRequest.MaxTokens"/>); null: the library's.</summary>
@@ -47,10 +47,6 @@ public sealed class OcrLabOptions
     /// <summary>A copy.</summary>
     public OcrLabOptions Clone() => (OcrLabOptions)MemberwiseClone();
 
-    /// <summary>The pipeline of <see cref="Pipeline"/>, checked against the registered transforms (empty when none).</summary>
-    /// <exception cref="ArgumentException">An unknown transform or option, or a value the transform refuses.</exception>
-    public ImageTransformPipeline ToPipeline() => ImageTransformPipeline.Parse(Pipeline);
-
     /// <summary>The read of <paramref name="page"/>: the instruction, the system text, the pipeline, the length and the stop over the library's defaults.</summary>
     public ImageReadRequest ToRequest(ChatImage page)
     {
@@ -60,7 +56,6 @@ public sealed class OcrLabOptions
         {
             Prompt = string.IsNullOrWhiteSpace(Prompt) ? library.Prompt : Prompt,
             System = string.IsNullOrWhiteSpace(System) ? library.System : System,
-            Transforms = ToPipeline(),
             MaxTokens = MaxTokens ?? library.MaxTokens,
             RepeatStop = RepeatStop ?? library.RepeatStop,
         };
