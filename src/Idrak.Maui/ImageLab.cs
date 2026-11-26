@@ -88,8 +88,8 @@ public static class ImageSettings
     /// <summary>The settings edited on the page, in its order.</summary>
     public static IReadOnlyList<LabSetting<ImageLabOptions>> Definitions { get; } = Define();
 
-    /// <summary>The formats a result is saved in: png, jpeg, then the other registered encoders.</summary>
-    public static IReadOnlyList<string> Formats => [Png, Jpeg, .. NotOnTheNewDesign.Names("image encoders").Where(n => !n.Equals(Png, StringComparison.OrdinalIgnoreCase) && !n.Equals(Jpeg, StringComparison.OrdinalIgnoreCase))];
+    /// <summary>The formats a result is saved in: png and jpeg (another encoder by name is not on the new design yet).</summary>
+    public static IReadOnlyList<string> Formats => [Png, Jpeg];
 
     /// <summary>
     /// The options saved in <paramref name="store"/>, over <paramref name="defaults"/> (a copy; the library's defaults when
@@ -126,7 +126,7 @@ public static class ImageSettings
     private static IReadOnlyList<LabSetting<ImageLabOptions>> Define() =>
     [
         new("profile", "Scan profile", "The scan profile Apply profile draws from (ScanProfiles; several joined with '+', such as damaged+marked).", LabSettingKind.Choice, "none",
-            o => o.Profile ?? "", (o, t) => o.Profile = Profile(t), () => ["none", .. NotOnTheNewDesign.Names("scan profiles")]),
+            o => o.Profile ?? "", (o, t) => o.Profile = Profile(t), () => ["none"]),
         new("seed", "Profile seed", "The seed a scan profile draws its steps from: the same seed, the same steps; empty: a new one each time (shown).",
             LabSettingKind.Number, "a new one each time", o => LabSettings.Show(o.Seed), (o, t) => o.Seed = LabSettings.Whole(t, 0)),
         new("save_format", "Save as", "The format a result is saved and shared in (png: the library's PNG encoder; jpeg: its JPEG encoder; or another registered encoder).",

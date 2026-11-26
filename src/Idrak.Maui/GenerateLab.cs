@@ -113,8 +113,8 @@ public static class GenerateSettings
     /// <summary>The settings edited on the page, in its order.</summary>
     public static IReadOnlyList<LabSetting<GenerateLabOptions>> Definitions { get; } = Define();
 
-    /// <summary>The image formats a page is written in: jpeg, then the registered encoders.</summary>
-    public static IReadOnlyList<string> Formats => ["jpeg", .. NotOnTheNewDesign.Names("image encoders").Where(n => !n.Equals("jpeg", StringComparison.OrdinalIgnoreCase))];
+    /// <summary>The image formats a page is written in: jpeg (another encoder by name is not on the new design yet).</summary>
+    public static IReadOnlyList<string> Formats => ["jpeg"];
 
     /// <summary>The options saved in <paramref name="store"/> over <paramref name="defaults"/> (a copy; the library's when null); a value that no longer reads is skipped and named.</summary>
     public static GenerateLabOptions Load(ISettingsStore store, out IReadOnlyList<string> skipped, GenerateLabOptions? defaults = null)
