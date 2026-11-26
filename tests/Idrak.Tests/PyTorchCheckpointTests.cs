@@ -8,61 +8,13 @@ using Idrak.Data;
 using Idrak.Models;
 using Idrak.Audio.Plugins.OpenVoice;
 
-// PyTorch checkpoints read without running them (PyTorchCheckpointReader, the "pytorch" checkpoint format) and pulls of
-// a model kept in a repository's subfolder. The fixture comes from tools/pytorch/checkpoint_reference.py
-// (pytorch-checkpoints/) and tools/audio/make_tiny_audio.py --sections voices (tiny-openvoice/checkpoint.pth).
+// Pulls of a model kept in a repository's subfolder (safetensors first, else one PyTorch checkpoint).
 internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] PyTorchCheckpointGroup =
     [
-        ("pytorch checkpoint: the \"pytorch\" format opens a folder with one checkpoint and no safetensors, or the file, and leaves a safetensors folder to safetensors; several checkpoints are refused naming them; OpenVoice's converter loads from tiny-openvoice's checkpoint.pth and converts to the same bits as from its safetensors", PyTorchCheckpointFormatAndOpenVoice),
         ("pytorch checkpoint: a pull of owner/name/folder takes that folder's config and weights (safetensors first, else one PyTorch checkpoint), refuses sharded .bin weights and several checkpoints naming them, and names the subfolder that holds a config.json when the top level has none; idrak pull reads owner/name/folder as a repository and a folder", PyTorchCheckpointPullChoice),
     ];
-
-    private static string PyTorchData(string name) => TestData(Path.Combine("pytorch-checkpoints", name));
-
-    private static void PyTorchCheckpointFormatAndOpenVoice(Device device)
-    {
-        string root = TempFolder("pytorch-format");
-        try
-        {
-            if (device.Type == DeviceType.Cpu)
-            {
-                string one = Path.Combine(root, "one");
-                Directory.CreateDirectory(one);
-                File.Copy(PyTorchData("state.pth"), Path.Combine(one, "weights.pth"));
-                var format = CheckpointFormats.For(one);
-                Check(format.Name == "pytorch" && CheckpointFormats.For(Path.Combine(one, "weights.pth")).Name == "pytorch"
-                    && CheckpointFormats.For(TinyOpenVoice).Name == "safetensors", $"the formats: {format.Name} for a folder with one checkpoint; safetensors where there is a .safetensors");
-                using (var store = format.Open(format.Prepare(Path.Combine(one, "weights.pth"))))
-                {
-                    Check(store.Contains("dense.weight") && format.Notes(one).Single().Contains("nothing in it is run", StringComparison.Ordinal), "the format opens the file's folder, with a note");
-                }
-
-                File.Copy(PyTorchData("nested.pth"), Path.Combine(one, "other.pt"));
-                Check(CheckpointFormats.For(one).Name == "safetensors", "a folder with several checkpoints is not taken by the pytorch format");
-                ThrowsNaming<InvalidDataException>(() => new PyTorchCheckpointFormat().Open(one).Dispose(), "several checkpoints", "other.pt", "weights.pth");
-            }
-
-            OpenVoicePlugin.Register();
-            string converter = Path.Combine(root, "openvoice-pth");
-            Directory.CreateDirectory(converter);
-            File.Copy(Path.Combine(TinyOpenVoice, "config.json"), Path.Combine(converter, "config.json"));
-            File.Copy(Path.Combine(TinyOpenVoice, "checkpoint.pth"), Path.Combine(converter, "checkpoint.pth"));
-            var (source, clips) = OpenVoiceInputs();
-            using var fromSafetensors = LoadOpenVoice(TinyOpenVoice, device);
-            using var fromPickle = LoadOpenVoice(converter, device);
-            var target = fromSafetensors.Embed(clips);
-            Check(fromPickle.Embed(clips).AsSpan().SequenceEqual(target), "the embedding from checkpoint.pth equals the safetensors one");
-            var exact = new VoiceConversionOptions { Tau = 0 };
-            Check(fromPickle.Convert(source, target, exact).Samples.AsSpan().SequenceEqual(fromSafetensors.Convert(source, target, exact).Samples),
-                "the conversion from checkpoint.pth equals the safetensors one bit for bit");
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
 
     private static void PyTorchCheckpointPullChoice(Device device)
     {

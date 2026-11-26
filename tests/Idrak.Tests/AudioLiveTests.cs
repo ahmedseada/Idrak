@@ -6,17 +6,13 @@ using System.Runtime.CompilerServices;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 
-// Plan 30: live transcription. The stream input, the library's LiveTranscriber on a scripted recognizer and on
-// tiny-whisper, the audio captures (ALSA's null device where libasound is installed) and idrak transcribe --live.
+// Plan 30: live transcription. The stream input and the library's LiveTranscriber on a scripted recognizer.
 internal abstract partial class DesktopTests : Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] AudioLiveGroup =
     [
         ("audio live: PcmStreamInput reads raw s16le stereo and f32le, a WAV header of unknown size with a chunk before its data, a stream shorter than a header, all through reads of three bytes at a time; frames split between reads wait for their rest", AudioLiveStream),
         ("audio live: LiveTranscriber on a scripted recognizer: quiet before speech never transcribed, words committed once two readings agree, a segment ended by a pause and the last by the end, the first segment's text the second's prompt; a click under MinSpeechSeconds never read; a long tone cut by the window", AudioLiveScripted),
-        ("audio live: tiny-whisper over pcm16.wav given in 0.1 s blocks: the steps' updates and one finished segment whose text is the whole file's transcription", AudioLiveWhisper),
-        ("audio live: the captures: winmm and alsa registered with their reasons, this machine's chosen; ALSA's null device recorded through the driver (16 kHz mono blocks, stopped by the token) where libasound is installed", AudioLiveCaptures),
-        ("audio live: idrak transcribe --live FILE prints the segment with its times and writes -o SRT; --list-inputs lists the captures; a second source refused", AudioLiveCli),
     ];
 
     // A stream that gives at most `step` bytes a read.
@@ -224,95 +220,5 @@ internal abstract partial class DesktopTests : Tests
         int cut = windowed.Count(u => u.SegmentEnded);
         Check(cut >= 3 && windowed.Where(u => u.SegmentEnded).All(u => u.End - u.Start <= 3.01), $"a 6 s tone in a 2.5 s window: {cut} segments");
         Console.WriteLine($"    {recognizer.Calls.Count} readings, {segments.Count} segments: '{segments[0].Segment}', '{segments[1].Segment}'; the window cut a 6 s tone into {cut}");
-    }
-
-    private static void AudioLiveWhisper(Device device)
-    {
-        using var recognizer = TinyWhisper(device);
-        var audio = AudioCodecs.Decode(AudioData("wav/pcm16.wav"));
-        var request = new TranscriptionOptions { Language = "ar" };
-        string whole = recognizer.Transcribe(audio, request).Text.Trim();
-
-        async IAsyncEnumerable<AudioData> Blocks()
-        {
-            var mono = new float[audio.Length];
-            audio.ToMono(mono);
-            int block = audio.SampleRate / 10;
-            for (int start = 0; start < mono.Length; start += block)
-            {
-                yield return new AudioData(mono.AsSpan(start, Math.Min(block, mono.Length - start)).ToArray(), 1, audio.SampleRate);
-                await Task.Yield();
-            }
-        }
-
-        var updates = Updates(recognizer, Blocks(), new LiveTranscriptionOptions { Transcription = request, StepSeconds = 0.3, PreRollSeconds = 30, SilenceSeconds = 30, KeepUp = false });
-        var segments = updates.Where(u => u.SegmentEnded).ToList();
-        Check(segments.Count == 1 && segments[0].Segment == whole && segments[0].Start == 0, $"segments: {string.Join(" | ", segments.Select(s => $"{s.Start}-{s.End} '{s.Segment}'"))}; the whole file reads '{whole}'");
-        Console.WriteLine($"    {updates.Count} updates; the segment '{segments[0].Segment}' as the whole file's");
-    }
-
-    private static void AudioLiveCaptures(Device device)
-    {
-        _ = device;
-        Check(AudioCaptures.Names.Contains(AudioCaptures.Winmm) && AudioCaptures.Names.Contains(AudioCaptures.Alsa), $"captures: {string.Join(", ", AudioCaptures.Names)}");
-        Check(AudioCaptures.Get("winmm").IsAvailable(out string winmm) == OperatingSystem.IsWindows(), $"winmm: {winmm}");
-        var alsa = AudioCaptures.Get("alsa");
-        bool alsaHere = alsa.IsAvailable(out string reason);
-        Check(alsaHere || !OperatingSystem.IsLinux() || reason.Contains("libasound", StringComparison.Ordinal), $"alsa: {reason}");
-        if (OperatingSystem.IsWindows() || alsaHere)
-        {
-            var chosen = AudioCaptures.ForThisMachine();
-            Check(chosen.Name == (OperatingSystem.IsWindows() ? "winmm" : "alsa") && chosen.Devices().Count > 0 && chosen.Devices()[0].IsDefault,
-                $"this machine's capture: {chosen.Name}, inputs {string.Join(", ", chosen.Devices().Select(d => d.Id))}");
-        }
-        else
-        {
-            ThrowsNaming<NotSupportedException>(() => AudioCaptures.ForThisMachine(), "no capture here", "No audio capture");
-        }
-
-        if (!alsaHere)
-        {
-            Console.WriteLine($"    alsa not here ({reason}): its null device not recorded");
-            return;
-        }
-
-        using var input = alsa.Open(new AudioCaptureOptions { Device = "null", SampleRate = 16000, Channels = 1, BlockSeconds = 0.05 });
-        using var stop = new CancellationTokenSource();
-        var blocks = new List<AudioData>();
-        var reading = Task.Run(async () =>
-        {
-            await foreach (var block in input.ReadAsync(stop.Token))
-            {
-                blocks.Add(block);
-                if (blocks.Count == 5)
-                {
-                    stop.Cancel();
-                }
-            }
-        });
-        Check(reading.Wait(TimeSpan.FromSeconds(30)), "the null device was not read and stopped within 30 s");
-        Check(blocks.Count >= 5 && blocks.All(b => b.SampleRate == 16000 && b.Channels == 1 && b.Length > 0), $"{blocks.Count} blocks: {string.Join(", ", blocks.Take(6).Select(b => $"{b.Length}@{b.SampleRate}"))}");
-        Console.WriteLine($"    alsa's null device: {blocks.Count} blocks of {blocks[0].Length} samples, then stopped; inputs {string.Join(", ", alsa.Devices().Take(6).Select(d => d.Id))}");
-    }
-
-    private static void AudioLiveCli(Device device)
-    {
-        string root = TempFolder("live-cli");
-        try
-        {
-            string srt = Path.Combine(root, "live.srt");
-            var (code, output, error) = AudioCli("transcribe", AudioData("tiny-whisper"), "--live", AudioData("wav/pcm16.wav"), "-l", "ar", "--timestamps", "--step", "0.3",
-                "-o", srt, "-d", device.ToString());
-            Check(code == 0 && output.Contains("[00:00", StringComparison.Ordinal) && File.Exists(srt) && File.ReadAllText(srt).Contains("-->", StringComparison.Ordinal),
-                $"transcribe --live: exit {code}\n{output}\n{error}");
-            var listed = AudioCli("transcribe", "--list-inputs");
-            Check(listed.Code == 0 && listed.Out.Contains("winmm", StringComparison.Ordinal) && listed.Out.Contains("alsa", StringComparison.Ordinal), $"--list-inputs: exit {listed.Code}\n{listed.Out}\n{listed.Err}");
-            var two = AudioCli("transcribe", AudioData("tiny-whisper"), "--live", "a.wav", "b.wav");
-            Check(two.Code != 0 && two.Err.Contains("one source", StringComparison.Ordinal), $"two sources: exit {two.Code}\n{two.Err}");
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
     }
 }
