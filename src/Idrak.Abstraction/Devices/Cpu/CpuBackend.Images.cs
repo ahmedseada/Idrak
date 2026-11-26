@@ -25,11 +25,14 @@ internal sealed unsafe partial class CpuBackend
         HostParallel.For(count, 1, body);
     }
 
+    // Each kernel reads a typed input through its type where it reads it (TypedRanges): a plane when its thread takes it, the
+    // input rows a window row reads, a window's column values; never the whole input.
     public override void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g)
     {
-        var px = V(x);
+        var px = D(x);
         var pc = V(cols);
         var geometry = g;
+        var tx = new TypedRanges(x, 0, "Im2Col");
         int oh = g.OH, ow = g.OW, patch = g.PatchSize;
         Planes(g.N * oh, (long)ow * patch, (first, last) =>
         {
@@ -37,6 +40,38 @@ internal sealed unsafe partial class CpuBackend
             for (int row = first; row < last; row++)
             {
                 int n = row / oh, y = row % oh;
+                if (tx.Typed)
+                {
+                    // Each channel's input rows the window row reads, read through x's type once (the same values copied).
+                    int top = Math.Max(0, y * s.SH - s.PH), bottom = Math.Min(s.H, y * s.SH - s.PH + (s.KH - 1) * s.DH + 1);
+                    for (int c = 0; c < s.C; c++)
+                    {
+                        long plane = (long)(n * s.C + c) * s.H;
+                        long shift = 0;
+                        var values = px;
+                        if (bottom > top)
+                        {
+                            values = tx.Values(px, (plane + top) * s.W, (long)(bottom - top) * s.W, out shift);
+                        }
+
+                        for (int xo = 0; xo < ow; xo++)
+                        {
+                            long at = ((long)row * ow + xo) * patch + (long)c * s.KH * s.KW;
+                            for (int kh = 0; kh < s.KH; kh++)
+                            {
+                                int ih = y * s.SH - s.PH + kh * s.DH;
+                                for (int kw = 0; kw < s.KW; kw++, at++)
+                                {
+                                    int iw = xo * s.SW - s.PW + kw * s.DW;
+                                    pc[at] = ih >= 0 && ih < s.H && iw >= 0 && iw < s.W ? values[shift + (plane + ih) * s.W + iw] : 0f;
+                                }
+                            }
+                        }
+                    }
+
+                    continue;
+                }
+
                 for (int xo = 0; xo < ow; xo++)
                 {
                     long at = ((long)row * ow + xo) * patch;
@@ -59,9 +94,10 @@ internal sealed unsafe partial class CpuBackend
 
     public override void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g)
     {
-        var pc = V(dcols);
+        var pc = D(dcols);
         var px = V(dx);
         var s = g;
+        var tc = new TypedRanges(dcols, 0, "Col2Im");
         int oh = g.OH, ow = g.OW, patch = g.PatchSize;
         Planes(g.N * g.C, (long)oh * ow * g.KH * g.KW, (first, last) =>
         {
@@ -74,6 +110,7 @@ internal sealed unsafe partial class CpuBackend
                     for (int xo = 0; xo < ow; xo++)
                     {
                         long at = ((long)(n * oh + y) * ow + xo) * patch + (long)c * s.KH * s.KW;
+                        var values = tc.Values(pc, at, (long)s.KH * s.KW, out long shift);   // the window's values of this plane
                         for (int kh = 0; kh < s.KH; kh++)
                         {
                             int ih = y * s.SH - s.PH + kh * s.DH;
@@ -82,7 +119,7 @@ internal sealed unsafe partial class CpuBackend
                                 int iw = xo * s.SW - s.PW + kw * s.DW;
                                 if (ih >= 0 && ih < s.H && iw >= 0 && iw < s.W)
                                 {
-                                    px[image + (long)ih * s.W + iw] += pc[at];
+                                    px[image + (long)ih * s.W + iw] += values[shift + at];
                                 }
                             }
                         }
@@ -94,16 +131,18 @@ internal sealed unsafe partial class CpuBackend
 
     public override void MaxPoolKernel(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
-        var px = V(x);
+        var wx = D(x);
         var py = V(y);
         var pa = D(argmax);
         var s = g;
+        var tx = new TypedRanges(x, 0, "MaxPool");
         int oh = g.OH, ow = g.OW;
         Planes(g.N * g.C, (long)oh * ow * g.KH * g.KW, (first, last) =>
         {
             for (int plane = first; plane < last; plane++)
             {
                 long image = (long)plane * s.H * s.W;
+                var px = tx.Values(wx, image, (long)s.H * s.W, out long shift);
                 for (int yo = 0; yo < oh; yo++)
                 {
                     for (int xo = 0; xo < ow; xo++)
@@ -127,7 +166,7 @@ internal sealed unsafe partial class CpuBackend
                                 }
 
                                 long at = image + (long)ih * s.W + iw;
-                                float v = px[at];
+                                float v = px[shift + at];
                                 if (index < 0 || v > best || float.IsNaN(v) && !float.IsNaN(best))
                                 {
                                     (best, index) = (v, at);
@@ -146,15 +185,21 @@ internal sealed unsafe partial class CpuBackend
 
     public override void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, int count)
     {
-        var pd = V(dy);
+        var wd = D(dy);
         var pa = D(argmax);
         var px = V(dx);
-        for (int i = 0; i < count; i++)
+        var td = new TypedRanges(dy, 0, "MaxPoolBackward");
+        for (int i0 = 0; i0 < count; i0 += ChunkValues)
         {
-            int at = BitConverter.SingleToInt32Bits(pa[i]);
-            if (at >= 0)
+            int i1 = Math.Min(count, i0 + ChunkValues);
+            var pd = td.Values(wd, i0, i1 - i0, out long shift);
+            for (int i = i0; i < i1; i++)
             {
-                px[at] += pd[i];
+                int at = BitConverter.SingleToInt32Bits(pa[i]);
+                if (at >= 0)
+                {
+                    px[at] += pd[shift + i];
+                }
             }
         }
     }
@@ -168,17 +213,23 @@ internal sealed unsafe partial class CpuBackend
     // dx[argmax[i]] += dy[i], each plane's outputs in order (a plane's maxima lie in its own plane).
     private static void ArgmaxBackward(Storage dy, Storage argmax, Storage dx, int planes, int outputs)
     {
-        var pd = V(dy);
+        var wd = D(dy);
         var pa = D(argmax);
         var px = V(dx);
+        var td = new TypedRanges(dy, 0, "MaxPoolBackward");
         Planes(planes, outputs, (first, last) =>
         {
-            for (long i = (long)first * outputs; i < (long)last * outputs; i++)
+            for (int plane = first; plane < last; plane++)
             {
-                int at = BitConverter.SingleToInt32Bits(pa[i]);
-                if (at >= 0)
+                long from = (long)plane * outputs;
+                var pd = td.Values(wd, from, outputs, out long shift);
+                for (long i = from; i < from + outputs; i++)
                 {
-                    px[at] += pd[i];
+                    int at = BitConverter.SingleToInt32Bits(pa[i]);
+                    if (at >= 0)
+                    {
+                        px[at] += pd[shift + i];
+                    }
                 }
             }
         });
@@ -195,15 +246,17 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AvgPoolKernel(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
-        var px = V(x);
+        var wx = D(x);
         var py = V(y);
         var s = g;
+        var tx = new TypedRanges(x, 0, "AvgPool");
         int oh = g.OH, ow = g.OW;
         Planes(g.N * g.C, (long)oh * ow * g.KH * g.KW, (first, last) =>
         {
             for (int plane = first; plane < last; plane++)
             {
-                long image = (long)plane * s.H * s.W;
+                var px = tx.Values(wx, (long)plane * s.H * s.W, (long)s.H * s.W, out long shift);
+                long image = shift + (long)plane * s.H * s.W;
                 for (int yo = 0; yo < oh; yo++)
                 {
                     var (h0, h1, hc) = Window(yo, s.SH, s.PH, s.KH, s.H, padBottom, countIncludePad);
@@ -228,22 +281,24 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AvgPoolBackwardKernel(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
-        var pd = V(dy);
+        var wd = D(dy);
         var px = V(dx);
         var s = g;
+        var td = new TypedRanges(dy, 0, "AvgPoolBackward");
         int oh = g.OH, ow = g.OW;
         Planes(g.N * g.C, (long)oh * ow * g.KH * g.KW, (first, last) =>
         {
             for (int plane = first; plane < last; plane++)
             {
                 long image = (long)plane * s.H * s.W;
+                var pd = td.Values(wd, (long)plane * oh * ow, (long)oh * ow, out long shift);
                 for (int yo = 0; yo < oh; yo++)
                 {
                     var (h0, h1, hc) = Window(yo, s.SH, s.PH, s.KH, s.H, padBottom, countIncludePad);
                     for (int xo = 0; xo < ow; xo++)
                     {
                         var (w0, w1, wc) = Window(xo, s.SW, s.PW, s.KW, s.W, padRight, countIncludePad);
-                        float share = pd[((long)plane * oh + yo) * ow + xo] / Math.Max(1, hc * wc);
+                        float share = pd[shift + ((long)plane * oh + yo) * ow + xo] / Math.Max(1, hc * wc);
                         for (int ih = h0; ih < h1; ih++)
                         {
                             for (int iw = w0; iw < w1; iw++)
@@ -263,13 +318,15 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AdaptiveAvgPoolKernel(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
     {
-        var px = V(x);
+        var wx = D(x);
         var py = V(y);
+        var tx = new TypedRanges(x, 0, "AdaptiveAvgPool");
         Planes(planes, (long)height * width, (first, last) =>
         {
             for (int plane = first; plane < last; plane++)
             {
-                long image = (long)plane * height * width;
+                var px = tx.Values(wx, (long)plane * height * width, (long)height * width, out long shift);
+                long image = shift + (long)plane * height * width;
                 for (int yo = 0; yo < outHeight; yo++)
                 {
                     var (h0, h1) = Adaptive(yo, height, outHeight);
@@ -294,20 +351,22 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AdaptiveAvgPoolBackwardKernel(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
     {
-        var pd = V(dy);
+        var wd = D(dy);
         var px = V(dx);
+        var td = new TypedRanges(dy, 0, "AdaptiveAvgPoolBackward");
         Planes(planes, (long)height * width, (first, last) =>
         {
             for (int plane = first; plane < last; plane++)
             {
                 long image = (long)plane * height * width;
+                var pd = td.Values(wd, (long)plane * outHeight * outWidth, (long)outHeight * outWidth, out long shift);
                 for (int yo = 0; yo < outHeight; yo++)
                 {
                     var (h0, h1) = Adaptive(yo, height, outHeight);
                     for (int xo = 0; xo < outWidth; xo++)
                     {
                         var (w0, w1) = Adaptive(xo, width, outWidth);
-                        float share = pd[((long)plane * outHeight + yo) * outWidth + xo] / Math.Max(1, (h1 - h0) * (w1 - w0));
+                        float share = pd[shift + ((long)plane * outHeight + yo) * outWidth + xo] / Math.Max(1, (h1 - h0) * (w1 - w0));
                         for (int ih = h0; ih < h1; ih++)
                         {
                             for (int iw = w0; iw < w1; iw++)
@@ -323,14 +382,16 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AdaptiveMaxPoolKernel(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
     {
-        var px = V(x);
+        var wx = D(x);
         var py = V(y);
         var pa = D(argmax);
+        var tx = new TypedRanges(x, 0, "AdaptiveMaxPool");
         Planes(planes, (long)height * width, (first, last) =>
         {
             for (int plane = first; plane < last; plane++)
             {
                 long image = (long)plane * height * width;
+                var px = tx.Values(wx, image, (long)height * width, out long shift);
                 for (int yo = 0; yo < outHeight; yo++)
                 {
                     var (h0, h1) = Adaptive(yo, height, outHeight);
@@ -344,7 +405,7 @@ internal sealed unsafe partial class CpuBackend
                             for (int iw = w0; iw < w1; iw++)
                             {
                                 long at = image + (long)ih * width + iw;
-                                float v = px[at];
+                                float v = px[shift + at];
                                 if (index < 0 || v > best || float.IsNaN(v) && !float.IsNaN(best))
                                 {
                                     (best, index) = (v, at);
@@ -379,13 +440,15 @@ internal sealed unsafe partial class CpuBackend
     public override void Interpolate2dKernel(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode,
         bool alignCorners, float scaleHeight, float scaleWidth)
     {
-        var px = V(x);
+        var wx = D(x);
         var py = V(y);
+        var tx = new TypedRanges(x, 0, "Interpolate2d");
         Planes(planes, (long)outHeight * outWidth * 4, (first, last) =>
         {
             for (int plane = first; plane < last; plane++)
             {
-                long image = (long)plane * height * width;
+                var px = tx.Values(wx, (long)plane * height * width, (long)height * width, out long shift);
+                long image = shift + (long)plane * height * width;
                 for (int yo = 0; yo < outHeight; yo++)
                 {
                     var (h0, h1, hl) = Source(yo, height, scaleHeight, mode, alignCorners);
@@ -414,20 +477,22 @@ internal sealed unsafe partial class CpuBackend
     public override void Interpolate2dBackwardKernel(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode,
         bool alignCorners, float scaleHeight, float scaleWidth)
     {
-        var pd = V(dy);
+        var wd = D(dy);
         var px = V(dx);
+        var td = new TypedRanges(dy, 0, "Interpolate2dBackward");
         Planes(planes, (long)outHeight * outWidth * 4, (first, last) =>
         {
             for (int plane = first; plane < last; plane++)
             {
                 long image = (long)plane * height * width;
+                var pd = td.Values(wd, (long)plane * outHeight * outWidth, (long)outHeight * outWidth, out long shift);
                 for (int yo = 0; yo < outHeight; yo++)
                 {
                     var (h0, h1, hl) = Source(yo, height, scaleHeight, mode, alignCorners);
                     for (int xo = 0; xo < outWidth; xo++)
                     {
                         var (w0, w1, wl) = Source(xo, width, scaleWidth, mode, alignCorners);
-                        float g = pd[((long)plane * outHeight + yo) * outWidth + xo];
+                        float g = pd[shift + ((long)plane * outHeight + yo) * outWidth + xo];
                         if (mode == InterpolationMode.Nearest)
                         {
                             px[image + (long)h0 * width + w0] += g;
@@ -460,7 +525,8 @@ internal sealed unsafe partial class CpuBackend
     private static void Ctc(Storage logProbs, Storage targets, Storage? losses, Storage? lossGrads, Storage? dLogProbs, ReadOnlySpan<int> inputLengths,
         ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
-        var lp = V(logProbs);
+        var lp = D(logProbs);
+        var tlp = new TypedRanges(logProbs, 0, "CtcLoss");
         var tw = D(targets);
         var loss = losses is null ? null : V(losses);
         var grads = lossGrads is null ? null : V(lossGrads);
@@ -487,6 +553,22 @@ internal sealed unsafe partial class CpuBackend
                 int length = Math.Clamp(inLengths[n], 0, steps), labels = tLengths[n], states = 2 * labels + 1;
                 int Label(int s) => s % 2 == 0 ? blank : intTargets ? BitConverter.SingleToInt32Bits(tw[tOffsets[n] + s / 2]) : (int)tw[tOffsets[n] + s / 2];
                 long At(int t, int c) => batchFirst ? ((long)n * steps + t) * classes + c : ((long)t * batch + n) * classes + c;
+
+                // A typed log-probability is read through its type a row (a step's classes) at a time, the row the passes are on.
+                float[] rowValues = lp;
+                long rowShift = 0;
+                int rowStep = -1;
+                float Lp(int t, int c)
+                {
+                    if (tlp.Typed && t != rowStep)
+                    {
+                        rowValues = tlp.Values(lp, At(t, 0), classes, out rowShift);
+                        rowStep = t;
+                    }
+
+                    return rowValues[rowShift + At(t, c)];
+                }
+
                 var alpha = new float[Math.Max(1, length) * states];
                 for (int i = 0; i < alpha.Length; i++)
                 {
@@ -495,10 +577,10 @@ internal sealed unsafe partial class CpuBackend
 
                 if (length > 0)
                 {
-                    alpha[0] = lp[At(0, blank)];
+                    alpha[0] = Lp(0, blank);
                     if (states > 1)
                     {
-                        alpha[1] = lp[At(0, Label(1))];
+                        alpha[1] = Lp(0, Label(1));
                     }
 
                     for (int t = 1; t < length; t++)
@@ -516,7 +598,7 @@ internal sealed unsafe partial class CpuBackend
                                 a = LogAdd(a, alpha[(t - 1) * states + s - 2]);
                             }
 
-                            alpha[t * states + s] = a + lp[At(t, Label(s))];
+                            alpha[t * states + s] = a + Lp(t, Label(s));
                         }
                     }
                 }
@@ -541,10 +623,10 @@ internal sealed unsafe partial class CpuBackend
                     beta[i] = float.NegativeInfinity;
                 }
 
-                beta[(length - 1) * states + states - 1] = lp[At(length - 1, Label(states - 1))];
+                beta[(length - 1) * states + states - 1] = Lp(length - 1, Label(states - 1));
                 if (states > 1)
                 {
-                    beta[(length - 1) * states + states - 2] = lp[At(length - 1, Label(states - 2))];
+                    beta[(length - 1) * states + states - 2] = Lp(length - 1, Label(states - 2));
                 }
 
                 for (int t = length - 2; t >= 0; t--)
@@ -562,7 +644,7 @@ internal sealed unsafe partial class CpuBackend
                             b = LogAdd(b, beta[(t + 1) * states + s + 2]);
                         }
 
-                        beta[t * states + s] = b + lp[At(t, Label(s))];
+                        beta[t * states + s] = b + Lp(t, Label(s));
                     }
                 }
 
@@ -582,7 +664,7 @@ internal sealed unsafe partial class CpuBackend
                         if (!float.IsNegativeInfinity(byClass[c]))
                         {
                             long at = At(t, c);
-                            dlp[at] -= g * Fn<float, F1>.Exp(byClass[c] - lp[at] - logP);
+                            dlp[at] -= g * Fn<float, F1>.Exp(byClass[c] - Lp(t, c) - logP);
                         }
                     }
                 }

@@ -196,6 +196,160 @@ internal sealed unsafe partial class CpuBackend
         }
     }
 
+    // ------------------------------------------------------------------ typed inputs read a range at a time where a kernel reads them
+
+    // Each thread's pinned buffers for the ranges its kernels read (a slot an operand, and the slots of its working rows),
+    // grown as asked and kept for the thread.
+    [ThreadStatic]
+    private static float[]?[]? t_ranges;
+
+    // Slots a thread's kernels take: 0 to 7 an input's ranges (TypedRanges), 8 to 11 a kernel's working rows (WorkRow).
+    private const int RangeSlots = 12;
+
+    // The calling thread's pinned buffer of `slot`, at least `count` floats.
+    private static float* ThreadBuffer(int slot, long count)
+    {
+        if (count > int.MaxValue)
+        {
+            throw new NotSupportedException($"The CPU reads {count} values of an operand at once: past one buffer.");
+        }
+
+        var buffers = t_ranges ??= new float[RangeSlots][];
+        var buffer = buffers[slot];
+        if (buffer is null || buffer.Length < count)
+        {
+            buffers[slot] = buffer = GC.AllocateUninitializedArray<float>((int)Math.Max(count, 256), pinned: true);
+        }
+
+        return (float*)Unsafe.AsPointer(ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(buffer));
+    }
+
+    /// <summary>A working row of the calling thread (slot 0 to 3) of at least <paramref name="count"/> floats: a kernel's partial sums kept across the ranges it reads.</summary>
+    internal static float* WorkRow(int slot, long count) => ThreadBuffer(8 + slot, count);
+
+    /// <summary>
+    /// An input an operation's kernels read a range at a time, where and when they read it (a row, a run of a group, a plane,
+    /// a head's keys, a window of a strided view): float32's own words where they lie, or another type's values read
+    /// through the type (its default read, or its native kind's lane where that is measured faster: the same bits) into
+    /// the calling thread's own buffer of the operand's slot (0 to 7), from the unit holding the range's first value; never
+    /// the whole operand at once. Each thread reads into its own buffers, so the kernels of every thread read at once; a
+    /// range is valid until the same thread reads the same slot again.
+    /// </summary>
+    internal readonly struct TypedRanges
+    {
+        private readonly IElementType? _type;
+        private readonly int _slot;
+        private readonly long _unit, _count;
+
+        /// <summary>The input <paramref name="s"/>, read into slot <paramref name="slot"/> where typed; refused where its values need float64 (named by <paramref name="operation"/>).</summary>
+        public TypedRanges(Storage s, int slot, string operation)
+        {
+            _slot = slot;
+            _count = s.ElementCount;
+            if (NativeFloats(s))
+            {
+                return;
+            }
+
+            if (WideValues(s.Type))
+            {
+                throw new NotSupportedException($"The CPU's {operation} reads float32 values; {s.Type.Name}'s values need float64 (native kind {s.Type.Native}), "
+                    + "which it never narrows: its float64 lane is not built.");
+            }
+
+            _type = s.Type;
+            _unit = Math.Max(1, s.Type.Description.UnitValues);
+        }
+
+        /// <summary>Whether the input is read through its type (else its words are float32's own).</summary>
+        public bool Typed => _type is not null;
+
+        /// <summary>The values the input holds.</summary>
+        public long Count => _count;
+
+        /// <summary>
+        /// A pointer p such that p[i] is value i for i in [<paramref name="first"/>, <paramref name="first"/> +
+        /// <paramref name="count"/>): the words themselves (pinned by the caller at <paramref name="words"/>), or those
+        /// values read into the thread's buffer, p placed so element i lands on its value.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float* At(float* words, long first, long count) => _type is null ? words : Read(words, first, count);
+
+        /// <summary>
+        /// The array holding values [<paramref name="first"/>, <paramref name="first"/> + <paramref name="count"/>) at
+        /// <paramref name="shift"/> + i for value i: the words themselves (shift 0), or the thread's buffer they were read
+        /// into through the type. For kernels written over managed arrays.
+        /// </summary>
+        public float[] Values(float[] words, long first, long count, out long shift)
+        {
+            shift = 0;
+            if (_type is null)
+            {
+                return words;
+            }
+
+            long start = first / _unit * _unit, total = first + count - start;
+            ThreadBuffer(_slot, total);
+            var buffer = t_ranges![_slot]!;
+            var bytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(words.AsSpan()).Slice((int)_type.ByteCount(start), (int)_type.ByteCount(total));
+            ReadValues(_type, bytes, buffer.AsSpan(0, (int)total));
+            shift = -start;
+            return buffer;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private float* Read(float* words, long first, long count)
+        {
+            long start = first / _unit * _unit;
+            long total = first + count - start;
+            float* buffer = ThreadBuffer(_slot, total);
+            var type = _type!;
+            var bytes = new ReadOnlySpan<byte>((byte*)words + type.ByteCount(start), (int)type.ByteCount(total));
+            ReadValues(type, bytes, new Span<float>(buffer, (int)total));
+            return buffer - start;
+        }
+
+        /// <summary>
+        /// The input's value at <paramref name="at"/> through a window of up to <paramref name="window"/> values kept by
+        /// the caller in [<paramref name="from"/>, <paramref name="to"/>) (<paramref name="values"/> placed as by
+        /// <see cref="At"/>): read again from the unit holding <paramref name="at"/> when it falls outside, so a kernel
+        /// whose addresses run on through the input reads each window once.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float Windowed(float* words, long at, long window, ref float* values, ref long from, ref long to)
+        {
+            if (at < from || at >= to)
+            {
+                from = at / _unit * _unit;
+                to = Math.Min(_count, from + Math.Max(window, _unit));
+                values = At(words, from, to - from);
+            }
+
+            return values[at];
+        }
+    }
+
+    /// <summary>
+    /// The rows of an input from element <paramref name="offset"/> of its words (pinned at <paramref name="words"/>): a
+    /// head's or a view's plane, read where it lies (float32's own) or through its type (<see cref="TypedRanges"/>).
+    /// </summary>
+    internal readonly struct RowsIn(TypedRanges reader, float* words, long offset)
+    {
+        /// <summary>Whether its values are read through their type.</summary>
+        public bool Typed => reader.Typed;
+
+        /// <summary>A pointer to element <paramref name="element"/> (from the offset) and the <paramref name="count"/> after it, as float32.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float* Row(long element, long count)
+        {
+            long at = offset + element;
+            return reader.At(words, at, count) + at;
+        }
+
+        /// <summary>The rows from <paramref name="more"/> elements further on.</summary>
+        public RowsIn Plus(long more) => new(reader, words, offset + more);
+    }
+
     /// <summary>The elements an operation runs at a time: all <paramref name="n"/> where every input is float32's own, else a chunk.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static long Step(long n, bool typed) => typed ? ChunkValues : Math.Max(1, n);

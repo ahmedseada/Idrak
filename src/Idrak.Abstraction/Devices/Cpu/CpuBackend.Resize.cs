@@ -19,15 +19,16 @@ internal sealed unsafe partial class CpuBackend
             return;
         }
 
-        fixed (float* px = V(x), pc = V(coefficients), pv = V(values), py = V(y))
+        fixed (float* px = bytes ? V(x) : D(x), pc = V(coefficients), pv = V(values), py = V(y))
         {
-            var kernel = new ResizeRows(px, pc, pv, py, Math.Max(1, channels), height, width, outHeight, outWidth, xTaps, yTaps, bytes, planes);
+            var kernel = new ResizeRows(px, pc, pv, py, Math.Max(1, channels), height, width, outHeight, outWidth, xTaps, yTaps, bytes, planes,
+                bytes ? default : new TypedRanges(x, 0, "ResizeNormalize"));
             Rows(bytes ? "ResizeNormalize bytes" : "ResizeNormalize", kernel, planes, outHeight * outWidth, Math.Max(1, xTaps + yTaps));
         }
     }
 
     private struct ResizeRows(float* x, float* coefficients, float* values, float* y, int channels, int height, int width, int outHeight, int outWidth, int xTaps,
-        int yTaps, bool bytes, int planes) : IRowKernel
+        int yTaps, bool bytes, int planes, TypedRanges tx) : IRowKernel
     {
         private float* _y = y;
 
@@ -35,6 +36,7 @@ internal sealed unsafe partial class CpuBackend
         {
             int c = p % channels, across = xTaps > 0 ? outWidth : width;
             long plane = (long)p * height * width;
+            float* source = bytes ? x : tx.At(x, plane, (long)height * width);           // a typed plane read through its type when its row runs
             float* target = _y + (long)p * outHeight * outWidth;
             // Floats without a horizontal pass: the plane itself is the vertical pass's input.
             bool inPlace = xTaps == 0 && !bytes;
@@ -43,10 +45,10 @@ internal sealed unsafe partial class CpuBackend
             {
                 fixed (float* buffer = rented)
                 {
-                    float* middle = inPlace ? x + plane : buffer;
+                    float* middle = inPlace ? source + plane : buffer;
                     if (!inPlace)
                     {
-                        Across(plane, across, middle);
+                        Across(plane, across, middle, source);
                     }
 
                     float* rowsAt = coefficients + (xTaps > 0 ? (long)outWidth * (2 + xTaps) : 0);
@@ -86,7 +88,7 @@ internal sealed unsafe partial class CpuBackend
         }
 
         // The horizontal pass of the plane at `plane` into middle [height, across] (no taps: the values as they are).
-        private readonly void Across(long plane, int across, float* middle)
+        private readonly void Across(long plane, int across, float* middle, float* source)
         {
             for (int r = 0; r < height; r++)
             {
@@ -96,7 +98,7 @@ internal sealed unsafe partial class CpuBackend
                 {
                     if (xTaps == 0)
                     {
-                        into[ox] = bytes ? Byte(row + ox) : x[row + ox];
+                        into[ox] = bytes ? Byte(row + ox) : source[row + ox];
                         continue;
                     }
 
@@ -117,7 +119,7 @@ internal sealed unsafe partial class CpuBackend
                         float sum = 0f;
                         for (int t = 0; t < taps; t++)
                         {
-                            sum = MathF.FusedMultiplyAdd(x[row + first + t], at[2 + t], sum);
+                            sum = MathF.FusedMultiplyAdd(source[row + first + t], at[2 + t], sum);
                         }
 
                         into[ox] = sum;

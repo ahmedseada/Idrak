@@ -958,9 +958,15 @@ internal sealed unsafe partial class CpuBackend
 
     public override void SgdStepKernel(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
-        fixed (float* pp = V(p), pg = V(g), pv = v is null ? null : V(v))
+        // The parameters and the momentum are written: float32's own; a typed gradient read through its type a chunk at a time.
+        fixed (float* pp = V(p), wg = D(g), pv = v is null ? null : V(v))
         {
-            Elements("SgdStep", new SgdMap(pp, pg, pv, lr, momentum, n), n, 2);
+            var tg = new TypedInput(g, wg, 0, ChunkValues, "SgdStep");
+            for (long i = 0, step = Step(n, tg.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("SgdStep", new SgdMap(pp, tg.Range(i, e - i), pv, lr, momentum, n), e, 2, i);
+            }
         }
     }
 
@@ -990,9 +996,15 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AdamStepKernel(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
     {
-        fixed (float* pp = V(p), pg = V(g), pm = V(m), pv = V(v))
+        // The parameters and the moments are written: float32's own; a typed gradient read through its type a chunk at a time.
+        fixed (float* pp = V(p), wg = D(g), pm = V(m), pv = V(v))
         {
-            Elements("AdamStep", new AdamMap(pp, pg, pm, pv, lr, beta1, beta2, eps, n), n, 8);
+            var tg = new TypedInput(g, wg, 0, ChunkValues, "AdamStep");
+            for (long i = 0, step = Step(n, tg.Typed); i < n; i += step)
+            {
+                long e = Math.Min(n, i + step);
+                Elements("AdamStep", new AdamMap(pp, tg.Range(i, e - i), pm, pv, lr, beta1, beta2, eps, n), e, 8, i);
+            }
         }
     }
 
@@ -1022,7 +1034,12 @@ internal sealed unsafe partial class CpuBackend
 
     public override void ClipFactorKernel(Storage sumSquares, Storage factor, float maxNorm)
     {
-        float s = V(sumSquares)[0];
+        float s;
+        fixed (float* w = D(sumSquares))
+        {
+            s = *new TypedInput(sumSquares, w, 0, 1, "ClipFactor").Range(0, 1);
+        }
+
         V(factor)[0] = s > 0f ? MathF.Min(1f, maxNorm / MathF.Sqrt(s)) : 1f;
     }
 
@@ -1036,7 +1053,13 @@ internal sealed unsafe partial class CpuBackend
     {
         if (Wide(x))
         {
-            V(result)[0] = (float)(scale * Sum64(x, n, squares: false));
+            // In the result's type: float64's own (never narrowed), or float32 rounded once.
+            double sum = scale * Sum64(x, n, squares: false);
+            fixed (float* wr = D(result))
+            {
+                WriteDoubles(result, wr, 0, 1, &sum);
+            }
+
             return;
         }
 
@@ -1050,7 +1073,13 @@ internal sealed unsafe partial class CpuBackend
     {
         if (Wide(x))
         {
-            V(total)[0] = (float)(V(total)[0] + Sum64(x, n, squares: true));
+            // Added to the total in its type: float64's own (never narrowed), or float32 rounded once.
+            double squares = Sum64(x, n, squares: true);
+            fixed (float* wt = D(total))
+            {
+                WriteDoubles(total, wt, 0, 1, &squares, accumulate: true);
+            }
+
             return;
         }
 

@@ -143,7 +143,7 @@ public sealed partial class Tensor
         }
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var c = Empty(a.Rank == 3 ? [batch, m, n] : [m, n], a.Device);
+        var c = ResultFor(a.Rank == 3 ? [batch, m, n] : [m, n], a.Device, a, b);
         Product(a, b, c.Storage, batch, m, n, k, transA, transB, 0f);
         if (WillRecord(a, b))
         {

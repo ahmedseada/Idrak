@@ -40,10 +40,10 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             var buffer = StepBuffer((long)batch * 4 * hiddenSize);
             try
             {
-                fixed (float* pp = V(projected), pu = V(weights), pc = V(cell), po = V(output), pg = gates is null ? null : V(gates),
+                fixed (float* pp = V(projected), pu = D(weights), pc = V(cell), po = V(output), pg = gates is null ? null : V(gates),
                     pcs = cells is null ? null : V(cells), pr = buffer)
                 {
-                    LstmStepRun(pp, pu, pc, po, pg, pcs, step, previous, steps, batch, hiddenSize, pr);
+                    LstmStepRun(pp, pu, pc, po, pg, pcs, step, previous, steps, batch, hiddenSize, pr, WeightsType(weights, "LstmStep"));
                 }
             }
             finally
@@ -63,12 +63,13 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             var buffer = StepBuffer((long)batch * 4 * hiddenSize);
             try
             {
-                fixed (float* pp = V(projected), pu = V(weights), pc = V(cell), po = V(output), pg = gates is null ? null : V(gates),
+                fixed (float* pp = V(projected), pu = D(weights), pc = V(cell), po = V(output), pg = gates is null ? null : V(gates),
                     pcs = cells is null ? null : V(cells), pr = buffer)
                 {
                     for (int i = 0; i < steps; i++)
                     {
-                        LstmStepRun(pp, pu, pc, po, pg, pcs, Taken(i, steps, reverse), i == 0 ? -1 : Taken(i - 1, steps, reverse), steps, batch, hiddenSize, pr);
+                        LstmStepRun(pp, pu, pc, po, pg, pcs, Taken(i, steps, reverse), i == 0 ? -1 : Taken(i - 1, steps, reverse), steps, batch, hiddenSize, pr,
+                            WeightsType(weights, "LstmSequence"));
                     }
                 }
             }
@@ -157,11 +158,11 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
     // The step kernel: the previous step's hidden rows (output[n, previous]) through U [H, 4H] into `recurrent` [batch,
     // 4H], then the cell (no product at the first step: the zero initial state).
     private static void LstmStepRun(float* projected, float* weights, float* cell, float* output, float* gates, float* cells, int step, int previous, int steps,
-        int batch, int h, float* recurrent)
+        int batch, int h, float* recurrent, IElementType? wType = null)
     {
         if (previous >= 0)
         {
-            Product(output + (long)previous * h, weights, null, recurrent, 1, batch, 4 * h, h, false, false, 0f, (long)steps * h);
+            Product(output + (long)previous * h, weights, null, recurrent, 1, batch, 4 * h, h, false, false, 0f, (long)steps * h, bType: wType);
         }
         else
         {
@@ -170,6 +171,10 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
 
         LstmForward(projected, recurrent, cell, null, output, gates, cells, step, steps, batch, h);
     }
+
+    // The recurrent weights' type where their words hold another type's values (the step's product reads them through it
+    // as it packs them), else null.
+    private static IElementType? WeightsType(Storage weights, string operation) => NativeFloats(weights) ? null : TypedB(weights, operation);
 
     // A step's buffer of `count` floats, from the shared pool (given back by the caller).
     private static float[] StepBuffer(long count) => System.Buffers.ArrayPool<float>.Shared.Rent((int)Math.Max(1, count));
@@ -336,10 +341,10 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             var buffer = StepBuffer((long)batch * 3 * hiddenSize);
             try
             {
-                fixed (float* pp = V(projected), pu = V(weights), pb = hiddenBias is null ? null : V(hiddenBias), po = V(output), pg = gates is null ? null : V(gates),
+                fixed (float* pp = V(projected), pu = D(weights), pb = hiddenBias is null ? null : V(hiddenBias), po = V(output), pg = gates is null ? null : V(gates),
                     pr = buffer)
                 {
-                    GruStepRun(pp, pu, pb, po, pg, step, previous, steps, batch, hiddenSize, pr);
+                    GruStepRun(pp, pu, pb, po, pg, step, previous, steps, batch, hiddenSize, pr, WeightsType(weights, "GruStep"));
                 }
             }
             finally
@@ -359,12 +364,13 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             var buffer = StepBuffer((long)batch * 3 * hiddenSize);
             try
             {
-                fixed (float* pp = V(projected), pu = V(weights), pb = hiddenBias is null ? null : V(hiddenBias), po = V(output), pg = gates is null ? null : V(gates),
+                fixed (float* pp = V(projected), pu = D(weights), pb = hiddenBias is null ? null : V(hiddenBias), po = V(output), pg = gates is null ? null : V(gates),
                     pr = buffer)
                 {
                     for (int i = 0; i < steps; i++)
                     {
-                        GruStepRun(pp, pu, pb, po, pg, Taken(i, steps, reverse), i == 0 ? -1 : Taken(i - 1, steps, reverse), steps, batch, hiddenSize, pr);
+                        GruStepRun(pp, pu, pb, po, pg, Taken(i, steps, reverse), i == 0 ? -1 : Taken(i - 1, steps, reverse), steps, batch, hiddenSize, pr,
+                            WeightsType(weights, "GruSequence"));
                     }
                 }
             }
@@ -435,13 +441,13 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
     // The step kernel: the previous step's rows (output[n, previous]) through U [H, 3H] into `recurrent` [batch, 3H], then
     // the cell reading them as the previous state (none at the first step).
     private static void GruStepRun(float* projected, float* weights, float* bias, float* output, float* gates, int step, int previous, int steps, int batch, int h,
-        float* recurrent)
+        float* recurrent, IElementType? wType = null)
     {
         float* before = null;
         if (previous >= 0)
         {
             before = output + (long)previous * h;
-            Product(before, weights, null, recurrent, 1, batch, 3 * h, h, false, false, 0f, (long)steps * h);
+            Product(before, weights, null, recurrent, 1, batch, 3 * h, h, false, false, 0f, (long)steps * h, bType: wType);
         }
         else
         {

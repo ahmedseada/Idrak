@@ -25,58 +25,93 @@ internal sealed unsafe partial class CpuBackend
         return (at * ce * weight, at * slope);
     }
 
+    // Typed inputs read through their types a chunk at a time (TypedInput): the elements, or the boxes of four values.
     public override void SigmoidFocalLossKernel(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
     {
-        var x = V(logits);
-        var t = V(targets);
         var l = V(losses);
-        for (int i = 0; i < count; i++)
+        fixed (float* wx = D(logits), wt = D(targets))
         {
-            l[i] = Focal(x[i], t[i], alpha, gamma).Loss;
+            TypedInput tx = new(logits, wx, 0, ChunkValues, "SigmoidFocalLoss"), tt = new(targets, wt, 1, ChunkValues, "SigmoidFocalLoss");
+            for (long i0 = 0, step = Step(count, tx.Typed || tt.Typed); i0 < count; i0 += step)
+            {
+                long e = Math.Min(count, i0 + step);
+                float* x = tx.Range(i0, e - i0), t = tt.Range(i0, e - i0);
+                for (long i = i0; i < e; i++)
+                {
+                    l[i] = Focal(x[i], t[i], alpha, gamma).Loss;
+                }
+            }
         }
     }
 
     public override void SigmoidFocalLossBackwardKernel(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
     {
-        var x = V(logits);
-        var t = V(targets);
-        var g = V(lossGrads);
         var d = V(dLogits);
-        for (int i = 0; i < count; i++)
+        fixed (float* wx = D(logits), wt = D(targets), wg = D(lossGrads))
         {
-            d[i] += g[i] * Focal(x[i], t[i], alpha, gamma).Slope;
+            TypedInput tx = new(logits, wx, 0, ChunkValues, "SigmoidFocalLossBackward"), tt = new(targets, wt, 1, ChunkValues, "SigmoidFocalLossBackward"),
+                tg = new(lossGrads, wg, 2, ChunkValues, "SigmoidFocalLossBackward");
+            for (long i0 = 0, step = Step(count, tx.Typed || tt.Typed || tg.Typed); i0 < count; i0 += step)
+            {
+                long e = Math.Min(count, i0 + step);
+                float* x = tx.Range(i0, e - i0), t = tt.Range(i0, e - i0), g = tg.Range(i0, e - i0);
+                for (long i = i0; i < e; i++)
+                {
+                    d[i] += g[i] * Focal(x[i], t[i], alpha, gamma).Slope;
+                }
+            }
         }
     }
 
     // ------------------------------------------------------------------ box overlap losses
 
+    // Boxes a chunk of a typed input holds.
+    private const int ChunkBoxes = ChunkValues / 4;
+
     public override void BoxIouLossKernel(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
     {
-        fixed (float* p = V(predicted), t = V(target), l = V(losses))
+        fixed (float* wp = D(predicted), wt = D(target), l = V(losses))
         {
-            for (int i = 0; i < count; i++)
+            bool typed = !NativeFloats(predicted) || !NativeFloats(target);
+            int step = typed ? ChunkBoxes : Math.Max(1, count);
+            TypedInput tp = new(predicted, wp, 0, 4L * step, "BoxIouLoss"), tt = new(target, wt, 1, 4L * step, "BoxIouLoss");
+            for (int i0 = 0; i0 < count; i0 += step)
             {
-                l[i] = BoxLoss(p + 4L * i, t + 4L * i, overlap, eps, null);
+                int e = Math.Min(count, i0 + step);
+                float* p = tp.Range(4L * i0, 4L * (e - i0)), t = tt.Range(4L * i0, 4L * (e - i0));
+                for (int i = i0; i < e; i++)
+                {
+                    l[i] = BoxLoss(p + 4L * i, t + 4L * i, overlap, eps, null);
+                }
             }
         }
     }
 
     public override void BoxIouLossBackwardKernel(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
     {
-        fixed (float* p = V(predicted), t = V(target), g = V(lossGrads), d = V(dPredicted))
+        fixed (float* wp = D(predicted), wt = D(target), wg = D(lossGrads), d = V(dPredicted))
         {
             float* grad = stackalloc float[4];
-            for (int i = 0; i < count; i++)
+            bool typed = !NativeFloats(predicted) || !NativeFloats(target) || !NativeFloats(lossGrads);
+            int step = typed ? ChunkBoxes : Math.Max(1, count);
+            TypedInput tp = new(predicted, wp, 0, 4L * step, "BoxIouLossBackward"), tt = new(target, wt, 1, 4L * step, "BoxIouLossBackward"),
+                tg = new(lossGrads, wg, 2, step, "BoxIouLossBackward");
+            for (int i0 = 0; i0 < count; i0 += step)
             {
-                if (g[i] == 0f)
+                int e = Math.Min(count, i0 + step);
+                float* p = tp.Range(4L * i0, 4L * (e - i0)), t = tt.Range(4L * i0, 4L * (e - i0)), g = tg.Range(i0, e - i0);
+                for (int i = i0; i < e; i++)
                 {
-                    continue;
-                }
+                    if (g[i] == 0f)
+                    {
+                        continue;
+                    }
 
-                BoxLoss(p + 4L * i, t + 4L * i, overlap, eps, grad);
-                for (int k = 0; k < 4; k++)
-                {
-                    d[4L * i + k] += g[i] * grad[k];
+                    BoxLoss(p + 4L * i, t + 4L * i, overlap, eps, grad);
+                    for (int k = 0; k < 4; k++)
+                    {
+                        d[4L * i + k] += g[i] * grad[k];
+                    }
                 }
             }
         }

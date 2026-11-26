@@ -174,7 +174,7 @@ public sealed partial class Tensor
     {
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty(_shape, Device);
+        var y = ResultFor(_shape, Device, this);                       // float64 where x's values need it (never narrowed)
         var xs = ReadStorage(out var scratch);                         // a view read as it is (plan 37, V1)
         try
         {
@@ -199,7 +199,7 @@ public sealed partial class Tensor
     {
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty(_shape, Device);
+        var y = ResultFor(_shape, Device, this);
         var xs = ReadStorage(out var scratch);
         try
         {
@@ -223,7 +223,7 @@ public sealed partial class Tensor
     {
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty([], Device);
+        var y = ResultFor([], Device, this);
         var xs = ReadStorage(out var scratch);
         try
         {
@@ -296,7 +296,7 @@ public sealed partial class Tensor
         CheckSameDevice(a, b);
         CheckSameShape(a, b);
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var c = Empty(a._shape, a.Device);
+        var c = ResultFor(a._shape, a.Device, a, b);
         var (aSource, bSource) = (a.ReadStorage(out var aScratch), b.ReadStorage(out var bScratch));
         try
         {

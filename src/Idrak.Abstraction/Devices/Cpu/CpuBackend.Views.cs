@@ -149,8 +149,9 @@ internal sealed unsafe partial class CpuBackend
     public override void AttentionTiledStridedKernel(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout,
         Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        // Heads whose rows lie as planes (a step between heads and between rows, the last step 1): read where they lie.
-        if (NativeFloats(q) && NativeFloats(keys) && NativeFloats(values) && Planes(qLayout, heads, rowsPerHead, dim, out long qh, out long qr)
+        // Heads whose rows lie as planes (a step between heads and between rows, the last step 1): read where they lie, a
+        // typed operand's rows through its type (RowsIn).
+        if (Planes(qLayout, heads, rowsPerHead, dim, out long qh, out long qr)
             && Planes(keysLayout, heads, capacity, dim, out long kh, out long kr) && Planes(valuesLayout, heads, capacity, dim, out long vh, out long vr))
         {
             var at = new HeadSteps(heads > 1 ? qh : 0, rowsPerHead > 1 ? qr : dim, heads > 1 ? kh : 0, capacity > 1 ? kr : dim, heads > 1 ? vh : 0, capacity > 1 ? vr : dim);

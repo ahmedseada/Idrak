@@ -400,29 +400,59 @@ internal sealed unsafe partial class CpuBackend
 
     public override void LayerNormBackwardKernel(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
-        fixed (float* px = V(x), wg = D(gamma), wdy = D(dy), ps = V(stats), pdx = dx is null ? null : V(dx), pdg = dgamma is null ? null : V(dgamma),
+        fixed (float* wx = D(x), wg = D(gamma), wdy = D(dy), ps = V(stats), pdx = dx is null ? null : V(dx), pdg = dgamma is null ? null : V(dgamma),
             pdb = dbeta is null ? null : V(dbeta))
         {
-            TypedInput tg = new(gamma, wg, 0, cols, "LayerNormBackward"), tdy = new(dy, wdy, 1, (long)RowStep(rows, cols, !NativeFloats(dy)) * cols, "LayerNormBackward");
+            bool typed = !NativeFloats(x) || !NativeFloats(dy);
+            int step = RowStep(rows, cols, typed);
+            TypedInput tg = new(gamma, wg, 0, cols, "LayerNormBackward"), tdy = new(dy, wdy, 1, (long)step * cols, "LayerNormBackward"),
+                tx = new(x, wx, 2, (long)step * cols, "LayerNormBackward");
             float* pg = tg.Range(0, cols);
-            if (pdg != null || pdb != null)
-            {
-                _ = V(dy);                                  // the parameter gradients read dy whole by columns: float32's own only
-            }
-
             if (pdx != null)
             {
-                int step = RowStep(rows, cols, tdy.Typed);
                 for (int r = 0; r < rows; r += step)
                 {
                     int e = Math.Min(rows, r + step);
-                    Rows("LayerNormBackward", new LayerBackRows(px, pg, tdy.Range((long)r * cols, (long)(e - r) * cols), ps, pdx, cols, rows), e, cols, 8, r);
+                    long at = (long)r * cols, count = (long)(e - r) * cols;
+                    Rows("LayerNormBackward", new LayerBackRows(tx.Range(at, count), pg, tdy.Range(at, count), ps, pdx, cols, rows), e, cols, 8, r);
                 }
             }
 
-            if (pdg != null || pdb != null)
+            if (pdg == null && pdb == null)
             {
-                Elements("LayerNormBackward columns", new LayerColumns(px, wdy, ps, pdg, pdb, rows, cols), cols, rows * 2);
+                return;
+            }
+
+            if (!typed)
+            {
+                Elements("LayerNormBackward columns", new LayerColumns(wx, wdy, ps, pdg, pdb, rows, cols, 0, rows, null, null), cols, rows * 2);
+                return;
+            }
+
+            // A typed x or dy: its rows a chunk at a time, each column's sums carried in the thread's working rows from
+            // one chunk to the next (the same terms in the same order), then added to the gradients.
+            float* sumG = WorkRow(0, cols), sumB = WorkRow(1, cols);
+            new Span<float>(sumG, cols).Clear();
+            new Span<float>(sumB, cols).Clear();
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                long at = (long)r * cols, count = (long)(e - r) * cols;
+                Elements("LayerNormBackward columns", new LayerColumns(tx.Range(at, count), tdy.Range(at, count), ps, pdg, pdb, rows, cols, r, e, sumG, sumB), cols,
+                    (e - r) * 2);
+            }
+
+            for (int j = 0; j < cols; j++)
+            {
+                if (pdg != null)
+                {
+                    pdg[j] += sumG[j];
+                }
+
+                if (pdb != null)
+                {
+                    pdb[j] += sumB[j];
+                }
             }
         }
     }
@@ -477,21 +507,29 @@ internal sealed unsafe partial class CpuBackend
         }
     }
 
-    // dgamma[j] += Σ_r dy · xhat, dbeta[j] += Σ_r dy, each column's rows in order.
-    private struct LayerColumns(float* x, float* dy, float* stats, float* dgamma, float* dbeta, int rows, int cols) : IMap
+    // dgamma[j] += Σ_r dy · xhat, dbeta[j] += Σ_r dy, each column's rows in order: rows [first, last), the sums from zero
+    // added to the gradients, or (sumG, sumB given: a chunk of a typed run's rows) carried on in them.
+    private struct LayerColumns(float* x, float* dy, float* stats, float* dgamma, float* dbeta, int rows, int cols, int first, int last, float* sumG, float* sumB) : IMap
     {
-        private float* _dg = dgamma, _db = dbeta;
+        private float* _dg = dgamma, _db = dbeta, _sg = sumG, _sb = sumB;
 
         public readonly void Step<TV, TF>(nint j) where TV : unmanaged where TF : struct, IFloats<TV>
         {
-            TV g = TF.All(0f), b = g;
-            for (int r = 0; r < rows; r++)
+            TV g = _sg == null ? TF.All(0f) : TF.Load(_sg + j), b = _sb == null ? TF.All(0f) : TF.Load(_sb + j);
+            for (int r = first; r < last; r++)
             {
                 long at = (long)r * cols + j;
                 var d = TF.Load(dy + at);
                 var hat = TF.Mul(TF.Sub(TF.Load(x + at), TF.All(stats[r])), TF.All(stats[rows + r]));
                 g = TF.Fma(d, hat, g);
                 b = TF.Add(b, d);
+            }
+
+            if (_sg != null)
+            {
+                TF.Store(_sg + j, g);
+                TF.Store(_sb + j, b);
+                return;
             }
 
             if (_dg != null)
@@ -509,6 +547,8 @@ internal sealed unsafe partial class CpuBackend
         {
             _dg = _dg == null ? null : scratch.Take(cols);
             _db = _db == null ? null : scratch.Take(cols);
+            _sg = _sg == null ? null : scratch.Take(cols);
+            _sb = _sb == null ? null : scratch.Take(cols);
         }
     }
 
@@ -517,16 +557,17 @@ internal sealed unsafe partial class CpuBackend
     public override void RopeKernel(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half,
         bool interleaved, float sign)
     {
-        fixed (float* wx = D(x), py = V(y), pc = V(cos), ps = V(sin), pp = D(positions))
+        fixed (float* wx = D(x), py = V(y), pc = D(cos), ps = D(sin), pp = D(positions))
         {
             int step = RowStep(rows, dim, !NativeFloats(x));
             var tx = new TypedInput(x, wx, 0, (long)step * dim, "Rope");
             var ids = IndicesOf(positions, pp);
+            TypedRanges tc = new(cos, 0, "Rope"), ts = new(sin, 1, "Rope");
             for (int r = 0; r < rows; r += step)
             {
                 int e = Math.Min(rows, r + step);
-                Rows("Rope", new RopeRows(tx.Range((long)r * dim, (long)(e - r) * dim), py, pc, ps, ids, null, heads, steps, dim, dim, half, interleaved, sign, 0f, 0f, rows),
-                    e, 2 * half, 4, r);
+                Rows("Rope", new RopeRows(tx.Range((long)r * dim, (long)(e - r) * dim), py, pc, ps, ids, null, heads, steps, dim, dim, half, interleaved, sign, 0f, 0f, rows,
+                    tc, ts), e, 2 * half, 4, r);
             }
         }
     }
@@ -534,26 +575,27 @@ internal sealed unsafe partial class CpuBackend
     public override void RmsNormRopeKernel(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
         float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
-        fixed (float* wx = D(x), wg = D(gain), pc = V(cos), ps = V(sin), pp = D(positions), py = V(y))
+        fixed (float* wx = D(x), wg = D(gain), pc = D(cos), ps = D(sin), pp = D(positions), py = V(y))
         {
             int step = RowStep(rows, cols, !NativeFloats(x));
             TypedInput tx = new(x, wx, 0, (long)step * cols, "RmsNormRope"), tg = new(gain, wg, 1, cols, "RmsNormRope");
             float* pg = tg.Range(0, cols);
             var ids = IndicesOf(positions, pp);
+            TypedRanges tc = new(cos, 0, "RmsNormRope"), ts = new(sin, 1, "RmsNormRope");
             for (int r = 0; r < rows; r += step)
             {
                 int e = Math.Min(rows, r + step);
                 Rows("RmsNormRope", new RopeRows(tx.Range((long)r * cols, (long)(e - r) * cols), py, pc, ps, ids, pg, heads, steps, cols, cols, half, interleaved, 1f, eps,
-                    offset, rows), e, cols, 4, r);
+                    offset, rows, tc, ts), e, cols, 4, r);
             }
         }
     }
 
     // Row r (of batch · steps · heads, step (r / heads) mod steps): RMS-normalized with gain first where given (the whole
     // row), then each pair p < half rotated by cos/sin[positions[step], p], sin times sign: (a, b) → (a·c − b·s, a·s + b·c).
-    // The positions are indices, read as their storage's type holds them.
+    // The positions are indices, read as their storage's type holds them; typed tables a row (a position's) at a time.
     private struct RopeRows(float* x, float* y, float* cos, float* sin, Indices positions, float* gain, int heads, int steps, int dim, int stride,
-        int half, bool interleaved, float sign, float eps, float offset, int rows) : IRowKernel
+        int half, bool interleaved, float sign, float eps, float offset, int rows, TypedRanges tc, TypedRanges ts) : IRowKernel
     {
         private float* _y = y;
 
@@ -571,7 +613,7 @@ internal sealed unsafe partial class CpuBackend
 
             int step = r / heads % steps;
             long position = positions[step];
-            float* c = cos + position * half, s = sin + position * half;
+            float* c = tc.At(cos, position * half, half) + position * half, s = ts.At(sin, position * half, half) + position * half;
             if (interleaved)
             {
                 for (int p = 0; p < half; p++)
@@ -606,8 +648,8 @@ internal sealed unsafe partial class CpuBackend
             return true;
         }
 
-        fixed (float* pq = V(q), pk = V(k), pv = V(v), wgq = gainQ is null ? null : D(gainQ), wgk = gainK is null ? null : D(gainK),
-            pc = half > 0 ? V(cos!) : null, ps = half > 0 ? V(sin!) : null, ppos = half > 0 ? D(positions!) : null, pyq = V(yq), pyk = V(yk), pyv = V(yv),
+        fixed (float* pq = D(q), pk = D(k), pv = D(v), wgq = gainQ is null ? null : D(gainQ), wgk = gainK is null ? null : D(gainK),
+            pc = half > 0 ? D(cos!) : null, ps = half > 0 ? D(sin!) : null, ppos = half > 0 ? D(positions!) : null, pyq = V(yq), pyk = V(yk), pyv = V(yv),
             pat = position is null ? null : D(position))
         {
             // The gains (a vector every head reads) read once for the call through their types: float32's own words, or a
@@ -620,8 +662,11 @@ internal sealed unsafe partial class CpuBackend
                 throw new ArgumentOutOfRangeException(nameof(position), start, $"{steps} steps from row {start} do not fit a cache of {capacity} rows.");
             }
 
+            // Typed projections and tables read through their types a row at a time where a row reads them.
+            var reads = new HeadReads(new(q, 0, "NormRopeHeads"), new(k, 1, "NormRopeHeads"), new(v, 2, "NormRopeHeads"),
+                half > 0 ? new(cos!, 3, "NormRopeHeads") : default, half > 0 ? new(sin!, 4, "NormRopeHeads") : default);
             var kernel = new HeadRows(pq, pk, pv, pgq, pgk, epsQ, offsetQ, epsK, offsetK, pc, ps, half > 0 ? IndicesOf(positions!, ppos) : default, half, interleaved,
-                pyq, pyk, pyv, start, batch, steps, heads, kvHeads, cols, capacity, stride);
+                pyq, pyk, pyv, start, batch, steps, heads, kvHeads, cols, capacity, stride, reads);
             int rows = batch * steps * (heads + 2 * kvHeads);
             Rows("NormRopeHeads", kernel, rows, cols);
         }
@@ -633,9 +678,15 @@ internal sealed unsafe partial class CpuBackend
     // projections hold them ([batch, steps, heads·cols]): a query or key RMS-normalized with its gain where given, then
     // rotated by the step's position where half > 0, into yq [batch, heads, steps, cols] or the cache yk [batch, kvHeads,
     // capacity, stride] at row start + s; a value copied into yv as a key is placed.
+    // NormRopeHeads' typed inputs: the projections' and the tables' rows read through their types where a row reads them.
+    private readonly struct HeadReads(TypedRanges q, TypedRanges k, TypedRanges v, TypedRanges cos, TypedRanges sin)
+    {
+        public readonly TypedRanges Q = q, K = k, V = v, Cos = cos, Sin = sin;
+    }
+
     private struct HeadRows(float* q, float* k, float* v, float* gainQ, float* gainK, float epsQ, float offsetQ, float epsK, float offsetK, float* cos, float* sin,
         Indices positions, int half, bool interleaved, float* yq, float* yk, float* yv, long start, int batch, int steps, int heads, int kvHeads, int cols,
-        int capacity, int stride) : IRowKernel
+        int capacity, int stride, HeadReads reads) : IRowKernel
     {
         private float* _yq = yq, _yk = yk, _yv = yv;
 
@@ -645,7 +696,9 @@ internal sealed unsafe partial class CpuBackend
             int part = r < queries ? 0 : r < queries + keys ? 1 : 2;
             int index = part == 0 ? r : part == 1 ? r - queries : r - queries - keys, width = part == 0 ? heads : kvHeads;
             int head = index % width, bs = index / width, s = bs % steps, b = bs / steps;
-            float* source = (part == 0 ? q : part == 1 ? k : v) + ((long)bs * width + head) * cols;
+            long first = ((long)bs * width + head) * cols;
+            var reader = part == 0 ? reads.Q : part == 1 ? reads.K : reads.V;
+            float* source = reader.At(part == 0 ? q : part == 1 ? k : v, first, cols) + first;
             float* target = part == 0 ? _yq + (((long)b * heads + head) * steps + s) * cols
                 : (part == 1 ? _yk : _yv) + (((long)b * kvHeads + head) * capacity + start + s) * stride;
             float* gain = part == 0 ? gainQ : part == 1 ? gainK : null;
@@ -667,7 +720,7 @@ internal sealed unsafe partial class CpuBackend
             }
 
             long at = positions[s];
-            float* c = cos + at * half, sn = sin + at * half;
+            float* c = reads.Cos.At(cos, at * half, half) + at * half, sn = reads.Sin.At(sin, at * half, half) + at * half;
             if (interleaved)
             {
                 for (int p = 0; p < half; p++)
@@ -754,39 +807,73 @@ internal sealed unsafe partial class CpuBackend
         }
     }
 
-    public override void SumRowsKernel(Storage x, Storage y, int rows, int cols)
+    public override void SumRowsKernel(Storage x, Storage y, int rows, int cols) => ColumnSumsOf(x, 0, cols, y, rows, cols, "SumRows");
+
+    public override void SumColumnsKernel(Storage x, long offset, int ld, Storage y, int rows, int cols) => ColumnSumsOf(x, offset, ld, y, rows, cols, "SumColumns");
+
+    // y[j] += Σ_r x[offset + r · ld + j]: float32's own x in one run; a typed x a chunk of rows at a time, each column's
+    // sum carried in the thread's working row from one chunk to the next (the same terms in the same order), then added.
+    private static void ColumnSumsOf(Storage x, long offset, int ld, Storage y, int rows, int cols, string name)
     {
-        fixed (float* px = V(x), py = V(y))
+        fixed (float* wx = D(x), py = V(y))
         {
-            Elements("SumRows", new ColumnSums(px, 0, cols, py, rows, cols), cols, Math.Max(1, rows));
+            if (NativeFloats(x))
+            {
+                Elements(name, new ColumnSums(wx, offset, ld, py, 0, rows, cols, null), cols, Math.Max(1, rows));
+                return;
+            }
+
+            if (rows <= 0 || cols <= 0)
+            {
+                return;
+            }
+
+            int step = Math.Max(1, ChunkValues / Math.Max(1, ld));
+            var tx = new TypedInput(x, wx, 0, (long)(Math.Min(step, rows) - 1) * ld + cols, name);
+            float* sums = WorkRow(0, cols);
+            new Span<float>(sums, cols).Clear();
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                long at = offset + (long)r * ld;
+                Elements(name, new ColumnSums(tx.Range(at, (long)(e - r - 1) * ld + cols), offset, ld, py, r, e, cols, sums), cols, e - r);
+            }
+
+            for (int j = 0; j < cols; j++)
+            {
+                py[j] += sums[j];
+            }
         }
     }
 
-    public override void SumColumnsKernel(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    // y[j] += Σ_r x[offset + r · ld + j], rows [first, last) in order; with `sums` (a chunk of a typed run's rows) the sums
+    // carried on in it instead.
+    private struct ColumnSums(float* x, long offset, int ld, float* y, int first, int last, int cols, float* sums) : IMap
     {
-        fixed (float* px = V(x), py = V(y))
-        {
-            Elements("SumColumns", new ColumnSums(px, offset, ld, py, rows, cols), cols, Math.Max(1, rows));
-        }
-    }
-
-    // y[j] += Σ_r x[offset + r · ld + j], the rows in order.
-    private struct ColumnSums(float* x, long offset, int ld, float* y, int rows, int cols) : IMap
-    {
-        private float* _y = y;
+        private float* _y = y, _s = sums;
 
         public readonly void Step<TV, TF>(nint j) where TV : unmanaged where TF : struct, IFloats<TV>
         {
-            var s = TF.All(0f);
-            for (int r = 0; r < rows; r++)
+            var s = _s == null ? TF.All(0f) : TF.Load(_s + j);
+            for (int r = first; r < last; r++)
             {
                 s = TF.Add(s, TF.Load(x + offset + (long)r * ld + j));
+            }
+
+            if (_s != null)
+            {
+                TF.Store(_s + j, s);
+                return;
             }
 
             TF.Store(_y + j, TF.Add(TF.Load(_y + j), s));
         }
 
-        public void Redirect(ref Scratch scratch) => _y = scratch.Take(cols);
+        public void Redirect(ref Scratch scratch)
+        {
+            _y = scratch.Take(cols);
+            _s = _s == null ? null : scratch.Take(cols);
+        }
     }
 
     public override void Copy2D(Storage src, int srcOffset, int srcStride, Storage dst, int dstOffset, int dstStride, int rows, int cols, bool accumulate)
@@ -877,32 +964,45 @@ internal sealed unsafe partial class CpuBackend
 
     public override void ClassMatchKernel(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
     {
-        var p = V(predictions);
-        var t = V(targets);
         var py = V(y);
-        for (int r = 0; r < rows; r++)
+        fixed (float* wp = D(predictions), wt = D(targets))
         {
-            if (cols == 1)
+            // Typed predictions or targets read through their types a chunk of rows at a time.
+            int step = RowStep(rows, cols, !NativeFloats(predictions) || !NativeFloats(targets));
+            TypedInput tp = new(predictions, wp, 0, (long)step * cols, "ClassMatch"), tt = new(targets, wt, 1, (long)step * cols, "ClassMatch");
+            float* p = wp, t = wt;
+            for (int r = 0; r < rows; r++)
             {
-                py[r] = p[r] >= threshold == t[r] >= 0.5f ? 1f : 0f;
-                continue;
-            }
-
-            int bp = 0, bt = 0;
-            for (int j = 1; j < cols; j++)
-            {
-                if (p[r * cols + j] > p[r * cols + bp])
+                if (r % step == 0)
                 {
-                    bp = j;
+                    long count = (long)(Math.Min(rows, r + step) - r) * cols;
+                    p = tp.Range((long)r * cols, count);
+                    t = tt.Range((long)r * cols, count);
                 }
 
-                if (t[r * cols + j] > t[r * cols + bt])
+                if (cols == 1)
                 {
-                    bt = j;
+                    py[r] = p[r] >= threshold == t[r] >= 0.5f ? 1f : 0f;
+                    continue;
                 }
-            }
 
-            py[r] = bp == bt ? 1f : 0f;
+                int bp = 0, bt = 0;
+                long at = (long)r * cols;
+                for (int j = 1; j < cols; j++)
+                {
+                    if (p[at + j] > p[at + bp])
+                    {
+                        bp = j;
+                    }
+
+                    if (t[at + j] > t[at + bt])
+                    {
+                        bt = j;
+                    }
+                }
+
+                py[r] = bp == bt ? 1f : 0f;
+            }
         }
     }
 
@@ -986,20 +1086,29 @@ internal sealed unsafe partial class CpuBackend
 
     public override void ScatterAddKernel(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
-        fixed (float* pdy = V(dy), pi = D(indices), pt = V(dtable))
+        fixed (float* wdy = D(dy), pi = D(indices), pt = V(dtable))
         {
-            Elements("ScatterAdd", new ScatterColumns(pdy, IndicesOf(indices, pi), pt, count, dim, vocabulary), dim, Math.Max(1, count));
+            // A typed dy read through its type a chunk of rows at a time: each table element still takes its rows in order.
+            int step = RowStep(count, dim, !NativeFloats(dy));
+            var tdy = new TypedInput(dy, wdy, 0, (long)step * dim, "ScatterAdd");
+            var ids = IndicesOf(indices, pi);
+            for (int i = 0; i < count; i += step)
+            {
+                int e = Math.Min(count, i + step);
+                Elements("ScatterAdd", new ScatterColumns(tdy.Range((long)i * dim, (long)(e - i) * dim), ids, pt, i, e, dim, vocabulary), dim, Math.Max(1, e - i));
+            }
         }
     }
 
-    // dtable[indices[i], j] += dy[i, j] for each column j, the rows i in position order (each id's rows in order).
-    private struct ScatterColumns(float* dy, Indices indices, float* table, int count, int dim, int vocabulary) : IMap
+    // dtable[indices[i], j] += dy[i, j] for each column j, the rows i of [first, last) in position order (each id's rows in
+    // order).
+    private struct ScatterColumns(float* dy, Indices indices, float* table, int first, int last, int dim, int vocabulary) : IMap
     {
         private float* _table = table;
 
         public readonly void Step<TV, TF>(nint j) where TV : unmanaged where TF : struct, IFloats<TV>
         {
-            for (int i = 0; i < count; i++)
+            for (int i = first; i < last; i++)
             {
                 long index = indices[i];
                 if (index >= 0 && index < vocabulary)

@@ -21,14 +21,15 @@ internal sealed unsafe partial class CpuBackend
         int[] best = ArrayPool<int>.Shared.Rent(Math.Max(1, k));
         try
         {
-            fixed (float* pp = V(probabilities), pw = V(weights), po = D(offsets), pt = D(tokenOfRow), ps = D(slotRow))
+            fixed (float* pp = D(probabilities), pw = V(weights), po = D(offsets), pt = D(tokenOfRow), ps = D(slotRow))
             {
                 var counts = next.AsSpan(0, experts);
                 counts.Clear();
                 var chosen = best.AsSpan(0, k);
+                var tp = new TypedRanges(probabilities, 0, "RouteTopK");          // a typed token's row read through its type
                 for (int i = 0; i < tokens; i++)
                 {
-                    float* row = pp + (long)i * experts;
+                    float* row = tp.At(pp, (long)i * experts, experts) + (long)i * experts;
                     int count = 0;
                     for (int e = 0; e < experts; e++)
                     {
@@ -105,22 +106,24 @@ internal sealed unsafe partial class CpuBackend
         var gated = ArrayPool<float>.Shared.Rent(Math.Max(1, rows * n));
         try
         {
-            fixed (float* px = V(x), po = D(offsets), ph = V(hidden), pg = gated)
+            fixed (float* px = D(x), po = D(offsets), ph = V(hidden), pg = gated)
             {
                 var bounds = IndicesOf(offsets, po);
+                int step = ExpertStep(x, rows, k);
+                var tx = new TypedInput(x, px, 0, (long)step * k, "ExpertGatedPair");
                 for (int e = 0; e < experts.Length; e++)
                 {
                     var (first, count) = ExpertRows(bounds, e, rows);
-                    if (count == 0)
-                    {
-                        continue;
-                    }
-
                     var (gate, gateBias, up, upBias) = experts[e];
-                    float* xRows = px + (long)first * k, into = ph + (long)first * n;
-                    Project(xRows, gate, gateBias, pg, count, n, k);
-                    Project(xRows, up, upBias, into, count, n, k);
-                    Gated(pg, into, into, (long)count * n, activation);
+                    for (int r = first; r < first + count; r += step)
+                    {
+                        // A typed x's rows read through its type a chunk of rows at a time (each output row its own sum).
+                        int taken = Math.Min(step, first + count - r);
+                        float* xRows = tx.Range((long)r * k, (long)taken * k) + (long)r * k, into = ph + (long)r * n;
+                        Project(xRows, gate, gateBias, pg, taken, n, k);
+                        Project(xRows, up, upBias, into, taken, n, k);
+                        Gated(pg, into, into, (long)taken * n, activation);
+                    }
                 }
             }
         }
@@ -132,20 +135,27 @@ internal sealed unsafe partial class CpuBackend
 
     public override void ExpertMatMulKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n)
     {
-        fixed (float* px = V(x), po = D(offsets), py = V(y))
+        fixed (float* px = D(x), po = D(offsets), py = V(y))
         {
             var bounds = IndicesOf(offsets, po);
+            int step = ExpertStep(x, rows, k);
+            var tx = new TypedInput(x, px, 0, (long)step * k, "ExpertMatMul");
             for (int e = 0; e < experts.Length; e++)
             {
                 var (first, count) = ExpertRows(bounds, e, rows);
-                if (count > 0)
+                var (weight, bias) = experts[e];
+                for (int r = first; r < first + count; r += step)
                 {
-                    var (weight, bias) = experts[e];
-                    Project(px + (long)first * k, weight, bias, py + (long)first * n, count, n, k);
+                    int taken = Math.Min(step, first + count - r);
+                    Project(tx.Range((long)r * k, (long)taken * k) + (long)r * k, weight, bias, py + (long)r * n, taken, n, k);
                 }
             }
         }
     }
+
+    // The rows of x an expert's product takes at a time: all where x is float32's own, else a chunk's worth (whole tiles).
+    private static int ExpertStep(Storage x, int rows, int k) =>
+        NativeFloats(x) ? Math.Max(1, rows) : Math.Max(TileRows, ChunkValues / Math.Max(1, k) / TileRows * TileRows);
 
     // The first row and the row count of expert e, from the offsets RouteTopK wrote (checked against the rows given).
     private static (int First, int Count) ExpertRows(Indices offsets, int e, int rows)
@@ -159,15 +169,17 @@ internal sealed unsafe partial class CpuBackend
         return ((int)first, (int)(end - first));
     }
 
-    // c [rows, n] = a [rows, k] · w [k, n], then the bias added to each row, as a layer's product and bias.
+    // c [rows, n] = a [rows, k] · w [k, n], then the bias added to each row, as a layer's product and bias: a typed w read
+    // through its type as the product packs it, a typed bias once, its own size.
     private static void Project(float* a, Storage w, Storage? bias, float* c, int rows, int n, int k)
     {
-        fixed (float* pw = V(w), pb = bias is null ? null : V(bias))
+        fixed (float* pw = D(w), wb = bias is null ? null : D(bias))
         {
-            Product(a, pw, null, c, 1, rows, n, k, false, false, 0f);
-            if (pb != null)
+            Product(a, pw, null, c, 1, rows, n, k, false, false, 0f, bType: NativeFloats(w) ? null : TypedB(w, "the experts' product"));
+            if (bias is not null)
             {
-                Rows("AddRowVector", new RowVectorRows(c, pb, c, n, rows, gelu: false), rows, n, 1);
+                var tb = new TypedInput(bias, wb, 3, n, "the experts' product");
+                Rows("AddRowVector", new RowVectorRows(c, tb.Range(0, n), c, n, rows, gelu: false), rows, n, 1);
             }
         }
     }

@@ -71,10 +71,19 @@ internal sealed unsafe partial class CpuBackend
             return true;
         }
 
-        fixed (float* pa = V(a), wb = D(b), wbias = D(bias), pc = V(c))
+        fixed (float* wa = D(a), wb = D(b), wbias = D(bias), pc = V(c))
         {
             var tbias = new TypedInput(bias, wbias, 0, n, "MatMulBias");
-            Product(pa, wb, tbias.Range(0, n), pc, 1, m, n, k, false, false, 0f, bType: NativeFloats(b) ? null : TypedB(b, "MatMulBias"));
+            float* pbias = tbias.Range(0, n);
+            var bType = NativeFloats(b) ? null : TypedB(b, "MatMulBias");
+            // A typed A read through its type a block of rows at a time (each output row its own sum, from the bias).
+            int step = NativeFloats(a) ? m : Math.Max(TileRows, ChunkValues / Math.Max(1, k) / TileRows * TileRows);
+            var ta = new TypedInput(a, wa, 1, (long)Math.Min(step, m) * k, "MatMulBias");
+            for (int i = 0; i < m; i += step)
+            {
+                int rows = Math.Min(step, m - i);
+                Product(ta.Range((long)i * k, (long)rows * k) + (long)i * k, wb, pbias, pc + (long)i * n, 1, rows, n, k, false, false, 0f, bType: bType);
+            }
         }
 
         return true;

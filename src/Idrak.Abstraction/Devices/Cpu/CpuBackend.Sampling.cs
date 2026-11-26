@@ -14,7 +14,8 @@ internal sealed unsafe partial class CpuBackend
     public override void SampleRowsKernel(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
         int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
-        var z = V(logits);
+        var wz = D(logits);
+        var tz = new TypedRanges(logits, 0, "SampleRows");                    // a typed row read through its type when drawn
         var sv = V(stats);
         fixed (float* pi = D(ids), pstep = D(step))
         {
@@ -28,7 +29,9 @@ internal sealed unsafe partial class CpuBackend
             {
                 for (int r = 0; r < rows; r++)
                 {
-                    var row = z.AsSpan(r * rowStride + rowOffset, vocabulary);
+                    long first = (long)r * rowStride + rowOffset;
+                    var z = tz.Values(wz, first, vocabulary, out long shift);
+                    var row = z.AsSpan((int)(shift + first), vocabulary);
                     var weights = e.AsSpan(0, vocabulary);
                     float sum = SamplingWeights.Compute(row, weights, temperature, topK, topP, minP, top, ref candidateScores, ref candidateWeights);
                     long o = ((long)stepNumber * rows + r) * 13;
@@ -112,7 +115,8 @@ internal sealed unsafe partial class CpuBackend
     public override void PenalizeRowsKernel(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
         int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
-        var z = V(logits);
+        var wz = D(logits);
+        var tz = new TypedRanges(logits, 0, "PenalizeRows");                  // a typed row read through its type when copied
         var w = V(work);
         fixed (float* ph = D(history), pl = D(length))
         {
@@ -125,7 +129,9 @@ internal sealed unsafe partial class CpuBackend
                 for (int r = 0; r < rows; r++)
                 {
                     var row = w.AsSpan(r * vocabulary, vocabulary);
-                    z.AsSpan(r * rowStride + rowOffset, vocabulary).CopyTo(row);
+                    long first = (long)r * rowStride + rowOffset;
+                    var z = tz.Values(wz, first, vocabulary, out long shift);
+                    z.AsSpan((int)(shift + first), vocabulary).CopyTo(row);
                     int taken = 0;
                     for (long p = count - window; p < count; p++)
                     {
@@ -162,14 +168,16 @@ internal sealed unsafe partial class CpuBackend
 
     public override void LogSoftmaxTopKKernel(Storage x, Storage values, Storage indices, int rows, int cols, int k)
     {
-        var px = V(x);
+        var wx = D(x);
+        var tx = new TypedRanges(x, 0, "LogSoftmaxTopK");                     // a typed row read through its type when ranked
         var pv = V(values);
         fixed (float* pi = D(indices))
         {
             var into = IndicesOf(indices, pi);
             for (int r = 0; r < rows; r++)
             {
-                var row = px.AsSpan(r * cols, cols);
+                var px = tx.Values(wx, (long)r * cols, cols, out long offset);
+                var row = px.AsSpan((int)(offset + (long)r * cols), cols);
                 var best = pv.AsSpan(r * k, k);
                 best.Fill(float.NegativeInfinity);
                 for (int j = 0; j < k; j++)
@@ -230,9 +238,11 @@ internal sealed unsafe partial class CpuBackend
 
     public override void SoftmaxCrossEntropyRowsKernel(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
-        fixed (float* pz = V(logits), pt = D(targets), pw = V(weights), pl = V(losses))
+        fixed (float* pz = V(logits), pt = D(targets), ww = D(weights), pl = V(losses))
         {
-            Rows("SoftmaxCrossEntropyRows", new CrossEntropyRows(pz, IndicesOf(targets, pt), pw, pl, vocabulary, scale, rows), rows, vocabulary, 24);
+            // The logits are overwritten with the gradient: float32's own; a typed weights vector read once, its own size.
+            var tw = new TypedInput(weights, ww, 0, rows, "SoftmaxCrossEntropyRows");
+            Rows("SoftmaxCrossEntropyRows", new CrossEntropyRows(pz, IndicesOf(targets, pt), tw.Range(0, rows), pl, vocabulary, scale, rows), rows, vocabulary, 24);
         }
     }
 

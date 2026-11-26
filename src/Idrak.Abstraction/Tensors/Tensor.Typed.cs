@@ -112,6 +112,25 @@ public sealed partial class Tensor
         }
     }
 
+    /// <summary>
+    /// The result of an operation that computes in float64 where an input's values need it (a float of more than
+    /// float32's bits, an integer past 2²⁴, as a code, scale or minimum: the float64 lanes'): held as float64
+    /// (<see cref="Types.F64"/>) where an input's values are so, so a float64 result is never rounded to float32; float32,
+    /// the compute type of activations, otherwise. Read from the inputs' descriptions alone (never a type's name).
+    /// </summary>
+    internal static Tensor ResultFor(ReadOnlySpan<int> shape, Device device, Tensor a, Tensor? b = null)
+    {
+        if (!Wide(a) && (b is null || !Wide(b)))
+        {
+            return Empty(shape, device);
+        }
+
+        var storage = device.Backend.Allocate(Types.F64.Type, ElementCount(shape), zeroed: false);
+        return new Tensor(shape.ToArray(), storage, device, track: true);
+
+        static bool Wide(Tensor t) => t._storage.Typed && Devices.Cpu.CpuBackend.WideValues(t._storage.Type);
+    }
+
     // A typed storage's values as float32, read through its type (ToArray of a tensor whose storage holds another type).
     private static void ReadTyped(Backend backend, Storage storage, Span<float> values)
     {
