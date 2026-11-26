@@ -409,20 +409,31 @@ public sealed record SyntheticPagesResult(int Records, int Pages, IReadOnlyList<
 public static class SyntheticPages
 {
     // Each of these was a registry (Idrak.Abstraction's, Idrak.Text's) a page's settings picked from by name: not on the
-    // new design yet.
+    // new design yet. The defaults are reached directly: the layouts SyntheticPageOptions.Layouts names by default
+    // ("letter": LetterLayout, "plain": PlainLayout), the shape profile "none" (no shapes), and the layouts' own defaults
+    // through the layouts (the "ideal" pen, the "sequence" binding, the "none" pose; a letter's ornaments as
+    // LetterOrnaments reads them). Another name stops.
     internal static IPagePartFiller FillerNamed(string name) => throw new NotSupportedException($"The page part slot {{{name}}} by name is not on the new design yet.");
 
-    internal static IPageLayout LayoutNamed(string name) => throw new NotSupportedException($"The page layout '{name}' by name is not on the new design yet.");
+    private static readonly LetterLayout Letter = new();
 
-    internal static bool ShapeProfilesNamed(string text) => throw new NotSupportedException($"The shape profiles '{text}' by name are not on the new design yet.");
+    private static readonly PlainLayout Plain = new();
+
+    internal static IPageLayout LayoutNamed(string name) =>
+        name.Equals(Letter.Name, StringComparison.OrdinalIgnoreCase) ? Letter
+        : name.Equals(Plain.Name, StringComparison.OrdinalIgnoreCase) ? Plain
+        : throw new NotSupportedException($"The page layout '{name}' by name is not on the new design yet.");
+
+    internal static bool ShapeProfilesNamed(string text) =>
+        text.Trim().Equals("none", StringComparison.OrdinalIgnoreCase) ? true : throw new NotSupportedException($"The shape profiles '{text}' by name are not on the new design yet.");
 
     internal static IImageEncoder EncoderNamed(string name) => throw new NotSupportedException($"The image encoder '{name}' by name is not on the new design yet.");
 
-    internal static IPen PenNamed(string name) => throw new NotSupportedException($"The pen '{name}' by name is not on the new design yet.");
+    internal static IPen PenNamed(string name) => ShapesLayout.PenFor(PageOptions.None, name).Pen;
 
-    internal static ITextBinding BindingNamed(string name) => throw new NotSupportedException($"The text binding '{name}' by name is not on the new design yet.");
+    internal static ITextBinding BindingNamed(string name) => ShapesLayout.BindingFor(PageOptions.None, name).Binding;
 
-    internal static IGlyphPose PoseNamed(string name) => throw new NotSupportedException($"The glyph pose '{name}' by name is not on the new design yet.");
+    internal static IGlyphPose PoseNamed(string name) => GlyphPainter.PoseNamed(name);
 
     internal static Idrak.Abstraction.Text.ITextHabits HabitsNamed(string name) => throw new NotSupportedException($"The text habits '{name}' by name are not on the new design yet.");
 
@@ -452,9 +463,6 @@ public static class SyntheticPages
 
     // The letter's settings that name shape profiles: given again in one settings text, each adds to the list ('|').
     private static readonly string[] ProfileListKeys = ["emblem-shapes", "stamp-shapes", "signature-shapes"];
-
-    // The letter's settings that name a pen.
-    private static readonly string[] LetterPenKeys = ["emblem-pen", "stamp-pen", "signature-pen"];
 
     /// <summary>
     /// The keys of the registered pens (<see cref="Pens"/>), text bindings (<see cref="TextBindings"/>) and glyph poses
@@ -583,12 +591,8 @@ public static class SyntheticPages
             case "pose":
                 _ = PoseNamed(value);
                 return;
-            case "emblem-shapes" or "stamp-shapes" or "signature-shapes":
-                _ = ShapeProfilesNamed(value);
-
-                return;
-            case "emblem-pen" or "stamp-pen" or "signature-pen":
-                _ = PenNamed(value);
+            case "emblem-shapes" or "stamp-shapes" or "signature-shapes" or "emblem-pen" or "stamp-pen" or "signature-pen":
+                _ = LetterOrnaments.Read(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [key] = value });   // as the letter reads it
                 return;
             case "stamp-turn":
                 _ = PageOptions.Range(what, value, -180, 180);
@@ -616,14 +620,11 @@ public static class SyntheticPages
             }
         }
 
-        // The pen, letter pens, binding and pose by name, each reading its own keys: not on the new design yet.
-        _ = PenNamed(options.TryGetValue("pen", out var penName) ? penName : Pens.Ideal);
-        foreach (string key in LetterPenKeys)
-        {
-            _ = PenNamed(options.TryGetValue(key, out var letterPenName) ? letterPenName : key == "signature-pen" ? "ballpoint" : Pens.Ideal);
-        }
-
-        _ = BindingNamed(options.TryGetValue("bind", out var bindName) ? bindName : TextBindings.Sequence);
+        // The pen, letter pens, binding and pose, each reading its own keys, as the layouts read them: their defaults
+        // reached directly, another by name not on the new design yet.
+        _ = ShapesLayout.PenFor(options, options.TryGetValue("pen", out var penName) ? penName : Pens.Ideal);
+        _ = LetterOrnaments.Read(options);
+        _ = ShapesLayout.BindingFor(options, options.TryGetValue("bind", out var bindName) ? bindName : TextBindings.Sequence);
         _ = PoseNamed(options.TryGetValue("pose", out var poseName) ? poseName : GlyphPoses.None);
     }
 

@@ -13,6 +13,8 @@
     <!-- The PDF reader's object layer (internal) is checked object by object against the samples' expected forms. -->
     <InternalsVisibleTo Include="Idrak.Tests" />
     <InternalsVisibleTo Include="Idrak.Tests.Library" />
+    <!-- Idrak.Text's synthetic documents reach the default document writer (pdf) directly. -->
+    <InternalsVisibleTo Include="Idrak.Text" />
   </ItemGroup>
 
   <ItemGroup>

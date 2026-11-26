@@ -27,13 +27,17 @@ internal sealed class SyntheticDocuments : IDisposable
     private string _name = "";
     private int _pages;
 
-    // The document writers were registered (DocumentWriters) and picked by name: not on the new design yet.
-    internal static IDocumentWriter WriterNamed(string name) => throw new NotSupportedException($"The document writer '{name}' by name is not on the new design yet.");
+    // The document writers were registered (DocumentWriters) and picked by name: not on the new design yet. The default,
+    // "pdf" (Idrak.Data's PdfWriter), is reached directly; another name stops.
+    private static readonly Idrak.Data.Pdf.PdfWriter Pdf = new();
+
+    internal static IDocumentWriter WriterNamed(string name) =>
+        name.Equals(Pdf.Name, StringComparison.OrdinalIgnoreCase) ? Pdf : throw new NotSupportedException($"The document writer '{name}' by name is not on the new design yet.");
 
     /// <param name="options">The pages' options: the output, the writer and its options, the pages a document, the resolution.</param>
     /// <param name="folder">The folder the documents' names are relative to (the records').</param>
     /// <param name="zip">The zip the documents go into instead, or null.</param>
-    /// <exception cref="NotSupportedException">The options' writer is not registered.</exception>
+    /// <exception cref="NotSupportedException">The options' writer is not "pdf": a document writer by name is not on the new design yet.</exception>
     public SyntheticDocuments(SyntheticPageOptions options, string folder, ZipArchive? zip)
     {
         ArgumentNullException.ThrowIfNull(options);

@@ -29,6 +29,8 @@
     <!-- Idrak.Data's PDF reader and writer reach their defaults here directly: the bidi reading order, the coverage page
          drawer, the JPEG encoder and the shaped text setter. -->
     <InternalsVisibleTo Include="Idrak.Data" />
+    <!-- Idrak.Text's synthetic pages reach the default page layouts (letter, plain) and their defaults here directly. -->
+    <InternalsVisibleTo Include="Idrak.Text" />
   </ItemGroup>
 
 </Project>
