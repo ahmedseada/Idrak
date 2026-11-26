@@ -6239,52 +6239,51 @@ public abstract partial class Backend
 
     /// <summary>
     /// y [m, n] = x [m, k] · Wᵀ, W stored as <paramref name="weight"/>: n rows of k values read by its description
-    /// (<see cref="Storage.Description"/>), each value times its scale from <paramref name="scales"/> as
-    /// <paramref name="layout"/> places them (minus its zero point from <paramref name="zeros"/> first, when given).
+    /// (<see cref="Storage.Description"/>) alone.
     /// </summary>
     /// <remarks>Runs <see cref="Ops.StoredMatMul"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>StoredMatMulKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void StoredMatMul(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
+    public void StoredMatMul(Storage x, Storage weight, Storage y, int m, int n, int k)
     {
         if (_kernels is null && _moves is null)
         {
-            StoredMatMulKernel(x, weight, scales, zeros, y, m, n, k, layout);
+            StoredMatMulKernel(x, weight, y, m, n, k);
         }
         else if (ReferenceEquals(_kernels, s_guardedKernels))
         {
-            StoredMatMulGuarded(x, weight, scales, zeros, y, m, n, k, layout);
+            StoredMatMulGuarded(x, weight, y, m, n, k);
         }
         else
         {
-            StoredMatMulRegistered(x, weight, scales, zeros, y, m, n, k, layout);
+            StoredMatMulRegistered(x, weight, y, m, n, k);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void StoredMatMulRegistered(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
+    private void StoredMatMulRegistered(Storage x, Storage weight, Storage y, int m, int n, int k)
     {
         using var operation = EnterOperation();
         if (Kernel(OperationIndex.StoredMatMul) is OperationKernels.StoredMatMul kernel)
         {
-            kernel(this, x, weight, scales, zeros, y, m, n, k, layout);
+            kernel(this, x, weight, y, m, n, k);
             return;
         }
 
         if (RefusedKernelsFallBack)
         {
-            StoredMatMulGuarded(x, weight, scales, zeros, y, m, n, k, layout);
+            StoredMatMulGuarded(x, weight, y, m, n, k);
         }
         else
         {
-            StoredMatMulKernel(x, weight, scales, zeros, y, m, n, k, layout);
+            StoredMatMulKernel(x, weight, y, m, n, k);
         }
     }
 
     // StoredMatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void StoredMatMulGuarded(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
+    private void StoredMatMulGuarded(Storage x, Storage weight, Storage y, int m, int n, int k)
     {
-        StoredMatMulKernel(x, weight, scales, zeros, y, m, n, k, layout);
+        StoredMatMulKernel(x, weight, y, m, n, k);
     }
 
     /// <summary>
@@ -6343,22 +6342,21 @@ public abstract partial class Backend
     /// <summary>
     /// Few-row products of stored weights sharing one input x [m, k] in one pass (the experiment's fused projections:
     /// queries, keys and values; gate and up): y_j = x · W_jᵀ for 2 or 3 weights of one description, each n_j rows of k
-    /// values with a scale a row or none (<see cref="StoredMatMulKernel"/>'s layout), each output as its own product
-    /// computes it. False where the device has no single pass for them (callers then run the products one by one).
+    /// values, each output as its own product (<see cref="StoredMatMulKernel"/>) computes it. False where the device has no single pass for them (callers then run the products one by one).
     /// </summary>
     /// <param name="x">The input [m, k].</param>
     /// <param name="m">Rows of x.</param>
     /// <param name="k">Columns of x, values of a weight row.</param>
-    /// <param name="products">Each weight's values and scales (or none), its output [m, n_j] and n_j.</param>
+    /// <param name="products">Each weight's values, its output [m, n_j] and n_j.</param>
     /// <remarks>Runs <see cref="Ops.StoredMatMulMany"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>StoredMatMulManyKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool StoredMatMulMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    public bool StoredMatMulMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products)
     {
         return _kernels is null && _moves is null ? StoredMatMulManyKernel(x, m, k, products) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulManyGuarded(x, m, k, products) : StoredMatMulManyRegistered(x, m, k, products);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool StoredMatMulManyRegistered(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    private bool StoredMatMulManyRegistered(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products)
     {
         using var operation = EnterOperation();
         if (Kernel(OperationIndex.StoredMatMulMany) is OperationKernels.StoredMatMulMany kernel)
@@ -6371,7 +6369,7 @@ public abstract partial class Backend
 
     // StoredMatMulMany on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool StoredMatMulManyGuarded(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    private bool StoredMatMulManyGuarded(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products)
     {
         try
         {
@@ -6392,17 +6390,17 @@ public abstract partial class Backend
     /// <param name="x">The input [m, k].</param>
     /// <param name="m">Rows of x.</param>
     /// <param name="k">Columns of x.</param>
-    /// <param name="products">The gate's then the up's values, scales, output [m, n] and n.</param>
+    /// <param name="products">The gate's then the up's values, output [m, n] and n.</param>
     /// <param name="hidden">act(gate) · up [m, n].</param>
     /// <remarks>Runs <see cref="Ops.StoredMatMulGatedPair"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>StoredMatMulGatedPairKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool StoredMatMulGatedPair(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, Storage hidden)
+    public bool StoredMatMulGatedPair(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products, Storage hidden)
     {
         return _kernels is null && _moves is null ? StoredMatMulGatedPairKernel(activation, x, m, k, products, hidden) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulGatedPairGuarded(activation, x, m, k, products, hidden) : StoredMatMulGatedPairRegistered(activation, x, m, k, products, hidden);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool StoredMatMulGatedPairRegistered(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, Storage hidden)
+    private bool StoredMatMulGatedPairRegistered(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products, Storage hidden)
     {
         using var operation = EnterOperation();
         if (Kernel(OperationIndex.StoredMatMulGatedPair) is OperationKernels.StoredMatMulGatedPair kernel)
@@ -6415,7 +6413,7 @@ public abstract partial class Backend
 
     // StoredMatMulGatedPair on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool StoredMatMulGatedPairGuarded(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, Storage hidden)
+    private bool StoredMatMulGatedPairGuarded(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products, Storage hidden)
     {
         try
         {
@@ -6429,13 +6427,12 @@ public abstract partial class Backend
     }
 
     /// <summary>
-    /// y = x · Wᵀ for a stored weight W (n rows of k, a scale a row or none), sum = residual + y and normalized = its RMS
+    /// y = x · Wᵀ for a stored weight W (n rows of k), sum = residual + y and normalized = its RMS
     /// normalization with gain (value · 1 / sqrt(mean of squares + eps) · (gain + offset)) in one pass, few rows. False
     /// where the device has no such pass.
     /// </summary>
     /// <param name="x">The input [m, k].</param>
     /// <param name="weight">W's values.</param>
-    /// <param name="scales">W's scales a row, or null.</param>
     /// <param name="y">The product [m, n].</param>
     /// <param name="m">Rows of x.</param>
     /// <param name="n">Rows of W.</param>
@@ -6448,30 +6445,30 @@ public abstract partial class Backend
     /// <param name="offset">Added to the gain.</param>
     /// <remarks>Runs <see cref="Ops.StoredMatMulAddRmsNorm"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>StoredMatMulAddRmsNormKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool StoredMatMulAddRmsNorm(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    public bool StoredMatMulAddRmsNorm(Storage x, Storage weight, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
-        return _kernels is null && _moves is null ? StoredMatMulAddRmsNormKernel(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulAddRmsNormGuarded(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : StoredMatMulAddRmsNormRegistered(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        return _kernels is null && _moves is null ? StoredMatMulAddRmsNormKernel(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulAddRmsNormGuarded(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset) : StoredMatMulAddRmsNormRegistered(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool StoredMatMulAddRmsNormRegistered(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    private bool StoredMatMulAddRmsNormRegistered(Storage x, Storage weight, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
         using var operation = EnterOperation();
         if (Kernel(OperationIndex.StoredMatMulAddRmsNorm) is OperationKernels.StoredMatMulAddRmsNorm kernel)
         {
-            return kernel(this, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+            return kernel(this, x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset);
         }
 
-        return RefusedKernelsFallBack ? StoredMatMulAddRmsNormGuarded(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : StoredMatMulAddRmsNormKernel(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        return RefusedKernelsFallBack ? StoredMatMulAddRmsNormGuarded(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset) : StoredMatMulAddRmsNormKernel(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset);
     }
 
     // StoredMatMulAddRmsNorm on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool StoredMatMulAddRmsNormGuarded(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    private bool StoredMatMulAddRmsNormGuarded(Storage x, Storage weight, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
         try
         {
-            return StoredMatMulAddRmsNormKernel(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+            return StoredMatMulAddRmsNormKernel(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset);
         }
         catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.StoredMatMulAddRmsNorm))
         {

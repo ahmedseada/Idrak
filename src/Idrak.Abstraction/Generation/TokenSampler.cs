@@ -65,12 +65,10 @@ public sealed class TokenSampler : ITokenSampler
         Vocabulary = vocabulary;
         MaxSteps = maxSteps;
         HistoryCapacity = historyCapacity;
-        // Token ids and the history in the type the device's sampler kernels write (plan 37, T1: int32 on the CPU).
-        var ids = device.Backend.IndexTypeOf(Operations.Ops.SampleRows);
-        Ids = Tensor.Empty([rows], device, ids, zeroed: true, track: false);
+        Ids = Tensor.Empty([rows], device, zeroed: true, track: false);
         _stats = Tensor.Persistent(new float[maxSteps * rows * StatsPerToken], [maxSteps, rows, StatsPerToken], device, requiresGrad: false);
         _step = Tensor.Persistent([0f], [1], device, requiresGrad: false);
-        _history = Tensor.Empty([rows, historyCapacity], device, ids, zeroed: true, track: false);
+        _history = Tensor.Empty([rows, historyCapacity], device, zeroed: true, track: false);
         _historyLength = Tensor.Persistent([0f], [1], device, requiresGrad: false);
         _work = Tensor.Persistent(new float[rows * vocabulary], [rows, vocabulary], device, requiresGrad: false);
     }

@@ -10,14 +10,14 @@ namespace Idrak.Gpu.Cuda;
 // product's residual and norm), each a candidate measured against the composition.
 internal sealed unsafe partial class CudaBackend
 {
-    public override bool StoredMatMulManyKernel(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products) =>
+    public override bool StoredMatMulManyKernel(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products) =>
         m <= PtxKernels.TypedGemvRows[^1] && FewMany(x, m, k, products);
 
     // A few rows' group: of the group's one launches (the described rows product's by each warp split: DescribedFusedLane +
     // split; each output as its own launch by that lane computes it) and the split launches (each product by its own
     // measured lane: 0), the fastest measured once a shape on the real operands, cold as the products are (Tune; the
     // reference is the grouped launch of the first product's own lane, where it has one).
-    private bool FewMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    private bool FewMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products)
     {
         if (products.Length == 0 || products[0].Values.Description is not { } description)
         {
@@ -53,26 +53,25 @@ internal sealed unsafe partial class CudaBackend
     // A number for each description, for the groups' keys.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<TypeDescription, int> FewGroupIds = new();
 
-    private static TuneKey GroupKey(TypeDescription description, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products) =>
+    private static TuneKey GroupKey(TypeDescription description, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products) =>
         new(TuneOp.ProductRoute, 7000 + FewGroupIds.GetOrAdd(description, static _ => FewGroupIds.Count), m, k, products[0].Columns, products.Length > 1 ? products[1].Columns : 0,
             products.Length > 2 ? products[2].Columns : 0, 1);
 
     // The group's candidates: the split launches (0) first, then the described lane's one launches where it reads the group
-    // (all of one description, all with a scale an output row or none).
-    private int GroupCandidates(ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, int m, int k, Span<int> into)
+    // (all of one description).
+    private int GroupCandidates(ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products, int m, int k, Span<int> into)
     {
         int count = 0;
         into[count++] = 0;
         var description = products[0].Values.Description;
-        bool scaled = products[0].Scales is not null;
         if (description is null || products.Length is < 2 or > 3 || m is <= 0 or > 8 || k <= 0)
         {
             return count;
         }
 
-        foreach (var (values, scales, _, columns) in products)
+        foreach (var (values, _, columns) in products)
         {
-            if (!Equals(values.Description, description) || scales is not null != scaled || columns <= 0)
+            if (!Equals(values.Description, description) || columns <= 0)
             {
                 return count;
             }
@@ -92,7 +91,7 @@ internal sealed unsafe partial class CudaBackend
 
     // The group's reference: the one launch of the first product's own lane (RoutedLane) where the group has it, else the
     // split launches.
-    private int GroupReference(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, ReadOnlySpan<int> candidates)
+    private int GroupReference(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products, ReadOnlySpan<int> candidates)
     {
         if (candidates.Length == 1)
         {
@@ -100,21 +99,21 @@ internal sealed unsafe partial class CudaBackend
         }
 
         var first = products[0];
-        int own = RoutedLane(x, first.Values, first.Scales, first.Output, m, first.Columns, k) ?? -1;
+        int own = RoutedLane(x, first.Values, first.Output, m, first.Columns, k) ?? -1;
         int grouped = own is >= DescribedRowsLane and < DescribedRowsLane + 4 ? DescribedFusedLane + own - DescribedRowsLane : 0;
         return candidates.Contains(grouped) ? grouped : 0;
     }
 
     // One lane of a group: 0 each product by its own measured lane, DescribedFusedLane + split the described rows product's
     // one launch.
-    private bool GroupLane(int lane, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products) => lane switch
+    private bool GroupLane(int lane, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products) => lane switch
     {
         >= DescribedFusedLane => RunDescribedMany(x, m, k, products, lane - DescribedFusedLane),
         _ => EachRouted(x, m, k, products),
     };
 
     /// <summary>Tests: the lane a few rows' group settled on (GroupLane's: 0 each product by its own lane), or null where none is measured yet.</summary>
-    internal int? StoredGroupChoice(Storage x, int m, int k, (Storage Values, Storage? Scales, Storage Output, int Columns)[] products)
+    internal int? StoredGroupChoice(Storage x, int m, int k, (Storage Values, Storage Output, int Columns)[] products)
     {
         Span<int> candidates = stackalloc int[8];
         int count = GroupCandidates(products, m, k, candidates);
@@ -123,11 +122,11 @@ internal sealed unsafe partial class CudaBackend
     }
 
     // Each product of a group by its own measured lane (StoredRouted); false where one is not taken so (the caller runs them all).
-    private bool EachRouted(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    private bool EachRouted(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products)
     {
-        foreach (var (values, scales, output, columns) in products)
+        foreach (var (values, output, columns) in products)
         {
-            if (!StoredRouted(x, values, scales, output, m, columns, k))
+            if (!StoredRouted(x, values, output, m, columns, k))
             {
                 return false;
             }
@@ -189,7 +188,7 @@ internal sealed unsafe partial class CudaBackend
         return TryTuned(EpilogueKey(kind, detail, description, m, n, k), candidates[..count], 0, out int lane) ? lane != 0 : null;
     }
 
-    public override bool StoredMatMulGatedPairKernel(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products,
+    public override bool StoredMatMulGatedPairKernel(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products,
         Storage hidden)
     {
         if (products.Length != 2 || products[0].Columns != products[1].Columns || activation is < 0 or > 2 || m <= 0 || m > PtxKernels.TypedGemvRows[^1]
@@ -234,14 +233,14 @@ internal sealed unsafe partial class CudaBackend
     /// Tests: a fused gate/up pass run directly by <paramref name="lane"/> (DescribedFusedLane + split the described lane's:
     /// StoredEpilogueCandidates), not measured against the composition.
     /// </summary>
-    internal bool StoredGatedFused(int activation, Storage x, int m, int k, (Storage Values, Storage? Scales, Storage Output, int Columns)[] products, Storage hidden,
+    internal bool StoredGatedFused(int activation, Storage x, int m, int k, (Storage Values, Storage Output, int Columns)[] products, Storage hidden,
         int lane = DescribedFusedLane) =>
         lane != 0 && GatedLane(lane, activation, x, m, k, products, hidden);
 
     /// <summary>Tests: a fused residual and norm pass run directly by <paramref name="lane"/> (as StoredGatedFused's), not measured against the composition.</summary>
-    internal bool StoredAddNormFused(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain,
+    internal bool StoredAddNormFused(Storage x, Storage weight, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain,
         Storage normalized, float eps, float offset, int lane = DescribedFusedLane) =>
-        lane != 0 && AddNormLane(lane, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        lane != 0 && AddNormLane(lane, x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset);
 
     /// <summary>Tests: the epilogue's lanes at the shape (kind 0 the gate/up pair, 1 the residual and norm), the composition (0) first.</summary>
     internal int[] StoredEpilogueCandidates(int kind, TypeDescription description, int m, int k)
@@ -250,7 +249,7 @@ internal sealed unsafe partial class CudaBackend
         return candidates[..EpilogueCandidates(kind, description, m, k, candidates)].ToArray();
     }
 
-    /// <summary>Tests: the epilogue lane the shape settled on (detail: the activation, or whether the weight has scales), or null where none is measured yet.</summary>
+    /// <summary>Tests: the epilogue lane the shape settled on (detail: the activation, or 0), or null where none is measured yet.</summary>
     internal int? StoredEpilogueChoice(int kind, int detail, TypeDescription description, int m, int n, int k)
     {
         var candidates = StoredEpilogueCandidates(kind, description, m, k);
@@ -261,11 +260,11 @@ internal sealed unsafe partial class CudaBackend
     internal static int StoredEpilogueProductLane(int fusedLane) => DescribedRowsLane + fusedLane - DescribedFusedLane;
 
     /// <summary>Tests: a stored weight's product by one of the described lane's variants (StoredRouted's candidates), not measured.</summary>
-    internal bool StoredRoutedLane(int lane, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k) =>
-        RunRouted(lane, DescribedOf(weight.Description), x, weight, scales, y, m, n, k);
+    internal bool StoredRoutedLane(int lane, Storage x, Storage weight, Storage y, int m, int n, int k) =>
+        RunRouted(lane, DescribedOf(weight.Description), x, weight, y, m, n, k);
 
     // 0 the grouped products, then act(gate) · up as a pass of its own; DescribedFusedLane + split the described lane's.
-    private bool GatedLane(int lane, int activation, Storage x, int m, int k, (Storage Values, Storage? Scales, Storage Output, int Columns)[] products, Storage hidden)
+    private bool GatedLane(int lane, int activation, Storage x, int m, int k, (Storage Values, Storage Output, int Columns)[] products, Storage hidden)
     {
         if (lane >= DescribedFusedLane)
         {
@@ -286,7 +285,7 @@ internal sealed unsafe partial class CudaBackend
 
     private ulong EpilogueCount() => P(_epilogueCount ??= Allocate(1, zeroed: true));
 
-    public override bool StoredMatMulAddRmsNormKernel(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain,
+    public override bool StoredMatMulAddRmsNormKernel(Storage x, Storage weight, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain,
         Storage normalized, float eps, float offset)
     {
         if (m <= 0 || m > PtxKernels.TypedGemvRows[^1] || k <= 0 || n <= 0 || weight.Description is not { } description)
@@ -301,27 +300,27 @@ internal sealed unsafe partial class CudaBackend
             return false;                                                  // no fused pass: the caller composes
         }
 
-        var key = EpilogueKey(1, scales is null ? 0 : 1, description, m, n, k);
+        var key = EpilogueKey(1, 0, description, m, n, k);
         if (!TryTuned(key, candidates[..count], 0, out int lane))
         {
-            lane = Tune(key, candidates[..count], 0, c => AddNormLane(c, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset), cold: true);
+            lane = Tune(key, candidates[..count], 0, c => AddNormLane(c, x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset), cold: true);
         }
 
         SayEpilogue(key, 1, description, m, n, k, lane, count);
-        return AddNormLane(lane, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        return AddNormLane(lane, x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset);
     }
 
     // 0 the product (the routed few-row lane), then residual + y and its norm as a pass of its own; DescribedFusedLane +
     // split the described lane's.
-    private bool AddNormLane(int lane, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain,
+    private bool AddNormLane(int lane, Storage x, Storage weight, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain,
         Storage normalized, float eps, float offset)
     {
         if (lane >= DescribedFusedLane)
         {
-            return RunDescribedAddNorm(x, weight, scales, m, n, k, residual, sum, gain, normalized, eps, offset, lane - DescribedFusedLane);
+            return RunDescribedAddNorm(x, weight, m, n, k, residual, sum, gain, normalized, eps, offset, lane - DescribedFusedLane);
         }
 
-        if (!StoredRouted(x, weight, scales, y, m, n, k))
+        if (!StoredRouted(x, weight, y, m, n, k))
         {
             return false;
         }

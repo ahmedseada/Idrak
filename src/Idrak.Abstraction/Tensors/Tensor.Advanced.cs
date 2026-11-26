@@ -271,7 +271,7 @@ public sealed partial class Tensor
         int cols = _shape[^1], rows = cols == 0 ? 0 : Size / cols;
         int[] shape = [.. _shape[..^1], k];
         var values = Empty(shape, Device);
-        var indices = Empty(shape, Device, Backend.IndexTypeOf(Operations.Ops.LogSoftmaxTopK));   // the type its kernel writes (plan 37, T1)
+        var indices = Empty(shape, Device);
         long start = Telemetry.Start(TelemetryLevel.Operations);
         Backend.LogSoftmaxTopK(Storage, values.Storage, indices.Storage, rows, cols, k);
         return (Traced("log_softmax_topk", values, start), indices);

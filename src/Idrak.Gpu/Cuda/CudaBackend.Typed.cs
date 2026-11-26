@@ -16,55 +16,15 @@ internal sealed unsafe partial class CudaBackend
     /// <summary>Why the last described module did not load, or null (diagnostics).</summary>
     internal string? TypedUnavailableReason { get; private set; }
 
-    // Stored weights (StoredWeight): the described lane's product, a scale per output row or none.
-    public override void StoredMatMulKernel(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
+    // Stored weights: the described lane's product.
+    public override void StoredMatMulKernel(Storage x, Storage weight, Storage y, int m, int n, int k)
     {
-        // Scales on x's columns (StoredScales.OnColumns: one block of rows over every output, each scale a column or a run of
-        // columns all outputs share): x times them once a call (m · k multiplies, not n · k), then the product with no scales,
-        // so no weight's value is scaled anywhere.
-        if (zeros is null && scales is not null && layout.OnColumns(n, k) && m > 0 && k > 0 && (long)m * k <= int.MaxValue && ColumnScaler() is { } scaler)
-        {
-            var scaled = _columnScaled.Get(this, m * k);
-            Launch(scaler, (uint)((m * k + 255) / 256), 1, 256, 1, P(x), P(scales), P(scaled), U(m * k), U(k), U(layout.BlockColumns));
-            StoredMatMulKernel(scaled, weight, null, null, y, m, n, k, default);
-            return;
-        }
-
-        bool perRow = !layout.HasScales || layout is { BlockRows: 1, ScaleColumns: 1 } && layout.BlockColumns >= k;
-        if (zeros is null && perRow && StoredRouted(x, weight, scales, y, m, n, k))
+        if (StoredRouted(x, weight, y, m, n, k))
         {
             return;
         }
 
-        base.StoredMatMulKernel(x, weight, scales, zeros, y, m, n, k, layout);
-    }
-
-    // x times its columns' scales (a call's, in queue order).
-    private readonly KeptScratch _columnScaled = new();
-
-    // The kernel scaling x by its columns' scales (PtxKernels.ColumnScale), loaded on first use; null where it does not load.
-    private IntPtr? _columnScaler;
-    private bool _columnScalerTried;
-
-    private IntPtr? ColumnScaler()
-    {
-        if (_columnScalerTried)
-        {
-            return _columnScaler;
-        }
-
-        lock (_typedLock)
-        {
-            if (!_columnScalerTried)
-            {
-                var (name, source) = PtxKernels.ColumnScale();
-                _columnScaler = LoadDynamicModule(name, [name], source, static _ => 0, out string? reason) is { } kernels ? kernels[name] : null;
-                TypedUnavailableReason = _columnScaler is null ? reason : TypedUnavailableReason;
-                _columnScalerTried = true;
-            }
-
-            return _columnScaler;
-        }
+        base.StoredMatMulKernel(x, weight, y, m, n, k);
     }
 
     // The kernel adding a product's k splits in split order (PtxKernels.SplitSum), loaded on first use.
@@ -224,10 +184,10 @@ internal sealed unsafe partial class CudaBackend
         return bytes <= int.MaxValue;
     }
 
-    // The described lane's rows product: y [m, n] = x [m, k] · Wᵀ (× a scale an output row), any row count: the variant of
+    // The described lane's rows product: y [m, n] = x [m, k] · Wᵀ, any row count: the variant of
     // the fewest rows that hold m, past 16 the grid's y over chunks of 16; a wide plan's x widened to float64 first. `split`:
     // log2 of the warps a group of 8 weight rows takes (0 - 3: 1, 2, 4 or 8 warps; a block 64 >> split rows).
-    private bool RunDescribedRows(DescribedPlan plan, Storage x, Storage w, Storage? rowScales, Storage y, int m, int n, int k, int split = 3)
+    private bool RunDescribedRows(DescribedPlan plan, Storage x, Storage w, Storage y, int m, int n, int k, int split = 3)
     {
         if (!DescribedRow(plan, w.Description!, k, out int rowBytes, out int align) || (long)m * k > int.MaxValue / 2
             || Described(plan, align, k % 2 == 0) is not { } functions)
@@ -268,13 +228,13 @@ internal sealed unsafe partial class CudaBackend
         int perBlock = 64 >> split;
         t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows);
         Launch(functions.Rows[variant], (uint)((n + perBlock - 1) / perBlock), (uint)((m + rows - 1) / rows),
-            PtxKernels.DescribedRowsThreads, 1, P(input), P(w), rowScales is null ? 0UL : P(rowScales), P(y), U(m), U(n), U(k), U(rowBytes), U(split));
+            PtxKernels.DescribedRowsThreads, 1, P(input), P(w), 0UL, P(y), U(m), U(n), U(k), U(rowBytes), U(split));
         return true;
     }
 
-    // The described rows product over a group of 2 or 3 weights of one type sharing x (few rows; all with a scale an output
-    // row or none) in one launch, each block one weight's 64 >> split rows: each output its own product's bits.
-    private bool RunDescribedMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, int split)
+    // The described rows product over a group of 2 or 3 weights of one type sharing x (few rows) in one launch, each block
+    // one weight's 64 >> split rows: each output its own product's bits.
+    private bool RunDescribedMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products, int split)
     {
         var description = products[0].Values.Description!;
         if (products.Length is < 2 or > 3 || m is <= 0 or > 8 || k <= 0 || DescribedOf(description) is not { } plan || !DescribedRow(plan, description, k, out int rowBytes, out int align)
@@ -283,20 +243,19 @@ internal sealed unsafe partial class CudaBackend
             return false;
         }
 
-        bool scaled = products[0].Scales is not null;
         long blocks = 0;
         int perBlock = 64 >> split;
         Span<ulong> args = stackalloc ulong[17];
         args.Clear();
         for (int i = 0; i < products.Length; i++)
         {
-            var (values, scales, output, columns) = products[i];
-            if (!Equals(values.Description, description) || scales is not null != scaled || columns <= 0)
+            var (values, output, columns) = products[i];
+            if (!Equals(values.Description, description) || columns <= 0)
             {
                 return false;
             }
 
-            (args[1 + 3 * i], args[2 + 3 * i], args[3 + 3 * i], args[13 + i]) = (P(values), scales is null ? 0UL : P(scales), P(output), U(columns));
+            (args[1 + 3 * i], args[3 + 3 * i], args[13 + i]) = (P(values), P(output), U(columns));
             blocks += (columns + perBlock - 1) / perBlock;
         }
 
@@ -323,7 +282,7 @@ internal sealed unsafe partial class CudaBackend
     // gate's and the up's values against one load of x, their sums as their own launches add them (split: log2 of the
     // warps a group of 8 rows takes), then hidden = act(gate) · up as gated_act_f32 computes it; neither product stored.
     // False where the plan, the shapes or the device do not take it.
-    private bool RunDescribedGated(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products,
+    private bool RunDescribedGated(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products,
         Storage hidden, int split)
     {
         if (products.Length != 2 || m is <= 0 or > 8 || k <= 0 || activation is < 0 or > 2)
@@ -333,7 +292,7 @@ internal sealed unsafe partial class CudaBackend
 
         var (gate, up) = (products[0], products[1]);
         var description = gate.Values.Description;
-        if (!Equals(up.Values.Description, description) || gate.Columns != up.Columns || gate.Columns <= 0 || gate.Scales is null != up.Scales is null
+        if (!Equals(up.Values.Description, description) || gate.Columns != up.Columns || gate.Columns <= 0
             || DescribedOf(description) is not { } plan || !DescribedRow(plan, description!, k, out int rowBytes, out int align) || (long)m * k > int.MaxValue / 2
             || Described(plan, align, k % 2 == 0) is not { } functions || functions.RowsGated[DescribedFewVariant(m)] == 0)
         {
@@ -350,19 +309,19 @@ internal sealed unsafe partial class CudaBackend
         }
 
         t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows, PtxKernels.Epilogue.Gated);
-        Launch(kernel, (uint)((n + perBlock - 1) / perBlock), 1, PtxKernels.DescribedRowsThreads, 1, P(input), P(gate.Values), gate.Scales is null ? 0UL : P(gate.Scales),
-            P(hidden), P(up.Values), up.Scales is null ? 0UL : P(up.Scales), U(m), U(n), U(k), U(rowBytes), U(split), U(activation));
+        Launch(kernel, (uint)((n + perBlock - 1) / perBlock), 1, PtxKernels.DescribedRowsThreads, 1, P(input), P(gate.Values), 0UL,
+            P(hidden), P(up.Values), 0UL, U(m), U(n), U(k), U(rowBytes), U(split), U(activation));
         return true;
     }
 
     // Each block's sums of squares of the fused residual and norm (a call's, in queue order): [blocks, m].
     private readonly KeptScratch _describedNormParts = new();
 
-    // The described lane's fused residual and norm (few rows): y = x · Wᵀ (× a scale an output row) by the rows product
+    // The described lane's fused residual and norm (few rows): y = x · Wᵀ by the rows product
     // (split as above), sum = residual + y in registers and stored, normalized = sum · 1 / sqrt(mean of the row's squares +
     // eps) · (gain + offset) by the last block to finish, as add_rms_norm_affine_f32 computes it; y not stored. False where
     // the plan, the shapes or the device do not take it.
-    private bool RunDescribedAddNorm(Storage x, Storage weight, Storage? scales, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized,
+    private bool RunDescribedAddNorm(Storage x, Storage weight, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized,
         float eps, float offset, int split)
     {
         var description = weight.Description!;
@@ -383,7 +342,7 @@ internal sealed unsafe partial class CudaBackend
 
         var parts = _describedNormParts.Get(this, blocks * m);
         t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows, PtxKernels.Epilogue.AddNorm);
-        Launch(kernel, (uint)blocks, 1, PtxKernels.DescribedRowsThreads, 1, P(input), P(weight), scales is null ? 0UL : P(scales), P(residual), P(sum), P(gain), P(normalized),
+        Launch(kernel, (uint)blocks, 1, PtxKernels.DescribedRowsThreads, 1, P(input), P(weight), 0UL, P(residual), P(sum), P(gain), P(normalized),
             P(parts), EpilogueCount(), U(m), U(n), U(k), U(rowBytes), U(split), F(eps), F(offset));
         return true;
     }
@@ -398,8 +357,18 @@ internal sealed unsafe partial class CudaBackend
         return (k + unit - 1) / unit * unit;
     }
 
+    // x rounded to int8 for the integer product (a call's, in queue order): the codes, then the blocks' scales.
+    private readonly KeptScratch _describedQuant = new();
+
+    // Whether the described integer product takes the product: a whole-byte integer code (DescribedPlan.IntegerBytes),
+    // prompts (x rounded to int8 a block of 32 values), rows of whole 16-byte chunks, and the kernels load here.
+    private bool DescribedIntTakes(DescribedPlan plan, TypeDescription description, int m, int k) =>
+        plan.IntegerBytes > 0 && m > PtxKernels.TypedGemvRows[^1] && DescribedRow(plan, description, k, out _, out int align) && align == 16
+        && (long)m * ((k + 31) / 32 * 32) <= int.MaxValue / 2 && Described(plan, 16, true) is { Int: not 0, Quant: not 0 };
+
+    // The described integer product, k split in up to `splits` parts (each whole steps of 32; their sums added in order):
     // x rounded to int8 a block of 32 values once (DescribedQuant), then the codes' byte planes by int8 tensor cores.
-    private bool RunDescribedInt(DescribedPlan plan, int splits, Storage x, Storage w, Storage? rowScales, Storage y, int m, int n, int k)
+    private bool RunDescribedInt(DescribedPlan plan, int splits, Storage x, Storage w, Storage y, int m, int n, int k)
     {
         if (!DescribedIntTakes(plan, w.Description!, m, k) || !DescribedRow(plan, w.Description!, k, out int rowBytes, out _) || Described(plan, 16, true) is not { } functions)
         {
@@ -419,7 +388,7 @@ internal sealed unsafe partial class CudaBackend
         var target = used == 1 ? y : _splitPartials.Get(this, used * m * n);
         t_sharedBytes = (uint)PtxKernels.DescribedIntShared(plan);
         Launch(functions.Int, (uint)((n + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile), (uint)((m + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile),
-            (uint)used, PtxKernels.DescribedMmaThreads, 1, q, s, rowScales is null ? 0UL : P(rowScales), P(w), P(target), U(m), U(n), U(k), U(kp), U(rowBytes), U(per));
+            (uint)used, PtxKernels.DescribedMmaThreads, 1, q, s, 0UL, P(w), P(target), U(m), U(n), U(k), U(kp), U(rowBytes), U(per));
         if (used > 1)
         {
             var sum = SplitSum();
@@ -430,17 +399,17 @@ internal sealed unsafe partial class CudaBackend
     }
 
     // Whether the integer product over narrow codes takes the product (DescribedPlan.NarrowChunk: codes of 8 bits or fewer
-    // whose numbers are whole within int8 at a power of two): a bfloat16 run's prompts (x rounded to int8 a block of 32, as
-    // the run rounds x for its tensor cores), x in pairs, and the kernels load here (the device has int8 tensor cores: the
+    // whose numbers are whole within int8 at a power of two): prompts (x rounded to int8 a block of 32), x in pairs, and the
+    // kernels load here (the device has int8 tensor cores: the
     // module's target, and the kernel's shared memory within its limit).
     private bool DescribedNarrowTakes(DescribedPlan plan, TypeDescription description, int m, int k) =>
-        plan.NarrowChunk > 0 && m > PtxKernels.TypedGemvRows[^1] && BFloat16Products && k % 2 == 0 && DescribedRow(plan, description, k, out _, out int align)
+        plan.NarrowChunk > 0 && m > PtxKernels.TypedGemvRows[^1] && k % 2 == 0 && DescribedRow(plan, description, k, out _, out int align)
         && (long)m * DescribedPadded(plan, k) <= int.MaxValue / 2 && Described(plan, align, true) is { Narrow: not 0, Quant: not 0 };
 
     // The integer product over narrow codes, k split in up to `splits` parts (each whole spans of W; their sums added in
     // order): x rounded to int8 a block of 32 values once (DescribedQuant, with its codes' sums of 16 where the plan has
     // minimums), then the codes made int8 in registers by int8 tensor cores, the factors a chunk at a time.
-    private bool RunDescribedNarrow(DescribedPlan plan, int splits, Storage x, Storage w, Storage? rowScales, Storage y, int m, int n, int k)
+    private bool RunDescribedNarrow(DescribedPlan plan, int splits, Storage x, Storage w, Storage y, int m, int n, int k)
     {
         if (!DescribedNarrowTakes(plan, w.Description!, m, k) || !DescribedRow(plan, w.Description!, k, out int rowBytes, out int align)
             || Described(plan, align, true) is not { } functions)
@@ -462,7 +431,7 @@ internal sealed unsafe partial class CudaBackend
         var target = used == 1 ? y : _splitPartials.Get(this, used * m * n);
         t_sharedBytes = (uint)PtxKernels.DescribedNarrowShared(plan, align);
         Launch(functions.Narrow, (uint)((n + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile), (uint)((m + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile),
-            (uint)used, PtxKernels.DescribedMmaThreads, 1, q, s, rowScales is null ? 0UL : P(rowScales), P(w), P(target), sums, U(m), U(n), U(k), U(kp), U(rowBytes), U(per));
+            (uint)used, PtxKernels.DescribedMmaThreads, 1, q, s, 0UL, P(w), P(target), sums, U(m), U(n), U(k), U(kp), U(rowBytes), U(per));
         if (used > 1)
         {
             var sum = SplitSum();
@@ -480,26 +449,26 @@ internal sealed unsafe partial class CudaBackend
     // A number for each description, for the measured choices' keys (TuneKey holds numbers only).
     private static readonly ConcurrentDictionary<TypeDescription, int> RoutedIds = new();
 
-    private readonly ConcurrentDictionary<(TypeDescription, int, int, int, bool), byte> _routedSaid = new();
+    private readonly ConcurrentDictionary<(TypeDescription, int, int, int), byte> _routedSaid = new();
 
     /// <summary>
     /// The product of a stored weight by the described lane: its variants that take the shape, the fastest measured once
     /// on the real operands (Tune). False where the described lane does not read the weight's description.
     /// </summary>
-    private bool StoredRouted(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k)
+    private bool StoredRouted(Storage x, Storage weight, Storage y, int m, int n, int k)
     {
-        if (RoutedLane(x, weight, scales, y, m, n, k) is not { } lane)
+        if (RoutedLane(x, weight, y, m, n, k) is not { } lane)
         {
             return false;
         }
 
-        return m == 0 || n == 0 || RunRouted(lane, DescribedOf(weight.Description), x, weight, scales, y, m, n, k);
+        return m == 0 || n == 0 || RunRouted(lane, DescribedOf(weight.Description), x, weight, y, m, n, k);
     }
 
     // The described lane's variant of a stored weight's product at the shape (StoredRouted), measured once on the real
     // operands (writing y, which the caller writes again), or null where none takes it. Recorded (ProductRoutes.Chose) once
     // a shape.
-    private int? RoutedLane(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k)
+    private int? RoutedLane(Storage x, Storage weight, Storage y, int m, int n, int k)
     {
         if (weight.Description is not { } description || DescribedOf(description) is not { } plan)
         {
@@ -517,15 +486,14 @@ internal sealed unsafe partial class CudaBackend
         int lane = candidates[0];
         if (count > 1 && m > 0 && n > 0)
         {
-            var key = new TuneKey(TuneOp.ProductRoute, 6000 + RoutedIds.GetOrAdd(description, static _ => RoutedIds.Count), few ? m : TuneSizes.Class(m), n, k, count, 0,
-                BFloat16Products ? 1 : 0);
+            var key = new TuneKey(TuneOp.ProductRoute, 6000 + RoutedIds.GetOrAdd(description, static _ => RoutedIds.Count), few ? m : TuneSizes.Class(m), n, k, count, 0, 0);
             if (!TryTuned(key, candidates[..count], candidates[0], out lane))
             {
-                lane = MeasureRouted(key, candidates[..count].ToArray(), x, weight, scales, y, m, n, k, few);
+                lane = MeasureRouted(key, candidates[..count].ToArray(), x, weight, y, m, n, k, few);
             }
         }
 
-        if (_routedSaid.TryAdd((description, few ? m : TuneSizes.Class(m), n, k, BFloat16Products), 0))
+        if (_routedSaid.TryAdd((description, few ? m : TuneSizes.Class(m), n, k), 0))
         {
             SayStored(description, m, n, k, $"{RoutedName(lane)}{(count > 1 ? $" (of {count} lanes)" : " (the only lane)")}");
         }
@@ -533,7 +501,7 @@ internal sealed unsafe partial class CudaBackend
         return lane;
     }
 
-    // The described lane's candidates: for a bfloat16 run's prompts a whole-byte integer code's integer product by its k
+    // The described lane's candidates: for prompts a whole-byte integer code's integer product by its k
     // splits and the integer product over narrow codes by its k splits, then the rows product.
     private int AddDescribed(DescribedPlan plan, TypeDescription description, int m, int k, Span<int> into)
     {
@@ -575,18 +543,18 @@ internal sealed unsafe partial class CudaBackend
 
     // Timed cold for few rows (a decoding step reads each weight from memory), warm for prompts.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private int MeasureRouted(TuneKey key, int[] candidates, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, bool few)
+    private int MeasureRouted(TuneKey key, int[] candidates, Storage x, Storage weight, Storage y, int m, int n, int k, bool few)
     {
         var plan = DescribedOf(weight.Description);
-        return Tune(key, candidates, candidates[0], c => RunRouted(c, plan, x, weight, scales, y, m, n, k), cold: few);
+        return Tune(key, candidates, candidates[0], c => RunRouted(c, plan, x, weight, y, m, n, k), cold: few);
     }
 
     // One variant of the described lane's product (StoredRouted's candidates).
-    private bool RunRouted(int lane, DescribedPlan? plan, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k) => lane switch
+    private bool RunRouted(int lane, DescribedPlan? plan, Storage x, Storage weight, Storage y, int m, int n, int k) => lane switch
     {
-        >= DescribedRowsLane and < DescribedRowsLane + 4 => RunDescribedRows(plan!, x, weight, scales, y, m, n, k, lane - DescribedRowsLane),
-        >= DescribedIntLane and < DescribedIntLane + 4 => RunDescribedInt(plan!, DescribedSplits[lane - DescribedIntLane], x, weight, scales, y, m, n, k),
-        >= DescribedNarrowLane and < DescribedNarrowLane + 4 => RunDescribedNarrow(plan!, DescribedSplits[lane - DescribedNarrowLane], x, weight, scales, y, m, n, k),
+        >= DescribedRowsLane and < DescribedRowsLane + 4 => RunDescribedRows(plan!, x, weight, y, m, n, k, lane - DescribedRowsLane),
+        >= DescribedIntLane and < DescribedIntLane + 4 => RunDescribedInt(plan!, DescribedSplits[lane - DescribedIntLane], x, weight, y, m, n, k),
+        >= DescribedNarrowLane and < DescribedNarrowLane + 4 => RunDescribedNarrow(plan!, DescribedSplits[lane - DescribedNarrowLane], x, weight, y, m, n, k),
         _ => false,
     };
 
@@ -604,5 +572,5 @@ internal sealed unsafe partial class CudaBackend
     // `part`: what of the shape's work the lane does, where it is not the product (a fused pass, a group's launches).
     private void SayStored(TypeDescription description, int m, int n, int k, string lane, string? part = null) =>
         ProductRoutes.Chose(Kind, string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"described ({description.Values} values in {description.Bytes} bytes) {m}x{k}->{n}{(BFloat16Products ? " mixed bfloat16" : "")}{(part is null ? "" : ", " + part)}"), lane);
+            $"described ({description.Values} values in {description.Bytes} bytes) {m}x{k}->{n}{(part is null ? "" : ", " + part)}"), lane);
 }

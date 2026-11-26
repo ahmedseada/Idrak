@@ -21,25 +21,24 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // measured once on the real operands (Chosen).
 internal sealed partial class CpuBackend
 {
-    // A stored weight's words, its row scales (or null), k and the bytes of a row.
-    private sealed record StoredLane(float[] Words, int Length, float[]? RowScales, int K, long RowBytes);
+    // A stored weight's words, k and the bytes of a row.
+    private sealed record StoredLane(float[] Words, int Length, int K, long RowBytes);
 
     // The bytes of a row of k values of a description (whole groups of blocks).
     private static long RowBytesOf(TypeDescription d, int k) => (long)k / d.UnitValues * d.UnitBytes;
 
     /// <summary>
-    /// The product of a stored weight by the described lane: a scale per row or none, no zero points, in the CPU's own
-    /// memory. False when the weight is not such a one, or the described lane does not read its description at k.
+    /// The product of a stored weight by the described lane, in the CPU's own memory. False when the weight is not such a
+    /// one, or the described lane does not read its description at k.
     /// </summary>
-    private bool StoredRouted(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
+    private bool StoredRouted(Storage x, Storage weight, Storage y, int m, int n, int k)
     {
-        bool perRow = !layout.HasScales || layout is { BlockRows: 1, ScaleColumns: 1 } && layout.BlockColumns >= k;
-        if (weight.Description is not { } description || zeros is not null || !perRow || weight is MappedStorage || m == 0 || n == 0 || k == 0)
+        if (weight.Description is not { } description || weight is MappedStorage || m == 0 || n == 0 || k == 0)
         {
             return false;
         }
 
-        var lane = new StoredLane(D(weight), weight.Length, scales is null ? null : D(scales), k, RowBytesOf(description, k));
+        var lane = new StoredLane(D(weight), weight.Length, k, RowBytesOf(description, k));
         if (!DescribedProduct(description, lane, D(x), D(y), m, n, k))
         {
             return false;
@@ -1808,17 +1807,16 @@ internal sealed partial class CpuBackend
     [InlineArray(3)]
     private struct ThreeProducts
     {
-        private (Storage Values, Storage? Scales, Storage Output, int Columns) _product;
+        private (Storage Values, Storage Output, int Columns) _product;
     }
 
     /// <summary>
     /// y [m, n] = x [m, k] · Wᵀ by the described lane (any type read from its description), by its lane
     /// <paramref name="index"/> among those that run here (DescribedLanesOf: by the portable instructions first), W's n rows
-    /// stored as <paramref name="words"/>, each output times its row's scale where <paramref name="scales"/> are given.
-    /// False where the described lane does not read the description here or has no such lane. For tests, apart from the
+    /// stored as <paramref name="words"/>. False where the described lane does not read the description here or has no such lane. For tests, apart from the
     /// measured choice.
     /// </summary>
-    internal static bool DescribedRowLane(int index, TypeDescription description, float[] words, int length, float[] x, float[] y, int m, int n, int k, float[]? scales = null)
+    internal static bool DescribedRowLane(int index, TypeDescription description, float[] words, int length, float[] x, float[] y, int m, int n, int k)
     {
         if (!DescribedFormat.Reads(description, k, out var described) || index >= described.Lanes.Count)
         {
@@ -1826,13 +1824,13 @@ internal sealed partial class CpuBackend
         }
 
         FusedInHardware.Ensure();
-        FormatProduct<DescribedFormat, DescribedKernels>(described, described.Lanes[index], new StoredLane(words, length, scales, k, RowBytesOf(description, k)), x, y, m, n, k);
+        FormatProduct<DescribedFormat, DescribedKernels>(described, described.Lanes[index], new StoredLane(words, length, k, RowBytesOf(description, k)), x, y, m, n, k);
         return true;
     }
 
     /// <summary>The described lane by the portable instructions (DescribedRowLane's first lane). For tests.</summary>
-    internal static bool DescribedRowLane(TypeDescription description, float[] words, int length, float[] x, float[] y, int m, int n, int k, float[]? scales = null) =>
-        DescribedRowLane(0, description, words, length, x, y, m, n, k, scales);
+    internal static bool DescribedRowLane(TypeDescription description, float[] words, int length, float[] x, float[] y, int m, int n, int k) =>
+        DescribedRowLane(0, description, words, length, x, y, m, n, k);
 
     /// <summary>The names of the described lane's lanes that run here for rows of <paramref name="k"/> values of <paramref name="description"/> (DescribedRowLane's indices); empty where it does not read it. For tests.</summary>
     internal static IReadOnlyList<string> DescribedLanesOf(TypeDescription description, int k)
@@ -1880,8 +1878,8 @@ internal sealed partial class CpuBackend
         ThreeParts parts = new();
         for (int j = 0; j < count; j++)
         {
-            var (values, scales, output, n) = products[j];
-            var lane = new StoredLane(D(values), values.Length, scales is null ? null : D(scales), k, RowBytesOf(description, k));
+            var (values, output, n) = products[j];
+            var lane = new StoredLane(D(values), values.Length, k, RowBytesOf(description, k));
             float[] y = D(output);
             int chosen = Chosen(new LaneCandidates(described, description, lane, x, y, m, n, k), m, n, k);
             parts[j] = new RowPart(lane, y, n, chosen);
@@ -1902,7 +1900,7 @@ internal sealed partial class CpuBackend
     // 2 or 3 such products in one pass (DescribedGrouped): each by its own lane for the shape (measured first where it has
     // not been), x prepared once, the weights' columns spread over the threads as one range, so each output is its own
     // product's, bit for bit. False for any other weights: the callers then run them one by one.
-    public override bool StoredMatMulManyKernel(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    public override bool StoredMatMulManyKernel(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products)
     {
         var description = products.Length > 0 ? products[0].Values.Description : null;
         if (products.Length is < 2 or > 3 || m <= 0 || k <= 0 || description is null)
@@ -1913,9 +1911,8 @@ internal sealed partial class CpuBackend
         var group = new ThreeProducts();
         for (int j = 0; j < products.Length; j++)
         {
-            var (values, scales, output, n) = products[j];
-            if (values is not CpuStorage || !Equals(values.Description, description) || n <= 0 || values.ElementCount < (long)n * k
-                || scales is not null and not CpuStorage || scales is not null && scales.Length < n || output is not CpuStorage)
+            var (values, output, n) = products[j];
+            if (values is not CpuStorage || !Equals(values.Description, description) || n <= 0 || values.ElementCount < (long)n * k || output is not CpuStorage)
             {
                 return false;
             }
@@ -2076,7 +2073,7 @@ internal sealed partial class CpuBackend
                 }
 
                 var kernels = format.Kernels(part.LaneId, k, new LanePointers(xv, xc, xs), scratch, scratchBytes);
-                RowGroups(ref kernels, (byte*)words, rowBytes, k, format.Span(k), format.GroupBytes, lane.RowScales, part.Y, part.N, j0, j1, i0, i1);
+                RowGroups(ref kernels, (byte*)words, rowBytes, k, format.Span(k), format.GroupBytes, part.Y, part.N, j0, j1, i0, i1);
             }
         }
         finally
@@ -2098,11 +2095,11 @@ internal sealed partial class CpuBackend
     // (IRowKernels.Group), then four rows of x at a time against each of the group's rows, the rows left over one at a time.
     // The four rows of x pass over the group's rows `span` values of k at a time (all of k where span ≥ k), so that much of
     // them stays in the cache across the group, and the group's stored rows across the rows of x; a span's partial sums are
-    // added in order. Each output times its row's scale where the weight has them. Compiled optimized from its first call,
+    // added in order. Compiled optimized from its first call,
     // as FormatColumns and RowTileRange.Run are: a format's kernels inline into it only when it is optimized, and the
     // first passes of a run would otherwise call them through unoptimized code.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void RowGroups<TK>(ref TK kernels, byte* stored, nint rowBytes, int k, int span, int groupBytes, float[]? scales, float[] y, int n,
+    private static unsafe void RowGroups<TK>(ref TK kernels, byte* stored, nint rowBytes, int k, int span, int groupBytes, float[] y, int n,
         int j0, int j1, int i0, int i1)
         where TK : struct, IRowKernels
     {
@@ -2110,8 +2107,7 @@ internal sealed partial class CpuBackend
         {
             for (int c = j0; c < j1; c++)
             {
-                float sum = kernels.Single(stored + c * rowBytes, i0);
-                y[i0 * n + c] = scales is null ? sum : sum * scales[c];
+                y[i0 * n + c] = kernels.Single(stored + c * rowBytes, i0);
             }
 
             return;
@@ -2132,12 +2128,11 @@ internal sealed partial class CpuBackend
                     for (int c = 0; c < count; c++)
                     {
                         kernels.Four(stored + (c0 + c) * rowBytes, c, i, 0, k, out float s0, out float s1, out float s2, out float s3);
-                        float scale = scales is null ? 1f : scales[c0 + c];
                         int at = i * n + c0 + c;
-                        y[at] = scales is null ? s0 : s0 * scale;
-                        y[at + n] = scales is null ? s1 : s1 * scale;
-                        y[at + 2 * n] = scales is null ? s2 : s2 * scale;
-                        y[at + 3 * n] = scales is null ? s3 : s3 * scale;
+                        y[at] = s0;
+                        y[at + n] = s1;
+                        y[at + 2 * n] = s2;
+                        y[at + 3 * n] = s3;
                     }
 
                     continue;
@@ -2160,12 +2155,11 @@ internal sealed partial class CpuBackend
 
                 for (int c = 0; c < count; c++)
                 {
-                    float scale = scales is null ? 1f : scales[c0 + c];
                     int at = i * n + c0 + c;
-                    y[at] = scales is null ? sums[4 * c] : sums[4 * c] * scale;
-                    y[at + n] = scales is null ? sums[4 * c + 1] : sums[4 * c + 1] * scale;
-                    y[at + 2 * n] = scales is null ? sums[4 * c + 2] : sums[4 * c + 2] * scale;
-                    y[at + 3 * n] = scales is null ? sums[4 * c + 3] : sums[4 * c + 3] * scale;
+                    y[at] = sums[4 * c];
+                    y[at + n] = sums[4 * c + 1];
+                    y[at + 2 * n] = sums[4 * c + 2];
+                    y[at + 3 * n] = sums[4 * c + 3];
                 }
             }
 
@@ -2173,8 +2167,7 @@ internal sealed partial class CpuBackend
             {
                 for (int c = 0; c < count; c++)
                 {
-                    float sum = kernels.One(stored + (c0 + c) * rowBytes, c, i);
-                    y[i * n + c0 + c] = scales is null ? sum : sum * scales[c0 + c];
+                    y[i * n + c0 + c] = kernels.One(stored + (c0 + c) * rowBytes, c, i);
                 }
             }
         }

@@ -1166,10 +1166,9 @@ public static class OperationKernels
     /// <summary>
     /// A kernel for <see cref="Ops.StoredMatMul"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
     /// y [m, n] = x [m, k] · Wᵀ, W stored as <paramref name="weight"/>: n rows of k values read by its description
-    /// (<see cref="Storage.Description"/>), each value times its scale from <paramref name="scales"/> as
-    /// <paramref name="layout"/> places them (minus its zero point from <paramref name="zeros"/> first, when given).
+    /// (<see cref="Storage.Description"/>) alone.
     /// </summary>
-    public delegate void StoredMatMul(Backend backend, Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout);
+    public delegate void StoredMatMul(Backend backend, Storage x, Storage weight, Storage y, int m, int n, int k);
 
     /// <summary>
     /// A kernel for <see cref="Ops.KeyValueWriteStrided"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1186,25 +1185,24 @@ public static class OperationKernels
     /// A kernel for <see cref="Ops.StoredMatMulMany"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
     /// Few-row products of stored weights sharing one input x [m, k] in one pass (the experiment's fused projections:
     /// queries, keys and values; gate and up): y_j = x · W_jᵀ for 2 or 3 weights of one description, each n_j rows of k
-    /// values with a scale a row or none (<see cref="Backend.StoredMatMulKernel"/>'s layout), each output as its own product
-    /// computes it. False where the device has no single pass for them (callers then run the products one by one).
+    /// values, each output as its own product (<see cref="Backend.StoredMatMulKernel"/>) computes it. False where the device has no single pass for them (callers then run the products one by one).
     /// </summary>
-    public delegate bool StoredMatMulMany(Backend backend, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products);
+    public delegate bool StoredMatMulMany(Backend backend, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products);
 
     /// <summary>
     /// A kernel for <see cref="Ops.StoredMatMulGatedPair"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
     /// A feed-forward block's gate and up products of stored weights (StoredMatMulManyKernel's two, of equal widths) and
     /// hidden = act(gate) · up (activation 0 SiLU, 1 tanh GELU, 2 ReLU) in one pass. False where the device has no such pass.
     /// </summary>
-    public delegate bool StoredMatMulGatedPair(Backend backend, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, Storage hidden);
+    public delegate bool StoredMatMulGatedPair(Backend backend, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products, Storage hidden);
 
     /// <summary>
     /// A kernel for <see cref="Ops.StoredMatMulAddRmsNorm"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
-    /// y = x · Wᵀ for a stored weight W (n rows of k, a scale a row or none), sum = residual + y and normalized = its RMS
+    /// y = x · Wᵀ for a stored weight W (n rows of k), sum = residual + y and normalized = its RMS
     /// normalization with gain (value · 1 / sqrt(mean of squares + eps) · (gain + offset)) in one pass, few rows. False
     /// where the device has no such pass.
     /// </summary>
-    public delegate bool StoredMatMulAddRmsNorm(Backend backend, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset);
+    public delegate bool StoredMatMulAddRmsNorm(Backend backend, Storage x, Storage weight, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset);
 }
 
 /// <summary>
@@ -2093,8 +2091,7 @@ public static partial class Ops
 
     /// <summary>
     /// y [m, n] = x [m, k] · Wᵀ, W stored as <c>weight</c>: n rows of k values read by its description
-    /// (<see cref="Storage.Description"/>), each value times its scale from <c>scales</c> as
-    /// <c>layout</c> places them (minus its zero point from <c>zeros</c> first, when given).
+    /// (<see cref="Storage.Description"/>) alone.
     /// </summary>
     public static readonly Operation<OperationKernels.StoredMatMul> StoredMatMul = new("StoredMatMul", OperationIndex.StoredMatMul, KernelSource.None);
 
@@ -2111,8 +2108,7 @@ public static partial class Ops
     /// <summary>
     /// Few-row products of stored weights sharing one input x [m, k] in one pass (the experiment's fused projections:
     /// queries, keys and values; gate and up): y_j = x · W_jᵀ for 2 or 3 weights of one description, each n_j rows of k
-    /// values with a scale a row or none (<see cref="Backend.StoredMatMulKernel"/>'s layout), each output as its own product
-    /// computes it. False where the device has no single pass for them (callers then run the products one by one).
+    /// values, each output as its own product (<see cref="Backend.StoredMatMulKernel"/>) computes it. False where the device has no single pass for them (callers then run the products one by one).
     /// </summary>
     public static readonly Operation<OperationKernels.StoredMatMulMany> StoredMatMulMany = new("StoredMatMulMany", OperationIndex.StoredMatMulMany, KernelSource.None);
 
@@ -2123,7 +2119,7 @@ public static partial class Ops
     public static readonly Operation<OperationKernels.StoredMatMulGatedPair> StoredMatMulGatedPair = new("StoredMatMulGatedPair", OperationIndex.StoredMatMulGatedPair, KernelSource.None);
 
     /// <summary>
-    /// y = x · Wᵀ for a stored weight W (n rows of k, a scale a row or none), sum = residual + y and normalized = its RMS
+    /// y = x · Wᵀ for a stored weight W (n rows of k), sum = residual + y and normalized = its RMS
     /// normalization with gain (value · 1 / sqrt(mean of squares + eps) · (gain + offset)) in one pass, few rows. False
     /// where the device has no such pass.
     /// </summary>

@@ -10,8 +10,7 @@ public abstract partial class Backend
 {
     /// <summary>
     /// y [m, n] = x [m, k] · Wᵀ, W stored as <paramref name="weight"/>: n rows of k values read by its description
-    /// (<see cref="Storage.Description"/>), each value times its scale from <paramref name="scales"/> as
-    /// <paramref name="layout"/> places them (minus its zero point from <paramref name="zeros"/> first, when given).
+    /// (<see cref="Storage.Description"/>) alone.
     /// </summary>
-    public virtual void StoredMatMulKernel(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout) => throw NoKernel(nameof(StoredMatMul));
+    public virtual void StoredMatMulKernel(Storage x, Storage weight, Storage y, int m, int n, int k) => throw NoKernel(nameof(StoredMatMul));
 }
