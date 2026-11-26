@@ -645,14 +645,20 @@ internal sealed unsafe partial class CpuBackend
     {
         fixed (float* pg = V(gate), pu = V(up), py = V(y))
         {
-            switch (kind)
-            {
-                case 0: Elements("GatedActivation SiLU", new Map2<GatedSilu>(pg, pu, py, n), n, 24); break;
-                case 1: Elements("GatedActivation GELU", new Map2<GatedGelu>(pg, pu, py, n), n, 24); break;
-                case 2: Elements("GatedActivation ReLU", new Map2<GatedRelu>(pg, pu, py, n), n); break;
-                case 3: Elements("GatedActivation tanh-sigmoid", new Map2<GatedTanhSigmoid>(pg, pu, py, n), n, 48); break;
-                default: throw new ArgumentOutOfRangeException(nameof(kind), kind, "A gated activation is 0 (SiLU), 1 (GELU), 2 (ReLU) or 3 (tanh · sigmoid).");
-            }
+            Gated(pg, pu, py, n, kind);
+        }
+    }
+
+    // y = act(gate) · up over [0, n) (y may be up itself: each element read before it is written).
+    private static void Gated(float* pg, float* pu, float* py, long n, int kind)
+    {
+        switch (kind)
+        {
+            case 0: Elements("GatedActivation SiLU", new Map2<GatedSilu>(pg, pu, py, n), n, 24); break;
+            case 1: Elements("GatedActivation GELU", new Map2<GatedGelu>(pg, pu, py, n), n, 24); break;
+            case 2: Elements("GatedActivation ReLU", new Map2<GatedRelu>(pg, pu, py, n), n); break;
+            case 3: Elements("GatedActivation tanh-sigmoid", new Map2<GatedTanhSigmoid>(pg, pu, py, n), n, 48); break;
+            default: throw new ArgumentOutOfRangeException(nameof(kind), kind, "A gated activation is 0 (SiLU), 1 (GELU), 2 (ReLU) or 3 (tanh · sigmoid).");
         }
     }
 

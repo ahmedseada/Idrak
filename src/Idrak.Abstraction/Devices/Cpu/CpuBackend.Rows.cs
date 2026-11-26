@@ -447,24 +447,25 @@ internal sealed unsafe partial class CpuBackend
     public override void RopeKernel(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half,
         bool interleaved, float sign)
     {
-        fixed (float* px = V(x), py = V(y), pc = V(cos), ps = V(sin), pp = V(positions))
+        fixed (float* px = V(x), py = V(y), pc = V(cos), ps = V(sin), pp = D(positions))
         {
-            Rows("Rope", new RopeRows(px, py, pc, ps, pp, null, heads, steps, dim, dim, half, interleaved, sign, 0f, 0f, rows), rows, 2 * half);
+            Rows("Rope", new RopeRows(px, py, pc, ps, IndicesOf(positions, pp), null, heads, steps, dim, dim, half, interleaved, sign, 0f, 0f, rows), rows, 2 * half);
         }
     }
 
     public override void RmsNormRopeKernel(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
         float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
-        fixed (float* px = V(x), pg = V(gain), pc = V(cos), ps = V(sin), pp = V(positions), py = V(y))
+        fixed (float* px = V(x), pg = V(gain), pc = V(cos), ps = V(sin), pp = D(positions), py = V(y))
         {
-            Rows("RmsNormRope", new RopeRows(px, py, pc, ps, pp, pg, heads, steps, cols, cols, half, interleaved, 1f, eps, offset, rows), rows, cols);
+            Rows("RmsNormRope", new RopeRows(px, py, pc, ps, IndicesOf(positions, pp), pg, heads, steps, cols, cols, half, interleaved, 1f, eps, offset, rows), rows, cols);
         }
     }
 
     // Row r (of batch · steps · heads, step (r / heads) mod steps): RMS-normalized with gain first where given (the whole
     // row), then each pair p < half rotated by cos/sin[positions[step], p], sin times sign: (a, b) → (a·c − b·s, a·s + b·c).
-    private struct RopeRows(float* x, float* y, float* cos, float* sin, float* positions, float* gain, int heads, int steps, int dim, int stride,
+    // The positions are indices, read as their storage's type holds them.
+    private struct RopeRows(float* x, float* y, float* cos, float* sin, Indices positions, float* gain, int heads, int steps, int dim, int stride,
         int half, bool interleaved, float sign, float eps, float offset, int rows) : IRowKernel
     {
         private float* _y = y;
@@ -482,7 +483,7 @@ internal sealed unsafe partial class CpuBackend
             }
 
             int step = r / heads % steps;
-            long position = (long)positions[step];
+            long position = positions[step];
             float* c = cos + position * half, s = sin + position * half;
             if (interleaved)
             {
@@ -501,6 +502,103 @@ internal sealed unsafe partial class CpuBackend
         }
 
         public void Redirect(ref Scratch scratch) => _y = scratch.Take((long)rows * stride);
+    }
+
+    public override bool NormRopeHeadsKernel(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols,
+        Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions,
+        int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride)
+    {
+        if (heads <= 0 || kvHeads <= 0 || heads % kvHeads != 0 || cols <= 0 || stride < cols || (gainQ is null) != (gainK is null)
+            || (half > 0 && (cos is null || sin is null || positions is null)) || 2 * half > cols)
+        {
+            return false;
+        }
+
+        if (batch <= 0 || steps <= 0)
+        {
+            return true;
+        }
+
+        fixed (float* pq = V(q), pk = V(k), pv = V(v), pgq = gainQ is null ? null : V(gainQ), pgk = gainK is null ? null : V(gainK),
+            pc = half > 0 ? V(cos!) : null, ps = half > 0 ? V(sin!) : null, ppos = half > 0 ? D(positions!) : null, pyq = V(yq), pyk = V(yk), pyv = V(yv),
+            pat = position is null ? null : D(position))
+        {
+            long start = position is null ? 0 : IndicesOf(position, pat)[0];
+            if (start < 0 || start + steps > capacity)
+            {
+                throw new ArgumentOutOfRangeException(nameof(position), start, $"{steps} steps from row {start} do not fit a cache of {capacity} rows.");
+            }
+
+            var kernel = new HeadRows(pq, pk, pv, pgq, pgk, epsQ, offsetQ, epsK, offsetK, pc, ps, half > 0 ? IndicesOf(positions!, ppos) : default, half, interleaved,
+                pyq, pyk, pyv, start, batch, steps, heads, kvHeads, cols, capacity, stride);
+            int rows = batch * steps * (heads + 2 * kvHeads);
+            Rows("NormRopeHeads", kernel, rows, cols);
+        }
+
+        return true;
+    }
+
+    // Row r: a query head (r < batch·steps·heads), then a key head, then a value head, of step s of sequence b as the
+    // projections hold them ([batch, steps, heads·cols]): a query or key RMS-normalized with its gain where given, then
+    // rotated by the step's position where half > 0, into yq [batch, heads, steps, cols] or the cache yk [batch, kvHeads,
+    // capacity, stride] at row start + s; a value copied into yv as a key is placed.
+    private struct HeadRows(float* q, float* k, float* v, float* gainQ, float* gainK, float epsQ, float offsetQ, float epsK, float offsetK, float* cos, float* sin,
+        Indices positions, int half, bool interleaved, float* yq, float* yk, float* yv, long start, int batch, int steps, int heads, int kvHeads, int cols,
+        int capacity, int stride) : IRowKernel
+    {
+        private float* _yq = yq, _yk = yk, _yv = yv;
+
+        public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
+        {
+            int queries = batch * steps * heads, keys = batch * steps * kvHeads;
+            int part = r < queries ? 0 : r < queries + keys ? 1 : 2;
+            int index = part == 0 ? r : part == 1 ? r - queries : r - queries - keys, width = part == 0 ? heads : kvHeads;
+            int head = index % width, bs = index / width, s = bs % steps, b = bs / steps;
+            float* source = (part == 0 ? q : part == 1 ? k : v) + ((long)bs * width + head) * cols;
+            float* target = part == 0 ? _yq + (((long)b * heads + head) * steps + s) * cols
+                : (part == 1 ? _yk : _yv) + (((long)b * kvHeads + head) * capacity + start + s) * stride;
+            float* gain = part == 0 ? gainQ : part == 1 ? gainK : null;
+            if (gain != null)
+            {
+                float eps = part == 0 ? epsQ : epsK;
+                float inv = RmsInverse<TV, TF>(source, cols, eps);
+                var map = new GainMap(source, gain, target, inv, part == 0 ? offsetQ : offsetK);
+                RowMap<TV, TF, GainMap>(ref map, cols);
+            }
+            else
+            {
+                new ReadOnlySpan<float>(source, cols).CopyTo(new Span<float>(target, cols));
+            }
+
+            if (part == 2 || half <= 0)
+            {
+                return;
+            }
+
+            long at = positions[s];
+            float* c = cos + at * half, sn = sin + at * half;
+            if (interleaved)
+            {
+                for (int p = 0; p < half; p++)
+                {
+                    float a = target[2 * p], o = target[2 * p + 1], cp = c[p], sp = sn[p];
+                    target[2 * p] = MathF.FusedMultiplyAdd(a, cp, -(o * sp));
+                    target[2 * p + 1] = MathF.FusedMultiplyAdd(a, sp, o * cp);
+                }
+            }
+            else
+            {
+                var rope = new RopeHalfMap(target, target, c, sn, half, 1f);
+                RowMap<TV, TF, RopeHalfMap>(ref rope, half);
+            }
+        }
+
+        public void Redirect(ref Scratch scratch)
+        {
+            _yq = scratch.Take((long)batch * heads * steps * cols);
+            _yk = scratch.Take((long)batch * kvHeads * capacity * stride);
+            _yv = scratch.Take((long)batch * kvHeads * capacity * stride);
+        }
     }
 
     // Pairs (p, p + half) of a row rotated, both read before either is written (the row may be rotated in place).

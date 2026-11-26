@@ -37,8 +37,10 @@ internal abstract partial class Tests
               && cpu.FreeMemory() is null && cpu.AvailableMemory() > 0 && cpu.SupportsSegmentedAttention(64) && cpu.SupportsAttentionRows(64), "what follows from them");
 
         var minimal = MinimalBackend.Instance;
+        // Its operations take the host fallback (the CPU's kernels); a capability is a device's own interface, so it has
+        // none (no packed-sequence attention, which the CPU has).
         Check(minimal.OwnKernels.Count == 0 && !minimal.OwnKernels.Contains(Ops.Softmax) && minimal is IMemoryReport && minimal.AvailableMemory() > 0
-              && minimal.SupportsSegmentedAttention(64) == cpu.SupportsSegmentedAttention(64), "a device with memory and copies only owns no kernel and asks the CPU");
+              && !minimal.SupportsSegmentedAttention(64) && cpu.SupportsSegmentedAttention(64), "a device with memory and copies only owns no kernel and asks the CPU");
 
         // The own kernels as the reflection over overrides named them before (an override declared below Backend), and a
         // capability's operations where the device implements the interface that declares them.

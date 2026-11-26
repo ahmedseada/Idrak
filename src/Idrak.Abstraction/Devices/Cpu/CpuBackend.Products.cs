@@ -43,20 +43,22 @@ internal sealed unsafe partial class CpuBackend
         return true;
     }
 
-    private static void Product(float* a, float* b, float* bias, float* c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    // `lda`: the step between A's rows where it is not transposed (0: k, its rows packed).
+    private static void Product(float* a, float* b, float* bias, float* c, int batch, int m, int n, int k, bool transA, bool transB, float beta, long lda = 0)
     {
-        var run = new ProductRun(new ProductShape(a, b, bias, c, batch, m, n, k, transA, transB, beta));
+        var run = new ProductRun(new ProductShape(a, b, bias, c, batch, m, n, k, transA, transB, beta, lda > 0 ? lda : k));
         run.Run(ChosenLanes("MatMul", SizeClass((long)batch * m), SizeClass(n) << 6 | SizeClass(k), ref run));
     }
 
-    private readonly struct ProductShape(float* a, float* b, float* bias, float* c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    private readonly struct ProductShape(float* a, float* b, float* bias, float* c, int batch, int m, int n, int k, bool transA, bool transB, float beta, long lda)
     {
         public readonly float* A = a, B = b, Bias = bias, C = c;
         public readonly int Batch = batch, M = m, N = n, K = k;
         public readonly bool TransA = transA, TransB = transB;
         public readonly float Beta = beta;
+        public readonly long Lda = lda;
 
-        public ProductShape WithC(float* to) => new(A, B, Bias, to, Batch, M, N, K, TransA, TransB, 0f);
+        public ProductShape WithC(float* to) => new(A, B, Bias, to, Batch, M, N, K, TransA, TransB, 0f, Lda);
     }
 
     private struct ProductRun(ProductShape shape) : ILanesRun
@@ -171,7 +173,7 @@ internal sealed unsafe partial class CpuBackend
 
         // Row i of op(a) at k0.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static float* Row(float* a, in ProductShape s, int i, int k0) => s.TransA ? a + (long)k0 * s.M + i : a + (long)i * s.K + k0;
+        private static float* Row(float* a, in ProductShape s, int i, int k0) => s.TransA ? a + (long)k0 * s.M + i : a + i * s.Lda + k0;
     }
 
     // Each output's start: β · c (0 where β is 0), or the bias.
