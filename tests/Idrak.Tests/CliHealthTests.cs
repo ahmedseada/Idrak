@@ -554,7 +554,7 @@ internal abstract partial class DesktopTests : Tests
         _ = device;
         var plugins = CliJson("plugins", "list", "-j");
         Check(plugins["devices"]!["names"]!.AsArray().Any(n => (string?)n == "cpu"), $"plugins list: {plugins}");
-        // The generic components' registries (plan 26, P2 and P3) are listed with their built-ins.
+        // The generic components (plan 26, P2 and P3) are listed with their built-ins.
         foreach (var (key, name) in new[] { ("progress", "console"), ("keywordindexes", "bm25"), ("recipes", "gpt"), ("linesegmenters", "projection"),
                      ("textmatchers", "semi-global"), ("readingorders", "bidi"), ("readingorders", "runs") })
         {

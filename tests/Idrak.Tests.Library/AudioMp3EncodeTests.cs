@@ -337,7 +337,7 @@ internal abstract partial class Tests
         var cut = codec.Decode(new Mp3Encoder(new Mp3EncodeOptions { LowpassHz = 800 }).Encode(Mp3Tone(44100, 1, 44100)));
         Check(Mp3Snr(Mp3Tone(44100, 1, 44100), cut) < 1, "an 800 Hz lowpass takes the 1 kHz tone out");
 
-        // The environment's settings (what Register uses when given none), and a value it does not take named.
+        // The environment's settings (what the encoder uses when given none), and a value it does not take named.
         string[] names = ["IDRAK_MP3_BITRATE", "IDRAK_MP3_RATE", "IDRAK_MP3_CHANNELS", "IDRAK_MP3_QUALITY", "IDRAK_MP3_LOWPASS", "IDRAK_MP3_FRAMES_PER_TASK"];
         var saved2 = names.ToDictionary(n => n, Environment.GetEnvironmentVariable);
         try

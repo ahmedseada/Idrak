@@ -568,7 +568,7 @@ internal abstract partial class Tests
     }
 
     // JPEG 2000, CCITT (inline, abbreviated) and JBIG2 (after ASCIIHex): handed over as stored, named in an issue and by
-    // Decode until a codec of that name is registered.
+    // Decode (the library has no decoder for them).
     private static void PdfImagesEncodings()
     {
         byte[] fax = [0x00, 0x11, 0x22, 0x33];

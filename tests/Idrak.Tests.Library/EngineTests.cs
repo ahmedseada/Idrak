@@ -11,7 +11,7 @@ using Idrak.PluginTests;
 using Idrak.Text.Retrieval;
 
 // Plan 26, phase P8: the engine for encoders and encoder-decoders. Attention options (score scale, key padding,
-// position bias), the encoder and seq2seq contracts with their suites, and toy families registered from
+// position bias), the encoder and seq2seq contracts with their suites, and toy families made in
 // tests/Idrak.PluginTests through the public API.
 internal abstract partial class Tests
 {

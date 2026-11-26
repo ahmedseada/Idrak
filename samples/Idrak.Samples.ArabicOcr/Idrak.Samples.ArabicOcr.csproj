@@ -3,8 +3,8 @@
   <!-- Reading document images into text (Arabic first, any script): an application on Idrak's public API. As an app
        references Idrak: the packages (in this repository they come from the clone itself, IdrakFromSource in
        samples/Directory.Build.props). The vision-language reader's family is the Gemma 3 plug-in and the line recognizer is
-       the CRNN plug-in of Idrak.Vision.Plugins (Idrak.Vision.Plugins.Gemma, Idrak.Vision.Plugins.Crnn), both registered
-       by the app itself. -->
+       the CRNN plug-in of Idrak.Vision.Plugins (Idrak.Vision.Plugins.Gemma, Idrak.Vision.Plugins.Crnn), both the app's
+       own. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Idrak.Samples.ArabicOcr</RootNamespace>

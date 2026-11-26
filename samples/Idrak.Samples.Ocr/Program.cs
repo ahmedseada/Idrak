@@ -119,8 +119,7 @@ else
 
 return 0;
 
-// The image's encoder and codec were picked by the file's extension and first bytes among the registered ones: not on the
-// new design yet.
+// Picking the image's encoder and codec by the file's extension and first bytes is not on the new design yet.
 static void SaveImage(string path, ImageData image) => throw new NotSupportedException($"Picking the image encoder of {path} is not on the new design yet.");
 
 static ImageData DecodeImage(string path) => throw new NotSupportedException($"Picking the image codec of {path} is not on the new design yet.");

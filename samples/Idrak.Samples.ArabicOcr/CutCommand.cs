@@ -42,7 +42,7 @@ internal static class CutCommand
           NAME-line-NN.txt where no filled .txt exists (an empty one is replaced). A filled .txt is never touched.
         """;
 
-    // The encoder was picked by the file's extension among the registered ones: not on the new design yet.
+    // Picking the encoder by the file's extension is not on the new design yet.
     private static void SaveImage(string path, ImageData image) => throw new NotSupportedException($"Picking the image encoder of {path} is not on the new design yet.");
 
     public static int Run(string[] args, TextWriter output, TextWriter error)

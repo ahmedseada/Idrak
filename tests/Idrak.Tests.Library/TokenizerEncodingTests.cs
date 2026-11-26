@@ -132,7 +132,7 @@ internal abstract partial class Tests
             }
             catch (NotSupportedException)
             {
-                continue;                                                      // a model type nobody registered
+                continue;                                                      // a model type not found
             }
 
             foreach (string text in texts)

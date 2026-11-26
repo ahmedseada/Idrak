@@ -118,11 +118,11 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
     <PackageReference Include="Idrak.Maui" Version="$(IdrakVersion)" />
-    <!-- The text families the Chat lab shows, each registered by its own call in MauiProgram. -->
+    <!-- The text families the Chat lab shows. -->
     <PackageReference Include="Idrak.Text.Plugins" Version="$(IdrakVersion)" />
-    <!-- The speech families the Transcribe and Speak labs read, registered one by one in MauiProgram (never espeak-ng). -->
+    <!-- The speech families the Transcribe and Speak labs read (never espeak-ng). -->
     <PackageReference Include="Idrak.Audio.Plugins" Version="$(IdrakVersion)" />
-    <!-- The vision-language families the OCR lab reads with, registered one by one in MauiProgram. -->
+    <!-- The vision-language families the OCR lab reads with. -->
     <PackageReference Include="Idrak.Vision.Plugins" Version="$(IdrakVersion)" />
   </ItemGroup>
 

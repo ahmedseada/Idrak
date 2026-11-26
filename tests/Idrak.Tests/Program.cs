@@ -45,7 +45,7 @@ if (args is ["--sandbox-child", var sandboxScenario])
     return DesktopTests.SandboxChild(sandboxScenario);                                  // a child of the interactive sandbox test (plan 1 of Craft, X part 6b)
 }
 
-// The idrak tool's servers (serve, ui, the cluster dashboard: ASP.NET Core), registered as its Program does, since the tests
+// The idrak tool's servers (serve, ui, the cluster dashboard: ASP.NET Core), named its Program does, since the tests
 // run its commands in this process (CommandLine.Run).
 Idrak.Cli.Commands.Serve.CommandServers.Register(new Idrak.Cli.AspNetCoreServers());
 

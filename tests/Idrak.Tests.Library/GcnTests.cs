@@ -602,7 +602,7 @@ internal abstract partial class Tests
         Check(allocated == 0 && asm.Length == 200 * 32, $"1,000 instructions ({asm.Length} bytes) allocated {allocated} bytes");
     }
 
-    // The gfx9 CPUs whose versions the registered gfx9 family handles (gfx90a and gfx94x are another family's, plan 35's G8).
+    // The gfx9 CPUs whose versions the gfx9 family handles (gfx90a and gfx94x are another family's, plan 35's G8).
     private static readonly string[] GcnRegisteredCpus = ["gfx900", "gfx906", "gfx908", "gfx90c"];
 
     // One CPU's block of forms.golden: its records (llvm-mc's text and bytes, labels with none) and the forms.s lines it rejects.

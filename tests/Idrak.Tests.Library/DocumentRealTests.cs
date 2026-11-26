@@ -370,7 +370,7 @@ internal abstract partial class Tests
     }
 
     // The failures the contract documents for a file or part that cannot be read as asked (damaged, hostile, past a limit,
-    // locked by a password, a part no registered codec reads): listed with the reason they give. Anything else is a crash.
+    // locked by a password, a part no codec reads): listed with the reason they give. Anything else is a crash.
     private static bool PdfRealReported(Exception e) => e switch
     {
         InvalidDataException or NotSupportedException => true,

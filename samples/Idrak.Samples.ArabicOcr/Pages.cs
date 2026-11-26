@@ -154,7 +154,7 @@ internal static class Pages
         return elements;
     }
 
-    // The data file's format was picked by its records among the registered formats: not on the new design yet.
+    // The data file's format was picked by its records among the formats: not on the new design yet.
     private static ITuningDataFormat DataFormatOf(string path) => throw new NotSupportedException($"Picking the data format of {path} is not on the new design yet.");
 
     /// <summary>The records of a fine-tuning data file as pages: each record's first image, its prompt and its answer.</summary>

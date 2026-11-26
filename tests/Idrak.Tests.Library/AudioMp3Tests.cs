@@ -78,7 +78,7 @@ internal abstract partial class Tests
         var tagged = codec.Decode(File.ReadAllBytes(AudioData("mp3/tagged44k.mp3")));
         Check(tagged.Samples.AsSpan().SequenceEqual(reference.Samples), "ID3v2 and ID3v1 tags are skipped: the tagged file decodes as the untagged");
 
-        // Junk before the stream, and an ID3v2 tag of 70 000 bytes (past the 64 KiB the registry reads first).
+        // Junk before the stream, and an ID3v2 tag of 70 000 bytes (past the 64 KiB read first).
         var junk = new byte[333];
         new Random(4).NextBytes(junk);
         junk[0] = 0;                                                             // not an ID3 start

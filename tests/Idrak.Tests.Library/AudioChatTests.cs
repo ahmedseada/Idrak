@@ -163,7 +163,7 @@ internal abstract partial class Tests
         var fake = FakeChatModel.Script(FakeChatModel.Answer("ok"));
         Refused(() => fake.ChatAsync(new ChatRequest(withAudio)).GetAwaiter().GetResult(), "FakeChatModel");
 
-        // A Jinja template that writes something for an audio part takes it (the probe finds every registered kind).
+        // A Jinja template that writes something for an audio part takes it (the probe finds every kind).
         var template = new JinjaChatTemplate(AudioTemplate, ["<|im_end|>"]);
         Check(template.PartKinds.SetEquals(["text", "image", "audio"]), $"the template's kinds: {string.Join(", ", template.PartKinds)}");
         string rendered = template.Render(withAudio, [], null, addGenerationPrompt: true);

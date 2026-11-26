@@ -7,7 +7,7 @@ using System.Runtime.InteropServices;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 
-// Plan 34, phase M1: sound out. The playback registry beside the captures', a test speaker built on the library's own
+// Plan 34, phase M1: sound out. The playbacks beside the captures, a test speaker built on the library's own
 // playback queue (the conversion proven exact against Resampler, the back-pressure, the drain, a failure and a stop),
 // ALSA's null device played through the driver where libasound is installed, and AAudio's answers off Android.
 internal abstract partial class Tests

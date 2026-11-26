@@ -33,8 +33,7 @@ internal abstract partial class Tests
 {
 
     // From InventoryTests.cs.
-    // These checks do not depend on the device: each runs once, on the first device of the run. The group runs first so
-    // the registries hold their built-in names only (later tests register plug-ins of their own).
+    // These checks do not depend on the device: each runs once, on the first device of the run. The group runs first.
     internal static readonly HashSet<string> InventoryDone = [];
 
     internal static bool FirstRun(string check)

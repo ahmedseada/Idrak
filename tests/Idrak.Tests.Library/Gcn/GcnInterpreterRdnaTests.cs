@@ -18,7 +18,7 @@ internal abstract partial class Tests
         ("gfx11", "gfx1100-w64", GcnCpu.Gfx1100), ("gfx11", "gfx1102-w64", GcnCpu.Gfx1102),
     ];
 
-    /// <summary>The family the kernel tests assemble <paramref name="isa"/> with: the registered one (gfx9, gfx10, gfx11).</summary>
+    /// <summary>The family the kernel tests assemble <paramref name="isa"/> with: the one (gfx9, gfx10, gfx11).</summary>
     internal static IGcnTarget KernelTarget(GcnIsaVersion isa) => GcnTargets.For(isa);
 
     // Every kernel of GcnKernels.All, one text in gfx9's names, assembled by the gfx10 and gfx11 families for each of

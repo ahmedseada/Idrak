@@ -5,8 +5,8 @@ namespace Idrak.Mobile;
 
 /// <summary>
 /// The app's own features. Self-test is the app's: it will run the test library's groups (plan 34, M7b), which a MAUI
-/// library does not reference; until then it is a planned feature with its real name and place. It was registered in
-/// MobileFeatures beside the library's, which is not on the new design yet.
+/// library does not reference; until then it is a planned feature with its real name and place. Listing it beside the library's
+/// features is not on the new design yet.
 /// </summary>
 public static class AppFeatures
 {

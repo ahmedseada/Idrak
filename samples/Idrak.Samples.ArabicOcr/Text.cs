@@ -55,7 +55,7 @@ internal static class OcrText
         _ => throw new UsageException($"--truth-text is raw or values, not '{mode}'."),
     };
 
-    // An answer text by its name: the answer texts were registered and picked by name, which is not on the new design yet.
+    // An answer text by its name: picking the answer texts by name is not on the new design yet.
     private static IAnswerText AnswerTextNamed(string name) =>
         throw new NotSupportedException($"Picking the answer text '{name}' by its name is not on the new design yet.");
 }

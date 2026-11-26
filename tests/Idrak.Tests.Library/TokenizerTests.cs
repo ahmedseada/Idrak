@@ -8,7 +8,7 @@ using Idrak.Abstraction.Testing;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 
-// Plan 24, phase L0: the tokenizer model registry, the file readers and the one loader.
+// Plan 24, phase L0: the tokenizer models, the file readers and the one loader.
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] TokenizerGroup =

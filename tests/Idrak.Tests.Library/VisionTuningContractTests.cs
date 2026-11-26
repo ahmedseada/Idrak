@@ -11,7 +11,7 @@ using Idrak.Text;
 using Idrak.Text.Abstractions;
 using Idrak.Abstraction.Generation;
 
-// Plan 12, phase 1: the contracts and registries of vision-language fine-tuning (no family in the library): tuning data
+// Plan 12, phase 1: the contracts of vision-language fine-tuning (no family in the library): tuning data
 // formats with images, the images' preparation saved with the adapters, the trainable parts a family offers, the feature
 // cache and the metrics on generated text.
 internal abstract partial class Tests

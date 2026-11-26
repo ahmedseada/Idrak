@@ -14,7 +14,7 @@ namespace Idrak.Maui.Tests;
 // themes.
 internal static partial class MauiTests
 {
-    // The app's Self-test as apps/Idrak.Mobile registers it (AppFeatures; the app is built for Android only, so not here).
+    // The app's Self-test as apps/Idrak.Mobile has it (AppFeatures; the app is built for Android only, so not here).
     private static PlannedFeature SelfTest() => new("self-test", "Self-test", "✓", 90, "The library's tests, run on this phone",
         "A test group by filter on cpu or vulkan:N with live progress; the failures file shared out", PhoneNeeds.None, ["Idrak.Tests.Library"]);
 

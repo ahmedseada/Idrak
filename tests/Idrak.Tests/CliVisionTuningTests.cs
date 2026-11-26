@@ -15,7 +15,7 @@ using Idrak.Text.Generation;
 // Plan 12, phase 4: the command line. idrak tune on LlamaFactory's ShareGPT (<image> placeholders, an "images" list) with
 // the tiny Gemma 3 (its plug-in) and the tiny LLaVA (the test plug-in), images from a folder and from a zip: the adapters,
 // the trained projector and tuning_images.json written, a generated-text score (cer), the run plan; run --adapter applies
-// the projector and the saved preparation; the refusals (an unregistered family, an adapter of another family); tune init
+// the projector and the saved preparation; the refusals (a family not found, an adapter of another family); tune init
 // writes a vision example; tune.json's image keys; tune evaluate with --metric cer.
 internal abstract partial class DesktopTests : Tests
 {

@@ -58,8 +58,8 @@ public static class MauiProgram
             });
 
         // The model families the app shows (the Chat lab's Qwen, Llama, Gemma and Mistral, the Transcribe lab's Whisper and
-        // RNNoise, the Speak lab's VITS and IdrakAudio, the OCR lab's Gemma 3 vision, Qwen2-VL and LLaVA) were registered
-        // here, each plug-in by its own Register call: picking a family by its name is not on the new design yet.
+        // RNNoise, the Speak lab's VITS and IdrakAudio, the OCR lab's Gemma 3 vision, Qwen2-VL and LLaVA) are the
+        // plug-ins': picking a family by its name is not on the new design yet.
 
         builder.Services.AddSingleton(new OcrLabOptions());
 
@@ -72,8 +72,7 @@ public static class MauiProgram
             return new IdrakCommandRunner(allows: () => options.TerminalAllowInEffect);
         });
 
-        // The app's own features (Self-test, AppFeatures) were registered after the library's: registering a feature is not
-        // on the new design yet.
+        // Adding the app's own features (Self-test, AppFeatures) after the library's is not on the new design yet.
         return builder.Build();
     }
 }

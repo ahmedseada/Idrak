@@ -119,8 +119,7 @@ Console.WriteLine(positional[0] switch
 Device.Default = device;
 var cacheFormat = KeyValueFormat.Float32;
 
-// The command sandbox and the learning-rate schedule were picked by their names among the registered ones: not on the new
-// design yet.
+// Picking the command sandbox and the learning-rate schedule by their names is not on the new design yet.
 static ICommandSandbox SandboxNamed(string name) => throw new NotSupportedException($"The command sandbox '{name}' by name is not on the new design yet.");
 
 static Func<Optimizer, int, ILearningRateScheduler> ScheduleNamed(string name) =>

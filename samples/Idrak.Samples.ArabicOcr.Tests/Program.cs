@@ -436,7 +436,7 @@ string Fresh(string name)
     return folder;
 }
 
-// The metrics and the reading orders were picked by their names among the registered ones: not on the new design yet.
+// Picking the metrics and the reading orders by their names is not on the new design yet.
 static ITuningMetric MetricNamed(string name) => throw new NotSupportedException($"Picking the metric '{name}' by its name is not on the new design yet.");
 
 static IReadingOrder ReadingOrderNamed(string name) => throw new NotSupportedException($"Picking the reading order '{name}' by its name is not on the new design yet.");

@@ -188,7 +188,7 @@ internal abstract partial class Tests
             }
         }
 
-        // The divergence of one row from its logits z, in double precision, as the registry's documentation writes it.
+        // The divergence of one row from its logits z, in double precision, as the divergences' documentation writes it.
         static double Divergence(string kind, double[] z, double[] qr, double temperature, double beta)
         {
             double max = z.Max() / temperature, sum = z.Sum(x => Math.Exp(x / temperature - max));

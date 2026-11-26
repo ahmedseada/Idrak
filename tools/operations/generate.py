@@ -3,7 +3,7 @@
 Every operation of the device contract is a method `NameKernel` on `Backend`
 (src/Idrak.Abstraction/Devices/Backend.cs, then the partial files in SOURCES): the device's own kernel. Most are
 virtual, with a default body that is a composition of other operations, or none (it returns false, or throws that
-the device has no kernel for it). The operations of a capability interface (plan 33: IFloat8Backend, IRecurrentKernels, ...) are not virtual: their body starts by forwarding to the interface,
+the device has no kernel for it). The operations of a capability interface (plan 33: IRecurrentKernels, ...) are not virtual: their body starts by forwarding to the interface,
 `=> _field is { } own && own.Name(...);` (no kernel otherwise) or `if (_field is { } own) { return own.Name(...); }`
 followed by the default. From those declarations and their documentation this script writes
 
@@ -328,8 +328,8 @@ def generate():
         guarded = f"{op}Guarded({arguments})"
         if i:
             d.append("")
-        # The fast path (no kernel registered for this device and no trace: one field read) is inlined into the call
-        # site; the registered path stays out of line.
+        # The fast path (every kernel slot empty and no trace: one field read) is inlined into the call site; the
+        # slot path (NameRegistered) stays out of line.
         runs = f"Runs <see cref=\"Ops.{op}\"/>: <c>{method}Kernel</c>."
         if any("</remarks>" in line for line in docs):
             d.extend(f"    /// {line.replace('</remarks>', f'<para>{runs}</para></remarks>')}".rstrip() for line in docs)
