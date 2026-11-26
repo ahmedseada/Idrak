@@ -70,6 +70,9 @@ internal class OpenTypeShaper : ITextShaper
 {
     public virtual string Name => "general";
 
+    /// <summary>Whether it shapes runs of <paramref name="script"/> (ISO 15924): "general" shapes any script.</summary>
+    public virtual bool Handles(string script) => true;
+
     // The GSUB features of the shaper in stage order; GPOS features need no stages.
     protected virtual IReadOnlyList<FeatureRequest> SubstitutionFeatures(bool rightToLeft) =>
     [

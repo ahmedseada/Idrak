@@ -14,12 +14,15 @@ namespace Idrak.Imaging.Shaping;
 /// </summary>
 internal sealed class ArabicShaper : OpenTypeShaper
 {
-    /// <summary>The scripts this shaper is registered for.</summary>
+    /// <summary>The scripts this shaper shapes.</summary>
     public static readonly string[] Scripts = ["Arab", "Syrc", "Nkoo", "Mong", "Mand", "Mani", "Phlp", "Adlm", "Rohg", "Sogd", "Ougr"];
 
     private static readonly string[] Forms = ["isol", "fina", "fin2", "fin3", "medi", "med2", "init"];
 
     public override string Name => "arabic";
+
+    /// <summary>Whether <paramref name="script"/> is one of the cursive joining scripts (<see cref="Scripts"/>, ignoring case).</summary>
+    public override bool Handles(string script) => Scripts.Contains(script, StringComparer.OrdinalIgnoreCase);
 
     protected override IReadOnlyList<FeatureRequest> SubstitutionFeatures(bool rightToLeft)
     {

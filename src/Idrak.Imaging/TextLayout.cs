@@ -175,14 +175,22 @@ public static class TextLayout
     /// <summary>The width of <paramref name="text"/> set on one line (pixels).</summary>
     public static float Measure(string text, TextStyle style) => Layout(text, style).Lines.Sum(l => l.Width);
 
-    // The text shapers were registered by script (TextShapers) and a run shaped by its script's: not on the new design yet.
-    // The default, the general shaper every script without one of its own took (TextShapers.AnyScript), is reached
-    // directly; a run of a script that had its own (the joining scripts' arabic shaper) stops.
-    private static readonly OpenTypeShaper General = new();
+    // The library's shapers, in the order they are asked: a fixed list, built once. A run is shaped by the first whose own
+    // Handles takes its script: the joining scripts' "arabic", else "general" (it shapes any script).
+    private static readonly OpenTypeShaper[] Shapers = [new ArabicShaper(), new OpenTypeShaper()];
 
-    private static ShapedGlyph[] ShapeRun(IFontFace font, string text, TextRun run, IReadOnlyCollection<string>? features) =>
-        !ArabicShaper.Scripts.Contains(run.Script, StringComparer.OrdinalIgnoreCase) ? General.Shape(font, text, run, features)
-        : throw new NotSupportedException($"Shaping a run of {font.Family} in the script {run.Script} through the text shapers by script is not on the new design yet.");
+    private static ShapedGlyph[] ShapeRun(IFontFace font, string text, TextRun run, IReadOnlyCollection<string>? features)
+    {
+        foreach (var shaper in Shapers)
+        {
+            if (shaper.Handles(run.Script))
+            {
+                return shaper.Shape(font, text, run, features);
+            }
+        }
+
+        throw new NotSupportedException($"No shaper of the library shapes a run in the script {run.Script}.");   // "general" shapes any: not reached
+    }
 
     // The shaped runs of [start, end) of a paragraph with its levels, in text order, each with the font that shapes it and
     // the paragraph's seed.
