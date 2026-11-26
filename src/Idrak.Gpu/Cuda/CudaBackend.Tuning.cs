@@ -24,34 +24,15 @@ namespace Idrak.Gpu.Cuda;
 /// <summary>Which choice a measurement is for.</summary>
 internal enum TuneOp : byte
 {
-    GemvSplits,
-    GemvMultiSplits,
-    Int8FewRows,
-    PackedSplits,
-    PackedTile,
-    PackedMultiSplits,
-    PackedLowRankSplits,
-    GatedActivation,
-    TensorSplits,
     FloatTile,
     DecodeSplits,
     DecodeMinChunk,
-    SpanWarps,                // no longer measured (SpanKernel took its place); kept so the values after it keep their numbers
     AttentionPath,
     Convolution,
-    SpanKernel,
-    SpanStrided,
-    RowsPath,
 
     /// <summary>
-    /// HIP's packed few-row products (plan 35, G7a; HipBackend.Tuning.cs): the rows of k a step and the k splits, one
-    /// choice (<c>depth &lt;&lt; 8 | splits</c>). Kept in HIP's own cache files (tuning/hip/), which share this format.
-    /// </summary>
-    HipPackedProduct,
-
-    /// <summary>
-    /// The route of a product of int8 or bfloat16 weights under <see cref="ProductRoute.Measured"/> (CudaBackend.Typed.cs):
-    /// 0 the format's own kernels, 1 the generic product (variant: the format; then rows (by class above 8), n and k).
+    /// The described lane's measured choices (CudaBackend.Typed.cs, CudaBackend.Many.cs): a stored weight's product, a
+    /// group's and a fused epilogue's lane (variant: the kind and the description's number; then the shape).
     /// </summary>
     ProductRoute,
 
@@ -242,8 +223,7 @@ internal sealed unsafe partial class CudaBackend
 
     // The fields of a key that may follow the data, as extents (a batch's positions, rows, a product's n and k: a product
     // of attention scores has a sequence length in n or k, exact in the key), and the key with them cleared (the shape
-    // apart from them), for the choices a neighbouring shape may lend: convolutions, float32 and tensor-core products,
-    // attention. Extents left unused are 1. False for a key whose fields are all the model's.
+    // apart from them), for the choices a neighbouring shape may lend: convolutions, float32 products, attention. Extents left unused are 1. False for a key whose fields are all the model's.
     private static bool DataSized(in TuneKey key, Span<long> extents, out TuneKey shape)
     {
         extents.Fill(1);
@@ -257,17 +237,9 @@ internal sealed unsafe partial class CudaBackend
                 (extents[0], extents[1], extents[2]) = ((long)key.A * key.D, key.B, key.C);
                 shape = key with { A = 0, B = 0, C = 0, D = 0 };
                 return true;
-            case TuneOp.TensorSplits:                                          // rows class; n; k; the output's leading dimension
-                (extents[0], extents[1], extents[2], extents[3]) = (key.A, key.B, key.C, key.D);
-                shape = key with { A = 0, B = 0, C = 0, D = 0 };
-                return true;
-            case TuneOp.SpanKernel or TuneOp.AttentionPath:                    // rows class × key rows class
+            case TuneOp.AttentionPath:                                         // rows class × key rows class
                 extents[0] = (long)key.B * key.C;
                 shape = key with { B = 0, C = 0 };
-                return true;
-            case TuneOp.SpanStrided:                                           // rows class
-                extents[0] = key.B;
-                shape = key with { B = 0 };
                 return true;
             default:
                 shape = default;

@@ -4,19 +4,15 @@
 using System.Globalization;
 using Idrak.Gpu.Cuda;
 using static Idrak.Gpu.Hip.HipRuntime;
-using Weights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 
 namespace Idrak.Gpu.Hip;
 
 // HIP's measured choices (plan 35, G7a), as CUDA's (CudaBackend.Tuning.cs, TuningCache.cs, CudaBackend.SharedTuning.cs):
 // a choice that depends on the device is measured on the device in use the first time a shape needs it, never set from one
-// card's benchmarks. Measured now: the packed few-row products' rows of k a step (G6a: 4 or 8) and k splits (1, 2, 4, …
-// up to min(64, k / 64), and the formula's), one choice per format, kernel variant, rows, n and k (TuneOp.HipPackedProduct).
-// Every candidate runs on the real inputs (it writes y, which the chosen one then writes again), is timed between two
-// HIP events by CUDA's comparison (TuneTiming: a warm-up until the clocks settle, then pairs with the default's choice,
-// medians, a 3% margin and a second confirmation), and the default (depth 4, the formula's splits) stays unless a
-// candidate is clearly faster. The settings still decide: IDRAK_HIP_GEMV_DEPTH or IDRAK_HIP_GEMV_SPLITS, when given,
-// leave only that value among the candidates (both given: nothing is measured); IDRAK_AUTOTUNE=0 keeps the defaults.
+// card's benchmarks. Every candidate runs on the real inputs (it writes y, which the chosen one then writes again), is
+// timed between two HIP events by CUDA's comparison (TuneTiming: a warm-up until the clocks settle, then pairs with the
+// default's choice, medians, a 3% margin and a second confirmation), and the default stays unless a candidate is
+// clearly faster; IDRAK_AUTOTUNE=0 keeps the defaults.
 // Nothing is measured while a profile times the launches or the runtime lacks events. Choices are kept per device (its
 // name, target, compute units, memory), runtime and driver, and library build with its GCN kernels, in the cache folder's
 // tuning/hip/ (TuningCache's format; IDRAK_TUNING_CACHE=0 keeps none), and shared between a cluster's ranks
@@ -75,73 +71,6 @@ internal sealed unsafe partial class HipBackend
     /// <summary>Whether candidates can be timed now: autotuning on, not inside a measurement, no profile, the runtime's events there.</summary>
     private bool CanMeasure => Autotune && !t_timing && _profile is null && hipEventCreate != null && hipEventRecord != null && hipEventSynchronize != null
                                && hipEventElapsedTime != null;
-
-    /// <summary>
-    /// The packed few-row product's choice (rows of k a step, k splits) for its shape: a forced setting's, a kept or
-    /// measured one, or the default (depth 4 or the forced one, the formula's splits or the forced count). Only the plain
-    /// products measure: the fused forms take the default depth and the formula's splits, as before. `run(depth, splits)`
-    /// runs the product with that choice into y (the chosen one then runs again).
-    /// </summary>
-    private (int Depth, int Splits) PackedChoice(Weights format, GcnKernels.PackedGemvVariant variant, int m, int n, int k, int columnBlocks, Action<int, int> run)
-    {
-        int formula = GemvSplitCount(DeviceLimits.ComputeUnits, columnBlocks, k);
-        bool plain = variant == GcnKernels.PackedGemvVariant.Plain;
-        int depth = plain ? ForcedGemvDepth ?? GcnKernels.PackedGemvDefaultDepth : GcnKernels.PackedGemvDefaultDepth;
-        int splits = ForcedGemvSplits is int forced ? GemvSplitCount(DeviceLimits.ComputeUnits, columnBlocks, k, forced) : formula;
-        if (!plain || t_timing || (ForcedGemvDepth is not null && ForcedGemvSplits is not null))
-        {
-            return (depth, splits);
-        }
-
-        // A depth whose kernel is not in the loaded set is never a candidate (it would time nothing and look fastest).
-        int? depthOnly = ForcedGemvDepth ?? (Gcn(GcnKernels.PackedGemvKernel(format, m, 8)) is null ? GcnKernels.PackedGemvDefaultDepth : null);
-        int[] candidates = PackedCandidates(depthOnly, ForcedGemvSplits is null ? null : splits, formula, k);
-        int fallback = EncodePacked(depth, splits);
-        var key = new TuneKey(TuneOp.HipPackedProduct, (int)format * 16 + (int)variant, m, n, k);
-        int choice = Tune(key, candidates, fallback, c => run(c >> 8, c & 0xFF));
-        return (choice >> 8, choice & 0xFF);
-    }
-
-    /// <summary>A packed product's choice as one number: <paramref name="depth"/> &lt;&lt; 8 | <paramref name="splits"/> (at most 255).</summary>
-    internal static int EncodePacked(int depth, int splits) => depth << 8 | Math.Clamp(splits, 1, 255);
-
-    /// <summary>
-    /// The candidates of a packed product: each depth (<see cref="GcnKernels.PackedGemvDepths"/>, or the forced one) with
-    /// each split count (1, 2, 4, … up to min(64, k / 64) and the formula's <paramref name="formula"/>, or the forced
-    /// one), encoded by <see cref="EncodePacked"/>, in a stable order.
-    /// </summary>
-    internal static int[] PackedCandidates(int? forcedDepth, int? forcedSplits, int formula, int k)
-    {
-        var splitCounts = new List<int>();
-        if (forcedSplits is int f)
-        {
-            splitCounts.Add(f);
-        }
-        else
-        {
-            for (int s = 1; s <= Math.Max(1, Math.Min(64, k / 64)); s *= 2)
-            {
-                splitCounts.Add(s);
-            }
-
-            if (!splitCounts.Contains(formula))
-            {
-                splitCounts.Add(formula);
-                splitCounts.Sort();
-            }
-        }
-
-        var candidates = new List<int>();
-        foreach (int depth in forcedDepth is int d ? (int[])[d] : GcnKernels.PackedGemvDepths.ToArray())
-        {
-            foreach (int splits in splitCounts)
-            {
-                candidates.Add(EncodePacked(depth, splits));
-            }
-        }
-
-        return [.. candidates];
-    }
 
     // The fastest of `candidates` for `key`, measured once (or kept); `fallback` (the default) while it cannot be measured.
     private int Tune(TuneKey key, int[] candidates, int fallback, Action<int> run)
@@ -464,7 +393,7 @@ internal sealed class HipMeasuredChoices : IMeasuredChoicesProvider
 {
     public string Name => "hip";
 
-    public string Summary => "the HIP kernels' measured choices (the packed few-row products' rows of k a step and k splits), per GPU, driver and library build";
+    public string Summary => "the HIP kernels' measured choices, per GPU, driver and library build";
 
     public bool Handles(Backend backend) => backend is HipBackend;
 

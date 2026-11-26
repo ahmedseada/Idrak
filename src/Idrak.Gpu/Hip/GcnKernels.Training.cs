@@ -65,7 +65,6 @@ namespace Idrak.Gpu.Hip;
 // | leaky_relu_bwd_f32     | x, dy, dx; slope, n                                                         | element-wise                        | element               | 2     | 16    |
 // | where_bwd_f32          | condition, dy, da, db; flags, n                                             | element-wise                        | element               | 2     | 24    |
 // | gated_act_bwd_f32      | gate, up, dy, dgate, dup; kind, flags, n                                    | element-wise                        | element               | 40    | 28    |
-// | gated_act_bwd_bf16_f32 | pg, pu, dy, dgate, dup; kind, flags, count, n (n = ⌈count / 2⌉ words)        | single, a work-item a word          | element               | 40    | 24    |
 // | softmax_bwd_f32        | y, dy, dx; cols, log, n                                                     | rows (or fewer)                     | element               | 5     | 20    |
 // | rms_norm_backward_f32  | dy, y, inv, dx; cols, n                                                     | rows (or fewer)                     | element               | 6     | 24    |
 // | norm_bwd_f32           | dxhat, xhat, s1, s2, invstd, dx; groups, inner, m, n                        | element-wise                        | element               | 30    | 28    |
@@ -144,7 +143,6 @@ internal static partial class GcnKernels
         LeakyReluBackward(),
         WhereBackward(),
         GatedBackward(),
-        GatedBackwardPacked(),
         SoftmaxBackward(),
         RmsNormBackward(),
         NormBackward(),
@@ -900,49 +898,6 @@ internal static partial class GcnKernels
             """));
         return (value, slope, upValue, upSlope);
     }
-
-    // gated_act_bwd_f32 with gate and up read as packed bfloat16 words (pg, pu: element 2p in word p's low half, 2p + 1 in
-    // its high half), CUDA's gated_act_bwd_bf16_f32: a work-item a word (n = ⌈count / 2⌉ words), its two elements in turn
-    // (the second while below count), dgate and dup read and written as gated_act_bwd_f32 reads and writes them.
-    private static GcnKernelSource GatedBackwardPacked() =>
-        TrainingElementwise("gated_act_bwd_bf16_f32", new(["pg", "pu", "dy", "dgate", "dup"], ["kind", "flags", "count"], [0, 1], [])
-        {
-            Index = true,
-            Single = true,
-        }, (w, e) =>
-        {
-            string kind = e.Values[0], flags = e.Values[1], count = e.Values[2];
-            for (int half = 0; half < 2; half++)
-            {
-                string element = w.V(), at = w.V(), g = w.V(), u = w.V(), dy = w.V(), oldGate = w.V(), oldUp = w.V(), newGate = w.V(), newUp = w.V();
-                string label = TrainingText($"{e.Label}_h{half}"), saved = w.Mask();
-                w.I(TrainingText($"v_lshl_add_u32 {element}, {e.Index}, 1, {half}"));
-                w.I(TrainingText($"v_cmp_gt_u32_e32 vcc, {count}, {element}"));
-                w.I(TrainingText($"s_and_saveexec_b64 {saved}, vcc"));
-                w.I(TrainingText($"s_cbranch_execz {label}_out"));
-                w.I(TrainingText($"v_lshlrev_b32_e32 {at}, 2, {element}"));
-                w.I(half == 0 ? TrainingText($"v_lshlrev_b32_e32 {g}, 16, {e.In[0]}") : TrainingText($"v_and_b32_e32 {g}, 0xffff0000, {e.In[0]}"));
-                w.I(half == 0 ? TrainingText($"v_lshlrev_b32_e32 {u}, 16, {e.In[1]}") : TrainingText($"v_and_b32_e32 {u}, 0xffff0000, {e.In[1]}"));
-                w.I(TrainingText($"global_load_dword {dy}, {at}, {e.Pointers[2]}"));
-                w.I(TrainingText($"v_mov_b32_e32 {oldGate}, 0"));
-                w.I(TrainingText($"v_mov_b32_e32 {oldUp}, 0"));
-                TrainingGate(w, flags, 0, label + "_no_gate_in");
-                w.I(TrainingText($"global_load_dword {oldGate}, {at}, {e.Pointers[3]}"));
-                w.I(TrainingText($"{label}_no_gate_in:"));
-                TrainingGate(w, flags, 1, label + "_no_up_in");
-                w.I(TrainingText($"global_load_dword {oldUp}, {at}, {e.Pointers[4]}"));
-                w.I(TrainingText($"{label}_no_up_in:"));
-                GatedBackwardBody(w, label, g, u, dy, oldGate, oldUp, kind, flags, newGate, newUp);
-                TrainingGate(w, flags, 0, label + "_no_gate_out");
-                w.I(TrainingText($"global_store_dword {at}, {newGate}, {e.Pointers[3]}"));
-                w.I(TrainingText($"{label}_no_gate_out:"));
-                TrainingGate(w, flags, 1, label + "_no_up_out");
-                w.I(TrainingText($"global_store_dword {at}, {newUp}, {e.Pointers[4]}"));
-                w.I(TrainingText($"{label}_no_up_out:"));
-                w.I(TrainingText($"{label}_out:"));
-                w.I(TrainingText($"s_mov_b64 exec, {saved}"));
-            }
-        });
 
     // dx += invstd/m · (m · dxhat - s1 - xhat · s2) per group (g = i / inner mod groups) as the CPU's two affine passes:
     // dx += dxhat · invstd, then dx += fma(xhat, -invstd · s2 / m, -invstd · s1 / m).

@@ -2,23 +2,14 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
-using Weights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 
 namespace Idrak.Gpu.Hip;
 
 // HIP's decoding operations on its own GCN kernels (GcnKernels.Decoding.cs), and the decoding contracts CUDA implements:
-// - IFusedPackedKernels (Backend.FusedKernels): the gated few-row products (act(gate) · up made as the product reads it),
-//   the products of one input (queries, keys and values, or gate and up with act(gate) · up written by the same pass)
-//   and the product followed by the residual addition and the next norms, few rows each (up to 8), with the plain
-//   packed products' k splits (HipBackend.GemvSplitCount, IDRAK_HIP_GEMV_SPLITS) and their sums added in split order by
-//   the launch's last block (rule 86's order, a completion counter only signalling; IDRAK_HIP_FINISH=block, the
-//   default), so each is one launch as on CUDA, or by a second launch (IDRAK_HIP_FINISH=launch). The prompt-sized and
-//   low-rank forms are CUDA's tensor-core kernels: here they decline (callers then run the packed products HIP has), as
-//   does PrefersPackedMatMul.
-// - IRowAttentionBackend: rows of different lengths decoded together over a float32 or bfloat16 cache
-//   (attention_rows_f32, attention_rows_bf16: the decoding kernel with each row's start), and ISegmentedAttentionBackend:
+// - IRowAttentionBackend: rows of different lengths decoded together over a float32 cache
+//   (attention_rows_f32: the decoding kernel with each row's start), and ISegmentedAttentionBackend:
 //   packed sequences, their key ranges written on the device (segment_spans_f32) for attention_spans_f32. Their head sizes
-//   are the CPU's; a shape the kernels cannot take runs on the host, as before. The segmented gradient is G5b's: the host.
+//   are the CPU's; a shape the kernels cannot take has no pass here. The segmented gradient is G5b's: none yet.
 // - The rows of decoding: the arg-max, class matches, the residual addition with its norm, the rotary embedding alone
 //   and after the norm (one tensor, queries and keys in one launch, and the attention layer's heads into their layouts
 //   and cache, NormRopeHeads true as on CUDA), one-hot rows, the token history and its repetition penalties.
@@ -28,7 +19,7 @@ namespace Idrak.Gpu.Hip;
 internal sealed unsafe partial class HipBackend : IRowAttentionBackend, ISegmentedAttentionBackend
 {
     /// <summary>
-    /// The setting for how a split sum, and a fused decoding kernel's tail, are finished: <c>block</c> (the default, CUDA's
+    /// The setting for how a split sum is finished: <c>block</c> (the default, CUDA's
     /// form): the last block of the launch, counted by a completion counter, in the same launch (GcnKernels.Finish.cs);
     /// <c>launch</c>: a second kernel, as before plan 35's G6b. Both add in the same order (rule 86); which is faster may
     /// depend on the device and the shape (a launch's cost against one block doing the tail), so both stay.
@@ -39,8 +30,7 @@ internal sealed unsafe partial class HipBackend : IRowAttentionBackend, ISegment
     internal static bool FinishByLastBlockSetting(string? setting) => !string.Equals(setting?.Trim(), "launch", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Whether split sums and the fused decoding kernels' tails are finished by their launch's last block (one launch) or
-    /// by a second launch: <c>IDRAK_HIP_FINISH</c>, settable by tests and benchmarks to time both forms.
+    /// Whether split sums are finished by their launch's last block (one launch) or by a second launch: <c>IDRAK_HIP_FINISH</c>, settable by tests and benchmarks to time both forms.
     /// </summary>
     internal static bool FinishByLastBlock { get; set; } = FinishByLastBlockSetting(Environment.GetEnvironmentVariable(FinishVariable));
 
@@ -63,17 +53,10 @@ internal sealed unsafe partial class HipBackend : IRowAttentionBackend, ISegment
         return current;
     }
 
-    /// <summary>The add-and-normalize finish of a packed product: the residual, sum, gain, normalized and the norm's eps and offset, and y's own gain (null: y not normalized first).</summary>
-    private readonly record struct AddNormTail(Storage? Residual, Storage? Sum, Storage? Gain, Storage? Normalized, float Eps, float Offset, Storage? YGain, float YEps,
-        float YOffset);
-
     /// <summary>The cost of a decoding kernel (the table at the top of GcnKernels.Decoding.cs; k: a finish's splits); (0, 0) for another.</summary>
     private static (double Flops, double Bytes) DecodingCost(string kernel, int k) => kernel switch
     {
-        "gemv_multi_finish_f32" => (1 + Math.Max(1, k), 4.0 * (Math.Max(1, k) + 2)),            // per output; k: the splits
-        "gemv_addnorm_f32" => (8 + Math.Max(1, k), 4.0 * (Math.Max(1, k) + 8)),                 // per element
         "attention_rows_f32" => (4, 8),                                                          // per row × position × dimension
-        "attention_rows_bf16" => (4, 4),
         "segment_spans_f32" => (0, 12),                                                          // per row
         "argmax_f32" => (1, 4),
         "class_match_f32" => (2, 8),
@@ -113,14 +96,14 @@ internal sealed unsafe partial class HipBackend : IRowAttentionBackend, ISegment
     {
         using (EnterOperation())
         {
-            if (headsPerRow > 0 && CacheAttention("attention_rows_f32", q, keys, values, null, null, position, y, null, heads, rowsPerHead, steps, capacity, dim, scale, 0,
+            if (headsPerRow > 0 && CacheAttention("attention_rows_f32", q, keys, values, position, y, null, heads, rowsPerHead, steps, capacity, dim, scale,
                     variant, starts, headsPerRow))
             {
                 return true;
             }
         }
 
-        return AttentionRowsOnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        return false;
     }
 
     bool ISegmentedAttentionBackend.SupportsSegmented(int dim, AttentionVariant variant) => Device.Cpu.Backend.SupportsSegmentedAttention(dim, variant);
@@ -136,15 +119,13 @@ internal sealed unsafe partial class HipBackend : IRowAttentionBackend, ISegment
             }
         }
 
-        return AttentionSegmentedOnHost(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        return false;
     }
 
-    // The gradient's kernels are G5b's (the attention backward passes): the host's until then.
+    // The gradient's kernels are G5b's (the attention backward passes): none on the device yet.
     bool ISegmentedAttentionBackend.AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq,
         Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale,
-        AttentionVariant variant) =>
-        AttentionSegmentedBackwardOnHost(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim,
-            scale, variant);
+        AttentionVariant variant) => false;
 
     // Packed sequences on the device: each row's range of keys (segment_spans_f32), then attention over those ranges with
     // the keys and values [heads, steps, dim] (attention_spans_f32, the soft-cap its own); false when the kernels cannot
@@ -238,16 +219,16 @@ internal sealed unsafe partial class HipBackend : IRowAttentionBackend, ISegment
     }
 
     // The attention layer's queries, keys and values into the layouts attention reads in one launch (norm_rope_heads_f32,
-    // CUDA's flags: 1 the norms, 2 bfloat16 caches, 4 a cache position); false where the kernel cannot take it (the same
+    // CUDA's flags: 1 the norms, 4 a cache position); false where the kernel cannot take it (the same
     // refusals as Vulkan's, a tensor of 2^30 elements or more), so callers run the steps one by one.
     public override bool NormRopeHeadsKernel(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols,
         Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions,
-        int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
+        int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride)
     {
         int rot = cos is null ? 0 : half;
         long rows1 = (long)batch * steps * heads, rows2 = (long)batch * steps * kvHeads;
         if (cols <= 0 || batch <= 0 || steps <= 0 || heads <= 0 || kvHeads <= 0 || capacity <= 0 || stride <= 0 || (gainQ is null) != (gainK is null)
-            || (cos is null) != (sin is null) || cos is not null && positions is null || rot < 0 || 2L * rot > cols || bfloat16 && (stride & 1) != 0
+            || (cos is null) != (sin is null) || cos is not null && positions is null || rot < 0 || 2L * rot > cols
             || rows1 + 2 * rows2 > int.MaxValue || !ShapeFits(rows1 * cols, rows2 * cols, (long)batch * kvHeads * capacity * stride)
             || RowKernel("norm_rope_heads_f32", cols) is not { } f)
         {
@@ -255,7 +236,7 @@ internal sealed unsafe partial class HipBackend : IRowAttentionBackend, ISegment
         }
 
         static ulong Optional(Storage? s) => s is null ? 0UL : P(s);
-        int flags = (gainQ is not null ? 1 : 0) | (bfloat16 ? 2 : 0) | (position is not null ? 4 : 0);
+        int flags = (gainQ is not null ? 1 : 0) | (position is not null ? 4 : 0);
         LaunchRows(f, (int)(rows1 + 2 * rows2), cols, Cost(f.Name).Flops, P(q), Optional(gainQ), P(k), Optional(gainK), P(v), Optional(cos), Optional(sin),
             Optional(positions), Optional(position), P(yq), P(yk), P(yv), U(cols), F(epsQ), F(offsetQ), U(heads), F(epsK), F(offsetK), U(kvHeads), U(steps), U(rot),
             U(interleaved ? 1 : 0), U((int)rows1), U((int)rows2), U(flags), U(capacity), U(stride), U((int)(rows1 + 2 * rows2)));

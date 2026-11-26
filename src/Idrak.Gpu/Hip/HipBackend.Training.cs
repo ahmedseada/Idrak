@@ -44,7 +44,6 @@ internal sealed unsafe partial class HipBackend
         "leaky_relu_bwd_f32" => (2, 16),
         "where_bwd_f32" => (2, 24),
         "gated_act_bwd_f32" => (40, 28),
-        "gated_act_bwd_bf16_f32" => (40, 24),
         "softmax_bwd_f32" => (5, 20),
         "rms_norm_backward_f32" => (6, 24),
         "norm_bwd_f32" => (30, 28),

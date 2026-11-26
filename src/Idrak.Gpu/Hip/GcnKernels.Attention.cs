@@ -38,12 +38,8 @@ namespace Idrak.Gpu.Hip;
 // | Kernel                | Arguments                                                                                   | Launch (blocks of 256)            | Unit                     | Flops | Bytes |
 // |-----------------------|---------------------------------------------------------------------------------------------|-----------------------------------|--------------------------|-------|-------|
 // | attention_decode_f32  | q, keys, values, pos, y, lse, part, counters; rph, steps, cap, dim, scale, window, softcap, chunk, splits, n | rows (or fewer) x splits | row x position x dim | 4 | 8 |
-// | attention_decode_bf16 | q, keys, values, pos, y, lse, part, counters; rph, steps, cap, dim, scale, words, window, softcap, chunk, splits, n | rows x splits | row x position x dim | 4 | 4 |
-// | attention_decode_int8 | q, keys, values, kscales, vscales, pos, y, lse, part, counters; rph, steps, cap, dim, scale, words, window, softcap, chunk, splits, n | rows x splits | row x position x dim | 4 | 2 |
 // | attention_spans_f32   | q, keys, values, starts, ends, y, lse, part, counters; heads, group, hpt, rows, keyrows, dim, scale, softcap, chunk, splits, qbatch, qhead, qrow, kbatch, khead, krow, ybatch, yhead, yrow, n | rows x splits | row x key x dim | 4 | 8 |
 // | attention_merge_f32   | part, y, lse; splits, dim, heads, rows, ybatch, yhead, yrow, n                              | rows (or fewer)                   | row x split x dim        | 3     | 4     |
-// | attn_scores_int8      | q, cache, scales, y; steps, capacity, dim, words, n                                         | one score a work-item (n)         | score x dim              | 2     | 5     |
-// | attn_context_int8     | w, cache, scales, y; steps, capacity, dim, words, n                                         | one word of 4 outputs a work-item | output x position        | 2     | 3     |
 //
 // attention_decode_*: n = heads · rph query rows, row r of head r / rph sees positions [begin, end) with end = min(pos +
 // (r mod rph) mod steps, cap - 1) + 1 and begin = end - window (0 without a window); keys and values [heads, cap, dim]
@@ -78,15 +74,11 @@ internal static partial class GcnKernels
     internal static IReadOnlyList<GcnKernelSource> Attention { get; } =
     [
         AttentionRows("attention_decode_f32", AttentionCache.Float32, spans: false),
-        AttentionRows("attention_decode_bf16", AttentionCache.BFloat16, spans: false),
-        AttentionRows("attention_decode_int8", AttentionCache.Int8, spans: false),
         AttentionRows("attention_spans_f32", AttentionCache.Float32, spans: true),
         AttentionMerge(),
         AttentionTiled(2),
         AttentionTiled(4),
         AttentionTiled(8),
-        AttentionScoresInt8(),
-        AttentionContextInt8(),
     ];
 
     private enum AttentionCache
@@ -884,135 +876,4 @@ internal static partial class GcnKernels
         w.Label($"{label}_dims_end");
     }
 
-    // scores[r, t, c] = scales[r, c] · Σ_d q[r, t, d] · keys[r, c, d] over an int8 cache: one score a work-item.
-    private static GcnKernelSource AttentionScoresInt8()
-    {
-        var w = new ElementWriter("attn_scores_int8", ["q", "cache", "scales", "y"], ["steps", "capacity", "dim", "words", "n"]);
-        string steps = w.Scalar("steps"), capacity = w.Scalar("capacity"), dim = w.Scalar("dim");
-        string byCapacity = w.Reciprocal(capacity), bySteps = w.Reciprocal(steps), wordBytes = w.S(), rowBytes = w.S();
-        w.L($"s_lshl_b32 {wordBytes}, {w.Scalar("words")}, 2");
-        w.L($"s_lshl_b32 {rowBytes}, {dim}, 2");
-        w.Begin();
-        var (rowStep, position) = w.DivMod(w.Item, capacity, byCapacity);
-        var (row, _) = w.DivMod(rowStep, steps, bySteps);
-        string slot = w.V(), keyAt = w.V(), queryAt = w.V(), dot = w.V(), word = w.V(), d = w.S(), lane = w.S();
-        w.L($"""
-            v_mul_lo_u32 {slot}, {row}, {capacity}
-            v_add_u32_e32 {slot}, {slot}, {position}
-            v_mul_lo_u32 {keyAt}, {slot}, {wordBytes}
-            v_mul_lo_u32 {queryAt}, {rowStep}, {rowBytes}
-            v_mov_b32_e32 {dot}, 0
-            s_mov_b32 {d}, 0
-            .Lwords:
-            s_cmp_ge_u32 {d}, {dim}
-            s_cbranch_scc1 .Lwords_end
-            global_load_dword {word}, {keyAt}, {w.Pointer("cache")}
-            """);
-        for (int e = 0; e < 4; e++)
-        {
-            string qe = w.V(), b = w.V();
-            w.L($"""
-                s_add_u32 {lane}, {d}, {e}
-                s_cmp_ge_u32 {lane}, {dim}
-                s_cbranch_scc1 .Lnext
-                global_load_dword {qe}, {queryAt}, {w.Pointer("q")}{AttentionOffset(4 * e)}
-                v_bfe_i32 {b}, {word}, {8 * e}, 8
-                v_cvt_f32_i32_e32 {b}, {b}
-                v_fma_f32 {dot}, {qe}, {b}, {dot}
-                """);
-        }
-
-        string scaleAt = w.V(), scaleValue = w.V(), at = w.V();
-        w.L($"""
-            .Lnext:
-            v_add_u32_e32 {keyAt}, 4, {keyAt}
-            v_add_u32_e32 {queryAt}, 16, {queryAt}
-            s_add_u32 {d}, {d}, 4
-            s_branch .Lwords
-            .Lwords_end:
-            v_lshlrev_b32_e32 {scaleAt}, 2, {slot}
-            global_load_dword {scaleValue}, {scaleAt}, {w.Pointer("scales")}
-            v_mul_f32_e32 {dot}, {dot}, {scaleValue}
-            v_lshlrev_b32_e32 {at}, 2, {w.Item}
-            global_store_dword {at}, {dot}, {w.Pointer("y")}
-            """);
-        return w.End();
-    }
-
-    // y[r, t, 4 wi .. 4 wi + 3] = Σ_c weights[r, t, c] · scales[r, c] · values[r, c, 4 wi ..] over an int8 cache, in position
-    // order: one word of four outputs a work-item.
-    private static GcnKernelSource AttentionContextInt8()
-    {
-        var w = new ElementWriter("attn_context_int8", ["w", "cache", "scales", "y"], ["steps", "capacity", "dim", "words", "n"]);
-        string steps = w.Scalar("steps"), capacity = w.Scalar("capacity"), dim = w.Scalar("dim"), words = w.Scalar("words");
-        string byWords = w.Reciprocal(words), bySteps = w.Reciprocal(steps), wordBytes = w.S();
-        w.L($"s_lshl_b32 {wordBytes}, {words}, 2");
-        w.Begin();
-        var (rowStep, wordIndex) = w.DivMod(w.Item, words, byWords);
-        var (row, _) = w.DivMod(rowStep, steps, bySteps);
-        string weightAt = w.V(), scaleAt = w.V(), cacheAt = w.V(), t = w.V(), c = w.S();
-        var acc = new string[4];
-        w.L($"""
-            v_mul_lo_u32 {weightAt}, {rowStep}, {capacity}
-            v_lshlrev_b32_e32 {weightAt}, 2, {weightAt}
-            v_mul_lo_u32 {scaleAt}, {row}, {capacity}
-            v_mul_lo_u32 {cacheAt}, {scaleAt}, {wordBytes}
-            v_lshlrev_b32_e32 {scaleAt}, 2, {scaleAt}
-            v_lshlrev_b32_e32 {t}, 2, {wordIndex}
-            v_add_u32_e32 {cacheAt}, {cacheAt}, {t}
-            """);
-        for (int e = 0; e < 4; e++)
-        {
-            acc[e] = w.V();
-            w.L($"v_mov_b32_e32 {acc[e]}, 0");
-        }
-
-        string weight = w.V(), scaleValue = w.V(), word = w.V(), factor = w.V();
-        w.L($"""
-            s_mov_b32 {c}, 0
-            .Lpositions:
-            s_cmp_ge_u32 {c}, {capacity}
-            s_cbranch_scc1 .Lpositions_end
-            global_load_dword {weight}, {weightAt}, {w.Pointer("w")}
-            global_load_dword {scaleValue}, {scaleAt}, {w.Pointer("scales")}
-            global_load_dword {word}, {cacheAt}, {w.Pointer("cache")}
-            v_mul_f32_e32 {factor}, {weight}, {scaleValue}
-            """);
-        for (int e = 0; e < 4; e++)
-        {
-            string b = w.V();
-            w.L($"""
-                v_bfe_i32 {b}, {word}, {8 * e}, 8
-                v_cvt_f32_i32_e32 {b}, {b}
-                v_fma_f32 {acc[e]}, {factor}, {b}, {acc[e]}
-                """);
-        }
-
-        string first = w.V(), at = w.V();
-        w.L($"""
-            v_add_u32_e32 {weightAt}, 4, {weightAt}
-            v_add_u32_e32 {scaleAt}, 4, {scaleAt}
-            v_add_u32_e32 {cacheAt}, {wordBytes}, {cacheAt}
-            s_add_u32 {c}, {c}, 1
-            s_branch .Lpositions
-            .Lpositions_end:
-            v_mul_lo_u32 {first}, {rowStep}, {dim}
-            v_lshlrev_b32_e32 {t}, 2, {wordIndex}
-            v_add_u32_e32 {first}, {first}, {t}
-            v_lshlrev_b32_e32 {at}, 2, {first}
-            """);
-        for (int e = 0; e < 4; e++)
-        {
-            string lane = w.V(), saved = w.SPair();
-            w.L($"""
-                v_add_u32_e32 {lane}, {e}, {t}
-                v_cmp_gt_u32_e32 vcc, {dim}, {lane}
-                s_and_saveexec_b64 {saved}, vcc
-                global_store_dword {at}, {acc[e]}, {w.Pointer("y")}{AttentionOffset(4 * e)}
-                s_or_b64 exec, exec, {saved}
-                """);
-        }
-
-        return w.End();
-    }
 }

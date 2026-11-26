@@ -18,8 +18,8 @@ internal sealed class HipStorage(HipBackend backend, ulong pointer, int length, 
 /// A GPU driven through the HIP runtime (the graphics driver's on Windows, ROCm's runtime library on Linux; no part of
 /// the HIP SDK): the third backend family after CUDA and Vulkan, started from the minimum backend. Memory, uploads,
 /// downloads, copies and fills run on the device, and so do the row and element-wise operations, on Idrak's own GCN
-/// kernels (plan 35: HipBackend.Kernels.cs, .Rows.cs, .Pointwise.cs); every other operation takes the host fallback
-/// (<see cref="HostCall"/>) until its kernel lands, so every model runs from the start. All work goes on one stream; uploads and downloads wait for it, so their host memory is never read or
+/// kernels (plan 35: HipBackend.Kernels.cs, .Rows.cs, .Pointwise.cs); an operation without a kernel of its own has none
+/// here. All work goes on one stream; uploads and downloads wait for it, so their host memory is never read or
 /// written after they return. The device reports its memory (<see cref="IMemoryReport"/>), so paths that need much at
 /// once (the composed attention's scores, a prompt's pieces) are sized by it.
 /// </summary>
@@ -120,21 +120,8 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
     // The device's index among HIP devices (hip:N).
     private int Ordinal => Array.IndexOf(Probe.Value.Devices, _device);
 
-    // Every operation without a kernel of its own takes the host fallback, which runs the CPU's code: the layers follow
-    // the CPU's limits so the two agree. Its kernels read indices, token ids and offsets as int32, as the CPU's (plan 37,
-    // T1b: the gathers, one-hot, scatter-add, top-k and the sampler's ids and history in GCN).
-    // Weights kept in their file's format (plan 37, Q0) have no product of its own yet: a load expands them for it. Its
-    // kernels compute float32 alone (plan 37, T2: no 16-bit product is built in GCN yet), so auto picks float32 here.
-    public override BackendCapabilities Capabilities { get; } = Device.Cpu.Backend.Capabilities with
-    {
-        IndexType = ElementType.Int32, StoresAnyFormat = false,
-        NativeTypes = [ElementType.Float32], NativeReport = "the HIP kernels compute float32 (no 16-bit products are built in GCN yet)",
-        // Decisions 7 and 8 (plan 37), its own report: the GCN kernels read and write float32 values and sum in float32,
-        // as the host fallback (the CPU's code) does.
-        DefaultValueTypes = [ElementType.Float32],
-        DefaultSumTypes = [ElementType.Float32],
-        ValueTypes = new Dictionary<Operation, IReadOnlyList<ElementType>> { [Ops.ConvertElements] = DeviceConversions.Types },   // its conversion kernels
-    };
+    // The layers follow the CPU's limits.
+    public override BackendCapabilities Capabilities { get; } = Device.Cpu.Backend.Capabilities;
 
     /// <summary>"6.2.41134" for a runtime version 60241134 (major · 10⁷ + minor · 10⁵ + patch).</summary>
     internal static string FormatVersion(int version) => $"{version / 10_000_000}.{version / 100_000 % 100}.{version % 100_000}";

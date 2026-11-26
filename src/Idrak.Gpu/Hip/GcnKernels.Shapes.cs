@@ -6,14 +6,13 @@ using System.Text;
 
 namespace Idrak.Gpu.Hip;
 
-// HIP's shape kernels in GCN (plan 35, G4b): the key/value cache writes (float32, bfloat16, int8), the decoder mask, the
-// gathers (float32, bfloat16 rows, bfloat16 columns; int32 indices, plan 37 T1b), the permute, the strided copy (adding
-// or not) and the conversions between float32 and int32 (plan 37 T1b), bfloat16 and float16, with CUDA's names
+// HIP's shape kernels in GCN (plan 35, G4b): the key/value cache write, the decoder mask, the gather, the permute and
+// the strided copy (adding or not), with CUDA's names
 // and arguments in CUDA's order (PtxKernels.Decoding.cs, .Quantized.cs, .Advanced.cs: the buffers, then the 32-bit
 // values, the count n last), each computing what the CPU backend computes (CpuBackend.Decoding.cs, .Quantized.cs,
 // .Advanced.cs), the reference their results are proven against.
 //
-// Every kernel has one shape: one output element (a word for kv_write_bf16, a cached row for kv_write_int8) a work-item,
+// Every kernel has one shape: one output element a work-item,
 // in blocks of ShapeBlock (declared with .reqd_workgroup_size), walked grid-stride: the dispatch packet's grid size is
 // read once and each work-item steps by it while its element is below n, so the backend may launch any grid up to the
 // element-wise kernels' bound (PointwiseMostWorkItems: an index plus the stride never wraps). Divisions by a count (an
@@ -30,24 +29,12 @@ namespace Idrak.Gpu.Hip;
 // | Kernel               | Arguments                                                            | Unit                 | Flops | Bytes        |
 // |----------------------|----------------------------------------------------------------------|----------------------|-------|--------------|
 // | kv_write_f32         | src, cache, pos; stepsdim, capdim, dim, n                            | a source float       | 0     | 8            |
-// | kv_write_bf16        | src, cache, pos; steps, cap, dim, words, n                           | a source float       | 0     | 6            |
-// | kv_write_int8        | src, cache, scales, position; steps, capacity, dim, words, n         | a source float       | 3     | 9            |
 // | decoder_mask_f32     | pos, mask; cap, n                                                    | a mask float         | 0     | 4            |
 // | gather_f32           | table, indices, y; dim, maxindex, n                                  | an output float      | 0     | 8            |
-// | gather_bf16_f32      | table, indices, y; dim, maxindex, words, n                           | an output float      | 0     | 6            |
-// | gather_bf16_cols_f32 | table, indices, y; dim, maxindex, words, n                           | an output float      | 0     | 8            |
 // | permute_f32          | x, y; s0..s5, t0..t5, accumulate, n                                  | an output float      | 0 (1) | 8 (12)       |
 // | copy2d_f32           | src, dst; srcoff, srcstride, dstoff, dststride, cols, accumulate, n  | a copied float       | 0 (1) | 8 (12)       |
-// | convert_f32_i32      | x, y; n                                                              | an element           | 0     | 8            |
-// | convert_i32_f32      | x, y; n                                                              | an element           | 0     | 8            |
-// | convert_f32_bf16     | x, y; count, n                                                       | a word of two halves | 0     | 12           |
-// | convert_f32_f16      | x, y; count, n                                                       | a word of two halves | 0     | 12           |
-// | convert_bf16_f32     | x, y; n                                                              | an element           | 0     | 6            |
-// | convert_f16_f32      | x, y; n                                                              | an element           | 0     | 6            |
 //
-// (In brackets: adding into the output.) kv_write_bf16's work-item writes a word of two values (n = heads · steps ·
-// words); kv_write_int8's quantizes a whole cached row (n = heads · steps), reading it twice (its largest magnitude, then
-// each value). gather_bf16_cols_f32 reads a whole word for each value (the column's half). permute_f32's dimensions are
+// (In brackets: adding into the output.) permute_f32's dimensions are
 // right-aligned to six (unused leading ones of size 1 and stride 0), as CUDA's.
 internal static partial class GcnKernels
 {
@@ -64,20 +51,10 @@ internal static partial class GcnKernels
     internal static IReadOnlyList<GcnKernelSource> Shapes { get; } =
     [
         ShapeKeyValueWrite(),
-        ShapeKeyValueWriteBFloat16(),
-        ShapeKeyValueWriteInt8(),
         ShapeDecoderMask(),
         ShapeGather(),
-        ShapeGatherBFloat16(columns: false),
-        ShapeGatherBFloat16(columns: true),
         ShapePermute(),
         ShapeCopy2D(),
-        ShapeConvert(toInt32: true),
-        ShapeConvert(toInt32: false),
-        ShapeNarrow(bfloat16: true),
-        ShapeNarrow(bfloat16: false),
-        ShapeWiden(bfloat16: true),
-        ShapeWiden(bfloat16: false),
     ];
 
     // cache[h, pos + t, d] = src[h, t, d]: one source float a work-item (h, rest) = i / (steps · dim).
@@ -99,131 +76,6 @@ internal static partial class GcnKernels
             v_lshlrev_b32_e32 {from}, 2, {w.Item}
             global_load_dword {value}, {from}, {w.Pointer("src")}
             global_store_dword {at}, {value}, {w.Pointer("cache")}
-            """);
-        return w.End();
-    }
-
-    // Word wi of cached row (h, pos + t) = the pair src[h, t, 2wi], src[h, t, 2wi + 1] (0 past dim), each rounded to
-    // bfloat16 as BFloat16Bits.Round does (to nearest, ties to even; a NaN kept quiet): one word a work-item.
-    private static GcnKernelSource ShapeKeyValueWriteBFloat16()
-    {
-        var w = new ElementWriter("kv_write_bf16", ["src", "cache", "pos"], ["steps", "cap", "dim", "words", "n"]);
-        string steps = w.Scalar("steps"), cap = w.Scalar("cap"), dim = w.Scalar("dim"), words = w.Scalar("words");
-        string pos = w.Position(w.Pointer("pos"));
-        string byWords = w.Reciprocal(words), bySteps = w.Reciprocal(steps);
-        w.Begin();
-        var (row, word) = w.DivMod(w.Item, words, byWords);
-        var (head, step) = w.DivMod(row, steps, bySteps);
-        string at = w.V(), first = w.V(), from = w.V(), low = w.V(), high = w.V(), second = w.V(), saved = w.SPair();
-        w.L($"""
-            v_mul_lo_u32 {at}, {head}, {cap}
-            v_add_u32_e32 {at}, {pos}, {at}
-            v_add_u32_e32 {at}, {at}, {step}
-            v_mul_lo_u32 {at}, {at}, {words}
-            v_add_u32_e32 {at}, {at}, {word}
-            v_lshlrev_b32_e32 {at}, 2, {at}
-            v_lshlrev_b32_e32 {first}, 1, {word}
-            v_mul_lo_u32 {from}, {row}, {dim}
-            v_add_u32_e32 {from}, {from}, {first}
-            v_lshlrev_b32_e32 {from}, 2, {from}
-            global_load_dword {low}, {from}, {w.Pointer("src")}
-            v_mov_b32_e32 {high}, 0
-            v_add_u32_e32 {second}, 1, {first}
-            v_cmp_gt_u32_e32 vcc, {dim}, {second}
-            s_and_saveexec_b64 {saved}, vcc
-            global_load_dword {high}, {from}, {w.Pointer("src")} offset:4
-            s_or_b64 exec, exec, {saved}
-            """);
-        string a = w.RoundBFloat16(low), b = w.RoundBFloat16(high), packed = w.V();
-        w.L($"""
-            v_lshl_or_b32 {packed}, {b}, 16, {a}
-            global_store_dword {at}, {packed}, {w.Pointer("cache")}
-            """);
-        return w.End();
-    }
-
-    // Cached row (h, position + t) of int8 values from source row i = h · steps + t, as the CPU quantizes it: the largest
-    // magnitude m, scale = m / 127 (stored in scales), each value round-to-even(x · (1 / scale)) clamped to ±127 (0 when
-    // m is 0), four bytes a word, the padding bytes 0. One cached row a work-item.
-    private static GcnKernelSource ShapeKeyValueWriteInt8()
-    {
-        var w = new ElementWriter("kv_write_int8", ["src", "cache", "scales", "position"], ["steps", "capacity", "dim", "words", "n"]);
-        string steps = w.Scalar("steps"), capacity = w.Scalar("capacity"), dim = w.Scalar("dim"), words = w.Scalar("words");
-        string pos = w.Position(w.Pointer("position"));
-        string bySteps = w.Reciprocal(steps), rowBytes = w.S(), wordBytes = w.S();
-        w.L($"s_lshl_b32 {rowBytes}, {dim}, 2");
-        w.L($"s_lshl_b32 {wordBytes}, {words}, 2");
-        w.Begin();
-        var (head, step) = w.DivMod(w.Item, steps, bySteps);
-        string slot = w.V(), from = w.V(), at = w.V(), max = w.V(), x = w.V(), d = w.S();
-        w.L($"""
-            v_mul_lo_u32 {slot}, {head}, {capacity}
-            v_add_u32_e32 {slot}, {pos}, {slot}
-            v_add_u32_e32 {slot}, {slot}, {step}
-            v_mul_lo_u32 {from}, {w.Item}, {rowBytes}
-            v_mov_b32_e32 {at}, {from}
-            v_mov_b32_e32 {max}, 0
-            s_mov_b32 {d}, 0
-            .Lmax:
-            s_cmp_ge_u32 {d}, {dim}
-            s_cbranch_scc1 .Lmax_end
-            global_load_dword {x}, {at}, {w.Pointer("src")}
-            v_max_f32_e64 {max}, {max}, |{x}|
-            v_add_u32_e32 {at}, 4, {at}
-            s_add_u32 {d}, {d}, 1
-            s_branch .Lmax
-            .Lmax_end:
-            """);
-        string scale = w.V(), inverse = w.V(), scaleAt = w.V(), hundred = w.V();
-        w.L($"v_mov_b32_e32 {hundred}, 0x42fe0000                ; 127");
-        w.Div(scale, max, hundred);
-        w.L($"v_mov_b32_e32 {inverse}, 1.0");
-        w.Div(inverse, inverse, scale);
-        w.L($"""
-            v_cmp_lt_f32_e32 vcc, 0, {max}
-            v_cndmask_b32_e32 {inverse}, 0, {inverse}, vcc
-            v_lshlrev_b32_e32 {scaleAt}, 2, {slot}
-            global_store_dword {scaleAt}, {scale}, {w.Pointer("scales")}
-            """);
-        string target = w.V(), packed = w.V(), wi = w.S(), lane = w.S();
-        w.L($"""
-            v_mul_lo_u32 {target}, {slot}, {wordBytes}
-            s_mov_b32 {wi}, 0
-            s_mov_b32 {d}, 0
-            .Lwords:
-            s_cmp_ge_u32 {wi}, {words}
-            s_cbranch_scc1 .Lwords_end
-            v_mov_b32_e32 {packed}, 0
-            """);
-        for (int e = 0; e < 4; e++)
-        {
-            string value = w.V(), q = w.V();
-            w.L($"""
-                s_add_u32 {lane}, {d}, {e}
-                v_mov_b32_e32 {value}, 0
-                s_cmp_ge_u32 {lane}, {dim}
-                s_cbranch_scc1 .Lbyte{e}
-                global_load_dword {value}, {from}, {w.Pointer("src")} offset:{4 * e}
-                .Lbyte{e}:
-                v_mul_f32_e32 {q}, {value}, {inverse}
-                v_rndne_f32_e32 {q}, {q}
-                v_cvt_i32_f32_e32 {q}, {q}
-                v_max_i32_e32 {q}, 0xffffff81, {q}
-                v_min_i32_e32 {q}, 0x7f, {q}
-                v_and_b32_e32 {q}, 0xff, {q}
-                v_lshlrev_b32_e32 {q}, {8 * e}, {q}
-                v_or_b32_e32 {packed}, {packed}, {q}
-                """);
-        }
-
-        w.L($"""
-            global_store_dword {target}, {packed}, {w.Pointer("cache")}
-            v_add_u32_e32 {target}, 4, {target}
-            v_add_u32_e32 {from}, 16, {from}
-            s_add_u32 {d}, {d}, 4
-            s_add_u32 {wi}, {wi}, 1
-            s_branch .Lwords
-            .Lwords_end:
             """);
         return w.End();
     }
@@ -277,141 +129,6 @@ internal static partial class GcnKernels
             v_add_u32_e32 {from}, {from}, {column}
             v_lshlrev_b32_e32 {from}, 2, {from}
             global_load_dword {value}, {from}, {w.Pointer("table")}
-            v_lshlrev_b32_e32 {at}, 2, {w.Item}
-            global_store_dword {at}, {value}, {w.Pointer("y")}
-            """);
-        return w.End();
-    }
-
-    // From a bfloat16 table packed two a word: rows [vocabulary, words] (gather_bf16_f32: y[i, j] = half j of row
-    // indices[i]), or a [dim, words] table read by columns (gather_bf16_cols_f32: y[i, j] = half indices[i] of row j). The
-    // half is the low one for an even position, as the CPU's halves are.
-    private static GcnKernelSource ShapeGatherBFloat16(bool columns)
-    {
-        var w = new ElementWriter(columns ? "gather_bf16_cols_f32" : "gather_bf16_f32", ["table", "indices", "y"], ["dim", "maxindex", "words", "n"]);
-        string dim = w.Scalar("dim"), words = w.Scalar("words"), byDim = w.Reciprocal(dim);
-        w.Begin();
-        var (index, column) = ShapeGatherIndex(w, dim, byDim);
-        var (row, half) = columns ? (column, index) : (index, column);
-        string word = w.V(), bits = w.V(), odd = w.V(), low = w.V(), at = w.V();
-        w.L($"""
-            v_lshrrev_b32_e32 {word}, 1, {half}
-            v_mul_lo_u32 {at}, {row}, {words}
-            v_add_u32_e32 {word}, {at}, {word}
-            v_lshlrev_b32_e32 {word}, 2, {word}
-            global_load_dword {bits}, {word}, {w.Pointer("table")}
-            v_and_b32_e32 {odd}, 1, {half}
-            v_cmp_eq_u32_e32 vcc, 0, {odd}
-            v_lshlrev_b32_e32 {low}, 16, {bits}
-            v_and_b32_e32 {bits}, 0xffff0000, {bits}
-            v_cndmask_b32_e32 {bits}, {bits}, {low}, vcc
-            v_lshlrev_b32_e32 {at}, 2, {w.Item}
-            global_store_dword {at}, {bits}, {w.Pointer("y")}
-            """);
-        return w.End();
-    }
-
-    // y[i] = x[i] between float32 and int32 (plan 37, T1b: the dispatcher's index conversions and a decoding context's
-    // positions in the index type), as CUDA's and Vulkan's: a float truncated toward zero (v_cvt_i32_f32 saturates, NaN
-    // gives 0), an integer rounded to the nearest float.
-    private static GcnKernelSource ShapeConvert(bool toInt32)
-    {
-        var w = new ElementWriter(toInt32 ? "convert_f32_i32" : "convert_i32_f32", ["x", "y"], ["n"]);
-        w.Begin();
-        string at = w.V(), value = w.V();
-        w.L($"""
-            v_lshlrev_b32_e32 {at}, 2, {w.Item}
-            global_load_dword {value}, {at}, {w.Pointer("x")}
-            {(toInt32 ? "v_cvt_i32_f32_e32" : "v_cvt_f32_i32_e32")} {value}, {value}
-            global_store_dword {at}, {value}, {w.Pointer("y")}
-            """);
-        return w.End();
-    }
-
-    // Word i of y = x[2i], x[2i + 1] narrowed to bfloat16 or float16 (low half first; 0 past count), as the CPU's
-    // conversions (ElementConversions) and CUDA's and Vulkan's kernels make them, NaNs included: bfloat16 as
-    // BFloat16Bits.Round (RoundBFloat16), float16 as .NET's (Half) (RoundFloat16: integer work only). One word a work-item.
-    private static GcnKernelSource ShapeNarrow(bool bfloat16)
-    {
-        var w = new ElementWriter(bfloat16 ? "convert_f32_bf16" : "convert_f32_f16", ["x", "y"], ["count", "n"]);
-        string count = w.Scalar("count");
-        w.Begin();
-        string from = w.V(), low = w.V(), high = w.V(), second = w.V(), saved = w.SPair();
-        w.L($"""
-            v_lshlrev_b32_e32 {from}, 3, {w.Item}
-            global_load_dword {low}, {from}, {w.Pointer("x")}
-            v_mov_b32_e32 {high}, 0
-            v_lshlrev_b32_e32 {second}, 1, {w.Item}
-            v_add_u32_e32 {second}, 1, {second}
-            v_cmp_gt_u32_e32 vcc, {count}, {second}
-            s_and_saveexec_b64 {saved}, vcc
-            global_load_dword {high}, {from}, {w.Pointer("x")} offset:4
-            s_or_b64 exec, exec, {saved}
-            """);
-        string a = bfloat16 ? w.RoundBFloat16(low) : w.RoundFloat16(low), b = bfloat16 ? w.RoundBFloat16(high) : w.RoundFloat16(high);
-        string packed = w.V(), at = w.V();
-        w.L($"""
-            v_lshl_or_b32 {packed}, {b}, 16, {a}
-            v_lshlrev_b32_e32 {at}, 2, {w.Item}
-            global_store_dword {at}, {packed}, {w.Pointer("y")}
-            """);
-        return w.End();
-    }
-
-    // y[i] = element i of the 16-bit words x widened, exactly: bfloat16 as the float32's high half, float16 as
-    // HalfFloats widens it (normal halves rebiased, a subnormal as mantissa · 2^-24, a NaN's payload kept). One element a
-    // work-item.
-    private static GcnKernelSource ShapeWiden(bool bfloat16)
-    {
-        var w = new ElementWriter(bfloat16 ? "convert_bf16_f32" : "convert_f16_f32", ["x", "y"], ["n"]);
-        w.Begin();
-        string word = w.V(), bits = w.V(), odd = w.V(), low = w.V(), at = w.V(), value = w.V();
-        w.L($"""
-            v_lshrrev_b32_e32 {word}, 1, {w.Item}
-            v_lshlrev_b32_e32 {word}, 2, {word}
-            global_load_dword {bits}, {word}, {w.Pointer("x")}
-            v_and_b32_e32 {odd}, 1, {w.Item}
-            v_cmp_eq_u32_e32 vcc, 0, {odd}
-            """);
-        if (bfloat16)
-        {
-            w.L($"""
-                v_lshlrev_b32_e32 {low}, 16, {bits}
-                v_and_b32_e32 {bits}, 0xffff0000, {bits}
-                v_cndmask_b32_e32 {value}, {bits}, {low}, vcc
-                """);
-        }
-        else
-        {
-            string half = w.V(), e = w.V(), m = w.V(), sign = w.V(), t = w.V(), normal = w.V(), special = w.V(), sub = w.V();
-            w.L($"""
-                v_and_b32_e32 {low}, 0xffff, {bits}
-                v_lshrrev_b32_e32 {bits}, 16, {bits}
-                v_cndmask_b32_e32 {half}, {bits}, {low}, vcc
-                v_bfe_u32 {e}, {half}, 10, 5
-                v_and_b32_e32 {m}, 0x3ff, {half}
-                v_and_b32_e32 {sign}, 0x8000, {half}
-                v_lshlrev_b32_e32 {sign}, 16, {sign}
-                v_lshlrev_b32_e32 {m}, 13, {m}
-                v_lshlrev_b32_e32 {t}, 23, {e}
-                v_add_u32_e32 {t}, 0x38000000, {t}
-                v_or_b32_e32 {normal}, {t}, {m}
-                v_or_b32_e32 {normal}, {normal}, {sign}
-                v_or_b32_e32 {special}, 0x7f800000, {m}
-                v_or_b32_e32 {special}, {special}, {sign}
-                v_lshrrev_b32_e32 {t}, 13, {m}
-                v_cvt_f32_u32_e32 {t}, {t}
-                v_mul_f32_e32 {t}, 0x33800000, {t}
-                v_or_b32_e32 {sub}, {sign}, {t}
-                v_mov_b32_e32 {value}, {normal}
-                v_cmp_eq_u32_e32 vcc, 31, {e}
-                v_cndmask_b32_e32 {value}, {value}, {special}, vcc
-                v_cmp_eq_u32_e32 vcc, 0, {e}
-                v_cndmask_b32_e32 {value}, {value}, {sub}, vcc
-                """);
-        }
-
-        w.L($"""
             v_lshlrev_b32_e32 {at}, 2, {w.Item}
             global_store_dword {at}, {value}, {w.Pointer("y")}
             """);

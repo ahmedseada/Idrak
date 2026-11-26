@@ -6,9 +6,9 @@ using System.Globalization;
 namespace Idrak.Gpu.Hip;
 
 // HIP's attention on its own GCN kernels (GcnKernels.Attention.cs), where CUDA overrides it: decoding and the tiled form
-// over a float32, bfloat16 or int8 key/value cache (the log-sum-exp for training, windows and soft-caps), attention over
+// over a float32 key/value cache (the log-sum-exp for training, windows and soft-caps), attention over
 // key ranges (grouped heads, tables of ranges, the log-sum-exp) and its strided form read in place from a layer's packed
-// rows, and the int8 cache's scores and weighted values. One block of 256 takes a query row (min(rows, the device's
+// rows. One block of 256 takes a query row (min(rows, the device's
 // grid) blocks; the kernels walk the rows grid-stride, rule 84) and, for few rows over many keys, a split of its keys
 // in grid y (rule 81): the splits and their positions follow the shapes alone (IDRAK_HIP_ATTENTION_SPLIT positions a
 // split, 512 by default, at most 64 splits and 4,096 blocks), so a row's sums keep one order on every device (rule 86),
@@ -109,21 +109,12 @@ internal sealed unsafe partial class HipBackend
     private static (double Flops, double Bytes) AttentionShapeCost(string kernel, bool variant) => kernel switch
     {
         "attention_decode_f32" or "attention_spans_f32" => (4, 8),                // per row × position × dimension
-        "attention_decode_bf16" => (4, 4),
-        "attention_decode_int8" => (4, 2),
         "attention_merge_f32" => (3, 4),                                          // per row × split × dimension
         "attention_tiled_r2_f32" => (4, 4),                                       // per row × position × dimension: K and V once for R rows
         "attention_tiled_r4_f32" => (4, 2),
         "attention_tiled_r8_f32" => (4, 1),
-        "attn_scores_int8" => (2, 5),                                             // per score × dimension
-        "attn_context_int8" => (2, 3),                                            // per output × position
-        "kv_write_f32" or "gather_f32" or "gather_bf16_cols_f32" => (0, 8),
-        "kv_write_bf16" or "gather_bf16_f32" => (0, 6),
-        "kv_write_int8" => (3, 9),
+        "kv_write_f32" or "gather_f32" => (0, 8),
         "decoder_mask_f32" => (0, 4),
-        "convert_f32_i32" or "convert_i32_f32" => (0, 8),
-        "convert_f32_bf16" or "convert_f32_f16" => (0, 12),                       // per word: two floats read, a word written
-        "convert_bf16_f32" or "convert_f16_f32" => (0, 6),
         "permute_f32" or "copy2d_f32" => variant ? (1, 12) : (0, 8),             // variant: adding into the output
         _ => TrainingCost(kernel),                                          // GcnKernels.Training.cs's table
     };
@@ -180,15 +171,15 @@ internal sealed unsafe partial class HipBackend
         }
     }
 
-    // Attention over a cache up to the device position (attention_decode_*): false when it cannot run here (the host's).
+    // Attention over a cache up to the device position (attention_decode_f32): false when it cannot run here.
     // With `starts` (attention_rows_*, HipBackend.Decoding.cs), each row also from its sequence's start, headsPerRow heads a
     // packed row of the table.
-    private bool CacheAttention(string kernel, Storage q, Storage keys, Storage values, Storage? keyScales, Storage? valueScales, Storage position, Storage y,
-        Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, int words, AttentionVariant variant, Storage? starts = null,
+    private bool CacheAttention(string kernel, Storage q, Storage keys, Storage values, Storage position, Storage y,
+        Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant, Storage? starts = null,
         int headsPerRow = 0)
     {
         long rows = (long)heads * rowsPerHead;
-        int rowWords = words > 0 ? words : dim;
+        int rowWords = dim;
         if (AttentionKernel(kernel, dim) is not { } function || Gcn("attention_merge_f32") is not { } merge || steps <= 0 || capacity <= 0 || rows > int.MaxValue
             || (long)capacity * rowWords * sizeof(float) >= 1L << 32 || SplitsFor((int)rows, capacity, dim) is not { } split)
         {
@@ -200,17 +191,11 @@ internal sealed unsafe partial class HipBackend
             return true;
         }
 
-        bool int8 = keyScales is not null;
         Span<ulong> arguments = stackalloc ulong[23];
         int at = 0;
         arguments[at++] = P(q);
         arguments[at++] = P(keys);
         arguments[at++] = P(values);
-        if (int8)
-        {
-            arguments[at++] = P(keyScales!);
-            arguments[at++] = P(valueScales!);
-        }
 
         arguments[at++] = P(position);
         arguments[at++] = P(y);
@@ -227,10 +212,6 @@ internal sealed unsafe partial class HipBackend
         arguments[at++] = U(capacity);
         arguments[at++] = U(dim);
         arguments[at++] = F(scale);
-        if (words > 0)
-        {
-            arguments[at++] = U(words);
-        }
 
         arguments[at++] = U(Math.Max(0, variant.Window));
         arguments[at++] = F(variant.Softcap);
@@ -306,7 +287,7 @@ internal sealed unsafe partial class HipBackend
     public override void AttentionDecodeKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
         int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        if (!CacheAttention("attention_decode_f32", q, keys, values, null, null, position, y, null, heads, rowsPerHead, steps, capacity, dim, scale, 0, variant))
+        if (!CacheAttention("attention_decode_f32", q, keys, values, position, y, null, heads, rowsPerHead, steps, capacity, dim, scale, variant))
         {
             base.AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
@@ -322,7 +303,7 @@ internal sealed unsafe partial class HipBackend
             return;
         }
 
-        if (!CacheAttention("attention_decode_f32", q, keys, values, null, null, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, 0, variant))
+        if (!CacheAttention("attention_decode_f32", q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant))
         {
             base.AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }

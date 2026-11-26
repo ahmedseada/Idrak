@@ -2,77 +2,23 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
-using Weights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 
 namespace Idrak.Gpu.Hip;
 
 // HIP's matrix products on its own GCN kernels (GcnKernels.Products.cs), where CUDA overrides them and with CUDA's rules:
 // the float32 product (every transposition, beta, batches; a bias through MatMulBias), few rows (decoding: up to two
 // groups of 8 rows, b not transposed in a, n·k of 65,536 or more, as CUDA's gemv_nn_f32 / gemv_nt_f32) on the few-row
-// kernels and the rest on the tiled one; the packed few-row products (int8, int4, bfloat16, float16 weights, 1 to 8
-// rows, the kernel written for the fewest rows that hold m, four rows of k a step or eight, G6a's variants, the same bits;
-// the depth and the splits measured on the device per shape, HipBackend.Tuning.cs, unless IDRAK_HIP_GEMV_DEPTH or
-// IDRAK_HIP_GEMV_SPLITS force them) with k split over grid y (the default, leftover 8.10: about two blocks a
-// compute unit the device reports, a power of two, at most 64 and chunks of 64 rows or more, as CUDA's formula, or
-// IDRAK_HIP_GEMV_SPLITS), the splits' sums added in split order by each column range's last block (IDRAK_HIP_FINISH) or by
-// int8_gemv_finish_f32 (rule 86: never added by atomics); more int8
-// rows on int8_matmul_f32; more int4 and bfloat16 rows expanded to float32 and multiplied (as CUDA without tensor cores);
-// the expansions and bfloat16 packing; up to three float32 products of one input of few rows in one launch
+// kernels and the rest on the tiled one; up to three float32 products of one input of few rows in one launch
 // (MatMulManyKernel, gemv_multi_f32, as CUDA's). Batches run in grid z up to the device's reported limit (rule 84), each launch
 // labelled for --profile as CUDA's ("matmul_nn m x n x k" with 2·m·n·k operations). Unavailable kernels, matrices of 2^30
-// elements or more (the kernels' 32-bit byte offsets) and grids past the device's limits take the host fallback.
+// elements or more (the kernels' 32-bit byte offsets) and grids past the device's limits have no pass here.
 internal sealed unsafe partial class HipBackend
 {
-    /// <summary>The setting that forces the k splits of the packed few-row products (a positive count; unset: CUDA's formula).</summary>
-    internal const string GemvSplitsVariable = "IDRAK_HIP_GEMV_SPLITS";
-
-    /// <summary>The split count <c>IDRAK_HIP_GEMV_SPLITS</c> (<paramref name="setting"/>) forces, or null to use the formula.</summary>
-    internal static int? GemvSplitsSetting(string? setting) =>
-        int.TryParse(setting, NumberStyles.None, CultureInfo.InvariantCulture, out int splits) && splits > 0 ? splits : null;
-
-    /// <summary>
-    /// The k splits the packed few-row products are forced to (<c>IDRAK_HIP_GEMV_SPLITS</c>), or null for the formula;
-    /// settable by tests and benchmarks to time each count.
-    /// </summary>
-    internal static int? ForcedGemvSplits { get; set; } = GemvSplitsSetting(Environment.GetEnvironmentVariable(GemvSplitsVariable));
-
-    /// <summary>The setting that picks the rows of k a step of the packed few-row products (plan 35, G6a): 4 (default) or 8.</summary>
-    internal const string GemvDepthVariable = "IDRAK_HIP_GEMV_DEPTH";
-
-    /// <summary>The rows of k a step <c>IDRAK_HIP_GEMV_DEPTH</c> (<paramref name="setting"/>) asks for: 8 when it says 8, else 4 (G4a's kernels).</summary>
-    internal static int GemvDepthSetting(string? setting) =>
-        int.TryParse(setting, NumberStyles.None, CultureInfo.InvariantCulture, out int depth) && depth == 8 ? 8 : GcnKernels.PackedGemvDefaultDepth;
-
-    /// <summary>
-    /// The rows of k a step the plain packed few-row products are forced to: 4 (the kernels G4a wrote) or 8 (their _k8
-    /// variants, the same bits), when <c>IDRAK_HIP_GEMV_DEPTH</c> is given; null to measure it on the device (G7a,
-    /// HipBackend.Tuning.cs; 4 until measured). Settable by tests and benchmarks to time both.
-    /// </summary>
-    internal static int? ForcedGemvDepth { get; set; } =
-        Environment.GetEnvironmentVariable(GemvDepthVariable) is { Length: > 0 } depth ? GemvDepthSetting(depth) : null;
-
     // Row groups of 8 the few-row float32 products take (grid y), as CUDA's FewRowGroups.
     private const int FewRowGroups = 2;
 
     // The most elements a matrix the products take may have: their byte offsets are 32-bit.
     private const long MostProductElements = 1L << 30;
-
-    /// <summary>
-    /// The k splits of a packed few-row product with <paramref name="columnBlocks"/> blocks of words over
-    /// <paramref name="computeUnits"/> compute units: about two blocks a unit, rounded to a power of two, from 1 to
-    /// min(64, k / 64) (CUDA's GemvSplitCount); <paramref name="forced"/> instead when given (within 1 and k).
-    /// </summary>
-    internal static int GemvSplitCount(int computeUnits, int columnBlocks, int k, int? forced = null)
-    {
-        if (forced is int f)
-        {
-            return Math.Clamp(f, 1, Math.Max(1, k));
-        }
-
-        int wanted = (2 * Math.Max(1, computeUnits) + columnBlocks - 1) / Math.Max(1, columnBlocks);
-        int splits = 1 << (int)Math.Round(Math.Log2(Math.Max(1, wanted)));
-        return Math.Clamp(splits, 1, Math.Max(1, Math.Min(64, k / 64)));
-    }
 
     /// <summary>
     /// A product kernel's floating-point operations and global-memory bytes for one call, from the table at the top of
@@ -231,196 +177,4 @@ internal sealed unsafe partial class HipBackend
         return true;
     }
 
-    // Few rows through packed weights on the kernel written for the fewest rows holding m, k split over grid y: false when
-    // the kernels cannot take it. The splits' sums are added in split order by the launch's last block of each column
-    // range (IDRAK_HIP_FINISH=block, the default: one launch), or by int8_gemv_finish_f32 (launch). A gated variant reads
-    // its input row as act(x) · up (x the gate, HipBackend.Decoding.cs); with `tail`, the residual addition and the norms
-    // follow (y normalized first with a y gain): by the add-and-norm product's last block, or by gemv_addnorm_f32 after
-    // the plain product.
-    private bool PackedFewRows(Weights format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
-        GcnKernels.PackedGemvVariant variant = GcnKernels.PackedGemvVariant.Plain, Storage? up = null, in AddNormTail tail = default)
-    {
-        int perWord = GcnKernels.ColumnsPerWord(format);
-        long words = (n + perWord - 1) / perWord;
-        if (words * k >= MostProductElements || (long)m * k >= MostProductElements || 64L * m * n >= MostProductElements)
-        {
-            return false;
-        }
-
-        // The rows of k a step and the k splits: forced by the settings, measured on the device for the plain products
-        // (G7a, HipBackend.Tuning.cs: each candidate runs into y, which the chosen one writes again), else the defaults.
-        int blocks = (int)((words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords);
-        var (depth, wanted) = tail.Residual is not null
-            ? (GcnKernels.PackedGemvDefaultDepth, GemvSplitCount(DeviceLimits.ComputeUnits, blocks, k, ForcedGemvSplits))
-            : PackedChoice(format, variant, m, n, k, blocks, (d, s) => PackedFewRowsWith(format, x, packed, scales, y, m, n, k, variant, up, default, d, s));
-        return PackedFewRowsWith(format, x, packed, scales, y, m, n, k, variant, up, tail, depth, wanted);
-    }
-
-    // PackedFewRows with its rows of k a step (`depth`, the plain products') and its k splits (`wanted`) given.
-    private bool PackedFewRowsWith(Weights format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
-        GcnKernels.PackedGemvVariant variant, Storage? up, in AddNormTail tail, int depth, int wanted)
-    {
-        int perWord = GcnKernels.ColumnsPerWord(format);
-        long words = (n + perWord - 1) / perWord;
-        bool addNorm = tail.Residual is not null, lastBlock = FinishByLastBlock;
-        var kernel = addNorm && lastBlock ? GcnKernels.PackedGemvVariant.AddNorm : variant;
-        string name = kernel == GcnKernels.PackedGemvVariant.Plain ? GcnKernels.PackedGemvKernel(format, m, depth) : GcnKernels.FusedGemvKernel(format, kernel, m);
-        int columnBlocks = (int)((words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords);
-        if (Gcn(name) is not { } function || columnBlocks > DeviceLimits.MaxGridDimX)
-        {
-            return false;
-        }
-
-        // Split boundaries on 64 rows for int4 (whole groups of scales, as CUDA's), anywhere for the others.
-        int align = format == Weights.Int4 ? 64 : 1;
-        int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
-        int count = (k + chunk - 1) / chunk;
-        var finish = count > 1 && !addNorm && !lastBlock ? Gcn("int8_gemv_finish_f32") : null;
-        var normalizing = addNorm && !lastBlock ? Gcn("gemv_addnorm_f32") : null;
-        if (count > DeviceLimits.MaxGridDimY || count > 1 && !addNorm && !lastBlock && finish is null || addNorm && !lastBlock && normalizing is null)
-        {
-            return false;
-        }
-
-        bool scaled = format == Weights.Int8;
-        var part = count > 1 ? Allocate(count * m * n, zeroed: false) : null;
-        ulong counters = lastBlock && (count > 1 || addNorm) ? P(Counters(columnBlocks + 1)) : 0UL;
-        try
-        {
-            if (Profiling)
-            {
-                string form = counters != 0 ? " (last block)" : "";
-                double flops = 2.0 * m * n * k + (kernel == GcnKernels.PackedGemvVariant.AddNorm ? Cost("gemv_addnorm_f32", 1).Flops * m * n : 0);
-                LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{name} {m}x{n}x{k}{(count > 1 ? $" split {count}" : "")}{form}"), flops);
-            }
-
-            ulong scaleAddress = format is Weights.Int8 or Weights.Int4 ? P(scales!) : 0UL;
-            ulong partAddress = part is null ? P(y) : P(part);
-            if (kernel == GcnKernels.PackedGemvVariant.AddNorm)
-            {
-                LaunchProduct(function, columnBlocks, count, 1, P(x), P(packed), scaleAddress, P(y), partAddress, U(m), U(n), U(k), (ulong)words, U(chunk), U(count),
-                    counters, P(tail.Residual!), P(tail.Sum!), P(tail.Gain!), P(tail.Normalized!), tail.YGain is null ? 0UL : P(tail.YGain), F(tail.Eps), F(tail.Offset),
-                    F(tail.YEps), F(tail.YOffset), tail.YGain is null ? 0UL : 1UL);
-            }
-            else if (up is null)
-            {
-                LaunchProduct(function, columnBlocks, count, 1, P(x), P(packed), scaleAddress, P(y), partAddress, U(m), U(n), U(k), (ulong)words, U(chunk), U(count),
-                    counters);
-            }
-            else
-            {
-                LaunchProduct(function, columnBlocks, count, 1, P(x), P(packed), scaleAddress, P(y), partAddress, U(m), U(n), U(k), (ulong)words, U(chunk), U(count),
-                    counters, P(up));
-            }
-
-            if (normalizing is not null)
-            {
-                // The splits' sums in split order (int8 scaled), or y itself, then the residual and the norms, a block a row.
-                if (Profiling)
-                {
-                    LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"gemv_addnorm_f32 {m}x{n}{(count > 1 ? $" split {count}" : "")}"),
-                        Cost("gemv_addnorm_f32", count).Flops * m * n);
-                }
-
-                LaunchKernel(normalizing, (uint)Math.Min(m, DeviceLimits.MaxGridDimX), 1, part is null ? P(y) : P(part), part is not null && scaled ? P(scales!) : 0UL, P(y),
-                    P(tail.Residual!), P(tail.Sum!), P(tail.Gain!), P(tail.Normalized!), tail.YGain is null ? 0UL : P(tail.YGain), U(n), U(count), U(m * n),
-                    F(tail.Eps), F(tail.Offset), F(tail.YEps), F(tail.YOffset), tail.YGain is null ? 0UL : 1UL, U(m));
-            }
-            else if (finish is not null)
-            {
-                int size = m * n;
-                if (Profiling)
-                {
-                    LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"int8_gemv_finish_f32 {m}x{n} split {count}"), (double)count * size);
-                }
-
-                LaunchProduct(finish, (int)PointwiseBlocks(size), 1, 1, P(part!), scaled ? P(scales!) : 0UL, P(y), U(n), U(size), U(count), U(size));
-            }
-        }
-        finally
-        {
-            part?.Release();                                                     // the pool reuses it after the queued launches
-        }
-
-        return true;
-    }
-
-    // Many int8 rows on int8_matmul_f32 (a thread a row and packed word), as CUDA's.
-    private bool Int8ManyRows(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
-    {
-        long words = (n + 3) / 4;
-        if (m * words >= MostProductElements || words * k >= MostProductElements || (long)m * k >= MostProductElements || (long)m * n >= MostProductElements
-            || Gcn("int8_matmul_f32") is not { } function)
-        {
-            return false;
-        }
-
-        if (Profiling)
-        {
-            LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"int8_matmul_f32 {m}x{n}x{k}"), 2.0 * m * n * k);
-        }
-
-        LaunchProduct(function, (int)PointwiseBlocks(m * words), 1, 1, P(x), P(q), P(scales), P(y), U(k), (ulong)words, U(n), (ulong)(m * words));
-        return true;
-    }
-
-    // Many rows through int4 or bfloat16 weights: expanded to float32 on the device, then the float32 product (CUDA's path
-    // without tensor cores).
-    private bool ExpandedProduct(Weights format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
-    {
-        if ((long)k * n >= MostProductElements || Gcn(GcnKernels.DequantKernel(format)) is null || Gcn("matmul_f32") is null)
-        {
-            return false;
-        }
-
-        var w = Allocate(k * n, zeroed: false);
-        try
-        {
-            if (!Expand(format, packed, scales, w, k, n) || !FloatProduct(x, w, y, 1, m, n, k, false, false, 0f, null))
-            {
-                return false;
-            }
-        }
-        finally
-        {
-            w.Release();
-        }
-
-        return true;
-    }
-
-    // w[k, n] = the packed weights' float32 values on the expansion kernel: true when done (nothing to do included).
-    private bool Expand(Weights format, Storage packed, Storage? scales, Storage w, int k, int n)
-    {
-        if (k <= 0 || n <= 0)
-        {
-            return true;
-        }
-
-        int perWord = GcnKernels.ColumnsPerWord(format);
-        long words = (long)k * ((n + perWord - 1) / perWord);
-        string name = GcnKernels.DequantKernel(format);
-        if ((long)k * n >= MostProductElements || Gcn(name) is not { } function)
-        {
-            return false;
-        }
-
-        if (Profiling)
-        {
-            LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{name} {k}x{n}"), Cost(name).Flops * k * n);
-        }
-
-        uint blocks = PointwiseBlocks(words);
-        ulong perRow = (ulong)((n + perWord - 1) / perWord);
-        if (format is Weights.Int8 or Weights.Int4)
-        {
-            LaunchProduct(function, (int)blocks, 1, 1, P(packed), P(scales!), P(w), perRow, U(n), (ulong)words);
-        }
-        else
-        {
-            LaunchProduct(function, (int)blocks, 1, 1, P(packed), P(w), perRow, U(n), (ulong)words);
-        }
-
-        return true;
-    }
 }
