@@ -46,8 +46,6 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
 
     public string Name => TokenizerTrainers.Unigram;
 
-    public string Summary => "SentencePiece's unigram language model, learned by its procedure (suffix-array seeds, EM, pruning by loss); writes tokenizer.json and tokenizer.model";
-
     public IPretrainedTokenizer Train(IReadOnlyList<string> files, TokenizerTrainingOptions options, IProgress<TokenizerTrainingProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -1714,7 +1712,7 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
         byte[] proto = SentencePieceWriter.Write(pieces, scores, types, settings);
         string source = $"unigram trainer ({string.Join(", ", files.Select(Path.GetFileName))})";
         var model = SentencePieceModel.Read(proto, source);
-        var tokenizer = TokenizerModels.Create(SentencePieceReader.FromModel(model), new TokenizerOptions());
+        var tokenizer = UnigramTokenizer.FromDefinition(SentencePieceReader.FromModel(model), new TokenizerOptions());
         if (tokenizer is UnigramTokenizer unigram)
         {
             unigram.KeepModelProto(proto);

@@ -15,7 +15,7 @@ namespace Idrak.Models;
 /// …) and SentencePiece-style BPE with the "▁" word marker and byte fallback (Llama 2, Mistral, Gemma, …). Special
 /// (added) tokens are matched exactly before anything else. <see cref="Encode(string)"/> adds no special tokens itself (chat
 /// templates write them), like <c>add_special_tokens=False</c>. Pieces of the file it does not know are reported, not
-/// guessed; other normalizer, pre-tokenizer and decoder types plug in through <see cref="TokenizerComponents"/>.
+/// guessed.
 /// </summary>
 public sealed class BpeTokenizer : IPretrainedTokenizer
 {
@@ -110,8 +110,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         var model = json["model"]?.AsObject() ?? throw new InvalidDataException("tokenizer.json has no model.");
         if ((string?)model["type"] != TokenizerModels.Bpe)
         {
-            throw new NotSupportedException($"Tokenizer model '{model["type"]}' is not BPE; load it with PretrainedTokenizers.Load, "
-                + "which builds every registered model type (TokenizerModels.Register adds one).");
+            throw new NotSupportedException($"Tokenizer model '{model["type"]}' is not BPE.");
         }
 
         _workers = workers;
@@ -201,8 +200,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     }
 
     /// <summary>
-    /// Reads tokenizer.json from a file or a model folder. The file must name the BPE model; <see cref="PretrainedTokenizers.Load"/>
-    /// reads any registered model type (and other tokenizer files).
+    /// Reads tokenizer.json from a file or a model folder. The file must name the BPE model.
     /// </summary>
     public static BpeTokenizer Load(string path)
     {
@@ -226,8 +224,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         return new BpeTokenizer(json, vocabulary, merges, options.ResolvedPieceCacheLimit(), options.ResolvedWorkers());
     }
 
-    // The library's "BPE" model (TokenizerModels): the tokenizer of a definition, which it takes as its own (the added
-    // tokens join its vocabulary).
+    // The "BPE" model: the tokenizer of a definition, which it takes as its own (the added tokens join its vocabulary).
     internal static BpeTokenizer FromDefinition(TokenizerDefinition definition, TokenizerOptions options) =>
         new(definition.Json,
             definition.Vocabulary ?? throw new InvalidDataException($"{definition.Source}: the BPE model has no vocabulary of token to id (model.vocab)."),
@@ -1532,10 +1529,6 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         {
             case null:
                 return;
-            case JsonObject n when TokenizerComponents.FindNormalizer((string?)n["type"]) is { } create:
-                _normalizerSteps = null;                                          // a registered type: the string pipeline runs
-                _normalizers.Add(create.Create(n).Normalize);
-                return;
             case JsonObject n when (string?)n["type"] == "Sequence":
                 foreach (var inner in n["normalizers"]!.AsArray())
                 {
@@ -1564,15 +1557,13 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         }
     }
 
-    // A built-in normalizer type as a function; a sequence runs its normalizers in turn (registered ones too). Also the
-    // library default of the type in TokenizerComponents, which an app's normalizer falls back to.
+    // A built-in normalizer type as a function; a sequence runs its normalizers in turn.
     internal static Func<string, string> NormalizerStep(JsonObject n)
     {
         string type = (string)n["type"]!;
         return type switch
         {
-            "Sequence" => Chain([.. n["normalizers"]!.AsArray().OfType<JsonObject>().Select(inner =>
-                TokenizerComponents.FindNormalizer((string?)inner["type"]) is { } create ? create.Create(inner).Normalize : NormalizerStep(inner))]),
+            "Sequence" => Chain([.. n["normalizers"]!.AsArray().OfType<JsonObject>().Select(NormalizerStep)]),
             "NFC" => s => UnicodeNormalization.Normalize(s, NormalizationForm.FormC),
             "NFKC" => s => UnicodeNormalization.Normalize(s, NormalizationForm.FormKC),
             "NFD" => s => UnicodeNormalization.Normalize(s, NormalizationForm.FormD),
@@ -1583,7 +1574,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             "Strip" => Stripper((bool?)n["strip_left"] ?? true, (bool?)n["strip_right"] ?? true),
             "BertNormalizer" => BertComponents.StringNormalizer(n),
             "Precompiled" => PrecompiledCharsMap.Step(n),                         // the charsmap read once, here
-            _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported; add it with TokenizerComponents.RegisterNormalizer."),
+            _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported."),
         };
 
         static Func<string, string> Chain(Func<string, string>[] steps) => s =>
@@ -1627,13 +1618,6 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         }
 
         string type = (string)p["type"]!;
-        if (TokenizerComponents.FindPreTokenizer(type) is { } create)
-        {
-            _preTokenizers.Add(Stage(create.Create(p)));
-            _splits = null;                                                       // a registered type: the string pipeline runs
-            return false;
-        }
-
         switch (type)
         {
             case "Sequence":
@@ -1698,24 +1682,18 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 _splits?.Add((bertPunctuation, "Isolated", false));
                 return false;
             default:
-                throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
+                throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported.");
         }
     }
 
-    // A registered pre-tokenizer as a stage of the string pipeline.
-    private static Func<List<string>, bool, List<string>> Stage(IPreTokenizer part) =>
-        (pieces, atStart) => part.PreTokenize(pieces, atStart) is var result && result is List<string> list ? list : [.. result];
-
-    // A built-in pre-tokenizer type as a stage of the string pipeline; a sequence runs its pre-tokenizers in turn
-    // (registered ones too). Also the library default of the type in TokenizerComponents, which an app's falls back to.
+    // A built-in pre-tokenizer type as a stage of the string pipeline; a sequence runs its pre-tokenizers in turn.
     internal static Func<List<string>, bool, List<string>> PreTokenizerStage(JsonObject p)
     {
         string type = (string)p["type"]!;
         switch (type)
         {
             case "Sequence":
-                Func<List<string>, bool, List<string>>[] stages = [.. p["pretokenizers"]!.AsArray().OfType<JsonObject>().Select(inner =>
-                    TokenizerComponents.FindPreTokenizer((string?)inner["type"]) is { } create ? Stage(create.Create(inner)) : PreTokenizerStage(inner))];
+                Func<List<string>, bool, List<string>>[] stages = [.. p["pretokenizers"]!.AsArray().OfType<JsonObject>().Select(PreTokenizerStage)];
                 return (pieces, atStart) =>
                 {
                     foreach (var stage in stages)
@@ -1747,7 +1725,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
             case "BertPreTokenizer":
                 return BertComponents.StringPreTokenizer();
             default:
-                throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
+                throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported.");
         }
     }
 
@@ -1899,13 +1877,6 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         }
 
         string type = (string)d["type"]!;
-        if (TokenizerComponents.FindDecoder(type) is { } create)
-        {
-            // A registered type: named so that no built-in stage (or the fused decoding) takes it for one of its own.
-            _decoders.Add(("Registered:" + type, Stage(create.Create(d)), null));
-            return;
-        }
-
         switch (type)
         {
             case "Sequence":
@@ -1927,21 +1898,15 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         }
     }
 
-    // A registered decoder as a stage.
-    private static Func<List<string>, List<string>> Stage(ITokenizerDecoder part) =>
-        tokens => part.Decode(tokens) is var result && result is List<string> list ? list : [.. result];
-
-    // A built-in decoder type as a stage; a sequence runs its decoders in turn (registered ones too). Also the library
-    // default of the type in TokenizerComponents, which an app's decoder falls back to; there ByteLevel turns the byte
-    // characters back into text (a byte-level tokenizer does it in Decode, from its table of token bytes).
+    // A built-in decoder type as a stage; a sequence runs its decoders in turn; there ByteLevel turns the byte characters
+    // back into text (a byte-level tokenizer does it in Decode, from its table of token bytes).
     internal static Func<List<string>, List<string>> DecoderStage(JsonObject d)
     {
         string type = (string)d["type"]!;
         switch (type)
         {
             case "Sequence":
-                Func<List<string>, List<string>>[] stages = [.. d["decoders"]!.AsArray().OfType<JsonObject>().Select(inner =>
-                    TokenizerComponents.FindDecoder((string?)inner["type"]) is { } create ? Stage(create.Create(inner)) : DecoderStage(inner))];
+                Func<List<string>, List<string>>[] stages = [.. d["decoders"]!.AsArray().OfType<JsonObject>().Select(DecoderStage)];
                 return tokens =>
                 {
                     foreach (var stage in stages)
@@ -1974,7 +1939,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                     return [text.StartsWith(' ') ? text[1..] : text];
                 };
             default:
-                throw new NotSupportedException($"Tokenizer decoder '{type}' is not supported; add it with TokenizerComponents.RegisterDecoder.");
+                throw new NotSupportedException($"Tokenizer decoder '{type}' is not supported.");
         }
     }
 

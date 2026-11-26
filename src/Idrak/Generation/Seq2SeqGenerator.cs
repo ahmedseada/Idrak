@@ -12,7 +12,7 @@ namespace Idrak.Generation;
 /// once. Tokens are chosen by the library's samplers (<see cref="TokenSamplers"/>: temperature, top-k, top-p, min-p,
 /// penalties; top-k 1 or temperature 0 is greedy), or, with <see cref="GenerationOptions.NumBeams"/> above 1, by beam
 /// search (<see cref="BeamSearch.Decode"/>: the beams decoded together through one cache, the memory of the one source
-/// serving every beam), so a family plug-in only registers its model (<c>PretrainedSeq2Seq</c>) and generation, streaming
+/// serving every beam), so a family plug-in only brings its model (<see cref="Models.Abstractions.IPretrainedSeq2SeqFamily"/>) and generation, streaming
 /// and the inference engine's text-model contract (<see cref="ITextModel"/>) work with it. A pretrained tokenizer
 /// encodes the prompt as transformers' tokenizer does (its special tokens added, <see cref="AddSpecialTokens"/>) and
 /// decodes the answer without them (<see cref="SkipSpecialTokens"/>). One generation at a time per generator.

@@ -1095,17 +1095,8 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
         }
     }
 
-    // The decoder a tokenizer.json names: the app's component when one is registered for its type, else the built-in.
-    private static Func<List<string>, List<string>> DecoderOf(JsonObject spec)
-    {
-        if (TokenizerComponents.FindDecoder((string?)spec["type"]) is { } create)
-        {
-            var part = create.Create(spec);
-            return tokens => part.Decode(tokens) is var result && result is List<string> list ? list : [.. result];
-        }
-
-        return BpeTokenizer.DecoderStage(spec);
-    }
+    // The decoder a tokenizer.json names.
+    private static Func<List<string>, List<string>> DecoderOf(JsonObject spec) => BpeTokenizer.DecoderStage(spec);
 
     // The UTF-8 length of the character a lead byte starts (the text is valid UTF-8: .NET wrote it).
     private static int CharWidth(byte lead) => lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;

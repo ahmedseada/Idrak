@@ -40,9 +40,9 @@ public sealed class OnnxAttribute
 }
 
 /// <summary>
-/// An ONNX graph being written: constants (initializers) and operator nodes. Export translators
-/// (<see cref="OnnxExportOps"/>, or one exporter's own) add their nodes to it; the exporter (<c>OnnxExporter</c> in
-/// Idrak) implements it and writes the result as an .onnx file. Operators follow ONNX opset <see cref="Opset"/>.
+/// An ONNX graph being written: constants (initializers) and operator nodes. Export translators (an exporter's own)
+/// add their nodes to it; the exporter (<c>OnnxExporter</c> in Idrak) implements it and writes the result as an .onnx
+/// file. Operators follow ONNX opset <see cref="Opset"/>.
 /// </summary>
 public abstract class OnnxGraph
 {
@@ -51,8 +51,8 @@ public abstract class OnnxGraph
 
     /// <summary>
     /// Adds the nodes of <paramref name="module"/> applied to <paramref name="input"/> (whose shape must be known) and
-    /// returns its output, translated as the export translates every module (its own translators first, then
-    /// <see cref="OnnxExportOps"/>). For translators of modules made of other modules (a custom residual block).
+    /// returns its output, translated as the export translates every module (by its own translators). For translators
+    /// of modules made of other modules (a custom residual block).
     /// </summary>
     public abstract OnnxValue Module(Module module, OnnxValue input);
 

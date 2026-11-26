@@ -35,7 +35,7 @@ public static class Network
     /// <summary>Sequences of feature vectors: batches of shape [N, length, features] (e.g. time-series windows).</summary>
     public static NetworkBuilder Sequence(int length, int features) => new(InputKind.Sequence, [Positive(length), Positive(features)]);
 
-    /// <summary>Recreates a builder from the description written by <see cref="NetworkBuilder.ToJson"/>.</summary>
+    /// <summary>Recreates a builder from the description written by <see cref="NetworkBuilder.ToJson"/>: replaying its steps is not on the new design yet.</summary>
     public static NetworkBuilder FromJson(JsonNode description) => NetworkBuilder.Replay(description);
 
     /// <summary>The description of a network made by <see cref="NetworkBuilder.Build"/>, or null for networks built another way.</summary>
@@ -94,12 +94,11 @@ public enum Activation
 /// <summary>
 /// Builds a <see cref="Sequential"/> step by step, tracking the shape of one sample (without the batch dimension) so
 /// each layer's input size comes from the previous layer. Every method corresponds to one layer constructor; see
-/// <see cref="Network"/> for the entry points. Builders made only of layer steps can be written to JSON and replayed
-/// (<see cref="ToJson"/>, <see cref="Network.FromJson"/>); model packages use this to store the architecture. Steps of
-/// your own are registered in <see cref="NetworkOps"/> and added with <see cref="Op"/>; they see the builder through
-/// <see cref="INetworkBuilder"/>.
+/// <see cref="Network"/> for the entry points. Builders made only of layer steps can be written to JSON
+/// (<see cref="ToJson"/>); model packages use this to store the architecture. Replaying a description
+/// (<see cref="Network.FromJson"/>) is not on the new design yet.
 /// </summary>
-public sealed class NetworkBuilder : INetworkBuilder
+public sealed class NetworkBuilder
 {
     internal static readonly ConditionalWeakTable<Module, JsonObject> Architectures = new();
 
@@ -133,7 +132,7 @@ public sealed class NetworkBuilder : INetworkBuilder
     /// <summary>Number of layers added so far.</summary>
     public int Count => _steps.Count;
 
-    /// <summary>Whether every step can be written to JSON (false after <see cref="Lambda"/> or <c>Add</c> outside a registered step, <see cref="Op"/>).</summary>
+    /// <summary>Whether every step can be written to JSON (false after <see cref="Lambda"/> or <c>Add</c>).</summary>
     public bool IsDescribable => _describable;
 
     // ------------------------------------------------------------------ settings passed to every layer
@@ -692,49 +691,13 @@ public sealed class NetworkBuilder : INetworkBuilder
     /// <summary>
     /// Appends a layer that <paramref name="create"/> makes anew on every <see cref="Build"/>, from the builder's device
     /// and random (as the built-in steps make theirs). Its output shape is required. A builder with such a layer cannot
-    /// be written to JSON, unless a registered step added it (<see cref="Op"/>).
+    /// be written to JSON.
     /// </summary>
     public NetworkBuilder Add(Func<Device?, Random?, Module> create, int[] outputShape)
     {
         ArgumentNullException.ThrowIfNull(create);
         _describable = false;
         return Push(r => create(_device, r), [.. outputShape], null);
-    }
-
-    /// <summary>
-    /// Adds the step registered as <paramref name="name"/> in <see cref="NetworkOps"/>, with <paramref name="arguments"/>
-    /// (the keys of its JSON besides "op"). A step that adds its layers with <see cref="Lambda"/> or <see cref="Add(Func{Device?, Random?, Module}, int[])"/>
-    /// is still written to JSON, as <c>{"op": name, ...arguments}</c>, and <see cref="Network.FromJson"/> replays it through
-    /// the same registration.
-    /// </summary>
-    public NetworkBuilder Op(string name, JsonObject? arguments = null)
-    {
-        var op = NetworkOps.Get(name);
-        var step = new JsonObject { ["op"] = name };
-        foreach (var (key, value) in arguments ?? [])
-        {
-            if (key != "op")
-            {
-                step[key] = value?.DeepClone();
-            }
-        }
-
-        bool describable = _describable;
-        int count = _steps.Count;
-        op.Add(this, new NetworkOpArguments(step));
-        if (_describable == describable && _steps.Skip(count).All(s => s.Step is not null))
-        {
-            return this;                                                    // made of described steps (the built-ins): they describe it
-        }
-
-        // Layers JSON cannot describe: the step's own JSON stands for all of them (written once, with the first).
-        for (int i = count; i < _steps.Count; i++)
-        {
-            _steps[i] = (_steps[i].Create, i == count ? step : null);
-        }
-
-        _describable = describable;
-        return this;
     }
 
     /// <summary>Applies a reusable block of builder steps (a function that adds layers and returns the builder).</summary>
@@ -751,17 +714,6 @@ public sealed class NetworkBuilder : INetworkBuilder
 
         return this;
     }
-
-    // ------------------------------------------------------------------ what registered steps see (INetworkBuilder)
-
-    /// <inheritdoc />
-    INetworkBuilder INetworkBuilder.Lambda(Func<Tensor, Tensor> function, string name, int[] outputShape) => Lambda(function, name, outputShape);
-
-    /// <inheritdoc />
-    INetworkBuilder INetworkBuilder.Add(Func<Device?, Random?, Module> create, int[] outputShape) => Add(create, outputShape);
-
-    /// <inheritdoc />
-    INetworkBuilder INetworkBuilder.Op(string name, JsonObject? arguments) => Op(name, arguments);
 
     // ------------------------------------------------------------------ build and describe
 
@@ -843,14 +795,7 @@ public sealed class NetworkBuilder : INetworkBuilder
 
         foreach (var node in description["steps"]!.AsArray())
         {
-            var step = node!.AsObject();
-            string op = (string)step["op"]!;
-            if (!NetworkOps.Contains(op))
-            {
-                throw new InvalidDataException($"Unknown network step '{op}' (registered: {string.Join(", ", NetworkOps.Names)}); add it with NetworkOps.Register.");
-            }
-
-            b.Op(op, step);
+            throw new NotSupportedException($"Replaying the network step '{(string?)node!["op"]}' is not on the new design yet.");
         }
 
         return b;

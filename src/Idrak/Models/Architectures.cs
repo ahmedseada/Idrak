@@ -9,8 +9,8 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Models;
 
 /// <summary>
-/// The pieces model families are made of, for the families of plug-ins and apps (the library registers none in
-/// <see cref="PretrainedArchitectures"/>; Idrak.Text.Plugins and Idrak.Vision.Plugins do):
+/// The pieces model families are made of, for the families of plug-ins and apps (the library has none;
+/// Idrak.Text.Plugins and Idrak.Vision.Plugins do):
 /// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string)"/> for those sharing
 /// the common configuration keys and checkpoint names, the specs read from the common configuration keys
 /// (<see cref="CommonSpec"/>, <see cref="ExpertSpec"/>), the configuration of a spec (<see cref="CommonConfig"/>) and the

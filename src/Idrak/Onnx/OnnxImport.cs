@@ -85,8 +85,8 @@ public sealed class ImportedNetwork : IDisposable
 /// on a weight table → Embedding; sinusoidal position tables → PositionalEncoding; LSTM and GRU (forward or
 /// bidirectional, stacked, PyTorch-style GRU, zero initial states); an image's columns as a sequence; ReduceMean over time;
 /// first/last time step; Reshape; Dropout and Identity (skipped); and the attention and transformer-layer blocks
-/// Idrak exports. Anything else is reported with the node that could not be imported; operators of your own are
-/// registered in <see cref="OnnxImportOps"/>.
+/// Idrak exports. Anything else is reported with the node that could not be imported. A graph's operations beyond the
+/// structural ones of <see cref="GraphModule"/> are not on the new design yet.
 /// </summary>
 public static class OnnxImport
 {
@@ -207,12 +207,12 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
 
         var node = users[0];
         Consume(node);
-        var translate = OnnxImportOps.Find(node.Op) ?? throw UnknownOperator(node);
-        return translate.Translate(new ImportContext(this, node, x));
+        var translate = BuiltInOps.TryGetValue(node.Op, out var builtIn) ? builtIn : throw UnknownOperator(node);
+        return translate(new ImportContext(this, node, x));
     }
 
-    // The single-node operators, registered in OnnxImportOps (a translator returns the value the chain continues from).
-    // A graph uses its own primitives for these (they build chains), unless a translator of your own replaces one.
+    // The single-node operators (a translator returns the value the chain continues from). A graph uses its own
+    // primitives for these (they build chains).
     internal static readonly IReadOnlyDictionary<string, OnnxImportTranslator> BuiltInOps = new Dictionary<string, Func<ImportContext, string>>
     {
         ["Identity"] = c => c.Output,
@@ -343,10 +343,9 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
 
     private static string UnsupportedText(OnnxNode node, string what) => $"Cannot import {node}: {what} has no Idrak layer.";
 
-    private static NotRegisteredException UnknownOperator(OnnxNode node) =>
-        new(nameof(OnnxImportOps), node.Op, OnnxImportOps.Names,
-            $"Cannot import {node}: the {node.Op} operator has no Idrak layer (registered: {string.Join(", ", OnnxImportOps.Names)}); "
-            + $"add a translator with OnnxImportOps.Register(\"{node.Op}\", ...).");
+    private static NotSupportedException UnknownOperator(OnnxNode node) =>
+        new($"Cannot import {node}: the {node.Op} operator has no Idrak layer (imported one node at a time: {string.Join(", ", BuiltInOps.Keys)}); "
+            + "translators of other operators are not on the new design yet.");
 
     // The other input of a binary node whose one input is `x`.
     private static string? Other(OnnxNode node, string x) =>
@@ -412,21 +411,14 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
                 }
 
                 Consume(node);
-                var translate = OnnxImportOps.Find(node.Op);
-                bool primitive = Primitives.ContainsKey(node.Op) && node.Domain is "" or "ai.onnx";
-                bool replaced = translate is not null && !(BuiltInOps.ContainsKey(node.Op) && OnnxImportOps.Default(node.Op) == translate);
-                if (replaced && x is not null)
-                {
-                    Translate(node, x, translate!);
-                }
-                else if (primitive)
+                if (Primitives.ContainsKey(node.Op) && node.Domain is "" or "ai.onnx")
                 {
                     _graphNodes.Add(Primitive(node));
                 }
                 else
                 {
                     // The built-in translators build chains of layers; in a graph their operators are the primitives above.
-                    throw translate is null ? UnknownOperator(node)
+                    throw !BuiltInOps.ContainsKey(node.Op) ? UnknownOperator(node)
                         : Unsupported(node, $"the {node.Op} operator in a graph (its built-in translator only imports chains of layers)");
                 }
             }
@@ -473,64 +465,6 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
             _ => null,
         };
         return match is not null && match.Nodes.Contains(node) ? match : null;
-    }
-
-    // A node imported through a translator of your own: its builder steps become layer nodes, its graph operations
-    // (OnnxImportContext.AddGraphOp) operation nodes; a node that adds nothing passes its input through.
-    private void Translate(OnnxNode node, string x, IOnnxImportOp translate)
-    {
-        CheckExtraOutputs(node);
-        var context = new ImportContext(this, node, x, graph: true);
-        translate.Translate(context);
-        if (!_graphNodes.Any(n => n.Output == node.Outputs[0]))
-        {
-            _graphNodes.Add(new GraphNode("identity", [context.Current], node.Outputs[0]));
-        }
-    }
-
-    // Graph mode of OnnxImportContext.Add: the steps, built on the shape of `input`, become one layer node.
-    internal string PushGraph(OnnxNode node, string input, Func<NetworkBuilder, NetworkBuilder> step, Action<Module>? load, string output)
-    {
-        var shape = SampleShape(node, input);
-        var builder = shape.Length switch
-        {
-            1 => Layers.Network.Input(shape[0]),
-            2 => Layers.Network.Sequence(shape[0], shape[1]),
-            3 => Layers.Network.Image(shape[0], shape[1], shape[2]),
-            _ => throw Unsupported(node, $"builder steps on a value shaped [{string.Join(", ", shape)}] (one to three dimensions per sample)"),
-        };
-        step(builder.OnDevice(device).Seed(0));
-        if (builder.Count == 0)
-        {
-            _graphNodes.Add(new GraphNode("identity", [input], output));
-            return output;
-        }
-
-        var built = builder.Build();
-        var first = built[0];
-        Module layer = built.Count == 1 && LayerTypes.CanDescribe(first) ? first : built;    // a block keeps the builder's description
-        _graphLayers.Add(layer);
-        using (Autograd.NoGrad())
-        {
-            load?.Invoke(first);
-        }
-
-        _graphNodes.Add(new GraphNode("layer", [input], output, Layer: layer));
-        return output;
-    }
-
-    // Graph mode of OnnxImportContext.AddGraphOp.
-    internal string AddGraphOp(OnnxNode node, string op, IReadOnlyList<string> inputs, JsonObject? attributes, string output)
-    {
-        if (!GraphOps.Contains(op))
-        {
-            throw new NotRegisteredException(nameof(GraphOps), op, GraphOps.Names,
-                UnsupportedText(node, $"the graph operation '{op}', which is not registered (registered: {string.Join(", ", GraphOps.Names)}; add it with GraphOps.Register)"));
-        }
-
-        RegisterConstants(inputs);
-        _graphNodes.Add(new GraphNode(op, [.. inputs], output, attributes));
-        return output;
     }
 
     // The shape of one sample at `value`, computed by running the graph so far on a zero input.

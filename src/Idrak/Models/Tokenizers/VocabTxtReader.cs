@@ -17,8 +17,6 @@ internal sealed class VocabTxtReader : ITokenizerFileReader
 {
     public string Name => TokenizerFiles.VocabTxt;
 
-    public string Summary => "BERT-style vocab.txt with tokenizer_config.json (WordPiece)";
-
     public string? Find(string path)
     {
         if (Directory.Exists(path))

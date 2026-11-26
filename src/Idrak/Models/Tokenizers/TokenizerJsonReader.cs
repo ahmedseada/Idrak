@@ -15,8 +15,6 @@ internal sealed class TokenizerJsonReader : ITokenizerFileReader
 {
     public string Name => TokenizerFiles.TokenizerJson;
 
-    public string Summary => "Hugging Face tokenizer.json (BPE, Unigram, WordPiece or a registered model type)";
-
     public string? Find(string path)
     {
         if (Directory.Exists(path))

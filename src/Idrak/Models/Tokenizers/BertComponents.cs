@@ -45,7 +45,7 @@ internal static class BertComponents
         };
     }
 
-    // The string form (TokenizerComponents' library default, the BPE tokenizer's string pipeline): the span form on a text of its own.
+    // The string form (the BPE tokenizer's string pipeline): the span form on a text of its own.
     public static Func<string, string> StringNormalizer(JsonObject spec)
     {
         var normalize = Normalizer(spec);
@@ -212,14 +212,11 @@ internal static class BertComponents
 
         /// <summary>
         /// The one pass for <paramref name="json"/>'s normalizer (none, or BertNormalizer) and pre-tokenizer (BertPreTokenizer),
-        /// or null for any other pipeline, or when an app registered its own type for one of them (or for the
-        /// pre-tokenizer's parts, WhitespaceSplit and Punctuation).
+        /// or null for any other pipeline.
         /// </summary>
         public static OnePass? Of(JsonObject json)
         {
-            if (json["pre_tokenizer"] is not JsonObject pre || (string?)pre["type"] != "BertPreTokenizer"
-                || TokenizerComponents.FindPreTokenizer("BertPreTokenizer") is not null || TokenizerComponents.FindPreTokenizer("WhitespaceSplit") is not null
-                || TokenizerComponents.FindPreTokenizer("Punctuation") is not null)
+            if (json["pre_tokenizer"] is not JsonObject pre || (string?)pre["type"] != "BertPreTokenizer")
             {
                 return null;
             }
@@ -228,7 +225,7 @@ internal static class BertComponents
             {
                 case null:
                     return new OnePass(false, false, false, false);
-                case JsonObject spec when (string?)spec["type"] == "BertNormalizer" && TokenizerComponents.FindNormalizer("BertNormalizer") is null:
+                case JsonObject spec when (string?)spec["type"] == "BertNormalizer":
                     bool lowercase = (bool?)spec["lowercase"] ?? true;
                     return new OnePass((bool?)spec["clean_text"] ?? true, (bool?)spec["handle_chinese_chars"] ?? true, (bool?)spec["strip_accents"] ?? lowercase, lowercase);
                 default:

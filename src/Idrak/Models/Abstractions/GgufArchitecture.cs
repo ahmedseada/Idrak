@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Models.Abstractions;
 
 /// <summary>
@@ -10,12 +8,12 @@ namespace Idrak.Models.Abstractions;
 /// to, and whether it interleaved the query and key rows of each head for its rotary layout. The file's settings are read
 /// from the usual keys under the family's name ({name}.embedding_length, {name}.block_count, …), with the family's own
 /// keys added by <see cref="Configure"/>, and its tensors by llama.cpp's names (token_embd, blk.N.attn_q, …) through
-/// <see cref="TensorName"/>, less what llama.cpp added to their values (<see cref="StoredOffset"/>). Registered by GGUF
-/// architecture name in <see cref="GgufArchitectures"/>; <see cref="GgufArchitecture"/> is a base with the common names.
+/// <see cref="TensorName"/>, less what llama.cpp added to their values (<see cref="StoredOffset"/>).
+/// <see cref="GgufArchitecture"/> is a base with the common names.
 /// </summary>
 public interface IGgufArchitecture
 {
-    /// <summary>The Hugging Face architecture (config.json's "architectures"), registered in <see cref="PretrainedArchitectures"/>.</summary>
+    /// <summary>The Hugging Face architecture (config.json's "architectures").</summary>
     string HuggingFace { get; }
 
     /// <summary>Whether llama.cpp interleaved each head's query and key rows (Llama does; they are put back on load).</summary>
@@ -59,8 +57,7 @@ public interface IGgufArchitecture
 
 /// <summary>
 /// A family's GGUF mapping (<see cref="IGgufArchitecture"/>) with the common tensor names (<see cref="CommonTensorName"/>),
-/// nothing added to any tensor and no keys of its own, unless a family deriving from it says otherwise. Register new
-/// families with <see cref="GgufArchitectures.Register"/>.
+/// nothing added to any tensor and no keys of its own, unless a family deriving from it says otherwise.
 /// </summary>
 public class GgufArchitecture : IGgufArchitecture
 {
@@ -130,44 +127,4 @@ public class GgufArchitecture : IGgufArchitecture
         };
         return module is null ? null : $"model.layers.{layer}.{module}.{kind}";
     }
-}
-
-/// <summary>
-/// The model families GGUF files are read as, by GGUF architecture name. The library registers none: the families are
-/// plug-ins' (Idrak.Text.Plugins registers llama, qwen2, qwen3, qwen2moe, qwen3moe, gemma, gemma2 and gemma3); add others
-/// with <see cref="Register"/>.
-/// </summary>
-public static class GgufArchitectures
-{
-    // By the GGUF names files give, one mapping possibly under several: a table of names, not of kinds named by themselves.
-    private static readonly SlotTable<string, IGgufArchitecture> Registry = new(nameof(GgufArchitectures), comparer: StringComparer.Ordinal,
-        unguarded: "an architecture is a description read once, not a call");
-
-    /// <summary>Registers how to read the GGUF architecture <paramref name="name"/>, until <see cref="Unregister"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, IGgufArchitecture architecture)
-    {
-        ArgumentNullException.ThrowIfNull(architecture);
-        Registry.Register(name, architecture, System.Reflection.Assembly.GetCallingAssembly(), architecture.HuggingFace);
-    }
-
-    /// <summary>Removes the architecture <paramref name="name"/> an app or plug-in registered; false when none did.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered architecture names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The architecture registered as <paramref name="name"/>.</summary>
-    public static IGgufArchitecture Get(ReadOnlySpan<char> name) => Find(name)
-        ?? throw new NotRegisteredException(nameof(GgufArchitectures), name.ToString(), Names,
-            $"No GGUF architecture '{name}' is registered ({string.Join(", ", Names)}); add it with GgufArchitectures.Register, or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
-
-    /// <summary>The architecture registered as <paramref name="name"/>, or null when there is none.</summary>
-    public static IGgufArchitecture? Find(ReadOnlySpan<char> name) => Registry.Find(name);
-
-    /// <summary>The library's architecture <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IGgufArchitecture? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the architecture <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
 }

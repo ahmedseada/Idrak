@@ -35,8 +35,6 @@ internal sealed class SentencePieceReader : ITokenizerFileReader
 
     public string Name => TokenizerFiles.SentencePiece;
 
-    public string Summary => "SentencePiece model (tokenizer.model, spiece.model, sentencepiece.bpe.model): Unigram or BPE";
-
     public string? Find(string path)
     {
         if (Directory.Exists(path))

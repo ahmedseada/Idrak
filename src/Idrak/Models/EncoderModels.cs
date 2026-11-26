@@ -55,8 +55,11 @@ public sealed class EncoderHead : Module
     /// <inheritdoc />
     public override string ToString() => $"EncoderHead({Kind}, {Outputs} outputs{(Pooled ? ", pooled" : "")})";
 
-    // "sequence-classification": [dense, activation,] out over the pooled vector.
-    internal static EncoderHead Classification(EncoderHeadRequest request)
+    /// <summary>
+    /// A "sequence-classification" head: the pooled vector [batch, width] → logits [batch, outputs], an optional dense
+    /// layer ("dense": true) with "activation" ("tanh", the default, "gelu", "relu"), then the output layer.
+    /// </summary>
+    public static EncoderHead Classification(EncoderHeadRequest request)
     {
         var (device, random) = Begin(request);
         bool dense = Flag(request, "dense", false);
@@ -71,8 +74,12 @@ public sealed class EncoderHead : Module
         return new EncoderHead(EncoderHeads.SequenceClassification, pooled: true, request.Outputs, new Sequential(layers));
     }
 
-    // "masked-lm": [dense, activation, layer norm,] out over every position's state.
-    internal static EncoderHead MaskedLanguageModel(EncoderHeadRequest request)
+    /// <summary>
+    /// A "masked-lm" head: the states [batch, time, width] → logits [batch, time, outputs], an optional transform
+    /// ("transform": true: dense, "activation", layer norm with "norm_epsilon"), then the output layer (or the token
+    /// embedding read in place, <see cref="EncoderHeadRequest.TiedTo"/>).
+    /// </summary>
+    public static EncoderHead MaskedLanguageModel(EncoderHeadRequest request)
     {
         var (device, random) = Begin(request);
         bool transform = Flag(request, "transform", false);
@@ -116,8 +123,8 @@ public sealed class EncoderHead : Module
         return new EncoderHead(EncoderHeads.MaskedLanguageModel, pooled: false, request.Outputs, new Sequential(layers));
     }
 
-    // "pooler": dense, activation over the pooled vector (its outputs the width).
-    internal static EncoderHead Pooler(EncoderHeadRequest request)
+    /// <summary>A "pooler" head: a dense layer and "activation" over the pooled vector (its outputs the width).</summary>
+    public static EncoderHead Pooler(EncoderHeadRequest request)
     {
         var (device, random) = Begin(request);
         if (request.Outputs != request.Width)
@@ -341,7 +348,7 @@ internal static class EncoderCheckpoints
     public static (string Folder, JsonObject Config, string Name, ICheckpointFormat Format) Read(string folder, string? architecture)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
-        var format = CheckpointFormats.For(folder);
+        var format = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {folder}");
         folder = format.Prepare(folder);
         var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))!.AsObject();
         string name = architecture ?? (string?)config["architectures"]?[0]
@@ -351,7 +358,7 @@ internal static class EncoderCheckpoints
 }
 
 /// <summary>
-/// A pretrained encoder read from a model folder by its family (<see cref="PretrainedEncoders"/>): the encoder, the heads
+/// A pretrained encoder read from a model folder by its family (<see cref="IPretrainedEncoderFamily"/>): the encoder, the heads
 /// its checkpoint holds, its pooler and its tokenizer. <see cref="Hidden"/> gives the states, <see cref="Pooled"/> one
 /// vector per sequence, <see cref="Logits"/> a head's output; Idrak.Text's <c>TextEncoder</c> turns texts into vectors
 /// with <see cref="Encoder"/>.
@@ -392,14 +399,14 @@ public sealed class PretrainedEncoderModel : IDisposable
     public Device Device => Encoder.Device;
 
     /// <summary>
-    /// Reads the model in <paramref name="folder"/> with the family registered under its architecture name.
+    /// Reads the model in <paramref name="folder"/> with the family of its architecture name.
     /// </summary>
-    /// <exception cref="NotSupportedException">No encoder family is registered under the architecture's name (the message says how to register one).</exception>
+    /// <exception cref="NotSupportedException">Picking the family by its name is not on the new design yet.</exception>
     public static PretrainedEncoderModel Load(string folder, PretrainedEncoderOptions? options = null)
     {
         options ??= new PretrainedEncoderOptions();
         var (prepared, config, name, format) = EncoderCheckpoints.Read(folder, options.Architecture);
-        var family = PretrainedEncoders.Get(name);
+        var family = NotOnTheNewDesign.Yet<IPretrainedEncoderFamily>($"Picking the encoder family '{name}' by its name");
         string pooler = options.Pooler ?? family.Pooler(config);
         SequencePoolers.Get(pooler);                                           // a pooler nobody registered is refused before anything is built
         var notes = new List<string>();
@@ -463,7 +470,7 @@ public sealed class PretrainedEncoderModel : IDisposable
 }
 
 /// <summary>
-/// A pretrained text encoder-decoder read from a model folder by its family (<see cref="PretrainedSeq2Seq"/>): the model
+/// A pretrained text encoder-decoder read from a model folder by its family (<see cref="IPretrainedSeq2SeqFamily"/>): the model
 /// and its tokenizer. <see cref="CreateGenerator"/> generates text with it through the library's samplers.
 /// </summary>
 public sealed class PretrainedSeq2SeqModel : IDisposable
@@ -498,13 +505,13 @@ public sealed class PretrainedSeq2SeqModel : IDisposable
     /// <summary>Where it runs.</summary>
     public Device Device => Model.Device;
 
-    /// <summary>Reads the model in <paramref name="folder"/> with the family registered under its architecture name.</summary>
-    /// <exception cref="NotSupportedException">No encoder-decoder family is registered under the architecture's name (the message says how to register one).</exception>
+    /// <summary>Reads the model in <paramref name="folder"/> with the family of its architecture name.</summary>
+    /// <exception cref="NotSupportedException">Picking the family by its name is not on the new design yet.</exception>
     public static PretrainedSeq2SeqModel Load(string folder, PretrainedEncoderOptions? options = null)
     {
         options ??= new PretrainedEncoderOptions();
         var (prepared, config, name, format) = EncoderCheckpoints.Read(folder, options.Architecture);
-        var family = PretrainedSeq2Seq.Get(name);
+        var family = NotOnTheNewDesign.Yet<IPretrainedSeq2SeqFamily>($"Picking the encoder-decoder family '{name}' by its name");
         var notes = new List<string>();
         notes.AddRange(format.Notes(prepared));
         ISeq2SeqModel model;

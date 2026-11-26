@@ -8,18 +8,22 @@ namespace Idrak.Layers;
 
 /// <summary>
 /// A network whose layers form a graph rather than a chain: values can be used several times (skip connections,
-/// branches) and combined. Nodes run in order; each is a layer (any type registered in <see cref="LayerTypes"/>:
-/// <see cref="Linear"/>, <see cref="Conv2d"/>, <see cref="BatchNorm"/>, … or your own) or an operation: the structural
-/// ones (identity, cast, add, sub, mul, div, concat, shape, gather, slice, unsqueeze, squeeze, reshape) and those
-/// registered in <see cref="GraphOps"/> (matmul, relu, tanh, sigmoid, exp, log, abs, neg, sqrt, pow, clip, leaky_relu,
-/// elu, hard_sigmoid, hard_swish, max, min, softmax, flatten, transpose, reduce_mean, global_average_pool, or your own),
-/// following the ONNX operators of the same names. Integer values such as shapes are computed on the host, so shape
-/// arithmetic works for any batch size. Constants are buffers: they move with the model and are saved with its weights.
-/// <see cref="ToJson"/> and <see cref="FromJson"/> describe the graph so packages can rebuild it. The ONNX importer
-/// creates these for models with skip connections, and the ONNX exporter writes them back.
+/// branches) and combined. Nodes run in order; each is a layer (<see cref="Linear"/>, <see cref="Conv2d"/>,
+/// <see cref="BatchNorm"/>, … or your own) or one of the structural operations (identity, cast, add, sub, mul, div,
+/// concat, shape, gather, slice, unsqueeze, squeeze, reshape), following the ONNX operators of the same names. Integer
+/// values such as shapes are computed on the host, so shape arithmetic works for any batch size. Constants are buffers:
+/// they move with the model and are saved with its weights. <see cref="ToJson"/> and <see cref="FromJson"/> describe a
+/// graph without layers. The ONNX importer creates these for models with skip connections, and the ONNX exporter writes
+/// them back.
 /// </summary>
 public sealed class GraphModule : Module
 {
+    // The operations a node can run besides "layer": the structural ones, which also work on integer values computed on the host.
+    internal static readonly HashSet<string> Core = new(StringComparer.Ordinal)
+    {
+        "layer", "identity", "cast", "add", "sub", "mul", "div", "concat", "shape", "gather", "slice", "unsqueeze", "squeeze", "reshape",
+    };
+
     private const string Format = "idrak-graph/1";
     private readonly List<GraphNode> _nodes;
     private readonly List<string> _constantNames;
@@ -55,9 +59,9 @@ public sealed class GraphModule : Module
                 throw new ArgumentException($"Node '{node.Output}' is a layer node without a layer.");
             }
 
-            if (!GraphOps.Contains(node.Op))
+            if (!Core.Contains(node.Op))
             {
-                throw new ArgumentException($"Node '{node.Output}' uses the unknown operation '{node.Op}' (known: {string.Join(", ", GraphOps.Names)}); add it with GraphOps.Register.");
+                throw new ArgumentException($"Node '{node.Output}' uses the operation '{node.Op}': graph operations beyond the structural ones ({string.Join(", ", Core)}) are not on the new design yet.");
             }
 
             known.Add(node.Output);
@@ -224,8 +228,7 @@ public sealed class GraphModule : Module
             case "squeeze":
                 return Squeeze(arg(0), Axes(1));
             default:
-                var op = GraphOps.TryGet(node.Op) ?? throw new NotSupportedException($"unknown operation '{node.Op}'; register it with GraphOps.Register");
-                return op.Run(new GraphOpContext(node, arg));
+                throw new NotSupportedException($"the graph operation '{node.Op}' is not on the new design yet");
         }
     }
 
@@ -379,8 +382,9 @@ public sealed class GraphModule : Module
     // ------------------------------------------------------------------ description
 
     /// <summary>
-    /// The graph as JSON (format "idrak-graph/1"): nodes with their layers' settings, constants' shapes and the
-    /// integer constants. Weights and float constants are not included; save them with <see cref="Idrak.ModuleFiles.Save(Module, string)"/>.
+    /// The graph as JSON (format "idrak-graph/1"): nodes, constants' shapes and the integer constants. Weights and float
+    /// constants are not included; save them with <see cref="Idrak.ModuleFiles.Save(Module, string)"/>. A graph with
+    /// layer nodes cannot be described: describing a layer is not on the new design yet.
     /// </summary>
     public JsonObject ToJson() => new()
     {
@@ -413,7 +417,7 @@ public sealed class GraphModule : Module
 
             if (n.Layer is not null)
             {
-                node["layer"] = LayerTypes.Describe(n.Layer);
+                throw new NotSupportedException($"Describing the layer of node '{n.Output}' as JSON is not on the new design yet.");
             }
 
             return (JsonNode)node;
@@ -441,7 +445,7 @@ public sealed class GraphModule : Module
             [.. n["inputs"]!.AsArray().Select(i => (string)i!)],
             (string)n["output"]!,
             n["attributes"]?.DeepClone().AsObject(),
-            n["layer"] is JsonObject layer ? LayerTypes.Create(layer, device) : null));
+            n["layer"] is JsonObject ? throw new NotSupportedException("Creating a layer from its JSON description is not on the new design yet.") : (Module?)null));
         return new GraphModule((string)description["input"]!, (string)description["output"]!, nodes, constants, integers);
     }
 

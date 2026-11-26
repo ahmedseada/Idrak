@@ -6,36 +6,21 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Models;
 
 /// <summary>
-/// Reads the tokenizer of a model folder (or a tokenizer file), whatever kind it is: a registered reader
-/// (<see cref="TokenizerFiles"/>) finds and reads the file, and the model type it names (<see cref="TokenizerModels"/>)
-/// builds the tokenizer. Nothing here knows a model type: BPE and the others are registered ones.
+/// Reads the tokenizer of a model folder (or a tokenizer file), whatever kind it is. Finding the file's reader among the
+/// registered ones (<see cref="TokenizerFiles"/>) and building the model type it names (<see cref="TokenizerModels"/>) are
+/// not on the new design yet: each reader and each model's class reads and builds its own.
 /// </summary>
 public static class PretrainedTokenizers
 {
     /// <summary>
-    /// The tokenizer file at <paramref name="path"/> (a model folder, or a file) and its reader: the reader
-    /// <see cref="TokenizerOptions.Format"/> names, else the first registered reader that finds its file. Null when none
-    /// does.
+    /// The tokenizer file at <paramref name="path"/> (a model folder, or a file) and its reader: picking the reader by
+    /// <see cref="TokenizerOptions.Format"/>'s name, or asking each registered reader, is not on the new design yet.
     /// </summary>
-    /// <exception cref="NotSupportedException">The format the options name is not registered.</exception>
+    /// <exception cref="NotSupportedException">Always: not on the new design yet.</exception>
     public static (string File, ITokenizerFileReader Reader)? Find(string path, TokenizerOptions? options = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
-        if ((options ?? new TokenizerOptions()).ResolvedFormat() is { } format)
-        {
-            var reader = TokenizerFiles.Get(format);
-            return reader.Find(path) is { } file ? (file, reader) : null;
-        }
-
-        foreach (var reader in TokenizerFiles.Readers)
-        {
-            if (reader.Find(path) is { } file)
-            {
-                return (file, reader);
-            }
-        }
-
-        return null;
+        return NotOnTheNewDesign.Yet<(string File, ITokenizerFileReader Reader)?>($"Finding the reader of the tokenizer at {path} among the registered ones");
     }
 
     /// <summary>Whether <paramref name="path"/> holds (or is) a tokenizer file a registered reader reads.</summary>
@@ -52,20 +37,24 @@ public static class PretrainedTokenizers
 
     /// <summary>The tokenizer at <paramref name="path"/> (a model folder, or a tokenizer file), built by its model type.</summary>
     /// <exception cref="FileNotFoundException">No reader finds a tokenizer file there.</exception>
-    /// <exception cref="NotSupportedException">The file's model type is not registered.</exception>
+    /// <exception cref="NotSupportedException">Building the model type by its name is not on the new design yet.</exception>
     public static IPretrainedTokenizer Load(string path, TokenizerOptions? options = null)
     {
         options ??= new TokenizerOptions();
-        return TokenizerModels.Create(Read(path, options), options);
+        return Create(Read(path, options));
     }
 
     /// <summary>The tokenizer at <paramref name="path"/> (see <see cref="Load"/>), or null when no reader finds a tokenizer file there.</summary>
-    /// <exception cref="NotSupportedException">The file's model type is not registered.</exception>
+    /// <exception cref="NotSupportedException">Building the model type by its name is not on the new design yet.</exception>
     public static IPretrainedTokenizer? TryLoad(string path, TokenizerOptions? options = null)
     {
         options ??= new TokenizerOptions();
-        return Find(path, options) is var (file, reader) ? TokenizerModels.Create(WithConfig(reader.Read(file, options), file), options) : null;
+        return Find(path, options) is var (file, reader) ? Create(WithConfig(reader.Read(file, options), file)) : null;
     }
+
+    // The tokenizer of the model type a definition names: picked by that name, not on the new design yet.
+    private static IPretrainedTokenizer Create(TokenizerDefinition definition) =>
+        NotOnTheNewDesign.Yet<IPretrainedTokenizer>($"{definition.Source}: building the tokenizer model '{definition.ModelType}' by its name");
 
     // What the model's tokenizer_config.json beside the file says of the decoded text's spaces (clean_up_tokenization_spaces),
     // unless the reader set it.
@@ -93,8 +82,7 @@ public static class PretrainedTokenizers
         return definition;
     }
 
-    // What a folder lacks: the files the registered readers look for.
+    // What a folder lacks.
     private static string Missing(string path, TokenizerOptions options) =>
-        (options.ResolvedFormat() is { } format ? $"No {format} tokenizer file at {path}" : $"No tokenizer file at {path}")
-        + $" (readers: {string.Join(", ", TokenizerFiles.Names)}); add a reader with TokenizerFiles.Register.";
+        options.ResolvedFormat() is { } format ? $"No {format} tokenizer file at {path}." : $"No tokenizer file at {path}.";
 }

@@ -9,14 +9,6 @@ using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
 
-// The GGUF pre-tokenizer names that are no family's (GPT-2's own rule), registered by LibraryRegistrations in
-// GgufPreTokenizers; the families' names and patterns are plug-ins' (Idrak.Text.Plugins).
-internal static class GgufBuiltIns
-{
-    // The pre-tokenizer names of GPT-2's own rule (null: no split pattern).
-    internal static IEnumerable<(string Name, string? Pattern)> PreTokenizers() =>
-        new[] { "gpt2", "gpt-2", "default" }.Select(name => (name, (string?)null));
-}
 
 /// <summary>
 /// Models from GGUF files (the format of llama.cpp and of the local model store). <see cref="Prepare"/> writes a small folder with what the
@@ -24,11 +16,10 @@ internal static class GgufBuiltIns
 /// template, generation_config.json), and <see cref="PretrainedModel.Load"/> reads the weights from the GGUF file itself,
 /// float32 tensor by tensor (another stored type is refused: not on the new design yet), with llama.cpp's names and layouts turned back into the Hugging Face ones (the family's
 /// <see cref="GgufArchitecture.TensorName"/>, less what the converter added to their values, <see cref="GgufArchitecture.StoredOffset"/>).
-/// Architectures: those registered with <see cref="GgufArchitectures.Register"/> (the library registers none;
-/// Idrak.Text.Plugins registers its families'). Experts stored together (blk.N.ffn_gate_exps, [experts, ff, dim]) are read
-/// one expert at a time.
-/// Tokenizers: by tokenizer.ggml.model through GgufTokenizers: byte-level BPE ("gpt2"), SentencePiece BPE ("llama") and Unigram
-/// ("t5"), WordPiece ("bert").
+/// Picking the file's architecture (general.architecture) and its tokenizer converter (tokenizer.ggml.model) by name is
+/// not on the new design yet. Experts stored together (blk.N.ffn_gate_exps, [experts, ff, dim]) are read one expert at a
+/// time. The tokenizer converters: byte-level BPE ("gpt2"), SentencePiece BPE ("llama") and Unigram ("t5"), WordPiece
+/// ("bert").
 /// </summary>
 public static class GgufModel
 {
@@ -69,10 +60,7 @@ public static class GgufModel
         using var file = GgufFile.Open(path);
         var notes = new List<string>();
         string arch = file.Get("general.architecture", "");
-        var architecture = GgufArchitectures.Find(arch)
-            ?? throw new NotRegisteredException(nameof(GgufArchitectures), arch, GgufArchitectures.Names,
-                $"{path}: GGUF architecture '{arch}' is not registered (registered: {string.Join(", ", GgufArchitectures.Names)}); "
-                + "add it with GgufArchitectures.Register, or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
+        var architecture = NotOnTheNewDesign.Yet<IGgufArchitecture>($"{path}: reading the GGUF architecture '{arch}' by its name");
 
         string temp = folder + ".tmp";
         if (Directory.Exists(temp))
@@ -213,12 +201,13 @@ public static class GgufModel
         return config;
     }
 
-    // The tokenizer.json of the file's tokenizer (GgufTokenizers, by tokenizer.ggml.model), then tokenizer_config.json and
+    // The tokenizer.json of the file's tokenizer (by tokenizer.ggml.model), then tokenizer_config.json and
     // generation_config.json.
     internal static void WriteTokenizer(GgufFile file, string folder, string[] tokens, List<string> notes)
     {
         string model = file.Get("tokenizer.ggml.model", "");
-        var definition = GgufTokenizers.Get(model).Create(new GgufTokenizerRequest(file, tokens, notes));
+        var definition = NotOnTheNewDesign.Yet<IGgufTokenizer>($"{file.Path}: the GGUF tokenizer converter '{model}', picked by its name,")
+            .Create(new GgufTokenizerRequest(file, tokens, notes));
         TokenizerJsonReader.Write(definition, Path.Combine(folder, "tokenizer.json"));
 
         string? Token(string key) => file.Metadata.TryGetValue(key, out var v) && Convert.ToInt64(v, System.Globalization.CultureInfo.InvariantCulture) is var id
@@ -226,15 +215,10 @@ public static class GgufModel
         string? template = file.Get<string?>("tokenizer.chat_template", null);
         if (template is null)
         {
-            // A registered fallback for the file's tokens (GgufChatTemplates: the library's ChatML, a family's from its
-            // plug-in); with none, no template, as a model folder without one.
-            var fallback = GgufChatTemplates.For(file, tokens);
-            template = fallback?.Template.Template;
-            notes.Add(fallback is { Name: var used }
-                ? $"the file has no chat template; the fallback '{used}' registered for its tokens (GgufChatTemplates) was used."
-                : $"the file has no chat template, and no fallback registered in GgufChatTemplates ({string.Join(", ", GgufChatTemplates.Names)}) is for its tokens: "
-                  + "chat is not available (plain text generation and fine-tuning on text work); register one with GgufChatTemplates.Register, "
-                  + "or reference Idrak.Text.Plugins (the families' templates) and call TextPlugins.RegisterAll().");
+            // No template, as a model folder without one: picking a fallback among the registered ones for the file's
+            // tokens is not on the new design yet.
+            notes.Add("the file has no chat template, and picking a fallback for its tokens is not on the new design yet: "
+                + "chat is not available (plain text generation and fine-tuning on text work).");
         }
 
         var tokenizerConfig = new JsonObject { ["bos_token"] = Token("tokenizer.ggml.bos_token_id"), ["eos_token"] = Token("tokenizer.ggml.eos_token_id") };
@@ -276,12 +260,6 @@ public static class GgufModel
         ("general.sampling.min_p", "min_p"), ("general.sampling.penalty_repeat", "repetition_penalty"),
     ];
 
-    // The library's fallback chat template (GgufChatTemplates, "chatml"): ChatML turns.
-    internal const string ChatMLName = "chatml";
-
-    internal const string ChatML = "{%- for message in messages %}{{ '<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>' + '\\n' }}{%- endfor %}"
-                                   + "{%- if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{%- endif %}";
-
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     // The UTF-8 ToJsonString(JsonOptions) gives, written straight to the file (no string of a multi-MB tokenizer.json).
@@ -313,13 +291,13 @@ public static class GgufModel
         {
             _file = file;
             _arch = file.Get("general.architecture", "");
-            var architecture = GgufArchitectures.Find(_arch);
+            var architecture = NotOnTheNewDesign.Yet<IGgufArchitecture?>($"{file.Path}: reading the GGUF architecture '{_arch}' by its name");
             _interleavedQueryKeys = architecture is { InterleavedQueryKeys: true };
             _heads = file.Get($"{_arch}.attention.head_count", 0);
             _kvHeads = file.Get($"{_arch}.attention.head_count_kv", _heads);
             // Experts' tensors are named through the Hugging Face family's own names (Mixtral's and Qwen's differ).
             var family = architecture is null ? null
-                : PretrainedArchitectures.Names.Contains(HuggingFaceOf(file, _arch, architecture)) ? PretrainedArchitectures.Get(HuggingFaceOf(file, _arch, architecture)) : null;
+                : NotOnTheNewDesign.Yet<IPretrainedArchitecture?>($"{file.Path}: the experts' names of the family '{HuggingFaceOf(file, _arch, architecture)}', picked by its name,");
             foreach (var (name, info) in file.Tensors)
             {
                 if ((architecture is null ? GgufArchitecture.CommonTensorName(name) : architecture.TensorName(name)) is { } hf)

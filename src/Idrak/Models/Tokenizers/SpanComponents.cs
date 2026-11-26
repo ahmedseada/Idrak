@@ -13,20 +13,17 @@ namespace Idrak.Models;
 
 /// <summary>
 /// The built-in normalizers and pre-tokenizers on spans (plan 24, L1): each gives the pieces its string form in
-/// <see cref="BpeTokenizer"/> gives, without a string per call, and keeps where every character came from. A type an app
-/// registered runs through its own component's span form (<see cref="ITokenizerNormalizer.Normalize(NormalizedText)"/>).
+/// <see cref="BpeTokenizer"/> gives, without a string per call, and keeps where every character came from.
 /// </summary>
 internal static class SpanComponents
 {
-    // The normalizer a tokenizer.json names: the app's component when one is registered for its type, else the built-in.
-    public static Action<NormalizedText> Normalizer(JsonObject spec) =>
-        TokenizerComponents.FindNormalizer((string?)spec["type"]) is { } create ? create.Create(spec).Normalize : BuiltInNormalizer(spec);
+    // The normalizer a tokenizer.json names.
+    public static Action<NormalizedText> Normalizer(JsonObject spec) => BuiltInNormalizer(spec);
 
-    // The pre-tokenizer a tokenizer.json names: the app's component when one is registered for its type, else the built-in.
-    public static Action<PreTokenizedText, bool> PreTokenizer(JsonObject spec) =>
-        TokenizerComponents.FindPreTokenizer((string?)spec["type"]) is { } create ? create.Create(spec).PreTokenize : BuiltInPreTokenizer(spec);
+    // The pre-tokenizer a tokenizer.json names.
+    public static Action<PreTokenizedText, bool> PreTokenizer(JsonObject spec) => BuiltInPreTokenizer(spec);
 
-    // The library's own normalizer of the spec's type (inside a sequence, registered types still answer for themselves).
+    // The library's own normalizer of the spec's type.
     public static Action<NormalizedText> BuiltInNormalizer(JsonObject spec)
     {
         string type = (string)spec["type"]!;
@@ -45,7 +42,7 @@ internal static class SpanComponents
             "Strip" => new StripNormalizer((bool?)spec["strip_left"] ?? true, (bool?)spec["strip_right"] ?? true).Run,
             "BertNormalizer" => BertComponents.Normalizer(spec),
             "Precompiled" => PrecompiledCharsMap.SpanStep(spec),
-            _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported; add it with TokenizerComponents.RegisterNormalizer."),
+            _ => throw new NotSupportedException($"Tokenizer normalizer '{type}' is not supported."),
         };
     }
 
@@ -77,7 +74,7 @@ internal static class SpanComponents
             case "BertPreTokenizer":
                 return BertComponents.PreTokenizer();
             default:
-                throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported; add it with TokenizerComponents.RegisterPreTokenizer.");
+                throw new NotSupportedException($"Tokenizer pre-tokenizer '{type}' is not supported.");
         }
     }
 

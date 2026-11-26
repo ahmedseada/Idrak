@@ -32,8 +32,6 @@ internal sealed class WordPieceTrainer : ITokenizerTrainer
 
     public string Name => TokenizerTrainers.WordPiece;
 
-    public string Summary => "BERT's WordPiece, by frequency (Hugging Face's WordPieceTrainer, its ties in a fixed order) or by likelihood";
-
     public IPretrainedTokenizer Train(IReadOnlyList<string> files, TokenizerTrainingOptions options, IProgress<TokenizerTrainingProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -63,7 +61,7 @@ internal sealed class WordPieceTrainer : ITokenizerTrainer
         }
 
         var definition = new TokenizerDefinition { Source = $"wordpiece trainer ({string.Join(", ", files.Select(Path.GetFileName))})", Json = json, Vocabulary = vocabulary };
-        return TokenizerModels.Create(definition, new TokenizerOptions());
+        return WordPieceTokenizer.FromDefinition(definition, new TokenizerOptions());
     }
 
     // The tokenizer.json around the vocabulary, as transformers' BertConverter writes it, with the training's choices.

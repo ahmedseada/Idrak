@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Plugins;
 using Idrak.Layers.Abstractions;
 
 namespace Idrak.Models.Abstractions;
@@ -11,7 +9,7 @@ namespace Idrak.Models.Abstractions;
 /// <summary>
 /// How to read one family of pretrained models: its configuration (a Hugging Face <c>config.json</c>) becomes a
 /// <see cref="DecoderSpec"/>, and each of Idrak's weight names (see <see cref="DecoderSpec"/>) is found in the
-/// checkpoint. Registered by architecture name in <see cref="PretrainedArchitectures"/>. What a family can do beyond that
+/// checkpoint. What a family can do beyond that
 /// is an interface of its own, tested once when a model is loaded or made: <see cref="INetworkBuildingArchitecture"/> (it
 /// builds its own network instead of the spec's), <see cref="IConfigWritingArchitecture"/> (it writes a spec as
 /// config.json, so models of the family can be made from a spec) and <see cref="ICheckpointFittedArchitecture"/> (its
@@ -110,58 +108,6 @@ public abstract class PretrainedArchitecture : IPretrainedArchitecture
 /// <param name="Notes">Append anything approximated (shown in the loaded model's notes).</param>
 public sealed record PretrainedBuildContext(JsonObject Config, DecoderSpec Spec, IWeightSource Weights, ITensorStore Checkpoint,
     DecoderBuildOptions Options, List<string> Notes);
-
-/// <summary>
-/// The model families pretrained models are loaded as, by the architecture name in <c>config.json</c>
-/// ("architectures": [...]). The library registers none: the families are plug-ins (Idrak.Text.Plugins,
-/// Idrak.Vision.Plugins), and a vision-language model's vision part is a <see cref="VisionFamilies"/> registration. Add
-/// others with <see cref="Register"/> (its <c>PretrainedFamilies.CommonArchitecture</c> makes one for families that share
-/// the common configuration keys and checkpoint names). An architecture nobody registered is refused, naming the plug-in
-/// package that declares it (<see cref="IdrakPluginNamesAttribute"/>, through <see cref="PluginPackageCatalogs"/>) when the
-/// program has one.
-/// </summary>
-public static class PretrainedArchitectures
-{
-    // The registry holds families by the architecture names checkpoints give (one family may be registered under several),
-    // so it is a table of names, not of kinds named by themselves.
-    private static readonly SlotTable<string, IPretrainedArchitecture> Registry = new(nameof(PretrainedArchitectures), comparer: StringComparer.Ordinal,
-        unguarded: "a family's parts (spec, tensor names, build) must agree with one another, so the app's and the library's cannot be mixed");
-
-    /// <summary>Registers how to read the architecture <paramref name="name"/>, until <see cref="Unregister"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, IPretrainedArchitecture architecture)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(name);
-        ArgumentNullException.ThrowIfNull(architecture);
-        Registry.Register(name, architecture, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the architecture <paramref name="name"/> an app or plug-in registered; false when none did.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered architecture names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The architecture registered as <paramref name="name"/>.</summary>
-    public static IPretrainedArchitecture Get(ReadOnlySpan<char> name) => Registry.Find(name) ?? throw NotRegistered(name.ToString());
-
-    // The refusal names the plug-in package that declares the family asked for (PluginPackageCatalogs: the packages the
-    // program has), or no package when none does: never one package's families for another's.
-    private static NotRegisteredException NotRegistered(string name)
-    {
-        string registered = string.Join(", ", Registry.Keys);
-        string message = PluginPackageCatalogs.PackageOf(nameof(PretrainedArchitectures), name) is { } package
-            ? $"No architecture '{name}' is registered ({registered}); {package} declares it: call that package's RegisterAll() (or register its family alone), or add it with PretrainedArchitectures.Register."
-            : $"No architecture '{name}' is registered ({registered}); add it with PretrainedArchitectures.Register, or reference the plug-in package that holds the family and call its RegisterAll() (no plug-in package this program has declares '{name}').";
-        return new NotRegisteredException(nameof(PretrainedArchitectures), name, Registry.Keys, message);
-    }
-
-    /// <summary>The library's architecture <paramref name="name"/>, whatever an app registered over it (for an app's family to build on); null when the library has none.</summary>
-    public static IPretrainedArchitecture? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the architecture <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-}
 
 /// <summary>Settings for building a <see cref="DecoderSpec"/> into a network (Idrak's <c>DecoderBuilder.Build</c>).</summary>
 public sealed record DecoderBuildOptions

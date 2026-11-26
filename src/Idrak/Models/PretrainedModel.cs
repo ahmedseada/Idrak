@@ -145,12 +145,6 @@ public sealed record PretrainedOptions
     /// <summary>How the tokenizer is read (which file, its piece cache); null takes the variables, then the defaults.</summary>
     public TokenizerOptions? Tokenizer { get; init; }
 
-    /// <summary>
-    /// The share of the device's memory the settings suggested after loading leave free beyond the device's own reserve
-    /// (<see cref="ComputeResources.GpuMemoryReserve"/>): 0 by default (see <see cref="SettingAdvisors"/>, published at
-    /// <see cref="TelemetryLevel.Suggestions"/>).
-    /// </summary>
-    public double SuggestionHeadroom { get; init; }
 
     /// <summary>
     /// A folder holding a PEFT LoRA adapter (from <see cref="PretrainedModel.SaveAdapter"/> or peft) to merge into the
@@ -184,12 +178,9 @@ public sealed record PretrainedOptions
     public long? AutoWeightsBudget { get; init; }
 
     /// <summary>
-    /// Where a decoder's layers go on a device other than the CPU (<see cref="WeightPlacements"/>, plan 37 W1): "device"
-    /// (every layer there), "split" (the first layers there as its free memory allows, the rest computed by the CPU from
-    /// system memory, as Ollama does), "stream" (every layer there, what does not fit staged from system memory each pass:
-    /// offload) or "auto" (the device when the model fits, else split or stream by what the bus and the CPU measure), or a
-    /// placement of one's own. Null takes <see cref="WeightPlacements.DefaultName"/> (IDRAK_WEIGHT_PLACEMENT; auto), so a
-    /// model that does not fit starts split instead of failing. The free memory is <see cref="AutoWeightsBudget"/> when
+    /// Where a decoder's layers go on a device other than the CPU (<see cref="WeightPlacements"/>, plan 37 W1), by name:
+    /// "device", "split", "stream" or "auto". Picking a placement by its name is not on the new design yet; null (the
+    /// default) places none, so every layer goes on the device. The free memory is <see cref="AutoWeightsBudget"/> when
     /// given, else what the device reports. <see cref="PretrainedModel.Placement"/> says what was chosen.
     /// </summary>
     public string? WeightPlacement { get; init; }
@@ -201,15 +192,10 @@ public sealed record PretrainedOptions
     public int? DeviceLayers { get; init; }
 
     /// <summary>
-    /// Where a mixture-of-experts model's experts live (<see cref="ExpertPlacements"/>, plan 37 R1):
-    /// - "resident": every expert on the device, as before.
-    /// - "offload": the most used experts of each layer in a cache on the device, the rest in system memory, copied in
-    ///   when the router picks them (or computed by the CPU, <see cref="ColdExpertsOnCpu"/>).
-    /// - "auto": resident when the model fits the device's measured free memory, else offload.
-    /// - or a placement of one's own.
-    /// Null takes <see cref="ExpertPlacements.DefaultName"/> (IDRAK_MOE_EXPERTS; auto). On the CPU every expert stays
-    /// resident. With <see cref="LazyLayers"/>, each expert is read the first time the router picks it.
-    /// <see cref="PretrainedModel.ExpertPlacement"/> says what was chosen.
+    /// Where a mixture-of-experts model's experts live (<see cref="ExpertPlacements"/>, plan 37 R1), by name: "resident",
+    /// "offload" or "auto". Picking a placement by its name is not on the new design yet; null (the default) places none,
+    /// so every expert stays where its layer is. With <see cref="LazyLayers"/>, each expert is read the first time the
+    /// router picks it. <see cref="PretrainedModel.ExpertPlacement"/> says what was chosen.
     /// </summary>
     public string? ExpertPlacement { get; init; }
 
@@ -342,16 +328,16 @@ public sealed class PretrainedModel : IDisposable
     public Device Device { get; }
 
     /// <summary>
-    /// The vision part of a vision-language model as its family's registration read it (<see cref="VisionFamilies"/>: the
+    /// The vision part of a vision-language model as its family read it (<see cref="IVisionFamily"/>: the
     /// encoder it builds, its prompt format and attention rule; read and checked but not built), or null for a text-only
     /// model. <see cref="Network"/> is the text decoder alone.
     /// </summary>
     public IPretrainedVision? Vision { get; }
 
     /// <summary>
-    /// Reads the model in <paramref name="folder"/> (a model folder, a .gguf file, or any path a format registered with
-    /// <see cref="CheckpointFormats"/> reads). Every weight is read from disk one tensor at a time, so the model is never
-    /// held twice.
+    /// Reads the model in <paramref name="folder"/> (a model folder, a .gguf file). Every weight is read from disk one
+    /// tensor at a time, so the model is never held twice. Picking the folder's checkpoint format, its architecture and its
+    /// vision family by name is not on the new design yet.
     /// </summary>
     public static PretrainedModel Load(string folder, PretrainedOptions? options = null)
     {
@@ -362,16 +348,15 @@ public sealed class PretrainedModel : IDisposable
             throw new ArgumentException("A deferred load (PretrainedOptions.Deferred) reads float32 weights where they are placed: load without a merged adapter.", nameof(options));
         }
 
-        var format = CheckpointFormats.For(folder);
+        var format = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {folder}");
         folder = format.Prepare(folder);                            // a .gguf file: config, tokenizer and template from its metadata
 
         var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))!.AsObject();
         string name = options.Architecture ?? (string?)config["architectures"]?[0]
             ?? throw new InvalidDataException("config.json names no architecture; pass PretrainedOptions.Architecture.");
-        var architecture = PretrainedArchitectures.Get(name);
-        // A vision-language checkpoint is read by its own vision family, by the same name; none registered is an error
-        // (families are applications of the contracts, registered by whoever brings them; nothing falls back to another).
-        var visionFamily = VisionFamilies.For(name, config);
+        var architecture = NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"Picking the architecture '{name}' by its name");
+        // A vision-language checkpoint (one with a vision_config) is read by its own vision family, by the same name.
+        var visionFamily = config["vision_config"] is JsonObject ? NotOnTheNewDesign.Yet<IVisionFamily>($"Picking the vision family '{name}' by its name") : null;
 
         using var reader = format.Open(folder);
         if (architecture is ICheckpointFittedArchitecture fitted)
@@ -385,20 +370,20 @@ public sealed class PretrainedModel : IDisposable
 
         // The weight placement (plan 37, W1): on a device other than the CPU, where the layers go when the model may not fit.
         var placementTarget = options.Device ?? Idrak.Abstraction.Device.Default;
-        string placementName = options.WeightPlacement ?? WeightPlacements.DefaultName;
-        var placement = !options.Deferred && placementTarget.Type != DeviceType.Cpu ? WeightPlacements.Get(placementName) : null;
-        bool mayLeaveDevice = placement is not null && !placement.Name.Equals(WeightPlacements.AllOnDevice, StringComparison.OrdinalIgnoreCase);
+        var placement = !options.Deferred && placementTarget.Type != DeviceType.Cpu && options.WeightPlacement is { } placementName
+            ? NotOnTheNewDesign.Yet<IWeightPlacement>($"Picking the weight placement '{placementName}' by its name") : null;
+        bool mayLeaveDevice = placement is not null and not WeightPlacements.DevicePlacement;
 
         // The experts' placement (plan 37, R1): where a mixture-of-experts model's experts live, decided before the layers'
         // placement, which then counts only the experts kept on the device.
         ExpertPlan? expertPlan = null;
         int loadContext = Math.Min(options.AutoWeightsContext ?? options.MaxPositions ?? AutoWeights.DefaultContext, spec.MaxPositions);
         ExpertPlacementRequest? expertRequest = null;
-        if (spec.Experts > 0 && !options.Deferred && architecture is not INetworkBuildingArchitecture)
+        if (spec.Experts > 0 && !options.Deferred && architecture is not INetworkBuildingArchitecture && options.ExpertPlacement is { } expertPlacementName)
         {
             expertRequest = AutoWeights.ExpertRequest(spec, loadContext, placementTarget, options.AutoWeightsBudget ?? placementTarget.Backend.AvailableMemory(),
                 options.DeviceExpertBytes ?? ExpertPlacements.DefaultCacheBytes, options.ColdExpertsOnCpu ?? ExpertPlacements.DefaultColdOnCpu, options.AutoWeightsHeadroom);
-            expertPlan = ExpertPlacements.Get(options.ExpertPlacement ?? ExpertPlacements.DefaultName).Place(expertRequest);
+            expertPlan = NotOnTheNewDesign.Yet<IExpertPlacement>($"Picking the expert placement '{expertPlacementName}' by its name").Place(expertRequest);
             if (expertPlan.Offload && placementTarget.Type == DeviceType.Cpu)
             {
                 expertPlan = expertPlan with { Offload = false, DeviceExperts = spec.Experts, Reason = $"every expert on {placementTarget} (the CPU's memory is the system's)" };
@@ -575,16 +560,6 @@ public sealed class PretrainedModel : IDisposable
         model.LoadTimes = new PretrainedLoadTimes(Stopwatch.GetElapsedTime(started, building), read, Max(weights.ReadTime - read), weights.MergeTime,
             Max(others), Stopwatch.GetElapsedTime(buildEnded, visionRead), Stopwatch.GetElapsedTime(tokenizing, tokenized),
             Stopwatch.GetElapsedTime(started));
-        try
-        {
-            SettingAdvisors.Publish(new AdviceSituation(model.Device, model, null) { Headroom = options.SuggestionHeadroom }, new HashSet<(string, string)>());
-        }
-        catch
-        {
-            model.Dispose();
-            throw;
-        }
-
         weights.Progress?.End();
         return model;
 
@@ -599,7 +574,7 @@ public sealed class PretrainedModel : IDisposable
     /// template and special-token files of <paramref name="files"/>), then loaded from there, so it is a model like any
     /// other: it runs, chats, serves, tunes and trains (plan 19).
     /// </summary>
-    /// <exception cref="NotSupportedException">The architecture is not registered, cannot be written from a spec, or cannot hold this spec.</exception>
+    /// <exception cref="NotSupportedException">Picking the architecture by its name is not on the new design yet; or it cannot be written from a spec, or cannot hold this spec.</exception>
     /// <exception cref="ArgumentException">The tokenizer is larger than the vocabulary, or a named token is not in it.</exception>
     /// <exception cref="IOException">The folder holds files and <see cref="CreateOptions.Overwrite"/> is off.</exception>
     public static PretrainedModel Create(string folder, DecoderSpec spec, string architecture, ModelFiles files, CreateOptions? options = null)
@@ -608,10 +583,9 @@ public sealed class PretrainedModel : IDisposable
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentNullException.ThrowIfNull(files);
         options ??= new CreateOptions();
-        var family = PretrainedArchitectures.Get(architecture);
+        var family = NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"Picking the architecture '{architecture}' by its name");
         var write = family is IConfigWritingArchitecture writing ? writing : throw new NotSupportedException(
-            $"Architecture '{architecture}' cannot be written from a spec (it reads checkpoints only); choose one that can "
-            + $"({string.Join(", ", PretrainedArchitectures.Names.Where(n => PretrainedArchitectures.Get(n) is IConfigWritingArchitecture))}).");
+            $"Architecture '{architecture}' cannot be written from a spec (it reads checkpoints only); choose one that can.");
         var tokenizer = files.Tokenizer;
         if (tokenizer.VocabularySize > spec.Vocabulary)
         {
@@ -648,7 +622,7 @@ public sealed class PretrainedModel : IDisposable
         CreatedVision? vision = null;
         if (options.Vision is { } description)
         {
-            var visionFamily = VisionFamilies.Find(architecture) ?? throw VisionFamilies.NotRegistered(architecture);
+            var visionFamily = NotOnTheNewDesign.Yet<IVisionFamily>($"Picking the vision family '{architecture}' by its name");
             vision = visionFamily.Create(description, spec.Dim, tokenizer, options.Seed);
             foreach (var (key, value) in vision.Config)
             {
@@ -673,10 +647,11 @@ public sealed class PretrainedModel : IDisposable
         if (options.Decoder is { } decoderFolder)
         {
             // The decoder of a model that exists (its spec the new one's but for the context length), read as Load reads it.
-            var format = CheckpointFormats.For(decoderFolder);
+            var format = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {decoderFolder}");
             decoderFolder = format.Prepare(decoderFolder);
             var decoderConfig = JsonNode.Parse(File.ReadAllText(Path.Combine(decoderFolder, "config.json")))!.AsObject();
-            var decoderFamily = PretrainedArchitectures.Get((string?)decoderConfig["architectures"]?[0] ?? throw new InvalidDataException($"{decoderFolder}/config.json names no architecture."));
+            string decoderArchitecture = (string?)decoderConfig["architectures"]?[0] ?? throw new InvalidDataException($"{decoderFolder}/config.json names no architecture.");
+            var decoderFamily = NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"Picking the architecture '{decoderArchitecture}' by its name");
             var decoderSpec = decoderFamily.Spec(decoderConfig, []);
             var mine = (spec with { MaxPositions = 0, Dropout = 0 }).ToJson();
             var theirs = (decoderSpec with { MaxPositions = 0, Dropout = 0 }).ToJson();
@@ -837,7 +812,7 @@ public sealed class PretrainedModel : IDisposable
         }
 
         var part = ModelParts.Get(kind);
-        var format = CheckpointFormats.For(Folder);
+        var format = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {Folder}");
         using var tensors = format.Open(Folder);
         string architecture = (string?)Config["architectures"]?[0] ?? throw new InvalidDataException($"{Folder}/config.json names no architecture.");
         return part.Open(new ModelPartCheckpoint(architecture, Config, tensors, Folder, () => format.Open(Folder), []),
@@ -860,12 +835,11 @@ public sealed class PretrainedModel : IDisposable
     /// when done.
     /// </summary>
     /// <exception cref="InvalidOperationException">The model has no vision part.</exception>
-    /// <exception cref="NotSupportedException">The vision family is no longer registered (the message names the registry).</exception>
+
     /// <exception cref="InvalidDataException">A trained vision tensor fits no part the family offers.</exception>
     public IVisionEncoder CreateVisionEncoder(VisionEncoderOptions? options = null)
     {
         var vision = Vision ?? throw new InvalidOperationException("The model has no vision part (a text-only checkpoint): it reads no images.");
-        _ = VisionFamilies.Get(vision.Family);                                  // unregistered since the model was read: the registry's message
         options ??= new VisionEncoderOptions();
         if (options.Device is null)
         {
@@ -1281,7 +1255,7 @@ public sealed class PretrainedModel : IDisposable
     /// </summary>
     public void SaveHuggingFace(string folder, IReadOnlyDictionary<string, Tensor>? vision, Func<StoredTensor, float[]>? values)
     {
-        using var source = Vision is null && _partTensors.Count == 0 ? null : CheckpointFormats.For(Folder).Open(Folder);
+        using var source = Vision is null && _partTensors.Count == 0 ? null : NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {Folder}").Open(Folder);
         var visionTensors = Vision is null ? [] : Vision.StoredTensors.Order(StringComparer.Ordinal).Select(name =>
             vision is not null && vision.TryGetValue(name, out var trained) ? (name, [.. trained.Shape], (Func<float[]>)trained.ToArray)
             : _vision.TryGetValue(name, out var kept) ? (name, kept.Shape, () => kept.Values)

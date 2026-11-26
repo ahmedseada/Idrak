@@ -42,21 +42,16 @@ public static class OnnxExport
 }
 
 /// <summary>
-/// Configures an ONNX export. The layers registered in <see cref="OnnxExportOps"/> are supported: Linear (LoRA adapters
-/// are merged), activations (ReLU, Tanh, Sigmoid, GELU, ExactGELU, QuickGELU), Softmax, Dropout (removed), BatchNorm,
-/// LayerNorm, Conv2d, MaxPool2d, GlobalAveragePool2d, Flatten, Embedding, PositionalEncoding, MultiHeadAttention,
-/// TransformerEncoderLayer (its own activation through that activation's translator), LSTM, GRU, Sequential,
-/// GraphModule (skip connections, branches and shape arithmetic, so an imported graph can be exported again), and the
-/// builder's MeanOverTime, FirstStep, LastStep and Reshape lambdas. Other lambdas and custom modules need a translator,
-/// registered for every export (<see cref="OnnxExportOps"/>) or given to this one (<see cref="Lambda"/>,
-/// <see cref="Module{T}"/>, <see cref="GraphOp"/>), which takes precedence. Inputs are float32 (token ids too, as in
-/// Idrak); the batch dimension is dynamic. The graph has one input and one output, as an Idrak module does.
+/// Configures an ONNX export. Every module needs a translator given to this export (<see cref="Module{T}"/>, or
+/// <see cref="Lambda"/> for the lambdas of one name; <see cref="OnnxExport.MeanOverTime"/>, <see cref="OnnxExport.FirstStep"/>,
+/// <see cref="OnnxExport.LastStep"/>, <see cref="OnnxExport.Reshape"/> and <see cref="OnnxExport.ColumnsToSequence"/> are
+/// the builder's): the built-in layers' translators are not on the new design yet. Inputs are float32 (token ids too, as
+/// in Idrak); the batch dimension is dynamic. The graph has one input and one output, as an Idrak module does.
 /// </summary>
 public sealed class OnnxExporter
 {
     private readonly Module _model;
     private readonly Dictionary<string, OnnxTranslator<Module>> _lambdas = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, OnnxGraphOpTranslator> _graphOps = new(StringComparer.Ordinal);
     private readonly List<(Type Type, OnnxTranslator<Module> Translate)> _modules = [];
     private readonly Dictionary<string, string> _metadata = [];
     private int[]? _sampleShape;
@@ -85,24 +80,17 @@ public sealed class OnnxExporter
         return this;
     }
 
-    /// <summary>A translator for the lambdas named <paramref name="name"/> (<see cref="INamedLambda.Name"/>) in this export; it takes precedence over <see cref="OnnxExportOps"/>.</summary>
+    /// <summary>A translator for the lambdas named <paramref name="name"/> (<see cref="INamedLambda.Name"/>) in this export.</summary>
     public OnnxExporter Lambda(string name, OnnxTranslator<Module> translate)
     {
         _lambdas[name] = translate;
         return this;
     }
 
-    /// <summary>A translator for modules of type <typeparamref name="T"/> (a custom layer) in this export; it takes precedence over <see cref="OnnxExportOps"/>.</summary>
+    /// <summary>A translator for modules of type <typeparamref name="T"/> in this export.</summary>
     public OnnxExporter Module<T>(OnnxTranslator<T> translate) where T : Module
     {
         _modules.Add((typeof(T), (g, m, x, s) => translate(g, (T)m, x, s)));
-        return this;
-    }
-
-    /// <summary>A translator for <see cref="GraphModule"/> nodes running the operation <paramref name="op"/> in this export; it takes precedence over <see cref="OnnxExportOps"/>.</summary>
-    public OnnxExporter GraphOp(string op, OnnxGraphOpTranslator translate)
-    {
-        _graphOps[op] = translate;
         return this;
     }
 
@@ -155,9 +143,6 @@ public sealed class OnnxExporter
         return Translate(graph, module, x, shape) with { Shape = shape };
     }
 
-    internal OnnxGraphOpTranslator? FindGraphOp(string op) => _graphOps.TryGetValue(op, out var translate) ? translate
-        : OnnxExportOps.FindGraphOp(op) is { } registered ? registered.Export : null;
-
     private OnnxValue Translate(OnnxGraph g, Module module, OnnxValue x, int[] shape)
     {
         foreach (var (type, translate) in _modules)
@@ -168,21 +153,8 @@ public sealed class OnnxExporter
             }
         }
 
-        var named = module as INamedLambda;
-        if (named is not null && _lambdas.TryGetValue(named.Name, out var forLambda))
-        {
-            return forLambda(g, module, x, shape);
-        }
-
-        if (OnnxExportOps.Find(module.GetType()) is { } registered)
-        {
-            return registered.Export(g, module, x, shape);
-        }
-
-        // A lambda module of one's own (any INamedLambda): its name's translator.
-        return named is not null && OnnxExportOps.FindLambda(named.Name) is { } lambda ? lambda.Export(g, module, x, shape)
-            : throw new NotRegisteredException("OnnxExportOps.Modules", module.GetType().Name, OnnxExportOps.Types.Select(t => t.Name).Order(),
-                $"{module.GetType().Name} ({module.DisplayName}) cannot be exported (registered: {string.Join(", ", OnnxExportOps.Types.Select(t => t.Name).Order())}): "
-                + $"register a translator with OnnxExportOps.Register<{module.GetType().Name}>(...) or the exporter's Module<{module.GetType().Name}>(...).");
+        return module is INamedLambda named && _lambdas.TryGetValue(named.Name, out var forLambda) ? forLambda(g, module, x, shape)
+            : throw new NotSupportedException($"{module.GetType().Name} ({module.DisplayName}) has no translator in this export (give it one with Module<{module.GetType().Name}>(...)); "
+                + "the built-in layers' translators are not on the new design yet.");
     }
 }

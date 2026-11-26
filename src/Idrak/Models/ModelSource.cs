@@ -5,9 +5,8 @@ namespace Idrak.Models;
 
 /// <summary>
 /// Where a model comes from: a local folder, a GGUF file, a model of the local model store ("store:qwen3:8b", see
-/// <see cref="LocalStoreModel"/>), or a Hugging Face model id such as "Qwen/Qwen3-0.6B". Idrak registers the folder,
-/// store and .gguf sources of <see cref="ModelSources"/>; Idrak.Data, which downloads from the Hub, registers the
-/// Hugging Face one (<c>HuggingFaceModels</c>).
+/// <see cref="LocalStoreModel"/>), or a Hugging Face model id such as "Qwen/Qwen3-0.6B". Picking the source that resolves
+/// a name among the registered ones is not on the new design yet.
 /// </summary>
 public static class ModelSource
 {
@@ -50,17 +49,14 @@ public static class ModelSource
         return File.Exists(blob) ? blob : throw new FileNotFoundException($"'{name}' in the local model store: its weights {blob} are missing (pull the model again).");
     }
 
-    // The length of the local model store's prefix on a model name ("store:"), else 0.
-    private static int StorePrefix(string model) => model.StartsWith("store:", StringComparison.OrdinalIgnoreCase) ? 6 : 0;
-
     /// <summary>Whether <paramref name="model"/> reads as a Hugging Face id ("owner/name") rather than a folder.</summary>
     public static bool IsModelId(string model) =>
         !Directory.Exists(model) && !Path.IsPathRooted(model) && model.Count(c => c == '/') == 1 && !model.StartsWith('.') && !model.Contains('\\');
 
     /// <summary>
     /// The local folder of <paramref name="model"/>: the folder itself, a .gguf file's prepared folder, or what another
-    /// source registered with <see cref="ModelSources"/> makes of it (a Hugging Face id found in a cache or downloaded,
-    /// with Idrak.Data). With <paramref name="download"/> false, only the caches are searched.
+    /// source makes of it (a Hugging Face id found in a cache or downloaded, with Idrak.Data). With
+    /// <paramref name="download"/> false, only the caches are searched. Picking the source is not on the new design yet.
     /// </summary>
     public static string Resolve(string model, string revision = "main", string? token = null, IDownloader? downloader = null, bool download = true) =>
         Resolve(model, Options(revision, token, downloader, download));
@@ -69,35 +65,13 @@ public static class ModelSource
     /// <see cref="Resolve(string, string, string?, IDownloader?, bool)"/> with the source's options given whole: their
     /// <see cref="ModelSourceOptions.Progress"/> told how a download goes (a model found in a cache reports nothing).
     /// </summary>
-    public static string Resolve(string model, ModelSourceOptions options) =>
-        ModelSources.For(model)?.Resolve(model, options ?? throw new ArgumentNullException(nameof(options)))
-        ?? throw new DirectoryNotFoundException(IsModelId(model) && !ModelSources.Names.Contains("huggingface")
-            ? $"'{model}' reads as a Hugging Face model id, but no source resolves those; reference Idrak.Data, which adds it."
-            : $"'{model}' is neither a folder nor a Hugging Face model id (owner/name).");
+    public static string Resolve(string model, ModelSourceOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return NotOnTheNewDesign.Yet<IModelSource>($"Picking the source that resolves '{model}' among the registered ones").Resolve(model, options);
+    }
 
     /// <summary>The options <see cref="Resolve(string, string, string?, IDownloader?, bool)"/> passes to a source: the revision, token, downloader and download switch.</summary>
     public static ModelSourceOptions Options(string revision = "main", string? token = null, IDownloader? downloader = null, bool download = true) =>
         new() { Revision = revision, Token = token, Download = download, Downloader = downloader };
-
-    // The built-in sources, in the order they are asked (see ModelSources); LibraryModelFormats registers them.
-    internal static IModelSource[] BuiltIn =>
-    [
-        new DelegateModelSource("folder", Directory.Exists, (model, _) => model),
-        new DelegateModelSource("store", model => StorePrefix(model) > 0, (model, options) =>
-        {
-            string blob = LocalStoreModel(model[StorePrefix(model)..]);
-            options.Downloader?.Log?.Invoke($"{model}: the local model store's file {blob}");
-            return GgufModel.Prepare(blob);
-        }),
-        new DelegateModelSource("gguf", model => File.Exists(model) && model.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase), (model, _) => GgufModel.Prepare(model)),
-    ];
-
-    private sealed class DelegateModelSource(string name, Func<string, bool> canResolve, Func<string, ModelSourceOptions, string> resolve) : IModelSource
-    {
-        public string Name => name;
-
-        public bool CanResolve(string model) => canResolve(model);
-
-        public string Resolve(string model, ModelSourceOptions options) => resolve(model, options);
-    }
 }

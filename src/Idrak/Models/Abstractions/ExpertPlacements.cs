@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
-using System.Runtime.CompilerServices;
 
 namespace Idrak.Models.Abstractions;
 
@@ -66,23 +65,22 @@ public sealed record ExpertPlan(string Placement, bool Offload, int DeviceExpert
 }
 
 /// <summary>An expert placement (<see cref="ExpertPlacements"/>): where a mixture-of-experts model's experts live.</summary>
-public interface IExpertPlacement : IKind
+public interface IExpertPlacement
 {
     /// <summary>The plan for <paramref name="request"/>.</summary>
     ExpertPlan Place(ExpertPlacementRequest request);
 }
 
 /// <summary>
-/// The expert placements, by name (ignoring case): where a mixture-of-experts model's experts live (plan 37, R1). The
-/// library registers three:
-/// - <see cref="Resident"/>: every expert on the device, as before.
-/// - <see cref="Offload"/>: the cold experts in system memory and the most used of each layer in a cache on the device.
-///   The cache is sized by the measured free memory or <see cref="CacheVariable"/>, and what stays in it is learned from
-///   the routing's counts at run time. A cold expert is copied in when the router picks it, or computed by the CPU
-///   (<see cref="ColdVariable"/>), as llama.cpp's <c>--cpu-moe</c> does.
-/// - <see cref="Auto"/> (the default): resident when the model fits the measured free device memory, else offload.
-/// A load takes the placement from its options, else <see cref="EnvironmentVariable"/> (IDRAK_MOE_EXPERTS), else
-/// <see cref="Auto"/>; a name nobody registered is refused with "not registered".
+/// The expert placements: where a mixture-of-experts model's experts live (plan 37, R1). The library has three:
+/// - <see cref="ResidentPlacement"/> (<see cref="Resident"/>): every expert on the device, as before.
+/// - <see cref="OffloadPlacement"/> (<see cref="Offload"/>): the cold experts in system memory and the most used of each
+///   layer in a cache on the device. The cache is sized by the measured free memory or <see cref="CacheVariable"/>, and
+///   what stays in it is learned from the routing's counts at run time. A cold expert is copied in when the router picks
+///   it, or computed by the CPU (<see cref="ColdVariable"/>), as llama.cpp's <c>--cpu-moe</c> does.
+/// - <see cref="AutoPlacement"/> (<see cref="Auto"/>): resident when the model fits the measured free device memory, else
+///   offload.
+/// Picking a placement by its name is not on the new design yet.
 /// </summary>
 public static class ExpertPlacements
 {
@@ -101,8 +99,6 @@ public static class ExpertPlacements
     /// <summary>A cold expert computed by the CPU from system memory.</summary>
     public const string ColdCpu = "cpu";
 
-    /// <summary>The variable naming the placement when an option does not: "IDRAK_MOE_EXPERTS".</summary>
-    public const string EnvironmentVariable = "IDRAK_MOE_EXPERTS";
 
     /// <summary>The variable giving the megabytes of experts the device keeps (a limit over the measured free memory): "IDRAK_MOE_DEVICE_EXPERTS_MB".</summary>
     public const string CacheVariable = "IDRAK_MOE_DEVICE_EXPERTS_MB";
@@ -110,18 +106,6 @@ public static class ExpertPlacements
     /// <summary>The variable choosing what a cold expert does, <see cref="ColdCopy"/> (the default) or <see cref="ColdCpu"/>: "IDRAK_MOE_COLD".</summary>
     public const string ColdVariable = "IDRAK_MOE_COLD";
 
-    private static readonly SlotTable<string, IExpertPlacement> Table = new(nameof(ExpertPlacements), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a placement decides where a model's experts live: falling back to another would place them otherwise than asked");
-
-    static ExpertPlacements() => Overrides.AsLibraryDefaults(() =>
-    {
-        Register(new ResidentPlacement());
-        Register(new OffloadPlacement());
-        Register(new AutoPlacement());
-    });
-
-    /// <summary>The placement named by <see cref="EnvironmentVariable"/>, else <see cref="Auto"/>.</summary>
-    public static string DefaultName => Environment.GetEnvironmentVariable(EnvironmentVariable) is { } name && name.Trim().Length > 0 ? name.Trim() : Auto;
 
     /// <summary>The bytes <see cref="CacheVariable"/> gives the device's experts, or null when it is not set.</summary>
     /// <exception cref="ArgumentException">Not a count of megabytes of 0 or more.</exception>
@@ -154,38 +138,6 @@ public static class ExpertPlacements
         _ => throw new ArgumentException($"{where} '{value}': what a cold expert does, {ColdCopy} (copied to the device when picked) or {ColdCpu} (computed by the CPU)."),
     };
 
-    /// <summary>Registers <paramref name="placement"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IExpertPlacement placement)
-    {
-        ArgumentNullException.ThrowIfNull(placement);
-        ArgumentException.ThrowIfNullOrWhiteSpace(placement.Name);
-        Table.Register(placement.Name, placement, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's placement <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The placement registered as <paramref name="name"/>, or null.</summary>
-    public static IExpertPlacement? Find(string name) => Table.Find(name);
-
-    /// <summary>The placement registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names it and the registered ones.</exception>
-    public static IExpertPlacement Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(ExpertPlacements), name, Table.Keys,
-            $"Expert placement '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with ExpertPlacements.Register.");
-
-    /// <summary>The library's placement <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IExpertPlacement? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the placement <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered placement as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(p => $"{p.Name}: {p.Summary}"));
 
     /// <summary>The offload plan for <paramref name="request"/>, named <paramref name="placement"/> (for a placement of one's own that offloads).</summary>
     public static ExpertPlan OffloadPlan(ExpertPlacementRequest request, string placement)
@@ -200,33 +152,30 @@ public static class ExpertPlacements
             + $"({sized}; {WeightPlacements.Gigabytes(request.ExpertBytes)} an expert)");
     }
 
-    private sealed class ResidentPlacement : IExpertPlacement
+    /// <summary>Every expert on the device (a model that does not fit fails as before, or follows the weight placement).</summary>
+    public sealed class ResidentPlacement : IExpertPlacement
     {
-        public string Name => Resident;
-
-        public string Summary => "every expert on the device (a model that does not fit fails as before, or follows the weight placement)";
-
+        /// <inheritdoc />
         public ExpertPlan Place(ExpertPlacementRequest request) =>
-            new(Name, false, request.Experts, false, $"every expert on {request.Device}");
+            new(Resident, false, request.Experts, false, $"every expert on {request.Device}");
     }
 
-    private sealed class OffloadPlacement : IExpertPlacement
+    /// <summary>
+    /// The most used experts of each layer on the device (as its free memory or IDRAK_MOE_DEVICE_EXPERTS_MB allows), the
+    /// rest in system memory, copied in when picked (or computed by the CPU: IDRAK_MOE_COLD=cpu).
+    /// </summary>
+    public sealed class OffloadPlacement : IExpertPlacement
     {
-        public string Name => Offload;
-
-        public string Summary => "the most used experts of each layer on the device (as its free memory or IDRAK_MOE_DEVICE_EXPERTS_MB allows), the rest in system memory, copied in when picked (or computed by the CPU: IDRAK_MOE_COLD=cpu)";
-
-        public ExpertPlan Place(ExpertPlacementRequest request) => OffloadPlan(request, Name);
+        /// <inheritdoc />
+        public ExpertPlan Place(ExpertPlacementRequest request) => OffloadPlan(request, Offload);
     }
 
-    private sealed class AutoPlacement : IExpertPlacement
+    /// <summary>Every expert on the device when the model fits its measured free memory, else offload.</summary>
+    public sealed class AutoPlacement : IExpertPlacement
     {
-        public string Name => Auto;
-
-        public string Summary => "every expert on the device when the model fits its measured free memory, else offload";
-
+        /// <inheritdoc />
         public ExpertPlan Place(ExpertPlacementRequest request) => request.Fits && request.CacheBytes is null
-            ? new(Name, false, request.Experts, false, $"every expert on {request.Device} (it fits)")
-            : OffloadPlan(request, Name);
+            ? new(Auto, false, request.Experts, false, $"every expert on {request.Device} (it fits)")
+            : OffloadPlan(request, Auto);
     }
 }

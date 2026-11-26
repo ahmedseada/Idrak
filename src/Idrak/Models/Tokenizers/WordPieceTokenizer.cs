@@ -120,17 +120,8 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
         _workers = options.ResolvedWorkers();
     }
 
-    // The decoder a tokenizer.json names, made once: an app's registered type, else the built-in stages.
-    private static Func<List<string>, List<string>> Decoder(JsonObject spec)
-    {
-        if (TokenizerComponents.FindDecoder((string?)spec["type"]) is not { } create)
-        {
-            return BpeTokenizer.DecoderStage(spec);
-        }
-
-        var component = create.Create(spec);
-        return tokens => component.Decode(tokens) is var result && result is List<string> list ? list : [.. result];
-    }
+    // The decoder a tokenizer.json names, made once: the built-in stages.
+    private static Func<List<string>, List<string>> Decoder(JsonObject spec) => BpeTokenizer.DecoderStage(spec);
 
     // The library's "WordPiece" model (TokenizerModels): the tokenizer of a definition, which it takes as its own.
     internal static WordPieceTokenizer FromDefinition(TokenizerDefinition definition, TokenizerOptions options) =>

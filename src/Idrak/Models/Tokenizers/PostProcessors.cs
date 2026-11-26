@@ -10,23 +10,12 @@ namespace Idrak.Models;
 /// The built-in tokenizer.json post-processors (plan 24, T2), as Hugging Face's <c>tokenizers</c> defines them:
 /// <c>TemplateProcessing</c> (special tokens and type ids by a template), <c>BertProcessing</c> (<c>[CLS] A [SEP] B [SEP]</c>),
 /// <c>RobertaProcessing</c> (<c>&lt;s&gt; A &lt;/s&gt;&lt;/s&gt; B &lt;/s&gt;</c>), <c>ByteLevel</c> (no tokens; it trims
-/// offsets) and <c>Sequence</c>. Registered in <see cref="TokenizerComponents"/>, so an app's type overrides one.
+/// offsets) and <c>Sequence</c>.
 /// </summary>
 internal static class PostProcessors
 {
-    // The built-in types, as TokenizerComponents lists them.
-    public static readonly string[] Types = ["TemplateProcessing", "BertProcessing", "RobertaProcessing", "ByteLevel", "Sequence"];
-
-    // The post-processor a tokenizer.json names (an app's registered type first), or null for none.
-    public static ITokenizerPostProcessor? Of(JsonObject? spec)
-    {
-        if (spec is null)
-        {
-            return null;
-        }
-
-        return TokenizerComponents.FindPostProcessor((string?)spec["type"]) is { } create ? create.Create(spec) : BuiltIn(spec);
-    }
+    // The post-processor a tokenizer.json names, or null for none.
+    public static ITokenizerPostProcessor? Of(JsonObject? spec) => spec is null ? null : BuiltIn(spec);
 
     // The library's post-processor of the spec's type.
     public static ITokenizerPostProcessor BuiltIn(JsonObject spec)
@@ -39,7 +28,7 @@ internal static class PostProcessors
             "RobertaProcessing" => new Roberta(Special(spec["cls"]), Special(spec["sep"]), (bool?)spec["trim_offsets"] ?? true, (bool?)spec["add_prefix_space"] ?? true),
             "ByteLevel" => new ByteLevel((bool?)spec["trim_offsets"] ?? true, (bool?)spec["add_prefix_space"] ?? true),
             "Sequence" => new Chain([.. spec["processors"]!.AsArray().OfType<JsonObject>().Select(p => Of(p)!)]),
-            _ => throw new NotSupportedException($"Tokenizer post-processor '{type}' is not supported; add it with TokenizerComponents.RegisterPostProcessor."),
+            _ => throw new NotSupportedException($"Tokenizer post-processor '{type}' is not supported."),
         };
     }
 

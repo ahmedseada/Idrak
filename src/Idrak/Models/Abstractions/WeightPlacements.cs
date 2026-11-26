@@ -4,7 +4,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.CompilerServices;
 
 namespace Idrak.Models.Abstractions;
 
@@ -71,7 +70,7 @@ public sealed record WeightPlan(string Placement, int DeviceLayers, int Layers, 
 }
 
 /// <summary>A weight placement (<see cref="WeightPlacements"/>): how a decoder's layers are shared between the device and the CPU.</summary>
-public interface IWeightPlacement : IKind
+public interface IWeightPlacement
 {
     /// <summary>The plan for <paramref name="request"/>.</summary>
     /// <exception cref="NotSupportedException">The placement cannot run on the request's device (stream without offload support).</exception>
@@ -87,15 +86,15 @@ public interface IWeightPlacement : IKind
 }
 
 /// <summary>
-/// The weight placements, by name (ignoring case): how a decoder whose weights may not fit its device is shared between
-/// the device and the CPU (plan 37, W1). The library registers <see cref="AllOnDevice"/> (every layer on the device; a model
-/// that does not fit fails as before), <see cref="Split"/> (as Ollama and llama.cpp do: the first layers on the device as
-/// far as its measured free memory allows, the rest computed by the CPU from system memory, their key/value caches there
-/// too, so only the activations cross the bus, at each boundary), <see cref="Stream"/> (every layer on the device, what
-/// does not fit kept in system memory and staged per pass: <see cref="ComputeResources.OffloadToHostMemory"/>) and
-/// <see cref="Auto"/> (the default: the device when the model fits, else split or stream, whichever the bus and the CPU
-/// measured at load make faster). A load takes the placement from its options, else <see cref="EnvironmentVariable"/>
-/// (IDRAK_WEIGHT_PLACEMENT), else <see cref="Auto"/>; a name nobody registered is refused with "not registered".
+/// The weight placements: how a decoder whose weights may not fit its device is shared between the device and the CPU
+/// (plan 37, W1). The library has <see cref="DevicePlacement"/> (<see cref="AllOnDevice"/>: every layer on the device; a
+/// model that does not fit fails as before), <see cref="SplitPlacement"/> (<see cref="Split"/>, as Ollama and llama.cpp
+/// do: the first layers on the device as far as its measured free memory allows, the rest computed by the CPU from system
+/// memory, their key/value caches there too, so only the activations cross the bus, at each boundary),
+/// <see cref="StreamPlacement"/> (<see cref="Stream"/>: every layer on the device, what does not fit kept in system memory
+/// and staged per pass: <see cref="ComputeResources.OffloadToHostMemory"/>) and <see cref="AutoPlacement"/>
+/// (<see cref="Auto"/>: the device when the model fits, else split or stream, whichever the bus and the CPU measured at
+/// load make faster). Picking a placement by its name is not on the new design yet.
 /// </summary>
 public static class WeightPlacements
 {
@@ -111,30 +110,10 @@ public static class WeightPlacements
     /// <summary>The device when the model fits, else split or stream by what the bus and the CPU measure.</summary>
     public const string Auto = "auto";
 
-    /// <summary>The variable naming the placement when an option does not: "IDRAK_WEIGHT_PLACEMENT".</summary>
-    public const string EnvironmentVariable = "IDRAK_WEIGHT_PLACEMENT";
 
     /// <summary>The variable giving the layers on the device (a count, or "auto" to size them): "IDRAK_DEVICE_LAYERS".</summary>
     public const string DeviceLayersVariable = "IDRAK_DEVICE_LAYERS";
 
-    private static readonly SlotTable<string, IWeightPlacement> Table = new(nameof(WeightPlacements), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a placement decides where a model's weights live: falling back to another would place them otherwise than asked");
-
-    static WeightPlacements() => Overrides.AsLibraryDefaults(() =>
-    {
-        Register(new DevicePlacement());
-        Register(new SplitPlacement());
-        Register(new StreamPlacement());
-        Register(new AutoPlacement());
-    });
-
-    /// <summary>
-    /// The placement named by <see cref="EnvironmentVariable"/>; when it is not set, <see cref="Stream"/> while
-    /// <see cref="ComputeResources.OffloadToHostMemory"/> is on (IDRAK_OFFLOAD=1 alone keeps its staging, which training
-    /// needs), else <see cref="Auto"/>.
-    /// </summary>
-    public static string DefaultName => Environment.GetEnvironmentVariable(EnvironmentVariable) is { } name && name.Trim().Length > 0 ? name.Trim()
-        : ComputeResources.OffloadToHostMemory ? Stream : Auto;
 
     /// <summary>The layers <see cref="DeviceLayersVariable"/> puts on the device, or null when it is not set or "auto".</summary>
     /// <exception cref="ArgumentException">Neither a count of 0 or more nor "auto".</exception>
@@ -169,38 +148,6 @@ public static class WeightPlacements
             : throw new ArgumentException($"{where} '{value}': the layers on the device, a count of 0 or more, or auto.");
     }
 
-    /// <summary>Registers <paramref name="placement"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IWeightPlacement placement)
-    {
-        ArgumentNullException.ThrowIfNull(placement);
-        ArgumentException.ThrowIfNullOrWhiteSpace(placement.Name);
-        Table.Register(placement.Name, placement, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's placement <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The placement registered as <paramref name="name"/>, or null.</summary>
-    public static IWeightPlacement? Find(string name) => Table.Find(name);
-
-    /// <summary>The placement registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names it and the registered ones.</exception>
-    public static IWeightPlacement Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(WeightPlacements), name, Table.Keys,
-            $"Weight placement '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with WeightPlacements.Register.");
-
-    /// <summary>The library's placement <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IWeightPlacement? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the placement <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered placement as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(p => $"{p.Name}: {p.Summary}"));
 
     // The bus and the CPU as measured once per device in this process (rule 75): bytes a second.
     private static readonly ConcurrentDictionary<string, double> BusRates = new(StringComparer.Ordinal);
@@ -325,64 +272,58 @@ public static class WeightPlacements
         return Math.Min(request.Layers, current + (int)Math.Min(request.Layers, room / each));
     }
 
-    private sealed class DevicePlacement : IWeightPlacement
+    /// <summary>Every layer on the device (a model that does not fit fails as before).</summary>
+    public sealed class DevicePlacement : IWeightPlacement
     {
-        public string Name => AllOnDevice;
-
-        public string Summary => "every layer on the device (a model that does not fit fails as before)";
-
+        /// <inheritdoc />
         public WeightPlan Place(WeightPlacementRequest request) =>
-            new(Name, request.Layers, request.Layers, false, $"every layer on {request.Device}");
+            new(AllOnDevice, request.Layers, request.Layers, false, $"every layer on {request.Device}");
     }
 
-    private sealed class SplitPlacement : IWeightPlacement
+    /// <summary>The first layers on the device as its free memory allows (or IDRAK_DEVICE_LAYERS), the rest computed by the CPU from system memory.</summary>
+    public sealed class SplitPlacement : IWeightPlacement
     {
-        public string Name => Split;
+        /// <inheritdoc />
+        public WeightPlan Place(WeightPlacementRequest request) => SplitPlan(request, Split);
 
-        public string Summary => "the first layers on the device as its free memory allows (or IDRAK_DEVICE_LAYERS), the rest computed by the CPU from system memory";
-
-        public WeightPlan Place(WeightPlacementRequest request) => SplitPlan(request, Name);
-
+        /// <inheritdoc />
         public int Adjust(WeightPlacementRequest request, int current) => Follow(request, current);
     }
 
-    private sealed class StreamPlacement : IWeightPlacement
+    /// <summary>Every layer on the device; what does not fit kept in system memory and staged each pass (offload).</summary>
+    public sealed class StreamPlacement : IWeightPlacement
     {
-        public string Name => Stream;
-
-        public string Summary => "every layer on the device; what does not fit kept in system memory and staged each pass (offload)";
-
+        /// <inheritdoc />
         public WeightPlan Place(WeightPlacementRequest request) => request.CanStream
-            ? new(Name, request.Layers, request.Layers, true,
+            ? new(Stream, request.Layers, request.Layers, true,
                 $"every layer on {request.Device}, {Math.Max(0, request.Layers - request.LayersThatFit)} of them kept in system memory and staged each pass")
             : request.Fits
-                ? new(Name, request.Layers, request.Layers, false, $"every layer on {request.Device} (it fits; the device cannot stream weights)")
+                ? new(Stream, request.Layers, request.Layers, false, $"every layer on {request.Device} (it fits; the device cannot stream weights)")
                 : throw new NotSupportedException($"{request.Device} cannot keep weights in system memory (no offload support) and the model does not fit it: use the '{Split}' placement there.");
     }
 
-    private sealed class AutoPlacement : IWeightPlacement
+    /// <summary>The device when the model fits; else split or stream, whichever the bus and the CPU measured at load make faster.</summary>
+    public sealed class AutoPlacement : IWeightPlacement
     {
-        public string Name => Auto;
-
-        public string Summary => "the device when the model fits; else split or stream, whichever the bus and the CPU measured at load make faster";
-
+        /// <inheritdoc />
         public int Adjust(WeightPlacementRequest request, int current) => Follow(request, current);
 
+        /// <inheritdoc />
         public WeightPlan Place(WeightPlacementRequest request)
         {
             if (request.DeviceLayers is not null)
             {
-                return SplitPlan(request, Name);
+                return SplitPlan(request, Auto);
             }
 
             if (request.Fits)
             {
-                return new(Name, request.Layers, request.Layers, false, $"every layer on {request.Device} (it fits)");
+                return new(Auto, request.Layers, request.Layers, false, $"every layer on {request.Device} (it fits)");
             }
 
             if (!request.CanStream)
             {
-                return SplitPlan(request, Name, "the device cannot stream weights");
+                return SplitPlan(request, Auto, "the device cannot stream weights");
             }
 
             // The layers that do not fit, a token's reading of their weights: over the bus when streamed, from system memory
@@ -391,8 +332,8 @@ public static class WeightPlacements
             double bus = MeasureBus(request.Device, probe), cpu = MeasureCpu(probe);
             string measured = $"bus {Rate(bus)}, CPU {Rate(cpu)} measured";
             return cpu >= bus
-                ? SplitPlan(request, Name, measured)
-                : new(Name, request.Layers, request.Layers, true,
+                ? SplitPlan(request, Auto, measured)
+                : new(Auto, request.Layers, request.Layers, true,
                     $"every layer on {request.Device}, {request.Layers - request.LayersThatFit} kept in system memory and staged each pass ({measured})");
         }
     }

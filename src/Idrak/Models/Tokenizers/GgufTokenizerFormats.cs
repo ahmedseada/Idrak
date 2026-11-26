@@ -8,27 +8,15 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Models;
 
 /// <summary>
-/// The built-in GGUF tokenizer converters (<see cref="GgufTokenizers"/>; plan 24, T3), by <c>tokenizer.ggml.model</c>:
+/// The built-in GGUF tokenizer converters (plan 24, T3), by <c>tokenizer.ggml.model</c>:
 /// "gpt2" (byte-level BPE), "llama" and "t5" (a SentencePiece BPE or Unigram model: the GGUF's fields are written back as
 /// the SentencePiece ModelProto they came from and read as a tokenizer.model is, so both files of a model give the same
 /// tokenizer), and "bert" (WordPiece: llama.cpp stores word-initial pieces with ▁ and continuations bare, turned back here).
 /// </summary>
 internal static class GgufTokenizerFormats
 {
-    // One of the built-in converters, registered in GgufTokenizers under its tokenizer model's name.
-    internal sealed class Converter(string name, string summary, Func<GgufFile, IReadOnlyList<string>, List<string>, TokenizerDefinition> convert) : IGgufTokenizer
-    {
-        public string Name => name;
-
-        public string Summary => summary;
-
-        public IReadOnlySet<string> Keys => OptionKeys.None;
-
-        public TokenizerDefinition Create(GgufTokenizerRequest request) => convert(request.File, request.Tokens, request.Notes);
-    }
-
     // Byte-level BPE: the vocabulary and merges, token types 3 and 4 as added tokens (3 special), the pre-tokenizer's split
-    // pattern by tokenizer.ggml.pre (GgufPreTokenizers, or its fallback for a name nobody registered), the ByteLevel decoder.
+    // pattern by tokenizer.ggml.pre (picked by that name: not on the new design yet), the ByteLevel decoder.
     public static TokenizerDefinition Gpt2(GgufFile file, IReadOnlyList<string> tokens, List<string> notes)
     {
         var types = file.Get<long[]>("tokenizer.ggml.token_type", []);
@@ -47,20 +35,7 @@ internal static class GgufTokenizerFormats
         }
 
         string pre = file.Get("tokenizer.ggml.pre", "default");
-        if (!GgufPreTokenizers.TryGet(pre, out string? pattern))
-        {
-            if (GgufPreTokenizers.Fallback is not { } fallback || !GgufPreTokenizers.TryGet(fallback, out pattern))
-            {
-                throw new NotRegisteredException(nameof(GgufPreTokenizers), pre, GgufPreTokenizers.Names,
-                    $"{file.Path}: GGUF pre-tokenizer '{pre}' is not registered (registered: {string.Join(", ", GgufPreTokenizers.Names)}), "
-                    + "and no registered fallback is set (GgufPreTokenizers.Fallback); register the family's pattern with GgufPreTokenizers.Register, "
-                    + "or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
-            }
-
-            notes.Add($"pre-tokenizer '{pre}' is not registered; the splitting rule of '{fallback}' (GgufPreTokenizers.Fallback) is used (tokens may differ slightly from the original; " +
-                "register the family's pattern with GgufPreTokenizers.Register).");
-        }
-
+        string? pattern = NotOnTheNewDesign.Yet<string?>($"{file.Path}: the split pattern of the GGUF pre-tokenizer '{pre}', picked by its name,");
         var pretokenizers = new JsonArray();
         if (pattern is not null)
         {

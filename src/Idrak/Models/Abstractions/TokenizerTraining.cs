@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Models.Abstractions;
 
 /// <summary>Settings for <see cref="ITokenizerTrainer.Train"/>.</summary>
@@ -292,15 +290,11 @@ public readonly record struct TokenizerTrainingProgress(string Stage, long Done,
 /// <summary>
 /// Learns a tokenizer from text files. The result encodes and decodes like one read from a tokenizer.json, and
 /// <see cref="IPretrainedTokenizer.Save"/> writes it as one, so a model made from scratch (plan 19) carries its own vocabulary.
-/// Register one with <see cref="TokenizerTrainers.Register"/>.
 /// </summary>
 public interface ITokenizerTrainer
 {
     /// <summary>The trainer's name ("bpe").</summary>
     string Name { get; }
-
-    /// <summary>One line on what it learns.</summary>
-    string Summary { get; }
 
     /// <summary>
     /// Learns a tokenizer from UTF-8 text <paramref name="files"/>, each line (with its line end) one sequence, as
@@ -327,11 +321,12 @@ public interface ITokenizerCompanionFiles
 }
 
 /// <summary>
-/// The tokenizer trainers, by name. Built in: "bpe", byte-pair encoding learned as Hugging Face's <c>BpeTrainer</c>
-/// learns it (the same vocabulary and merges, in the same order, from the same files); "unigram", SentencePiece's unigram
-/// language model learned by its procedure (suffix-array seeds, EM with the digamma correction, pruning by loss), written
-/// as tokenizer.json and tokenizer.model; "wordpiece", BERT's model, by frequency (Hugging Face's <c>WordPieceTrainer</c>
-/// with its ties in a fixed order) or by likelihood. Others plug in with <see cref="Register"/>.
+/// The tokenizer trainers' names and choices. The trainers: "bpe", byte-pair encoding learned as Hugging Face's
+/// <c>BpeTrainer</c> learns it (the same vocabulary and merges, in the same order, from the same files); "unigram",
+/// SentencePiece's unigram language model learned by its procedure (suffix-array seeds, EM with the digamma correction,
+/// pruning by loss), written as tokenizer.json and tokenizer.model; "wordpiece", BERT's model, by frequency (Hugging
+/// Face's <c>WordPieceTrainer</c> with its ties in a fixed order) or by likelihood. Picking a trainer by its name is not
+/// on the new design yet: each trainer's class is made directly.
 /// </summary>
 public static class TokenizerTrainers
 {
@@ -376,49 +371,4 @@ public static class TokenizerTrainers
 
     /// <summary>The metaspace pre-tokenizer (<see cref="TokenizerTrainingOptions.PreTokenizer"/>).</summary>
     public const string Metaspace = "metaspace";
-
-    private static readonly SlotTable<string, ITokenizerTrainer> Table = BuiltIn();
-
-    private static SlotTable<string, ITokenizerTrainer> BuiltIn()
-    {
-        var table = new SlotTable<string, ITokenizerTrainer>(nameof(TokenizerTrainers), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a trainer's vocabulary and merges are its own, so another trainer cannot give the same tokenizer");
-        table.RegisterDefault(Bpe, new BpeTrainer());
-        table.RegisterDefault(Unigram, new UnigramTrainer());
-        table.RegisterDefault(WordPiece, new WordPieceTrainer());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="trainer"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ITokenizerTrainer trainer)
-    {
-        ArgumentNullException.ThrowIfNull(trainer);
-        ArgumentException.ThrowIfNullOrWhiteSpace(trainer.Name);
-        Table.Register(trainer.Name, trainer, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's trainer of that name (the library's, if any, answers again).</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The trainer of that name, or null.</summary>
-    public static ITokenizerTrainer? Find(string name) => Table.Find(name);
-
-    /// <summary>The trainer of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static ITokenizerTrainer Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(TokenizerTrainers), name, Table.Keys,
-            $"Tokenizer trainer '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TokenizerTrainers.Register.");
-
-    /// <summary>The library's trainer of that name, or null.</summary>
-    public static ITokenizerTrainer? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the trainer of that name.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each trainer as "name: summary", one a line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(t => $"{t.Name}: {t.Summary}"));
 }

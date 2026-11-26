@@ -42,8 +42,8 @@ public sealed record TokenizerOptions
     public const int DefaultSamplingBest = -1;
 
     /// <summary>
-    /// The reader (<see cref="TokenizerFiles"/>: "tokenizer.json", or a registered one) to use when a folder holds the files
-    /// of several; null takes IDRAK_TOKENIZER_FORMAT, then the first reader that finds its file, in registration order.
+    /// The reader (<see cref="TokenizerFiles"/>: "tokenizer.json", "sentencepiece" or "vocab.txt") to use when a folder
+    /// holds the files of several; null takes IDRAK_TOKENIZER_FORMAT. Picking a reader by name is not on the new design yet.
     /// </summary>
     public string? Format { get; init; }
 
