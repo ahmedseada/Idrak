@@ -27,14 +27,18 @@ namespace Idrak.Data.Pdf;
 /// come with the later phase of the documents plan (D10), each a <see cref="NotSupportedException"/> naming its phase
 /// until it lands.
 /// </summary>
-internal sealed class PdfWriter : IDocumentWriter
+public sealed class PdfWriter : IDocumentWriter
 {
+    /// <summary>"pdf".</summary>
     public string Name => PdfFormat.FormatName;
 
+    /// <summary>".pdf".</summary>
     public IReadOnlyCollection<string> Extensions { get; } = [".pdf"];
 
+    /// <summary>"application/pdf".</summary>
     public IReadOnlyCollection<string> MediaTypes { get; } = ["application/pdf"];
 
+    /// <inheritdoc/>
     public IDocumentBuilder Create(Stream destination, DocumentWriteOptions options)
     {
         ArgumentNullException.ThrowIfNull(destination);
@@ -47,6 +51,7 @@ internal sealed class PdfWriter : IDocumentWriter
         return new PdfDocumentBuilder(destination, options);
     }
 
+    /// <inheritdoc/>
     public IDocumentEditor Edit(IDocument source, Stream destination, DocumentWriteOptions options)
     {
         ArgumentNullException.ThrowIfNull(source);

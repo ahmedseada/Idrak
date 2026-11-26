@@ -12,12 +12,15 @@ namespace Idrak.Imaging;
 /// runs of one face, standing for the characters of their clusters, placed from the line's start on its baseline. Nothing
 /// here is for one language or script.
 /// </summary>
-internal sealed class ShapedTextSetter : IDocumentTextSetter
+public sealed class ShapedTextSetter : IDocumentTextSetter
 {
+    /// <summary>"shaped".</summary>
     public string Name => DocumentTextSetters.Shaped;
 
+    /// <summary>One line on what it does.</summary>
     public string Summary => "each paragraph through the bidirectional algorithm, its runs shaped by their scripts' shapers in the first face that has their characters, lines broken at spaces";
 
+    /// <inheritdoc/>
     public IReadOnlyList<DocumentSetLine> Set(string text, DocumentTextSetting setting)
     {
         ArgumentNullException.ThrowIfNull(text);

@@ -21,17 +21,20 @@ namespace Idrak.Imaging;
 /// a ring-text's or a lettering's words) are set in the body's font as ornament, outside the page's text; one that asks
 /// for the page's own text has none here and is left out.
 /// </summary>
-internal sealed class ShapesLayout : IPageLayout
+public sealed class ShapesLayout : IPageLayout
 {
     internal static readonly string[] Alignments = ["start", "center", "end", "mixed"];
 
     // The least width and height a region needs to hold text, in pixels.
     private const float LeastRegion = 3;
 
+    /// <summary>"shapes".</summary>
     public string Name => "shapes";
 
+    /// <summary>One line on what it draws.</summary>
     public string Summary => "shapes drawn by a pen (a shape profile: lines, boxes, grids, circles, ...), the body's lines set in the regions they make";
 
+    /// <inheritdoc/>
     public RenderedPage Render(PageContent content, PageStyle style, int seed)
     {
         ArgumentNullException.ThrowIfNull(content);
@@ -240,14 +243,14 @@ internal sealed class ShapesLayout : IPageLayout
 
     /// <summary>The pen <paramref name="name"/> names with its own keys of <paramref name="options"/>: the default, "ideal" (it takes none), reached directly.</summary>
     /// <exception cref="NotSupportedException">Another name: a pen by name is not on the new design yet.</exception>
-    internal static (IPen Pen, PenSettings Settings) PenFor(IReadOnlyDictionary<string, string> options, string name) =>
+    public static (IPen Pen, PenSettings Settings) PenFor(IReadOnlyDictionary<string, string> options, string name) =>
         name.Equals(Pens.Ideal, StringComparison.OrdinalIgnoreCase) ? (Ideal, Ideal.Read(PageOptions.None))
         : throw new NotSupportedException($"The pen '{name}' by name is not on the new design yet.");
 
     /// <summary>The text binding <paramref name="name"/> names with its own keys of <paramref name="options"/>: the default, "sequence", reached directly.</summary>
     /// <exception cref="ArgumentException">A bad value of one of its keys.</exception>
     /// <exception cref="NotSupportedException">Another name: a text binding by name is not on the new design yet.</exception>
-    internal static (ITextBinding Binding, TextBindingSettings Settings) BindingFor(IReadOnlyDictionary<string, string> options, string name) =>
+    public static (ITextBinding Binding, TextBindingSettings Settings) BindingFor(IReadOnlyDictionary<string, string> options, string name) =>
         name.Equals(TextBindings.Sequence, StringComparison.OrdinalIgnoreCase) ? (Sequence, Sequence.Read(PageOptions.Only(options, SequenceBinding.OwnKeys)))
         : throw new NotSupportedException($"The text binding '{name}' by name is not on the new design yet.");
 

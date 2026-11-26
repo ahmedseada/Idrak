@@ -9,17 +9,21 @@ namespace Idrak.Imaging;
 /// <see cref="ImageEncodeOptions.Quality"/> (Pillow's default, 75, unless given); the same bytes as
 /// <see cref="JpegEncoder.Encode(ImageData, int, bool, JpegSubsampling)"/> at that quality.
 /// </summary>
-internal sealed class JpegImageEncoder : IImageEncoder
+public sealed class JpegImageEncoder : IImageEncoder
 {
     /// <summary>The quality written when none is given (Pillow's default).</summary>
     public const int DefaultQuality = 75;
 
+    /// <summary>"jpeg".</summary>
     public string Name => "jpeg";
 
+    /// <summary>".jpg" and ".jpeg".</summary>
     public IReadOnlyCollection<string> Extensions { get; } = [".jpg", ".jpeg"];
 
+    /// <inheritdoc/>
     public byte[] Encode(ImageData image) => JpegEncoder.Encode(image, DefaultQuality);
 
+    /// <inheritdoc/>
     public byte[] Encode(ImageData image, ImageEncodeOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);

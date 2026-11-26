@@ -155,7 +155,7 @@ internal sealed class DriftPose : IGlyphPose
 /// origin on the baseline, the outline's points transformed and filled by the outline rasterizer, below full ink through
 /// a pooled layer of its own. With "none" it is exactly <see cref="TextRenderer.Draw"/>.
 /// </summary>
-internal sealed class GlyphPainter
+public sealed class GlyphPainter
 {
     private readonly IGlyphPose _pose;
     private readonly GlyphPoseSettings _settings;
@@ -163,6 +163,7 @@ internal sealed class GlyphPainter
     private readonly Dictionary<int, float[]> _points = [];       // transformed points, one array per length, reused
     private int _line;
 
+    /// <summary>A painter that draws with <paramref name="pose"/> (named <paramref name="name"/>) at <paramref name="settings"/>, its poses drawn from <paramref name="seed"/>.</summary>
     public GlyphPainter(IGlyphPose pose, string name, GlyphPoseSettings settings, int seed)
     {
         _pose = pose;
@@ -201,7 +202,7 @@ internal sealed class GlyphPainter
 
     /// <summary>The pose <paramref name="name"/> names: the default, "none", reached directly.</summary>
     /// <exception cref="NotSupportedException">Another name: a pose by name is not on the new design yet.</exception>
-    internal static IGlyphPose PoseNamed(string name) =>
+    public static IGlyphPose PoseNamed(string name) =>
         name.Equals(GlyphPoses.None, StringComparison.OrdinalIgnoreCase) ? None : throw new NotSupportedException($"The glyph pose '{name}' by name is not on the new design yet.");
 
     /// <summary>The most a posed glyph's ink moves, in pixels, for text of <paramref name="size"/> whose outlines reach <paramref name="reach"/> pixels from their origins (0 for none).</summary>

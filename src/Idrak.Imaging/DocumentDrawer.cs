@@ -22,14 +22,17 @@ namespace Idrak.Imaging;
 /// is drawn band by band (rows in order), the bands spread over the cores: a large
 /// page at a high resolution holds one band of coverage and colour a core, besides its pixels. Safe from several threads.
 /// </summary>
-internal sealed class CoverageDocumentDrawer : IDocumentPageDrawer
+public sealed class CoverageDocumentDrawer : IDocumentPageDrawer
 {
     private static readonly float[] Levels = [.. Enumerable.Range(0, 256).Select(k => k * (1f / 255f))];
 
+    /// <summary>"coverage".</summary>
     public string Name => DocumentPageDrawers.Coverage;
 
+    /// <summary>One line on what it does.</summary>
     public string Summary => "a page's paths, glyph runs, images, shadings and tilings in content order, under their clips, soft masks and groups, by exact area coverage, band by band";
 
+    /// <inheritdoc/>
     public DocumentDrawing Draw(DocumentPage page, DocumentDrawOptions options)
     {
         ArgumentNullException.ThrowIfNull(page);

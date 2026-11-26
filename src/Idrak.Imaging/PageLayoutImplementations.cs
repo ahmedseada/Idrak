@@ -296,12 +296,15 @@ internal static class PageDrawing
 /// (the page's first header line, a stamp's generic word) are ornament, not the page's text. Their choices come from
 /// seeds of their own, so a page without them is drawn as it was.
 /// </summary>
-internal sealed class LetterLayout : IPageLayout
+public sealed class LetterLayout : IPageLayout
 {
+    /// <summary>"letter".</summary>
     public string Name => "letter";
 
+    /// <summary>One line on what it draws.</summary>
     public string Summary => "an official letter: three-place header with an optional emblem, rule, title, subject, body, signature block with a pen-drawn signature, optional stamp, footer";
 
+    /// <inheritdoc/>
     public RenderedPage Render(PageContent content, PageStyle style, int seed)
     {
         ArgumentNullException.ThrowIfNull(content);
@@ -568,35 +571,48 @@ internal sealed class LetterLayout : IPageLayout
 /// (<c>stamp-ink</c>, 0 to 1, 0.2..0.65), the chance a colour page's stamp is black (<c>stamp-black</c>, 0.2), and the
 /// chance a signature block has a signature drawn over its name (<c>signature</c>, 1).
 /// </summary>
-internal sealed class LetterOrnaments
+public sealed class LetterOrnaments
 {
+    /// <summary>The emblems' shape profiles (<c>emblem-shapes</c>), one drawn per page.</summary>
     public required IReadOnlyList<string> Emblems { get; init; }
 
+    /// <summary>The stamps' shape profiles (<c>stamp-shapes</c>), one drawn per page.</summary>
     public required IReadOnlyList<string> Stamps { get; init; }
 
+    /// <summary>The signatures' shape profiles (<c>signature-shapes</c>), one drawn per page.</summary>
     public required IReadOnlyList<string> Signatures { get; init; }
 
+    /// <summary>The emblem's pen (<c>emblem-pen</c>).</summary>
     public required IPen EmblemPen { get; init; }
 
+    /// <summary>The emblem pen's settings, its own keys of the options.</summary>
     public required PenSettings EmblemPenSettings { get; init; }
 
+    /// <summary>The stamp's pen (<c>stamp-pen</c>).</summary>
     public required IPen StampPen { get; init; }
 
+    /// <summary>The stamp pen's settings, its own keys of the options.</summary>
     public required PenSettings StampPenSettings { get; init; }
 
+    /// <summary>The signature's pen (<c>signature-pen</c>).</summary>
     public required IPen SignaturePen { get; init; }
 
     /// <summary>The signature pen's name, as the options asked for it.</summary>
     public required string SignaturePenName { get; init; }
 
+    /// <summary>The signature pen's settings, its own keys of the options.</summary>
     public required PenSettings SignaturePenSettings { get; init; }
 
+    /// <summary>How far a stamp is turned, in degrees (<c>stamp-turn</c>).</summary>
     public required (float Min, float Max) StampTurn { get; init; }
 
+    /// <summary>How uneven a stamp's ink is, 0 to 1 (<c>stamp-ink</c>).</summary>
     public required (float Min, float Max) StampInk { get; init; }
 
+    /// <summary>The chance a colour page's stamp is black (<c>stamp-black</c>).</summary>
     public required float StampBlack { get; init; }
 
+    /// <summary>The chance a signature block has a signature drawn over its name (<c>signature</c>).</summary>
     public required float Signature { get; init; }
 
     // The signature's default pen, the ballpoint, reached directly with its own keys of the page's options.
@@ -646,12 +662,15 @@ internal sealed class LetterOrnaments
 }
 
 /// <summary>"plain": header lines at the start, a centred title, the subject, the body, centred footer lines; no rule or ornament.</summary>
-internal sealed class PlainLayout : IPageLayout
+public sealed class PlainLayout : IPageLayout
 {
+    /// <summary>"plain".</summary>
     public string Name => "plain";
 
+    /// <summary>One line on what it draws.</summary>
     public string Summary => "a plain page: header lines, title, subject, body, footer; no rule or ornament";
 
+    /// <inheritdoc/>
     public RenderedPage Render(PageContent content, PageStyle style, int seed)
     {
         ArgumentNullException.ThrowIfNull(content);

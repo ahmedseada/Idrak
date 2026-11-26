@@ -18,22 +18,26 @@ namespace Idrak.Imaging.Shaping;
 /// back as it is, nothing allocated. Any other text allocates only the string it gives back: the candidates, their
 /// columns and the algorithm's working space come from the shared array pools.
 /// </summary>
-internal sealed class BidiReadingOrder : IReadingOrder
+public sealed class BidiReadingOrder : IReadingOrder
 {
     private const int Rounds = 8;
 
+    /// <summary>"bidi".</summary>
     public string Name => ReadingOrders.Bidi;
 
+    /// <inheritdoc/>
     public bool? RightToLeft(string text) => FirstStrong.RightToLeft(text);
 
     // The reordering is a method of its own in each direction, so that a line the order leaves as it is (most lines) has
     // only these few lines compiled on its first call.
+    /// <inheritdoc/>
     public string ToColumns(string logical, bool rightToLeft)
     {
         ArgumentNullException.ThrowIfNull(logical);
         return Unchanged(logical, rightToLeft) ? logical : Reordered(logical, rightToLeft);
     }
 
+    /// <inheritdoc/>
     public string FromColumns(string columns, bool rightToLeft)
     {
         ArgumentNullException.ThrowIfNull(columns);
@@ -124,6 +128,7 @@ internal sealed class BidiReadingOrder : IReadingOrder
         }
     }
 
+    /// <summary>One line on what it does.</summary>
     public override string ToString() => "the Unicode bidirectional algorithm (UAX #9), a paragraph of the line's direction";
 
     // Whether every code point of `text` (read as Units reads them) resolves to the paragraph's level, so that the visual
