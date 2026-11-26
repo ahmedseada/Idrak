@@ -15,16 +15,14 @@ namespace Idrak.Gpu.Vulkan;
 /// pipeline once, on the kernel's first dispatch there, and keeps it. <see cref="Writes"/> tells the runtime which
 /// bindings the kernel stores into, so it orders a dispatch after earlier ones only where they touch the same storages.
 /// The library's own kernels are generated in C#; a plug-in ships the words of its own (compiled from GLSL, say) and
-/// dispatches them from a kernel it registers for the "vulkan" kind (<see cref="Kernels.Register{TKernel}(Operation{TKernel}, string, TKernel, Func{Backend, bool})"/>),
-/// on any backend that dispatches Vulkan kernels (<see cref="IVulkanKernelDispatcher"/>).
+/// dispatches them on any backend that dispatches Vulkan kernels (<see cref="IVulkanKernelDispatcher"/>).
 /// </summary>
 /// <example>
 /// <code>
 /// static readonly VulkanKernel Scale = new(ScaleWords, bindings: 3, pushConstantBytes: 8, "my_scale_rows", writes: 0b100);
 ///
-/// Kernels.Register(MyOps.ScaleRows, "vulkan", (b, rows, scales, output, n, width) =&gt;
-///     Scale.Dispatch(b, (uint)Math.Clamp((n + 63) / 64, 1, 65535), 1, 1, [rows, scales, output],
-///         MemoryMarshal.AsBytes&lt;int&gt;([n, width])));
+/// Scale.Dispatch(backend, (uint)Math.Clamp((n + 63) / 64, 1, 65535), 1, 1, [rows, scales, output],
+///     MemoryMarshal.AsBytes&lt;int&gt;([n, width]));
 /// </code>
 /// </example>
 public sealed class VulkanKernel : IDeviceKernel

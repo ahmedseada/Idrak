@@ -9,7 +9,7 @@ namespace Idrak.Gpu.Hip;
 
 // HIP's training operations on its own GCN kernels (GcnKernels.Training.cs), where CUDA runs them on the device and with
 // CUDA's launch rules: the backward passes (unary, softmax, RMS norm, grouped norms, gated activations, extremes,
-// selection, clamps, powers, leaky ReLU), the optimizers (SGD with momentum, Adam, 8-bit Adam, AdamW over many tensors,
+// selection, clamps, powers, leaky ReLU), the optimizers (SGD with momentum, Adam, AdamW over many tensors,
 // the clipping factor, dropout), the reductions (sums of rows, columns, axes, groups and squares, the whole sum,
 // scatter-add, broadcasts, weight norm). Element-wise kernels launch as HIP's element-wise operations (PointwiseBlocks:
 // rule 81, the grid-stride loop takes the rest), row kernels over min(rows, the device's grid) blocks (rule 84). Every sum

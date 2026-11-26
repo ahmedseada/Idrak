@@ -30,7 +30,7 @@ internal sealed unsafe partial class HipBackend : IKernelLauncher<GcnKernel>
 
     /// <summary>
     /// Why plug-ins' GCN kernels cannot run on this device (null when they can): its reported target is not one Idrak
-    /// reads, or no registered family handles it. IDRAK_HIP_KERNELS plays no part (it turns off the library's own kernels).
+    /// reads, or no family handles it. IDRAK_HIP_KERNELS plays no part (it turns off the library's own kernels).
     /// </summary>
     internal string? PluginKernelsUnavailableReason => TargetUnavailable(Name, DeviceLimits.Architecture, out _, out _);
 

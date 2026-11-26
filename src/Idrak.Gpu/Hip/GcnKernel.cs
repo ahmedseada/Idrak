@@ -22,10 +22,8 @@ namespace Idrak.Gpu.Hip;
 /// order with its other work, is timed under <see cref="Name"/> while a profile runs, and reaches the telemetry when the
 /// runtime refuses it, as the library's own kernels do. IDRAK_HIP_KERNELS=0 turns off the library's kernels, not a
 /// plug-in's, as Vulkan's setting leaves a plug-in's SPIR-V and CUDA's plug-in PTX always runs. A plug-in ships the GCN
-/// of its own and launches it from a kernel it registers for the "hip" kind
-/// (<see cref="Kernels.Register{TKernel}(Operation{TKernel}, string, TKernel, Func{Backend, bool})"/>), with the
-/// requirement <c>b =&gt; GcnKernel.UnavailableReason(b) is null</c> so a device no registered GCN family handles runs the
-/// operation's default kernel. It launches on any backend that launches GCN kernels (<see cref="IKernelLauncher{TKernel}"/>).
+/// of its own; <c>GcnKernel.UnavailableReason(backend)</c> is null where it can launch (a device no GCN family handles
+/// cannot). It launches on any backend that launches GCN kernels (<see cref="IKernelLauncher{TKernel}"/>).
 /// Text that does not assemble for a device, a code object the runtime refuses in every format and a refused launch
 /// raise <see cref="HipException"/>; the assembler's refusal names the line and column.
 /// </summary>
@@ -56,8 +54,7 @@ namespace Idrak.Gpu.Hip;
 ///     """;
 /// static readonly GcnKernel Scale = new(ScaleText, "my_scale");
 ///
-/// Kernels.Register(MyOps.Scale, "hip", (b, x, y, scale, n) =&gt; Scale.Launch(b, (uint)((n + 255) / 256), 1, 1, 256, 1, 1, [x, y, scale, n]),
-///     b =&gt; GcnKernel.UnavailableReason(b) is null);
+/// Scale.Launch(backend, (uint)((n + 255) / 256), 1, 1, 256, 1, 1, [x, y, scale, n]);
 /// </code>
 /// </example>
 public sealed class GcnKernel : IDeviceKernel
@@ -197,11 +194,11 @@ public sealed class GcnKernel : IDeviceKernel
     }
 
     /// <summary>
-    /// The text assembled for <paramref name="isa"/> by the registered family that handles it: what a device of that
+    /// The text assembled for <paramref name="isa"/> by the family that handles it: what a device of that
     /// target loads. A text the assembler refuses raises <see cref="GcnSyntaxException"/> (its line and column) or
     /// <see cref="GcnAllocationException"/> (its registers past the declared block's budget).
     /// </summary>
-    /// <exception cref="NotRegisteredException">No registered family handles the target.</exception>
+    /// <exception cref="NotSupportedException">No family handles the target.</exception>
     internal GcnKernelCode Assemble(GcnIsaVersion isa)
     {
         var target = GcnTargets.For(isa);
@@ -209,7 +206,7 @@ public sealed class GcnKernel : IDeviceKernel
         return asm.AssembleKernel(Text);
     }
 
-    // The declarations, read by the assembler of a registered family (the directives are Idrak's syntax, the same for every family).
+    // The declarations, read by the assembler of a family (the directives are Idrak's syntax, the same for every family).
     private static GcnKernelDeclarations ReadDeclarations(byte[] text)
     {
         foreach (var target in GcnTargets.All)
@@ -230,7 +227,7 @@ public sealed class GcnKernel : IDeviceKernel
             }
         }
 
-        throw new NotRegisteredException(nameof(GcnTargets), "any", GcnTargets.Names, "No registered GCN family's assembler reads a kernel's text.");
+        throw new NotSupportedException("No GCN family's assembler reads a kernel's text.");
     }
 
     // One letter an argument (see Parameters).

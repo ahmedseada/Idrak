@@ -4,7 +4,7 @@
 namespace Idrak.Gpu.Vulkan;
 
 // Training kernels: the layer-norm gradient, grouped normalization (batch norm) and its reductions, column sums, the
-// fused AdamW and 8-bit Adam updates, and the gradient of tiled causal attention. Every sum is taken in a fixed order
+// fused AdamW updates, and the gradient of tiled causal attention. Every sum is taken in a fixed order
 // (partial sums per split, then added split by split), so results are the same run after run; nothing uses atomics.
 internal static partial class VulkanKernels
 {
@@ -306,21 +306,6 @@ internal static partial class VulkanKernels
     {
         var q = n / d;
         return k.Fma(k.Fma(-q, d, n), 1f / d, q);
-    }
-
-    // The code of the sorted 256-entry map at map[base …] nearest to x, as EightBitMoments.Nearest finds it.
-    private static Val NearestCode(KernelBuilder k, Buf map, int start, Val x)
-    {
-        var lo = k.Local(0);
-        for (int step = 128; step > 0; step >>= 1)
-        {
-            int s = step;
-            k.If(map[lo.V + (start + s)] <= x, () => lo.V = lo.V + s);
-        }
-
-        var at = lo.V;
-        k.If(at < 255, () => k.If(map[at + (start + 1)] - x < x - map[at + start], () => lo.V = at + 1));
-        return lo.V;
     }
 
     // Dimensions of a head each invocation of the attention gradients keeps (the head size up to AttentionMaxDim over the width).

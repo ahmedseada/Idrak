@@ -1184,7 +1184,7 @@ internal enum GcnHazardFixes : byte
 /// it follows, its instructions (by meaning and by mnemonic), the features each version has, and the operand codes of
 /// its special registers; and, for kernels written with virtual registers, its wait counters and hazards. A family
 /// without it is described by the code object writer but not assembled for. Internal: only the library's assembler
-/// reads it, and an app's family (<see cref="GcnTargets.Register"/>) describes code objects without encoding instructions.
+/// reads it.
 /// </summary>
 internal interface IGcnInstructionSet
 {

@@ -8,9 +8,7 @@ namespace Idrak.Gpu.Abstractions;
 
 /// <summary>
 /// A compute kernel a plug-in ships for one kind of device: PTX text (<see cref="Cuda.CudaKernel"/>), GCN text
-/// (<see cref="Hip.GcnKernel"/>) or SPIR-V words (<see cref="Vulkan.VulkanKernel"/>), launched from a kernel the plug-in
-/// registers for that kind (<see cref="Kernels.Register{TKernel}(Operation{TKernel}, string, TKernel, Func{Backend, bool})"/>).
-/// It runs on any backend that launches kernels of its type (<see cref="IKernelLauncher{TKernel}"/>,
+/// (<see cref="Hip.GcnKernel"/>) or SPIR-V words (<see cref="Vulkan.VulkanKernel"/>). It runs on any backend that launches kernels of its type (<see cref="IKernelLauncher{TKernel}"/>,
 /// <see cref="IVulkanKernelDispatcher"/>): the library's backend of the kind implements it, and so may a backend
 /// that drives the same hardware in its own way.
 /// </summary>

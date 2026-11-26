@@ -6,7 +6,7 @@ using System.Numerics;
 namespace Idrak.Gpu.Vulkan;
 
 // Training operations as generated kernels (VulkanKernels.Training.cs): the layer-norm gradient, grouped normalization
-// and its reductions, column sums, the product with a bias, AdamW over many tensors, 8-bit Adam and the gradient of
+// and its reductions, column sums, the product with a bias, AdamW over many tensors and the gradient of
 // tiled causal attention. Reductions run in two passes, partial sums per split and then the splits, in the two-pass
 // reductions' one order (VulkanKernels.Order.cs), so a shape gives the same bits run after run and whatever its split
 // count, width or reductions; the split counts come from the width, or are measured per shape (VulkanTuneOp.Splits).

@@ -5,7 +5,7 @@ using System.Globalization;
 
 namespace Idrak.Gpu.Vulkan;
 
-// The ranks of a cluster run rank 0's measured choices (ClusterOptions.ShareTuning, IMeasuredChoicesProvider): the kernel
+// The ranks of a cluster run rank 0's measured choices (ClusterOptions.ShareTuning): the kernel
 // choices of VulkanBackend.KernelTuning.cs and the workgroup width of VulkanBackend.WidthProbe.cs, since both decide which
 // kernel runs and so the last bits of a result (the attention path, the tiled against the decoding kernel and the span
 // widths use online against two-pass softmax; a cooperative-matrix product sums in an order the hardware defines). The
@@ -268,32 +268,3 @@ internal sealed partial class VulkanBackend
     internal bool TryTunedForTests(VulkanTuneKey key, out int value) => TryTuned(key, out value);
 }
 
-/// <summary>The Vulkan backend's measured choices between the ranks of a cluster (VulkanBackend.SharedTuning.cs).</summary>
-internal sealed class VulkanMeasuredChoices : IMeasuredChoicesProvider
-{
-    public string Name => "vulkan";
-
-    public string Summary => "the Vulkan kernels' measured choices (variants, splits, attention paths) and the workgroup width, per device and driver";
-
-    public bool Handles(Backend backend) => backend is VulkanBackend;
-
-    public MeasuredChoices Export(Backend backend) => Of(backend).ExportChoices();
-
-    public MeasuredChoicesResult Import(Backend backend, MeasuredChoices choices)
-    {
-        ArgumentNullException.ThrowIfNull(choices);
-        return Of(backend).ImportChoices(choices);
-    }
-
-    public MeasuredChoicesResult Follow(Backend follower, Backend leader)
-    {
-        var mine = Of(follower);
-        return leader is VulkanBackend vulkan ? mine.FollowChoices(vulkan)
-            : new MeasuredChoicesResult(false, 0, $"kept its own: rank 0 runs on another kind of device ({leader.Kind}: {leader.Name}) than {mine.Name}");
-    }
-
-    public void Leave(Backend follower) => Of(follower).LeaveChoices();
-
-    private static VulkanBackend Of(Backend backend) => backend as VulkanBackend
-        ?? throw new ArgumentException($"{backend?.Name ?? "null"} is not a Vulkan backend.", nameof(backend));
-}

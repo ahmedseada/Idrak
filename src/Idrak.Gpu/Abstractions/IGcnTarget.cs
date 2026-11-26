@@ -143,8 +143,8 @@ public readonly record struct GcnDescriptorBits(uint Rsrc1, uint Rsrc3, ushort C
 /// <summary>
 /// One family of GCN instruction sets (gfx9: GCN 5 and CDNA's first targets; gfx10: RDNA 1 and 2; gfx11: RDNA 3; later
 /// gfx12), chosen by the version the device reports (<see cref="GcnIsaVersion"/>), never by its name: its wave sizes,
-/// register files, kernel descriptor encoding and the code object's ELF flags. Register one with <see cref="GcnTargets.Register"/>; the
-/// assembler and the code object writer look a device's family up there.
+/// register files, kernel descriptor encoding and the code object's ELF flags. The assembler and the code object writer
+/// take a device's family from <see cref="GcnTargets"/>.
 /// </summary>
 public interface IGcnTarget
 {
@@ -192,46 +192,23 @@ public interface IGcnTarget
 }
 
 /// <summary>
-/// The GCN target families by name. Built in (Idrak.Gpu): "gfx9" (GCN 5 and CDNA's gfx9 targets without a unified
-/// register file), "gfx10" (RDNA 1 and 2) and "gfx11" (RDNA 3), the RDNA families in waves of 64. Register another family, or replace one, with <see cref="Register"/>; families an app registers are
-/// asked first. A device whose version no family handles is refused, naming the target it reported.
+/// The GCN target families: "gfx9" (GCN 5 and CDNA's gfx9 targets without a unified register file), "gfx10" (RDNA 1 and
+/// 2) and "gfx11" (RDNA 3), the RDNA families in waves of 64. HIP picks the family of a device by its ISA, through each
+/// family's own <see cref="IGcnTarget.Handles"/>, from this fixed list. A device whose version no family handles is
+/// refused, naming the target it reported.
 /// </summary>
 public static partial class GcnTargets
 {
-    // The library's families are its defaults (BuiltIn, in src/Idrak.Gpu/Hip/GcnTargets.cs), registered when the table is made.
-    private static readonly SlotTable<string, IGcnTarget> Table = BuiltIn();
+    // The families, in the order they are asked (the newest first): a fixed list, built once.
+    private static readonly IGcnTarget[] Fixed = [Families.Gfx11, Families.Gfx10, new Gfx9()];
 
-    /// <summary>The registered family names, the newest first.</summary>
-    public static IReadOnlyList<string> Names => Table.Keys;
+    /// <summary>The families, in the order they are asked.</summary>
+    public static IReadOnlyList<IGcnTarget> All => Fixed;
 
-    /// <summary>The registered families, in the order they are asked.</summary>
-    public static IReadOnlyList<IGcnTarget> All => Table.Values;
-
-    /// <summary>Registers <paramref name="target"/> under its family name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IGcnTarget target)
-    {
-        ArgumentNullException.ThrowIfNull(target);
-        ArgumentException.ThrowIfNullOrWhiteSpace(target.Family);
-        Table.Register(target.Family, target, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's family of that name (the library's, if any, answers again); false when the app registered none.</summary>
-    public static bool Unregister(string family) => Table.Unregister(family);
-
-    /// <summary>The family registered as <paramref name="family"/>, or null.</summary>
-    public static IGcnTarget? Find(string family) => Table.Find(family);
-
-    /// <summary>The library's family of that name, whatever an app registered over it; null when the library has none.</summary>
-    public static IGcnTarget? Default(string family) => Table.Default(family);
-
-    /// <summary>Who registered the family: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string family) => Table.Origin(family);
-
-    /// <summary>The first registered family that handles <paramref name="isa"/>; false when none does.</summary>
+    /// <summary>The first family that handles <paramref name="isa"/>; false when none does.</summary>
     public static bool TryFor(GcnIsaVersion isa, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IGcnTarget? target)
     {
-        foreach (var candidate in Table.Values)
+        foreach (var candidate in Fixed)
         {
             if (candidate.Handles(isa))
             {
@@ -245,21 +222,20 @@ public static partial class GcnTargets
     }
 
     /// <summary>The family that handles <paramref name="isa"/>.</summary>
-    /// <exception cref="NotRegisteredException">No registered family does; the message names the target and the families.</exception>
-    public static IGcnTarget For(GcnIsaVersion isa) => TryFor(isa, out var target) ? target : throw NotRegistered(isa.ToString(), isa);
+    /// <exception cref="NotSupportedException">No family does; the message names the target and the families.</exception>
+    public static IGcnTarget For(GcnIsaVersion isa) => TryFor(isa, out var target) ? target : throw Unhandled(isa.ToString(), isa);
 
     /// <summary>The family that handles the target string a device reports (<c>gfx90c:xnack-</c>).</summary>
     /// <exception cref="FormatException">The string is not a target string.</exception>
-    /// <exception cref="NotRegisteredException">No registered family handles it; the message names the reported target.</exception>
+    /// <exception cref="NotSupportedException">No family handles it; the message names the reported target.</exception>
     public static IGcnTarget For(string reported)
     {
         ArgumentNullException.ThrowIfNull(reported);
         var isa = GcnIsaVersion.Parse(reported);
-        return TryFor(isa, out var target) ? target : throw NotRegistered(reported, isa);
+        return TryFor(isa, out var target) ? target : throw Unhandled(reported, isa);
     }
 
-    private static NotRegisteredException NotRegistered(string reported, GcnIsaVersion isa) =>
-        new(nameof(GcnTargets), reported, Names,
-            $"The GCN target '{reported}' (ISA {isa.Major}.{isa.Minor}.{isa.Stepping}) is not registered: no GCN target family handles it "
-            + $"(registered: {string.Join(", ", Names)}); add one with GcnTargets.Register.");
+    private static NotSupportedException Unhandled(string reported, GcnIsaVersion isa) =>
+        new($"No GCN target family handles the target '{reported}' (ISA {isa.Major}.{isa.Minor}.{isa.Stepping}); the families: "
+            + $"{string.Join(", ", Fixed.Select(f => f.Family))}.");
 }

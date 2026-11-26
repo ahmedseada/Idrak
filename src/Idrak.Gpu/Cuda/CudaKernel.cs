@@ -16,17 +16,14 @@ namespace Idrak.Gpu.Cuda;
 /// declared <c>.ptr</c>), <c>.u32</c>/<c>.s32</c> an integer, <c>.f32</c> a float, <c>.b32</c> either. A launch goes on
 /// the device's stream, in order with its other work, and into a CUDA graph while one records. The library's own kernels
 /// are generated in C#; a plug-in ships the PTX of its own (from <c>nvcc -ptx</c>, say: target the oldest
-/// architecture it supports, the driver compiles it for newer ones) and launches it from a kernel it registers for the
-/// "cuda" kind (<see cref="Kernels.Register{TKernel}(Operation{TKernel}, string, TKernel, Func{Backend, bool})"/>). It
-/// launches on any backend that launches CUDA kernels (<see cref="IKernelLauncher{TKernel}"/>). Driver errors (a PTX the
+/// architecture it supports, the driver compiles it for newer ones). It launches on any backend that launches CUDA kernels (<see cref="IKernelLauncher{TKernel}"/>). Driver errors (a PTX the
 /// JIT compiler refuses, a failed launch) raise <see cref="CudaException"/>.
 /// </summary>
 /// <example>
 /// <code>
 /// static readonly CudaKernel Scale = new(ScalePtx, "my_scale_rows");
 ///
-/// Kernels.Register(MyOps.ScaleRows, "cuda", (b, rows, scales, output, n, width) =&gt;
-///     Scale.Launch(b, (uint)Math.Clamp((n + 255) / 256, 1, 65535), 1, 1, 256, 1, 1, [rows, scales, output, n, width]));
+/// Scale.Launch(backend, (uint)Math.Clamp((n + 255) / 256, 1, 65535), 1, 1, 256, 1, 1, [rows, scales, output, n, width]);
 /// </code>
 /// </example>
 public sealed class CudaKernel : IDeviceKernel

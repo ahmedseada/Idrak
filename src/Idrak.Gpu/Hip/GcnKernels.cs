@@ -46,7 +46,7 @@ internal static partial class GcnKernels
     }
 
     /// <summary>One code object of every kernel (<see cref="AssembleAll"/>) for <paramref name="isa"/> in format <paramref name="format"/>.</summary>
-    /// <exception cref="NotRegisteredException">No registered family handles the target.</exception>
+    /// <exception cref="NotSupportedException">No family handles the target.</exception>
     internal static byte[] CodeObject(GcnIsaVersion isa, int format)
     {
         var target = GcnTargets.For(isa);
@@ -58,7 +58,7 @@ internal static partial class GcnKernels
     /// and as Idrak's assembler prints it for <paramref name="isa"/> (physical registers, waits and wait states, LLVM's
     /// syntax), in <see cref="All"/>'s order.
     /// </summary>
-    /// <exception cref="NotRegisteredException">No registered family handles the target.</exception>
+    /// <exception cref="NotSupportedException">No family handles the target.</exception>
     internal static IReadOnlyList<(string Name, string Virtual, string Physical)> Dump(GcnIsaVersion isa)
     {
         var target = GcnTargets.For(isa);
@@ -76,7 +76,7 @@ internal static partial class GcnKernels
 
     /// <summary>
     /// The target <c>idrak kernels dump gcn</c> prints for without one given: the first HIP device's reported target when
-    /// there is one a family handles, else the first processor a registered family handles (format data, no card chosen).
+    /// there is one a family handles, else the first processor a family handles (format data, no card chosen).
     /// </summary>
     internal static GcnIsaVersion DefaultTarget()
     {
@@ -93,7 +93,7 @@ internal static partial class GcnKernels
             }
         }
 
-        throw new NotRegisteredException(nameof(GcnTargets), "any", GcnTargets.Names, "No registered GCN family handles any processor Idrak knows.");
+        throw new NotSupportedException("No GCN family handles any processor Idrak knows.");
     }
 
     /// <summary>The block <c>fill_f32</c> is written for (its required workgroup size): one element a work-item.</summary>
@@ -146,7 +146,7 @@ internal static partial class GcnKernels
     }
 
     /// <summary>The code object of <c>fill_f32</c> for <paramref name="isa"/> in code object format <paramref name="format"/>.</summary>
-    /// <exception cref="NotRegisteredException">No registered family handles the target.</exception>
+    /// <exception cref="NotSupportedException">No family handles the target.</exception>
     internal static byte[] FillCodeObject(GcnIsaVersion isa, int format)
     {
         var target = GcnTargets.For(isa);

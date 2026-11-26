@@ -516,36 +516,3 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
     }
 }
 
-/// <summary>
-/// HIP devices: listed (a plain test run covers them), never the default unless IDRAK_HIP_DEFAULT=1 opts in, and then
-/// after CUDA (registered first, ranked higher) and before Vulkan, discrete GPUs before integrated ones as reported.
-/// </summary>
-internal sealed class HipProvider : ISeparableDeviceProvider
-{
-    public string Name => "hip";
-
-    public string Summary => "GPUs through the HIP runtime (the graphics driver's; Idrak's own GCN kernels)";
-
-    public string Display => "HIP";
-
-    public DeviceType Type => DeviceType.Hip;
-
-    public int Count => HipBackend.DeviceCount;
-
-    public string? UnavailableReason => HipBackend.UnavailableReason;
-
-    public Backend Create(int ordinal) => HipBackend.Get(ordinal);
-
-    public Backend CreateSeparate(int ordinal, SeparateBackendOptions options) => HipBackend.CreateSeparate(ordinal, options);
-
-    public bool IsStarted(int ordinal) => HipBackend.IsInitialized(ordinal);
-
-    public Guid? DeviceUuid(int ordinal) => (uint)ordinal < (uint)Count ? HipBackend.Limits(ordinal).Uuid : null;
-
-    // Untested on real hardware so far, and most operations still take the host fallback: by name or by opting in.
-    public int? DefaultRank(int ordinal) => Environment.GetEnvironmentVariable("IDRAK_HIP_DEFAULT") != "1" ? null
-        : HipBackend.Limits(ordinal).Integrated ? 45 : 60;
-
-    public string? Note(int ordinal) =>
-        DefaultRank(ordinal) is null ? "not the default device (IDRAK_HIP_DEFAULT=1 to prefer it)" : null;
-}

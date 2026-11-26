@@ -20,7 +20,7 @@ namespace Idrak.Gpu.Hip;
 // or assembled (cold), with its time and size (rules 76, 78).
 //
 // The kernels are unavailable, with the reason KernelsUnavailableReason gives and every operation through the host
-// fallback, when IDRAK_HIP_KERNELS=0 turns them off, the device reports a target no registered family handles (or one
+// fallback, when IDRAK_HIP_KERNELS=0 turns them off, the device reports a target no family handles (or one
 // Idrak does not read), its limits are implausible, or the runtime refuses the code object in every format.
 internal sealed unsafe partial class HipBackend
 {
@@ -143,7 +143,7 @@ internal sealed unsafe partial class HipBackend
             target = GcnTargets.For(reported);
             return null;
         }
-        catch (NotRegisteredException e)
+        catch (NotSupportedException e)
         {
             return $"no GCN code can be written for {device}: {e.Message}";
         }

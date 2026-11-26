@@ -6,7 +6,7 @@ using static Idrak.Gpu.Cuda.CudaDriver;
 
 namespace Idrak.Gpu.Cuda;
 
-// The ranks of a cluster run rank 0's measured choices (ClusterOptions.ShareTuning, IMeasuredChoicesProvider): every choice
+// The ranks of a cluster run rank 0's measured choices (ClusterOptions.ShareTuning): every choice
 // of CudaBackend.Tuning.cs (splits, tiles, kernel variants, the attention path and the span kernels), since several pick
 // different algorithms whose results differ in the last bits. Only choices of the same GPU (its UUID), driver and library
 // build are taken (ChoicesIdentity: the tuning cache's identity with the UUID); another rank keeps its own.
@@ -228,32 +228,3 @@ internal sealed unsafe partial class CudaBackend
     }
 }
 
-/// <summary>The CUDA backend's measured choices between the ranks of a cluster (CudaBackend.SharedTuning.cs).</summary>
-internal sealed class CudaMeasuredChoices : IMeasuredChoicesProvider
-{
-    public string Name => "cuda";
-
-    public string Summary => "the CUDA kernels' measured choices (splits, tiles, variants, attention paths), per GPU, driver and library build";
-
-    public bool Handles(Backend backend) => backend is CudaBackend;
-
-    public MeasuredChoices Export(Backend backend) => Of(backend).ExportChoices();
-
-    public MeasuredChoicesResult Import(Backend backend, MeasuredChoices choices)
-    {
-        ArgumentNullException.ThrowIfNull(choices);
-        return Of(backend).ImportChoices(choices);
-    }
-
-    public MeasuredChoicesResult Follow(Backend follower, Backend leader)
-    {
-        var mine = Of(follower);
-        return leader is CudaBackend cuda ? mine.FollowChoices(cuda)
-            : new MeasuredChoicesResult(false, 0, $"kept its own: rank 0 runs on another kind of device ({leader.Kind}: {leader.Name}) than {mine.Name}");
-    }
-
-    public void Leave(Backend follower) => Of(follower).LeaveChoices();
-
-    private static CudaBackend Of(Backend backend) => backend as CudaBackend
-        ?? throw new ArgumentException($"{backend?.Name ?? "null"} is not a CUDA backend.", nameof(backend));
-}

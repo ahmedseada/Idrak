@@ -11,18 +11,7 @@ public static partial class GcnTargets
     /// <summary>The code object formats a family writes ELF flags for: 4 and 5 (the same flags; 6 adds generic targets).</summary>
     internal static ReadOnlySpan<int> FlagFormats => [4, 5];
 
-    private static SlotTable<string, IGcnTarget> BuiltIn()
-    {
-        var table = new SlotTable<string, IGcnTarget>(nameof(GcnTargets), comparer: StringComparer.Ordinal, newestFirst: true,
-            unguarded: "a family's encodings are written into code objects whole, with no call to fall back at");
-        var gfx9 = new Gfx9();
-        table.RegisterDefault(gfx9.Family, gfx9);
-        table.RegisterDefault(Families.Gfx10.Family, Families.Gfx10);
-        table.RegisterDefault(Families.Gfx11.Family, Families.Gfx11);
-        return table;
-    }
-
-    // The later families' one instance each, made when first asked for (by the registry or the tests), whatever order the
+    // The later families' one instance each, made when first asked for (by the fixed list or the tests), whatever order the
     // partial files' static fields are set in.
     private static class Families
     {

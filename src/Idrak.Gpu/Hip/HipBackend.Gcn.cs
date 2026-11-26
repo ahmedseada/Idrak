@@ -105,7 +105,7 @@ internal sealed unsafe partial class HipBackend
     /// the runtime refuses one (to load it, or to find the kernel in it).
     /// </summary>
     /// <exception cref="HipException">
-    /// The device reports no target Idrak reads, no registered family handles it, or the runtime refused every format; the
+    /// The device reports no target Idrak reads, no family handles it, or the runtime refused every format; the
     /// message names the target, each format tried with the runtime's error, and the runtime.
     /// </exception>
     internal GcnFunction LoadGcn(Func<IGcnTarget, GcnKernelCode> kernel)
@@ -122,7 +122,7 @@ internal sealed unsafe partial class HipBackend
         {
             target = GcnTargets.For(reported);
         }
-        catch (NotRegisteredException e)
+        catch (NotSupportedException e)
         {
             throw new HipException($"No GCN code can be written for {Name}: {e.Message}");
         }

@@ -9,7 +9,7 @@ namespace Idrak.Gpu.Hip;
 // HIP's training kernels in GCN (plan 35, G5b), with CUDA's names and arguments where CUDA has the kernel
 // (PtxKernels.cs, .Advanced.cs, .Pointwise.cs, .Decoder.cs, .Rows.cs, .SpansBackward.cs) and the CPU backend's results
 // (CpuBackend*.cs) within the device-against-CPU tolerance: the backward passes (unary, softmax, RMS norm, grouped norms,
-// gated activations, extremes, selection, clamps, powers, leaky ReLU), the optimizers (SGD with momentum, Adam, 8-bit Adam,
+// gated activations, extremes, selection, clamps, powers, leaky ReLU), the optimizers (SGD with momentum, Adam,
 // AdamW over many tensors with its clipping norm, the clipping factor, dropout), the reductions (sums of rows, columns,
 // axes, groups and squares, the whole sum, scatter-add, broadcasts, weight norm) and the attention backward passes
 // (GcnKernels.TrainingAttention below; tiled over a cache and over key ranges).
@@ -108,9 +108,6 @@ namespace Idrak.Gpu.Hip;
 // their flag bit clear, as CUDA passes them; the kernels never touch them.
 internal static partial class GcnKernels
 {
-    /// <summary>Elements a quantization block of 8-bit Adam holds (EightBitMoments.BlockSize): one a thread of the block.</summary>
-    internal const int Adam8Block = 256;
-
     /// <summary>Elements one chunk of the many-tensor AdamW takes (CUDA's 4,096): a block a chunk.</summary>
     internal const int MultiAdamChunk = 4096;
 
@@ -148,7 +145,6 @@ internal static partial class GcnKernels
         NormBackward(),
         SgdMomentum(),
         Adam(),
-        Adam8(),
         MultiSumSquares(),
         MultiAdamW(),
         ClipFactor(),
@@ -1440,149 +1436,6 @@ internal static partial class GcnKernels
     }
 
     // ---- Optimizers over blocks and chunks -------------------------------------------------------------------------
-
-    // 8-bit Adam (Backend.AdamStep8Bit): one block a quantization block of 256 elements, one a thread. The two code maps
-    // go to LDS once; the moments are decoded with the block's old scales, updated as the CPU updates them (correctly
-    // rounded square root and division), the block's new scales are its maxima (one tree), and each moment is encoded to
-    // its nearest code by binary search (EightBitMoments.Nearest). count = elements, n = blocks.
-    private static GcnKernelSource Adam8()
-    {
-        var w = new RowWriter("adam8_f32", arrays: 2, extraLds: 2048);
-        var a = w.Arguments(["p", "g", "m", "v", "absmax", "map"], ["lr", "b1", "b2", "c1", "c2", "eps", "count", "gscale", "decay", "n"]);
-        string p = a.Pointer("p"), g = a.Pointer("g"), m = a.Pointer("m"), v = a.Pointer("v"), absmax = a.Pointer("absmax"), map = a.Pointer("map");
-        string lr = a.Scalar("lr"), b1 = a.Scalar("b1"), b2 = a.Scalar("b2"), c1 = a.Scalar("c1"), c2 = a.Scalar("c2"), eps = a.Scalar("eps");
-        string count = a.Scalar("count"), gscale = a.Scalar("gscale"), decay = a.Scalar("decay"), n = a.Scalar("n");
-        int signedLds = w.ExtraLdsBase, unsignedLds = signedLds + 1024;
-        string tid4 = w.V(), s0 = w.V(), u0 = w.V(), at = w.V();
-        w.L($"""
-            v_lshlrev_b32_e32 {tid4}, 2, {w.Tid}
-            global_load_dword {s0}, {tid4}, {map}
-            global_load_dword {u0}, {tid4}, {map} offset:1024
-            v_add_u32_e32 {at}, 0x{signedLds:x}, {tid4}
-            ds_write_b32 {at}, {s0}
-            ds_write_b32 {at}, {u0} offset:1024
-            s_barrier
-            """);
-        w.BeginRows(n);
-        string first = w.S(), upper = w.S(), i = w.V(), off = w.V(), active = w.SPair(), saved = w.SPair();
-        string mb = w.V(), vb = w.V(), gv = w.V(), pv = w.V(), mScale = w.V(), vScale = w.V();
-        w.L($"""
-            s_lshl_b32 {first}, {w.Row}, 8
-            v_add_u32_e32 {i}, {first}, {w.Tid}
-            v_lshlrev_b32_e32 {off}, 2, {i}
-            s_add_u32 {upper}, {n}, {w.Row}
-            """);
-        string mAt = w.ElementAddress(absmax, w.Row), vAt = w.ElementAddress(absmax, upper);
-        w.L($"""
-            global_load_dword {mScale}, {w.Zero}, {mAt}
-            global_load_dword {vScale}, {w.Zero}, {vAt}
-            v_mov_b32_e32 {mb}, 0
-            v_mov_b32_e32 {vb}, 0
-            v_mov_b32_e32 {gv}, 0
-            v_mov_b32_e32 {pv}, 0
-            v_cmp_gt_u32_e64 {active}, {count}, {i}
-            s_and_saveexec_b64 {saved}, {active}
-            global_load_ubyte {mb}, {i}, {m}
-            global_load_ubyte {vb}, {i}, {v}
-            global_load_dword {gv}, {off}, {g}
-            global_load_dword {pv}, {off}, {p}
-            s_or_b64 exec, exec, {saved}
-            """);
-        string grad = w.V(), decayed = w.V(), mq = w.V(), vq = w.V(), t = w.V(), mom = w.V(), u = w.V(), vel = w.V();
-        w.L($"""
-            v_mul_f32_e32 {grad}, {gscale}, {gv}
-            v_mul_f32_e32 {decayed}, {decay}, {pv}
-            v_lshlrev_b32_e32 {t}, 2, {mb}
-            ds_read_b32 {mq}, {t} offset:{signedLds}
-            v_lshlrev_b32_e32 {u}, 2, {vb}
-            ds_read_b32 {vq}, {u} offset:{unsignedLds}
-            v_mul_f32_e32 {mq}, {mq}, {mScale}
-            v_mul_f32_e32 {vq}, {vq}, {vScale}
-            v_mul_f32_e32 {t}, {c1}, {grad}
-            v_fma_f32 {mom}, {b1}, {mq}, {t}
-            v_mul_f32_e32 {u}, {grad}, {grad}
-            v_mul_f32_e32 {u}, {c2}, {u}
-            v_fma_f32 {vel}, {b2}, {vq}, {u}
-            """);
-        string root = w.V(), q = w.V(), updated = w.V();
-        RowMath(w, pw =>
-        {
-            pw.Sqrt(root, vel);
-            pw.I(TrainingText($"v_add_f32_e32 {root}, {eps}, {root}"));
-            pw.Div(q, mom, root);
-        });
-        w.L($"""
-            v_mul_f32_e32 {q}, {lr}, {q}
-            v_sub_f32_e32 {updated}, {decayed}, {q}
-            s_and_saveexec_b64 {saved}, {active}
-            global_store_dword {off}, {updated}, {p}
-            s_or_b64 exec, exec, {saved}
-            """);
-        string mom0 = w.V(), vel0 = w.V(), am = w.V(), vm = w.V();
-        w.L($"""
-            v_cndmask_b32_e64 {mom0}, 0, {mom}, {active}
-            v_cndmask_b32_e64 {vel0}, 0, {vel}, {active}
-            v_and_b32_e32 {am}, 0x7fffffff, {mom0}
-            v_mov_b32_e32 {vm}, {vel0}
-            """);
-        w.Reduce(TrainingMax, am, vm);
-        string mn = w.V(), vn = w.V();
-        RowMath(w, pw =>
-        {
-            pw.Div(mn, mom0, am);
-            pw.Div(vn, vel0, vm);
-        });
-        w.L($"""
-            v_cmp_lt_f32_e32 vcc, 0, {am}
-            v_cndmask_b32_e32 {mn}, 0, {mn}, vcc
-            v_cmp_lt_f32_e32 vcc, 0, {vm}
-            v_cndmask_b32_e32 {vn}, 0, {vn}, vcc
-            """);
-        string mc = Adam8Encode(w, mn, signedLds), vc = Adam8Encode(w, vn, unsignedLds);
-        w.L($"""
-            s_and_saveexec_b64 {saved}, {active}
-            global_store_byte {i}, {mc}, {m}
-            global_store_byte {i}, {vc}, {v}
-            s_or_b64 exec, exec, {saved}
-            """);
-        w.StoreFirstLane((mAt, am), (vAt, vm));
-        w.EndRows();
-        return w.Source();
-    }
-
-    // The index of the code nearest x in the sorted map of 256 codes at LDS `table` (EightBitMoments.Nearest).
-    private static string Adam8Encode(RowWriter w, string x, int table)
-    {
-        string lo = w.V(), cand = w.V(), at = w.V(), value = w.V();
-        w.L($"v_mov_b32_e32 {lo}, 0");
-        for (int step = 128; step > 0; step >>= 1)
-        {
-            w.L($"""
-                v_add_u32_e32 {cand}, 0x{step:x}, {lo}
-                v_lshlrev_b32_e32 {at}, 2, {cand}
-                ds_read_b32 {value}, {at} offset:{table}
-                v_cmp_le_f32_e32 vcc, {value}, {x}
-                v_cndmask_b32_e32 {lo}, {lo}, {cand}, vcc
-                """);
-        }
-
-        string low = w.V(), high = w.V(), up = w.V(), d1 = w.V(), d2 = w.V(), next = w.V(), closer = w.SPair();
-        w.L($"""
-            v_lshlrev_b32_e32 {at}, 2, {lo}
-            ds_read_b32 {low}, {at} offset:{table}
-            v_min_u32_e32 {up}, 0xfe, {lo}
-            v_lshlrev_b32_e32 {up}, 2, {up}
-            ds_read_b32 {high}, {up} offset:{table + 4}
-            v_sub_f32_e32 {d1}, {high}, {x}
-            v_sub_f32_e32 {d2}, {x}, {low}
-            v_cmp_lt_f32_e64 {closer}, {d1}, {d2}
-            v_cmp_gt_u32_e32 vcc, 0xff, {lo}
-            s_and_b64 vcc, vcc, {closer}
-            v_add_u32_e32 {next}, 1, {lo}
-            v_cndmask_b32_e32 {lo}, {lo}, {next}, vcc
-            """);
-        return lo;
-    }
 
     // A chunk of the many-tensor optimizer (block = chunk): its table entry's address (40 bytes a tensor: the parameter,
     // gradient and moment pointers, then the count), its first element and its end (min(first + 4,096, count)).

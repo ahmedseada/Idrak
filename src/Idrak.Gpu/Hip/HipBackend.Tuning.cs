@@ -16,14 +16,14 @@ namespace Idrak.Gpu.Hip;
 // Nothing is measured while a profile times the launches or the runtime lacks events. Choices are kept per device (its
 // name, target, compute units, memory), runtime and driver, and library build with its GCN kernels, in the cache folder's
 // tuning/hip/ (TuningCache's format; IDRAK_TUNING_CACHE=0 keeps none), and shared between a cluster's ranks
-// (HipMeasuredChoices). Not measured yet: the finish form (IDRAK_HIP_FINISH), attention's splits and rows, the
+// (ClusterOptions.ShareTuning). Not measured yet: the finish form (IDRAK_HIP_FINISH), attention's splits and rows, the
 // element-wise grids and the add-and-norm product (its tail is not safe to run twice); their settings and formulas decide.
 internal sealed unsafe partial class HipBackend
 {
     /// <summary>Measure device-dependent choices (default); off (IDRAK_AUTOTUNE=0): the defaults and formulas only.</summary>
     internal static bool Autotune { get; set; } = !Idrak.Abstraction.Devices.TuningFiles.IsOff(Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE"));
 
-    // This backend's choices (null until first needed), or a cluster leader's it follows (HipMeasuredChoices).
+    // This backend's choices (null until first needed), or a cluster leader's it follows (ClusterOptions.ShareTuning).
     private HipTuningTable? _tuning;
     private HipBackend? _leader;
     private (IntPtr Start, IntPtr End) _tuneEvents;
@@ -176,7 +176,7 @@ internal sealed unsafe partial class HipBackend
         return candidates[TuneTiming.Choose(candidates, fallback, i => time(candidates[i], repeats[i]) / repeats[i])];
     }
 
-    // ---- Sharing between a cluster's ranks (HipMeasuredChoices) -----------------------------------------------------
+    // ---- Sharing between a cluster's ranks (ClusterOptions.ShareTuning) -----------------------------------------------------
 
     internal MeasuredChoices ExportChoices() => new(Kind, ChoicesIdentity, Name, Tuning.Export());
 
@@ -388,32 +388,3 @@ internal sealed class HipTuningTable
     }
 }
 
-/// <summary>The HIP backend's measured choices between the ranks of a cluster (HipBackend.Tuning.cs).</summary>
-internal sealed class HipMeasuredChoices : IMeasuredChoicesProvider
-{
-    public string Name => "hip";
-
-    public string Summary => "the HIP kernels' measured choices, per GPU, driver and library build";
-
-    public bool Handles(Backend backend) => backend is HipBackend;
-
-    public MeasuredChoices Export(Backend backend) => Of(backend).ExportChoices();
-
-    public MeasuredChoicesResult Import(Backend backend, MeasuredChoices choices)
-    {
-        ArgumentNullException.ThrowIfNull(choices);
-        return Of(backend).ImportChoices(choices);
-    }
-
-    public MeasuredChoicesResult Follow(Backend follower, Backend leader)
-    {
-        var mine = Of(follower);
-        return leader is HipBackend hip ? mine.FollowChoices(hip)
-            : new MeasuredChoicesResult(false, 0, $"kept its own: rank 0 runs on another kind of device ({leader.Kind}: {leader.Name}) than {mine.Name}");
-    }
-
-    public void Leave(Backend follower) => Of(follower).LeaveChoices();
-
-    private static HipBackend Of(Backend backend) => backend as HipBackend
-        ?? throw new ArgumentException($"{backend?.Name ?? "null"} is not a HIP backend.", nameof(backend));
-}
