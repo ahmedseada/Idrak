@@ -116,7 +116,7 @@ public static class ModelMemory
                 : new MemoryPart("encoder", 0, $"{encoder.GetType().Name} is not a module: its tensors are not counted"));
         }
 
-        parts.Add(new MemoryPart("kv cache", KeyValueCacheBytes(spec, capacity, layout, batch), $"{layout.Name}, {capacity} positions"));
+        parts.Add(new MemoryPart("kv cache", KeyValueCacheBytes(spec, capacity, layout, batch), $"{layout}, {capacity} positions"));
         return parts;
     }
 

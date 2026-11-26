@@ -408,7 +408,6 @@ public sealed class PretrainedEncoderModel : IDisposable
         var (prepared, config, name, format) = EncoderCheckpoints.Read(folder, options.Architecture);
         var family = NotOnTheNewDesign.Yet<IPretrainedEncoderFamily>($"Picking the encoder family '{name}' by its name");
         string pooler = options.Pooler ?? family.Pooler(config);
-        SequencePoolers.Get(pooler);                                           // a pooler nobody registered is refused before anything is built
         var notes = new List<string>();
         notes.AddRange(format.Notes(prepared));
         ISequenceEncoder encoder;
@@ -443,7 +442,7 @@ public sealed class PretrainedEncoderModel : IDisposable
 
     /// <summary>One vector per sequence [batch, width]: the states pooled by <see cref="Pooler"/>.</summary>
     public Tensor Pooled(Tensor ids, IReadOnlyList<int>? lengths = null, Tensor? tokenTypes = null) =>
-        SequencePoolers.Get(Pooler).Pool(Hidden(ids, lengths, tokenTypes), lengths);
+        NotOnTheNewDesign.Yet<ISequencePooler>($"Picking the pooler '{Pooler}' by its name").Pool(Hidden(ids, lengths, tokenTypes), lengths);
 
     /// <summary>The output of the head <paramref name="kind"/>: over the pooled vectors or the states, as the head reads.</summary>
     /// <exception cref="ArgumentException">The checkpoint holds no head of that kind (the message lists those it holds).</exception>

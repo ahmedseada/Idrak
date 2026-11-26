@@ -340,11 +340,11 @@ public sealed class ModelPackageReader : IDisposable
         : Contains(PackageEntryKind.MinMaxScaler, name) ? MinMaxScaler(name)
         : throw new KeyNotFoundException($"{_path} has no scaler named '{name}'.");
 
-    /// <summary>The tokenizer named <paramref name="name"/>.</summary>
+    /// <summary>The tokenizer named <paramref name="name"/>: reading it by the type its JSON names is not on the new design yet.</summary>
     public ITokenizer Tokenizer(string name)
     {
         using var stream = OpenSeekable(PackageEntryKind.Tokenizer, name);
-        return Tokenizers.Load(stream);
+        return NotOnTheNewDesign.Yet<ITokenizer>($"Reading the tokenizer '{name}' by the type its JSON names");
     }
 
     /// <summary>The <see cref="WordTokenizer"/> named <paramref name="name"/>.</summary>

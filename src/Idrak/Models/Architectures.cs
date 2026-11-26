@@ -128,18 +128,6 @@ public static class PretrainedFamilies
             {
                 c["partial_rotary_factor"] = (double)rotary / spec.HeadDim;
             }
-
-            if (rope.Scaling is { } scaling)
-            {
-                var parameters = scaling.Parameters;
-                if ((int?)parameters["max_position_embeddings"] == spec.MaxPositions)
-                {
-                    parameters.Remove("max_position_embeddings");     // the reader puts the context length back
-                }
-
-                parameters["rope_type"] = scaling.Type;
-                c["rope_scaling"] = parameters;
-            }
         }
 
         if (spec.SlidingWindow is int window)
@@ -253,27 +241,9 @@ public static class PretrainedFamilies
         int maxPositions = (int?)c["max_position_embeddings"] ?? 4096;
         float theta = (float?)c["rope_theta"] ?? 10000f;
         int? rotary = c["partial_rotary_factor"] is { } factor ? (int)(headDim * (float)factor) : null;
-        RopeScaling? scaling = null;
-        if (c["rope_scaling"] is JsonObject s)
+        if (c["rope_scaling"] is JsonObject s && ((string?)s["rope_type"] ?? (string?)s["type"] ?? "default") is var type && type != "default")
         {
-            string type = (string?)s["rope_type"] ?? (string?)s["type"] ?? "default";
-            if (type != "default")
-            {
-                if (!RopeScalings.Contains(type))
-                {
-                    throw new NotRegisteredException(nameof(RopeScalings), type, RopeScalings.Names,
-                        $"RoPE scaling '{type}' is not registered ({string.Join(", ", RopeScalings.Names)}); add it with RopeScalings.Register, "
-                        + "reference Idrak.Text.Plugins (a family's own scaling) and call TextPlugins.RegisterAll(), or remove rope_scaling to use the model within its original context.");
-                }
-
-                // The parameters as the configuration gives them, plus the model's context length, which several methods
-                // fall back on (yarn without original_max_position_embeddings; dynamic always).
-                var parameters = (JsonObject)s.DeepClone();
-                parameters.Remove("type");
-                parameters.Remove("rope_type");
-                parameters["max_position_embeddings"] ??= maxPositions;
-                scaling = new RopeScaling(type, parameters);
-            }
+            throw new NotSupportedException($"The RoPE scaling '{type}', picked by its name, is not on the new design yet; remove rope_scaling to use the model within its original context.");
         }
 
         // Sliding-window attention, as transformers reads it: the window (none when use_sliding_window is false, as Qwen2
@@ -315,7 +285,7 @@ public static class PretrainedFamilies
                 "relu" => FeedForwardActivation.Relu,
                 _ => throw new NotSupportedException($"Activation '{activation}' is not supported."),
             },
-            Rope = new RopeSettings(theta, rotary, Interleaved: false, scaling),
+            Rope = new RopeSettings(theta, rotary, Interleaved: false),
             QkvBias = attentionBias, OutputBias = attentionBias, FeedForwardBias = (bool?)c["mlp_bias"] ?? false,
             TieEmbeddings = (bool?)c["tie_word_embeddings"] ?? false,
             SlidingWindow = window, SlidingWindowLayers = windowed,

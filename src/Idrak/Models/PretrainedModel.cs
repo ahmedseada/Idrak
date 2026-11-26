@@ -102,9 +102,9 @@ public sealed record CreateOptions
     public string? Decoder { get; init; }
 
     /// <summary>
-    /// Parts stored beside the decoder, by kind ("audio"): each description read by the part registered in
-    /// <see cref="ModelParts"/> (<see cref="IModelPart.Create"/>), its tensors, config keys and files written with the
-    /// model's; null or empty for none.
+    /// Parts stored beside the decoder, by kind ("audio"): each description read by the part of that kind
+    /// (<see cref="IModelPart.Create"/>; picking it by its kind is not on the new design yet), its tensors, config keys and
+    /// files written with the model's; null or empty for none.
     /// </summary>
     public IReadOnlyDictionary<string, JsonObject>? Parts { get; init; }
 }
@@ -430,7 +430,7 @@ public sealed class PretrainedModel : IDisposable
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter, Deferred = options.Deferred, Progress = LoadProgress.Of(reader, options.Progress) };
         weights.Progress?.Begin();
-        var buildDevice = options.Deferred ? DeferredTensors.Device : options.Device;
+        var buildDevice = options.Deferred ? NotOnTheNewDesign.Yet<Device>("The deferred device (picked by its name)") : options.Device;
         // W2: layers built on first use (the checkpoint kept open for them), and layers following the memory at step boundaries.
         bool buildsOwnNetwork = architecture is INetworkBuildingArchitecture;
         bool lazy = (options.LazyLayers ?? WeightPlacements.DefaultLazy) && !options.Deferred && options.MergeAdapter is null && !buildsOwnNetwork;
@@ -472,14 +472,9 @@ public sealed class PretrainedModel : IDisposable
             weights.Used.UnionWith(vision.StoredTensors);
         }
 
-        // The parts stored beside the decoder (an audio encoder), read by the packages that registered them.
+        // The parts stored beside the decoder (an audio encoder): finding them among the packages' registered parts is not
+        // on the new design yet, so none is read.
         var partTensors = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
-        foreach (var part in ModelParts.In(config))
-        {
-            var owned = part.StoredTensors(new ModelPartCheckpoint(name, config, reader, folder, () => format.Open(folder), notes));
-            partTensors[part.Kind] = owned;
-            weights.Used.UnionWith(owned);
-        }
 
         var unused = lazy ? new List<string>() : reader.Names.Where(k => !weights.Used.Contains(k) && !k.EndsWith("rotary_emb.inv_freq", StringComparison.Ordinal)).ToList();
         if (unused.Count > 0)
@@ -509,7 +504,7 @@ public sealed class PretrainedModel : IDisposable
         long tokenizing = Stopwatch.GetTimestamp();
         var tokenizer = PretrainedTokenizers.TryLoad(folder, options.Tokenizer);
         tokenizer?.PadVocabulary(spec.Vocabulary);
-        var template = ChatTemplates.Load(folder, tokenizer);
+        IChatTemplate? template = null;                                 // reading the folder's own template (its registered readers): not on the new design yet
         long tokenized = Stopwatch.GetTimestamp();
         var model = new PretrainedModel(folder, config, spec, network, tokenizer, template, notes, maxPositions, architecture,
             options.Device ?? Idrak.Abstraction.Device.Default, vision);
@@ -610,7 +605,8 @@ public sealed class PretrainedModel : IDisposable
         var parts = new List<CreatedModelPart>();
         foreach (var (kind, partDescription) in options.Parts ?? new Dictionary<string, JsonObject>())
         {
-            var made = ModelParts.Get(kind).Create(new ModelPartRequest(architecture, partDescription, spec.Dim, tokenizer, options.Seed));
+            var made = NotOnTheNewDesign.Yet<IModelPart>($"Picking the model part '{kind}' by its name")
+                .Create(new ModelPartRequest(architecture, partDescription, spec.Dim, tokenizer, options.Seed));
             foreach (var (key, value) in made.Config)
             {
                 config[key] = value?.DeepClone();
@@ -743,14 +739,6 @@ public sealed class PretrainedModel : IDisposable
     /// </summary>
     public ExpertPlan? ExpertPlacement { get; private set; }
 
-    /// <summary>
-    /// The key/value cache format generation with the model uses unless one is named: IDRAK_KV_CACHE_TYPE, else auto
-    /// (<see cref="KeyValueLayouts.Choose"/>). Pass its <see cref="KeyValueLayoutChoice.Layout"/> to <c>CreateGenerator</c>.
-    /// </summary>
-    public KeyValueLayoutChoice CacheChoice => _cacheChoice ??= KeyValueLayouts.Choose(null);
-
-    private KeyValueLayoutChoice? _cacheChoice;
-
     /// <summary>Where the time of <see cref="Load"/> went, by stage (read, convert, upload, adapter merge, tokenizer, …).</summary>
     public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default);
 
@@ -811,7 +799,7 @@ public sealed class PretrainedModel : IDisposable
             throw new InvalidOperationException($"The model has no '{kind}' part ({(_partTensors.Count == 0 ? "none" : string.Join(", ", _partTensors.Keys))}).");
         }
 
-        var part = ModelParts.Get(kind);
+        var part = NotOnTheNewDesign.Yet<IModelPart>($"Picking the model part '{kind}' by its name");
         var format = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {Folder}");
         using var tensors = format.Open(Folder);
         string architecture = (string?)Config["architectures"]?[0] ?? throw new InvalidDataException($"{Folder}/config.json names no architecture.");

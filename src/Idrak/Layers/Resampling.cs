@@ -201,5 +201,5 @@ internal static class AdaptivePooling
     }
 
     private static bool RunsItself(Backend backend, Operation operation) =>
-        Kernels.Chain(backend)[operation.Index].Source is KernelSource.Registered or KernelSource.Device;
+        Kernels.Chain(backend)[operation.Index].Source is KernelSource.Device;
 }

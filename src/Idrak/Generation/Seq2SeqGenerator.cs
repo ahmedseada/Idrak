@@ -9,7 +9,7 @@ namespace Idrak.Generation;
 /// Generates text with any text encoder-decoder (<see cref="ISeq2SeqModel"/>): the prompt is the source, encoded once;
 /// the answer is decoded token by token from the model's start token until its end token, a stop sequence or the length
 /// limit, each step through the key/value cache of the decoder's self-attention and the cross-attentions' memory projected
-/// once. Tokens are chosen by the library's samplers (<see cref="TokenSamplers"/>: temperature, top-k, top-p, min-p,
+/// once. Tokens are chosen by the library's sampler (<see cref="TokenSampler"/>: temperature, top-k, top-p, min-p,
 /// penalties; top-k 1 or temperature 0 is greedy), or, with <see cref="GenerationOptions.NumBeams"/> above 1, by beam
 /// search (<see cref="BeamSearch.Decode"/>: the beams decoded together through one cache, the memory of the one source
 /// serving every beam), so a family plug-in only brings its model (<see cref="Models.Abstractions.IPretrainedSeq2SeqFamily"/>) and generation, streaming
@@ -57,10 +57,9 @@ public sealed class Seq2SeqGenerator(ISeq2SeqModel model, ITokenizer tokenizer) 
     public bool SelectBeamsOnDevice { get; init; } = true;
 
     /// <summary>
-    /// Makes the sampler each generation chooses tokens with (<see cref="TokenSamplers.Create"/>: the sampler registered as
-    /// <see cref="TokenSamplers.DefaultName"/>, unless set).
+    /// Makes the sampler each generation chooses tokens with (<see cref="TokenSampler.Create"/>, unless set).
     /// </summary>
-    public Func<SamplerRequest, ITokenSampler> CreateSampler { get; set; } = TokenSamplers.Create;
+    public Func<SamplerRequest, ITokenSampler> CreateSampler { get; set; } = TokenSampler.Create;
 
     /// <inheritdoc />
     public IAsyncEnumerable<GenerationChunk> StreamAsync(string prompt, GenerationOptions options, CancellationToken cancellationToken = default) =>

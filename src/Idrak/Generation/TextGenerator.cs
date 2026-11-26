@@ -81,7 +81,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
     public KeyValueFormat CacheFormat { get; init; } = KeyValueFormat.Float32;
 
     /// <summary>
-    /// The KV cache's layout when set (a format of one's own, or a built-in one by name with <see cref="KeyValueLayouts.Get"/>);
+    /// The KV cache's layout when set (a format of one's own, or a built-in one with <see cref="KeyValueLayouts.For"/>);
     /// it takes precedence over <see cref="CacheFormat"/>. Default null: the layout of <see cref="CacheFormat"/>.
     /// </summary>
     public IKeyValueLayout? CacheLayout { get; init; }
@@ -90,12 +90,12 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
     private IKeyValueLayout Layout => CacheLayout ?? KeyValueLayouts.For(CacheFormat);
 
     /// <summary>
-    /// Creates the sampler each generation chooses tokens with (default <see cref="TokenSamplers.Create"/>: the sampler
-    /// registered as "default", the built-in <see cref="TokenSampler"/> with temperature, top-k, top-p, min-p and penalties
-    /// on the device, unless an app overrode it). Set it to plug in another <see cref="ITokenSampler"/> for this generator
+    /// Creates the sampler each generation chooses tokens with (default <see cref="TokenSampler.Create"/>: the built-in
+    /// <see cref="TokenSampler"/> with temperature, top-k, top-p, min-p and penalties on the device). Set it to plug in
+    /// another <see cref="ITokenSampler"/> for this generator
     /// alone; one that is not <see cref="ITokenSampler.Recordable"/> turns off the CUDA graph of the decoding step.
     /// </summary>
-    public Func<SamplerRequest, ITokenSampler> CreateSampler { get; set; } = TokenSamplers.Create;
+    public Func<SamplerRequest, ITokenSampler> CreateSampler { get; set; } = TokenSampler.Create;
 
     /// <summary>
     /// Keep the KV cache after each generation, so the next prompt that starts with the same tokens (the earlier turns of

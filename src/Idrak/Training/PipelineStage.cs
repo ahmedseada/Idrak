@@ -198,7 +198,7 @@ public sealed class PipelineStage : IDisposable
         var transport = cluster.Transport ?? throw new NotSupportedException(
             $"The collectives '{cluster.Name}' give no transport (ICollectives.Transport): a pipeline sends activations from stage to stage, point to point.");
         var layout = PipelineLayout.For(cluster.WorldSize, options);
-        var schedule = PipelineSchedules.Get(options.Schedule);
+        var schedule = NotOnTheNewDesign.Yet<IPipelineSchedule>($"The pipeline schedule '{options.Schedule}', picked by its name,");
         var top = network.ToList();
         // Each rank's memory as the ranks joined (plan 37, N2): the same on every rank, so every rank cuts alike.
         var measured = cluster.Context?.RankMemory is { } memory && memory.Count == layout.WorldSize ? memory : null;
@@ -292,7 +292,7 @@ public sealed class PipelineStage : IDisposable
                 $"Stage {stage} is held by {layout.Replicas} replicas, which reduce its gradients over a group of their own; the collectives '{cluster.Name}' give no topology to group them by (ICollectives.Context).");
             int[] members = layout.StageRanks(stage);
             var topology = ClusterGroups.Topology(context.Topology, members);
-            replicas = Collectives.Get(options.CollectiveFor(topology)).Create(ClusterGroups.Transport(transport, members), cluster.Device,
+            replicas = NotOnTheNewDesign.Yet<ICollectivesProvider>($"The collectives '{options.CollectiveFor(topology)}', picked by their name,").Create(ClusterGroups.Transport(transport, members), cluster.Device,
                 new ClusterContext(topology, layout.ReplicaOf(rank), options) { RankMemory = measured is null ? null : [.. members.Select(m => measured[m])] });
         }
 

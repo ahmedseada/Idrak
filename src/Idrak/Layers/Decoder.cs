@@ -459,7 +459,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
             // Rows of different lengths: positions per token, and each row attends from its own start.
             if (cache.RowStartsLayout is not { } rowLayout)
             {
-                throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout), not {cache.Layout.Name}.");
+                throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout), not {cache.Layout}.");
             }
 
             if (!PlainCausal && !WindowKernels)
@@ -517,7 +517,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
         {
             if (cache.RowStartsLayout is null)
             {
-                throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout), not {cache.Layout.Name}.");
+                throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout), not {cache.Layout}.");
             }
 
             var (rq, rk, rv) = Project(input, rotary?.Index ?? context.RotaryPositions ?? context.TokenPositions!, packed: true, rotary: rotary);

@@ -74,27 +74,14 @@ public sealed record DeviceInfo
 /// </summary>
 public static class DeviceListing
 {
-    /// <summary>The registered device kinds beyond the CPU, in registration order, with their device counts.</summary>
-    public static IReadOnlyList<BackendInfo> Backends =>
-        [.. DeviceProviders.All.Select(p => new BackendInfo(p.Name, p.Display, p.Count, p.Count == 0 ? p.UnavailableReason : null))];
+    /// <summary>The device kinds beyond the CPU: none, since listing device providers is not on the new design yet.</summary>
+    public static IReadOnlyList<BackendInfo> Backends => [];
 
     /// <summary>
-    /// The CPU and every device of every backend, listed or reached by name only (starting each one's backend; one that
-    /// fails to start is returned with <see cref="DeviceInfo.Error"/> set).
+    /// Every device (<see cref="Device.Available"/>: the CPU), starting each one's backend; one that fails to start is
+    /// returned with <see cref="DeviceInfo.Error"/> set.
     /// </summary>
-    public static IReadOnlyList<DeviceInfo> All()
-    {
-        var devices = new List<DeviceInfo> { Describe(Device.Cpu) };
-        foreach (var provider in DeviceProviders.All)
-        {
-            for (int i = 0; i < provider.Count; i++)
-            {
-                devices.Add(Describe(Device.Get(provider.Name, i)));
-            }
-        }
-
-        return devices;
-    }
+    public static IReadOnlyList<DeviceInfo> All() => [.. Device.Available.Select(Describe)];
 
     // The devices listed so far in this process (the first listing of each is its cold start).
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> s_listed = new(StringComparer.Ordinal);
@@ -123,17 +110,15 @@ public static class DeviceListing
     {
         long began = System.Diagnostics.Stopwatch.GetTimestamp();
         describe = TimeSpan.Zero;
-        var provider = device.Type == DeviceType.Cpu ? null : DeviceProviders.Find(device.Kind);
         bool isDefault = device == Device.Default;
         var info = new DeviceInfo
         {
             Device = device.ToString(),
             Kind = device.Kind,
-            Backend = provider?.Display ?? "CPU",
+            Backend = device.Type == DeviceType.Cpu ? "CPU" : device.Kind,
             Name = "",
-            Listed = provider?.Listed(device.Ordinal) ?? true,
+            Listed = true,
             IsDefault = isDefault,
-            Note = isDefault ? null : provider?.Note(device.Ordinal),
         };
 
         Backend backend;

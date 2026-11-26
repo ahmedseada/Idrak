@@ -54,10 +54,10 @@ public sealed partial class TextGenerator
             throw new InvalidOperationException(reason);
         }
 
-        if (CreateSampler != (Func<SamplerRequest, ITokenSampler>)TokenSamplers.Create || TokenSamplers.Origin(TokenSamplers.DefaultName) != Overrides.Library)
+        if (CreateSampler != (Func<SamplerRequest, ITokenSampler>)TokenSampler.Create)
         {
             throw new InvalidOperationException("Speculative decoding checks the draft's tokens by the library's sampling rule, and this generator samples with a "
-                + "sampler of its own (TextGenerator.CreateSampler, or the app's TokenSamplers \"default\"): generate without GenerationOptions.Draft.");
+                + "sampler of its own (TextGenerator.CreateSampler): generate without GenerationOptions.Draft.");
         }
     }
 

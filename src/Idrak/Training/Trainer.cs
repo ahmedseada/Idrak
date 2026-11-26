@@ -197,7 +197,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
     /// k of one process with batches W times as large; a shuffling loader needs a seed, so every rank draws the same order),
     /// another batch source by batch.
     /// After each backward pass the gradients are summed across the ranks, weighted by each rank's samples
-    /// (<see cref="GradientSyncs"/>), so every rank updates with the gradient of the whole step; the reported losses and
+    /// (<see cref="IGradientSync"/>; picking it by its name is not on the new design yet), so every rank updates with the gradient of the whole step; the reported losses and
     /// metrics are over every rank's samples, so every rank makes the same early-stopping decision; validation is
     /// sharded the same way; the model's buffers (batch-norm statistics) are rank 0's at every epoch's end; dropout masks
     /// differ by rank; callbacks that write files write on rank 0.
@@ -241,15 +241,16 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
 
     /// <summary>
     /// What a step that runs out of memory does (<see cref="OutOfMemoryPolicies"/>, by name): <see cref="OutOfMemoryPolicies.Split"/>
-    /// (the default unless IDRAK_OOM_POLICY names another) cuts the step's samples into twice as many parts after each
+    /// cuts the step's samples into twice as many parts after each
     /// failure, down to one sample a part, and adds their gradients up, so the update is the whole step's (within the
     /// rounding of a sum taken in another order; a loss that is not a mean over its samples, or dropout, which draws a mask a
     /// part, gives another step); <see cref="OutOfMemoryPolicies.None"/> throws. The parts found stay for the rest of the
     /// run, and each recovery is reported to the telemetry (<c>OutOfMemoryRecovered</c>). An allocation failure is told by
     /// its type alone (<see cref="OutOfMemoryPolicies.IsAllocationFailure"/>); any other error is thrown as it is. A
-    /// data-parallel run (<see cref="Cluster"/>) does not split: its ranks would no longer run the same steps.
+    /// data-parallel run (<see cref="Cluster"/>) does not split: its ranks would no longer run the same steps. Picking a
+    /// policy by its name is not on the new design yet; null (the default) recovers from none: the failure reaches the caller.
     /// </summary>
-    public string OutOfMemoryPolicy { get; init; } = OutOfMemoryPolicies.DefaultName;
+    public string? OutOfMemoryPolicy { get; init; }
 
     /// <summary>The cluster settings a <see cref="Cluster"/> run uses (the synchronisation, the wire, the starting state), or null: <see cref="Abstraction.Cluster.ClusterOptions.FromEnvironment"/>.</summary>
     public ClusterOptions? ClusterOptions { get; init; }
@@ -284,7 +285,9 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
             throw new NotSupportedException("Pipeline placement (IDRAK_CLUSTER_PLACEMENT=pipeline) cuts a decoder into stages (PipelineStage; the Pretrainer trains through it); the Trainer runs with single placement.");
         }
 
-        using var sync = Cluster is { } cluster ? GradientSyncs.Create(cluster, Optimizer, clusterOptions) : null;
+        using var sync = Cluster is { } cluster
+            ? NotOnTheNewDesign.Yet<IGradientSyncProvider>($"The gradient synchronisation '{clusterOptions!.GradientSyncName}', picked by its name,").Create(cluster, Optimizer, clusterOptions)
+            : null;
         var sharded = sync as IShardedGradientSync;                         // asked once: the update, gathers and state are its
         if (sync is not null && train is IShardableBatchSource { Seeded: false })
         {
@@ -304,7 +307,8 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
         bool lead = sync is null || sync.Rank == 0;                         // the rank that publishes telemetry
         List<Tensor> buffers = sync is null ? [] : [.. Model.Buffers().Where(b => b.Size > 0)];
         using var seeds = sync is null ? null : Layers.Dropout.SeedsForRank(sync.Rank);
-        var outOfMemory = sync is null ? OutOfMemoryPolicies.Get(OutOfMemoryPolicy) : null;   // a name nobody registered fails here, before any step
+        var outOfMemory = sync is null && OutOfMemoryPolicy is { } policyName
+            ? NotOnTheNewDesign.Yet<IOutOfMemoryPolicy>($"The out-of-memory policy '{policyName}', picked by its name,") : null;
         int parts = 1;                                                      // one process: the parts a step runs in (more after running out of memory)
         long resumeStep = 0;
         if (ResumeFrom is { } from)
@@ -333,7 +337,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
 
         // On a cluster a cancelled token asks the ranks to stop and they agree at a step boundary (Plan 27, R7), so no rank
         // leaves a step the others are in; in one process the token stops the loop after the current batch, as before.
-        var agreement = Cluster is { } ranks ? StopAgreements.For(ranks, clusterOptions) : null;
+        var agreement = Cluster is { } ranks ? NotOnTheNewDesign.Yet<IStopAgreementProvider>("The stop agreement, picked by its name,").Create(ranks, clusterOptions!) : null;
         agreement?.Reset();
         using var asks = agreement?.Watch(cancellationToken) ?? default;
         bool Cancelled() => agreement is null && cancellationToken.IsCancellationRequested;
@@ -464,7 +468,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
                 double stepLoss = double.NaN;                               // one process: the step's loss, read only when someone needs it
                 if (sync is null)
                 {
-                    stepLoss = TrainStep(batch!, sums, ref parts, outOfMemory!, perBatch || callbacksNeedLoss);
+                    stepLoss = TrainStep(batch!, sums, ref parts, outOfMemory, perBatch || callbacksNeedLoss);
                     samples += batch!.Size;
                 }
                 else if (batch is not null)
@@ -702,10 +706,10 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
         }
     }
 
-    // One process's step over `batch`, in `parts` (more after the step runs out of memory, as `policy` says): the gradients
+    // One process's step over `batch`, in `parts` (more after the step runs out of memory, as `policy` says, when there is one): the gradients
     // of the parts, each loss weighted by its share of the samples, add up to the step's; the loss and metrics go into
     // `sums` once every part has run. The step's loss when `readLoss` (it waits for the device), else NaN.
-    private double TrainStep(Batch batch, Tensor sums, ref int parts, IOutOfMemoryPolicy policy, bool readLoss)
+    private double TrainStep(Batch batch, Tensor sums, ref int parts, IOutOfMemoryPolicy? policy, bool readLoss)
     {
         for (int attempt = 1; ; attempt++)
         {
@@ -744,7 +748,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
 
                 return readLoss ? total : double.NaN;
             }
-            catch (Exception error) when (OutOfMemoryPolicies.IsAllocationFailure(error))
+            catch (Exception error) when (policy is not null && OutOfMemoryPolicies.IsAllocationFailure(error))
             {
                 int next = policy.NextParts(new OutOfMemoryFailure(error, batch.Size, cut, attempt, nameof(Trainer)));
                 if (next <= cut)
@@ -754,9 +758,9 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
 
                 parts = next;
                 Optimizer.ZeroGrad();
-                OutOfMemoryPolicies.Report(new OutOfMemoryRecovered(nameof(Trainer), policy.Name, $"{error.GetType().Name}: {error.Message.Split(':')[0]}", batch.Size, next, attempt,
+                OutOfMemoryPolicies.Report(new OutOfMemoryRecovered(nameof(Trainer), OutOfMemoryPolicy ?? policy.GetType().Name, $"{error.GetType().Name}: {error.Message.Split(':')[0]}", batch.Size, next, attempt,
                     Device.ToString(), string.Create(CultureInfo.InvariantCulture,
-                        $"the step runs again in {next} parts of about {(batch.Size + next - 1) / next} samples, their gradients added up, and so do the steps after it (Trainer.OutOfMemoryPolicy, {OutOfMemoryPolicies.EnvironmentVariable})")));
+                        $"the step runs again in {next} parts of about {(batch.Size + next - 1) / next} samples, their gradients added up, and so do the steps after it (Trainer.OutOfMemoryPolicy)")));
             }
         }
     }

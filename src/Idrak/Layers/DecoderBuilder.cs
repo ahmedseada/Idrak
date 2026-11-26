@@ -220,7 +220,7 @@ public static class DecoderBuilder
                 {
                     using (DeferredTensors.Build())
                     {
-                        var on = DeferredTensors.Device;
+                        var on = NotOnTheNewDesign.Yet<Device>("The deferred device (picked by its name)");
                         Linear Unread(int inputs, int outputs) => Linear.FromWeights(
                             Idrak.Abstraction.Tensor.Persistent(DeferredTensors.Placeholder(inputs * outputs), [inputs, outputs], on, requiresGrad: true),
                             spec.FeedForwardBias ? Idrak.Abstraction.Tensor.Persistent(DeferredTensors.Placeholder(outputs), [outputs], on, requiresGrad: true) : null);
