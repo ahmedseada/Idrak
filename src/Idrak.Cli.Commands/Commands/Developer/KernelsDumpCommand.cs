@@ -29,7 +29,7 @@ internal sealed class KernelsDumpCommand : Command
     public override string Usage =>
         "[ptx|spirv|gcn] [-o DIR] [--target TARGET]\n\n" +
         "Writes the generated kernels to DIR (default ./kernels); without a kind, all three:\n" +
-        "  ptx     the CUDA kernels: idrak.ptx and idrak.tensorcore.ptx (the default kernel shapes)\n" +
+        "  ptx     the CUDA kernels: idrak.ptx (the default kernel shapes)\n" +
         "  spirv   the Vulkan kernels: spirv/NAME.spv and spirv/kernels.txt (bindings, push constants); the\n" +
         "          cooperative-matrix products in the 16 x 16 x 16 shape (a device builds them in the shape it reports)\n" +
         "  gcn     HIP's kernels: gcn/virtual/NAME.s as written (virtual registers) and gcn/TARGET/NAME.s as Idrak's\n" +
@@ -77,7 +77,6 @@ internal sealed class KernelsDumpCommand : Command
             {
                 case "ptx":
                     files.Add((kind, WriteText(Path.Combine(folder, "idrak.ptx"), PtxKernels.Source), 0));
-                    files.Add((kind, WriteText(Path.Combine(folder, "idrak.tensorcore.ptx"), PtxKernels.TensorCoreSource), 0));
                     break;
                 case "gcn":
                     files.AddRange(DumpGcn(Path.Combine(folder, "gcn"), target ?? GcnKernels.DefaultTarget()).Select(p => (kind, p, 0L)));
@@ -126,7 +125,7 @@ internal sealed class KernelsDumpCommand : Command
         return paths;
     }
 
-    // The test runner's --dump-spirv: every kernel at its default width, and the cooperative-matrix products in one shape.
+    // The test runner's --dump-spirv: every kernel at its default width, and the cooperative-matrix product in one shape.
     private static IEnumerable<string> DumpSpirv(string folder)
     {
         Directory.CreateDirectory(folder);
@@ -139,12 +138,9 @@ internal sealed class KernelsDumpCommand : Command
             lines.Add(kernel.ToString());
         }
 
-        foreach (var format in new VulkanKernels.PackedFormat?[] { null, VulkanKernels.PackedFormat.Int8, VulkanKernels.PackedFormat.Int4, VulkanKernels.PackedFormat.BFloat16 })
-        {
-            var kernel = VulkanKernels.Coop(new VulkanKernels.CoopSpec(format, new VulkanKernels.CoopShape(16, 16, 16), 128));
-            paths.Add(WriteWords(Path.Combine(folder, kernel.Name + ".spv"), kernel.Words));
-            lines.Add(kernel.ToString());
-        }
+        var coop = VulkanKernels.Coop(new VulkanKernels.CoopSpec(new VulkanKernels.CoopShape(16, 16, 16), 128));
+        paths.Add(WriteWords(Path.Combine(folder, coop.Name + ".spv"), coop.Words));
+        lines.Add(coop.ToString());
 
         string contracts = Path.Combine(folder, "kernels.txt");
         File.WriteAllLines(contracts, lines);

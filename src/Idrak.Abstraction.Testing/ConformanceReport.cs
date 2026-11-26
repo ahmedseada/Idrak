@@ -91,8 +91,7 @@ public sealed class ConformanceReport
 
     /// <summary>
     /// Saves every failure that carries a case (<see cref="ConformanceFailure.Repro"/>) into <paramref name="folder"/>
-    /// (one JSON file each), to replay with <see cref="Regression.Replay(string, Device, DeviceCheckOptions?)"/> or the
-    /// contract overloads; returns the files written.
+    /// (one JSON file each), to replay with the contract overloads of <see cref="Regression"/>; returns the files written.
     /// </summary>
     public IReadOnlyList<string> SaveFailures(string folder) =>
         [.. Failures.Where(f => f.Repro is not null).Select(f => Regression.Save(Path.Combine(folder, Regression.FileName(f.Repro!)), f.Repro!))];

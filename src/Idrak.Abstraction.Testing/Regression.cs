@@ -5,7 +5,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Devices;
-using Idrak.Abstraction.Testing.Devices;
 
 namespace Idrak.Abstraction.Testing;
 
@@ -26,9 +25,6 @@ public sealed record RegressionCase(string Kind, string Name, JsonObject Data);
 /// </summary>
 public static class Regression
 {
-    /// <summary>The kind of a saved operation call of a device.</summary>
-    public const string OperationKind = "operation";
-
     private const string Format = "idrak-regression-case";
 
     /// <summary>Writes <paramref name="case"/> to <paramref name="path"/> (creating its folder); returns the path.</summary>
@@ -80,23 +76,6 @@ public static class Regression
     }
 
     /// <summary>
-    /// Runs the saved operation calls at <paramref name="path"/> (a file or a folder) on <paramref name="device"/> and
-    /// compares what they write with what the CPU wrote when they were saved. Cases of other kinds are left out.
-    /// </summary>
-    public static ConformanceReport Replay(string path, Device device, DeviceCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(device);
-        return Replay(path, device.Backend, $"{device} ({device.Name})", options);
-    }
-
-    /// <summary>The same as <see cref="Replay(string, Device, DeviceCheckOptions?)"/> for a backend that is not registered as a device.</summary>
-    public static ConformanceReport Replay(string path, Backend backend, DeviceCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(backend);
-        return Replay(path, backend, $"{backend.Kind} ({backend.Name})", options);
-    }
-
-    /// <summary>
     /// Runs the saved cases of <paramref name="suite"/> at <paramref name="path"/> (a file or a folder) on
     /// <paramref name="implementation"/>, compared with the library default as the suite compares. Cases of other kinds
     /// are left out.
@@ -128,9 +107,4 @@ public static class Regression
         return $"{text.Trim('-')[..Math.Min(60, text.Trim('-').Length)]}-{hash}.json";
     }
 
-    private static ConformanceReport Replay(string path, Backend backend, string subject, DeviceCheckOptions? options)
-    {
-        var calls = LoadAll(path).Where(c => c.Kind == OperationKind).Select(OperationCases.FromCase).ToList();
-        return DeviceConformance.Replay(backend, $"{subject}, saved cases from {path}", calls, options ?? new DeviceCheckOptions(), [], calls.Count);
-    }
 }

@@ -4,7 +4,6 @@
 using System.Diagnostics;
 using System.Text;
 using Idrak.Abstraction.Devices;
-using Idrak.Abstraction.Testing.Devices;
 
 namespace Idrak.Abstraction.Testing;
 
@@ -137,24 +136,6 @@ public sealed class StressReport
 public static class Stress
 {
     /// <summary>
-    /// Replays the device check's operation calls (recorded on the CPU from the random cases, large ones included when
-    /// <see cref="StressOptions.Large"/>) on <paramref name="device"/> from several threads, in random order, comparing
-    /// each with the CPU; then checks that the device's memory in use came back.
-    /// </summary>
-    public static StressReport Run(Device device, StressOptions? options = null, CancellationToken cancellation = default)
-    {
-        ArgumentNullException.ThrowIfNull(device);
-        return Run(device.Backend, $"{device} ({device.Name})", options ?? new StressOptions(), cancellation);
-    }
-
-    /// <summary>The same as <see cref="Run(Device, StressOptions?, CancellationToken)"/> for a backend that is not registered as a device.</summary>
-    public static StressReport Run(Backend backend, StressOptions? options = null, CancellationToken cancellation = default)
-    {
-        ArgumentNullException.ThrowIfNull(backend);
-        return Run(backend, $"{backend.Kind} ({backend.Name})", options ?? new StressOptions(), cancellation);
-    }
-
-    /// <summary>
     /// Runs random cases of <paramref name="suite"/> on <paramref name="implementation"/> from several threads at once
     /// (the one implementation shared, as an app shares it), as the conformance check runs them; then checks that the
     /// memory in use on the suite's device came back.
@@ -176,29 +157,6 @@ public static class Stress
             return checks.Failures.Count == before ? null : [];
         });
         return report.With(checks.Failures);
-    }
-
-    private static StressReport Run(Backend backend, string subject, StressOptions options, CancellationToken cancellation)
-    {
-        var failures = new List<ConformanceFailure>();
-        var calls = DeviceConformance.Record(new DeviceCheckOptions { Seed = options.Seed, Large = options.Large, RandomRuns = 2 }, failures, out _);
-        if (calls.Count == 0)
-        {
-            throw new InvalidOperationException("No operation call was recorded.");
-        }
-
-        var defaults = new DeviceCheckOptions();
-        var order = new Random(options.Seed);
-        int[] picks = [.. Enumerable.Range(0, Math.Min(options.IterationLimit, 1 << 20)).Select(_ => order.Next(calls.Count))];
-        var report = Loop(subject, backend, options, cancellation, (iteration, timings) =>
-        {
-            var call = calls[iteration < picks.Length ? picks[iteration] : (int)((uint)Seeds.Mix(options.Seed, iteration) % (uint)calls.Count)];
-            var started = Stopwatch.GetTimestamp();
-            string? problem = DeviceConformance.Run(backend, call, defaults.ToleranceFor(call.Operation), out _);
-            timings.Add(($"{call.Operation} [{call.Case}]", Stopwatch.GetElapsedTime(started)));
-            return problem is null ? null : [new ConformanceFailure(call.Operation.Name, call.Case, problem, OperationCases.ToCase(call, backend.Kind, problem))];
-        });
-        return report.With([.. failures, .. report.Failures]);
     }
 
     // Runs `iteration` on the threads until the budget is spent or the run is cancelled, then measures the memory.

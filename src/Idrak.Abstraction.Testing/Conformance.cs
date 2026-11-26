@@ -5,7 +5,6 @@ using Idrak.Abstraction.Data;
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Operations;
 using Idrak.Abstraction.Reinforcement;
-using Idrak.Abstraction.Testing.Devices;
 
 namespace Idrak.Abstraction.Testing;
 
@@ -14,35 +13,8 @@ namespace Idrak.Abstraction.Testing;
 /// failing case. Nothing here asserts: each method returns a <see cref="ConformanceReport"/> for any test framework (or
 /// none) to check, print and save (<see cref="ConformanceReport.SaveFailures"/>).
 /// </summary>
-/// <example>
-/// <code>
-/// var report = Conformance.Check(Device.Get("mydevice"));
-/// Console.WriteLine(report);
-/// report.ThrowIfFailed();
-/// </code>
-/// </example>
 public static class Conformance
 {
-    /// <summary>
-    /// Checks a device against the CPU, operation by operation: every case of <paramref name="options"/> runs on the CPU
-    /// with each operation call recorded, then each call runs on <paramref name="device"/> through its dispatcher
-    /// (<c>Backend.Name(...)</c>: a registered kernel, the device's own, a composition or the host fallback) on the same
-    /// values, and what it writes must agree within the operation's tolerance. Operations no case reaches, or that have
-    /// no kernel on the device (<see cref="Operations.Kernels.Chain"/>), are reported as skipped.
-    /// </summary>
-    public static ConformanceReport Check(Device device, DeviceCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(device);
-        return DeviceConformance.Check(device.Backend, $"{device} ({device.Name})", options ?? new DeviceCheckOptions());
-    }
-
-    /// <summary>The same as <see cref="Check(Device, DeviceCheckOptions?)"/> for a backend that is not registered as a device.</summary>
-    public static ConformanceReport Check(Backend backend, DeviceCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(backend);
-        return DeviceConformance.Check(backend, $"{backend.Kind} ({backend.Name})", options ?? new DeviceCheckOptions());
-    }
-
     /// <summary>
     /// Checks the kernel a plug-in operation runs on <paramref name="device"/> (<see cref="PluginOperation{TKernel}.KernelFor"/>:
     /// a kernel registered for its kind, or the default) against the operation's default kernel on the CPU, on
