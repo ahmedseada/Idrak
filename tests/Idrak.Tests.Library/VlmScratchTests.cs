@@ -154,7 +154,7 @@ internal abstract partial class Tests
             string saved = Path.Combine(folder, "saved");
             using (var model = LoadScratch(device))
             {
-                model.SaveHuggingFace(saved, SafeTensorType.F32);
+                model.SaveHuggingFace(saved);
             }
 
             var original = ReadTensors(ScratchData("tiny-idrak-vision/model.safetensors"));

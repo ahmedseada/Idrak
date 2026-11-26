@@ -582,7 +582,7 @@ internal abstract partial class DesktopTests : Tests
                     .Select(k => (k, stored.Tensors[k].Shape, stored.Read(k))));
             }
 
-            SafeTensorsWriter.Write(Path.Combine(encoderOnly, "model.safetensors"), tensors, SafeTensorType.F32);
+            SafeTensorsWriter.Write(Path.Combine(encoderOnly, "model.safetensors"), tensors);
             foreach (var (path, architecture) in new[] { (encoderOnly, (string?)null), (folder, T5Plugin.T5EncoderModel), (folder, T5Plugin.MT5EncoderModel) })
             {
                 using var encoder = PretrainedEncoderModel.Load(path, new PretrainedEncoderOptions { Device = device, Architecture = architecture });
@@ -833,7 +833,7 @@ internal abstract partial class DesktopTests : Tests
             (a[0], b[0]) = (0f, -0f);                                                           // equal as floats
             a[5] = b[5] = float.NaN;
             h[0] = 0f;                                                                          // a with 0 where a holds NaN
-            SafeTensorsWriter.Write(Path.Combine(folder, "one.safetensors"), [("a", [n], a), ("b", [n], b), ("c", [n], c), ("d", [n], d), ("s", [1, n], d)], SafeTensorType.F32);
+            SafeTensorsWriter.Write(Path.Combine(folder, "one.safetensors"), [("a", [n], a), ("b", [n], b), ("c", [n], c), ("d", [n], d), ("s", [1, n], d)]);
             SafeTensorsWriter.Write(Path.Combine(folder, "two.safetensors"), [("g", [n], d), ("h", [n], h)], SafeTensorType.BF16);
             var map = new JsonObject();
             foreach (string name in new[] { "a", "b", "c", "d", "s" })
@@ -897,7 +897,7 @@ internal abstract partial class DesktopTests : Tests
                 }
 
                 tensors.Add(("lm_head.weight", shared.Shape, head));
-                SafeTensorsWriter.Write(path, tensors, SafeTensorType.F32);
+                SafeTensorsWriter.Write(path, tensors);
             }
 
             AddHead(same, change: false);

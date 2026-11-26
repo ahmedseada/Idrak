@@ -157,7 +157,7 @@ internal abstract partial class DesktopTests : Tests
 
                 Check(checkedWeights == 14 && reader.Tensors.Values.Count(t => t.Type == SafeTensorType.F8_E4M3) == 8 && reader.Tensors.Values.Count(t => t.Type == SafeTensorType.I8) == 6,
                     $"8 F8 attention projections and 6 I8 MLP projections checked: {checkedWeights}");
-                SafeTensorsWriter.Write(Path.Combine(plain, "model.safetensors"), reader.Tensors.Keys.Select(n => (n, reader.Tensors[n].Shape, reader.Read(n))).ToList(), SafeTensorType.F32);
+                SafeTensorsWriter.Write(Path.Combine(plain, "model.safetensors"), reader.Tensors.Keys.Select(n => (n, reader.Tensors[n].Shape, reader.Read(n))).ToList());
             }
 
             using var fromQuantized = PretrainedModel.Load(quantized, new PretrainedOptions { Device = Device.Cpu });

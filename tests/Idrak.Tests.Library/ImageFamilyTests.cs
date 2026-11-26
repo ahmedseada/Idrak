@@ -179,7 +179,7 @@ internal abstract partial class Tests
                 ExpectRefusal<InvalidOperationException>(() => ImageModels.Load(folder, options with { Architecture = "IdrakTestNoLabels" }), "an empty list of labels", "empty labels");
 
                 // A tensor missing: the error names it.
-                SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors.Where(t => t.Name != "bn.running_var"), SafeTensorType.F32);
+                SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors.Where(t => t.Name != "bn.running_var"));
                 ExpectRefusal<InvalidDataException>(() => ImageModels.Load(folder, options), "'bn.running_var'", "a missing tensor");
             }
             finally

@@ -961,7 +961,7 @@ internal abstract partial class Tests
             {
             }
 
-            WriteCheckpoint(source, spec, weights, "Qwen3ForCausalLM", SafeTensorType.F32, sharded: true);
+            WriteCheckpoint(source, spec, weights, "Qwen3ForCausalLM", sharded: true);
             var served = Directory.GetFiles(source).Select(Path.GetFileName).ToList();
             Check(served.Contains("model.safetensors.index.json") && served.Count(f => f!.EndsWith(".safetensors", StringComparison.Ordinal)) >= 2, "sharded source");
 
@@ -1097,7 +1097,7 @@ internal abstract partial class Tests
         {
         }
 
-        WriteCheckpoint(folder, spec, weights, "Qwen3ForCausalLM", SafeTensorType.F32, sharded: false);
+        WriteCheckpoint(folder, spec, weights, "Qwen3ForCausalLM", sharded: false);
         var printable = Enumerable.Range('!', '~' - '!' + 1).Concat(Enumerable.Range('¡', '¬' - '¡' + 1)).Concat(Enumerable.Range('®', 'ÿ' - '®' + 1)).ToHashSet();
         var vocab = new JsonObject();
         for (int b = 0, n = 0; b < 256; b++)
@@ -1322,7 +1322,7 @@ internal abstract partial class Tests
             {
                 Check(reloaded.LoadAdapter(adapter) == 7 * spec.Layers, "every adapter loads");
                 AssertClose([after], [FineTuner.Evaluate(reloaded, sequences)], 1e-4f, "loss with the reloaded adapters");
-                reloaded.SaveHuggingFace(exported, SafeTensorType.F32);
+                reloaded.SaveHuggingFace(exported);
             }
 
             using (var merged = PretrainedModel.Load(exported, new PretrainedOptions { Device = device }))

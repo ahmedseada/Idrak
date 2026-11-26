@@ -186,7 +186,7 @@ public static class ToyEncoderPlugin
             ["start_token"] = 0, ["end_token"] = 1,
         };
         File.WriteAllText(Path.Combine(folder, "config.json"), config.ToJsonString());
-        SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors, SafeTensorType.F32);
+        SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors);
         return folder;
     }
 

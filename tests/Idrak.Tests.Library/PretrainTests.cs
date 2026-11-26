@@ -414,7 +414,7 @@ internal abstract partial class Tests
         {
             using (var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device }))
             {
-                model.SaveHuggingFace(folder, SafeTensorType.F32);
+                model.SaveHuggingFace(folder);
             }
 
             var expected = ReadTensors(Path.Combine(TinyLlama, "model.safetensors"));
@@ -426,7 +426,7 @@ internal abstract partial class Tests
             // Saved over its own folder: the file is read to the end before it is replaced.
             using (var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
             {
-                model.SaveHuggingFace(folder, SafeTensorType.F32);
+                model.SaveHuggingFace(folder);
             }
 
             Check(ReadTensors(Path.Combine(folder, "model.safetensors")).All(t => expected[t.Key].Values.AsSpan().SequenceEqual(t.Value.Values)), "saved over its own folder");
@@ -452,7 +452,7 @@ internal abstract partial class Tests
                 var tensors = ReadTensors(Path.Combine(gptFolder, "model.safetensors"));
                 Check(tensors.ContainsKey("pos.weight") && tensors.ContainsKey("layers.0.attn_norm.bias") && tensors.ContainsKey("norm.bias"), $"learned positions and layer norms written: {string.Join(", ", tensors.Keys.Order())}");
                 string resaved = Path.Combine(folder, "gpt-saved");
-                created.SaveHuggingFace(resaved, SafeTensorType.F32);
+                created.SaveHuggingFace(resaved);
                 var back = ReadTensors(Path.Combine(resaved, "model.safetensors"));
                 Check(back.All(t => tensors[t.Key].Values.AsSpan().SequenceEqual(t.Value.Values)), "and read back value for value");
             }

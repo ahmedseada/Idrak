@@ -753,7 +753,7 @@ internal abstract partial class Tests
         try
         {
             File.WriteAllText(Path.Combine(folder, "config.json"), config.ToJson().ToJsonString());
-            SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), store.Names.Select(n => (n, store.ShapeOf(n), store.Read(n))), SafeTensorType.F32);
+            SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), store.Names.Select(n => (n, store.ShapeOf(n), store.Read(n))));
             using var loaded = HifiGanVocoder.Load(folder, device);
             Check(loaded.Normalizes && loaded.Config.Hop == 4, loaded.ToString());
             AssertClose(sound.Samples, loaded.Synthesize(logMel, device).Samples, 1e-6f, "the folder's vocoder gives the store's samples");

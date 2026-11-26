@@ -171,7 +171,7 @@ internal abstract partial class DesktopTests : Tests
             var history = trainer.Fit(new DataLoader(tokens, batchSize: 4, device: rank.Device), epochs);
             if (rank.Rank == 0)
             {
-                model.SaveHuggingFace(saved, SafeTensorType.F32);
+                model.SaveHuggingFace(saved);
             }
 
             return (Global: history.Epochs.Select(e => (float)e.Loss).ToArray(), Own: losses.ToArray());

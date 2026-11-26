@@ -140,7 +140,7 @@ internal abstract partial class Tests
             }
 
             string saved = Path.Combine(folder, "saved");
-            model.SaveHuggingFace(saved, SafeTensorType.F32);
+            model.SaveHuggingFace(saved);
             Check(ReadTensors(Path.Combine(saved, "model.safetensors"))[FakePartTensor].Values.SequenceEqual(trained), "the save writes the kept tensor");
             using (var again = PretrainedModel.Load(saved, new PretrainedOptions { Device = device }))
             {

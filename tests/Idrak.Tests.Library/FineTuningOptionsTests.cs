@@ -459,7 +459,7 @@ internal abstract partial class Tests
             }
 
             tensors.Add(("base_model.model.model.embed_tokens.lora_embedding_A", [2, 260], new float[520]));
-            SafeTensorsWriter.Write(weightsPath, tensors, SafeTensorType.F32);
+            SafeTensorsWriter.Write(weightsPath, tensors);
 
             Expect<InvalidDataException>("an embedding adapter", _ => { }, "lora_embedding_A");
             File.WriteAllBytes(weightsPath, weights);
@@ -599,7 +599,7 @@ internal abstract partial class Tests
             {
                 Check(reloaded.LoadAdapter(adapter) == 4 * 2, "every DoRA adapter loads");
                 AssertClose([after], [FineTuner.Evaluate(reloaded, sequences)], 1e-4f, "loss with the reloaded DoRA adapters");
-                reloaded.SaveHuggingFace(exported, SafeTensorType.F32);
+                reloaded.SaveHuggingFace(exported);
             }
 
             using (var merged = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, MergeAdapter = adapter }))

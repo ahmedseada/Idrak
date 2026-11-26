@@ -276,7 +276,7 @@ internal abstract partial class DesktopTests : Tests
                 tensors = [.. reader.Tensors.Values.Select(t => (t.Name, t.Shape, reader.Read(t.Name).Select(_ => (float)(random.NextDouble() - 0.5) * 0.2f).ToArray()))];
             }
 
-            SafeTensorsWriter.Write(adapterFile, tensors, SafeTensorType.F32);
+            SafeTensorsWriter.Write(adapterFile, tensors);
             string merged = Path.Combine(folder, "merged");
             var merge = ModelsJson(["merge", hf, adapter, "-o", merged, "--type", "f32", .. c]);
             Check(File.Exists(Path.Combine(merged, "model.safetensors")) && (string?)merge["kind"] == "LoRA", $"merge: {merge}");

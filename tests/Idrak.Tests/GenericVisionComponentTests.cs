@@ -335,7 +335,7 @@ internal abstract partial class DesktopTests : Tests
         [
             ("conv.weight", [4, 1, 3, 3], RandomArray(random, 36)), ("conv.bias", [4], RandomArray(random, 4)),
             ("fc.weight", [4, 4], RandomArray(random, 16)), ("fc.bias", [4], RandomArray(random, 4)),
-        ], SafeTensorType.F32);
+        ]);
         File.WriteAllText(Path.Combine(folder, "config.json"),
             $$$"""{"architectures": ["{{{architecture}}}"], "line_height": 8, "id2label": {"0": "", "1": "a", "2": "b", "3": "c"}}""");
         return folder;

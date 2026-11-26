@@ -393,7 +393,7 @@ internal abstract partial class DesktopTests : Tests
             Directory.CreateDirectory(Path.GetDirectoryName(released)!);
             File.Copy(Path.Combine(root, "run", "checkpoint-1", "discriminator.json"), Path.Combine(root, "release", "discriminator.json"));
             Idrak.Models.SafeTensorsWriter.Write(released, names.Select(n => (n.Replace(".parametrizations.weight.original0", ".weight_g", StringComparison.Ordinal)
-                .Replace(".parametrizations.weight.original1", ".weight_v", StringComparison.Ordinal), ((Idrak.Abstraction.Formats.ITensorStore)reader).ShapeOf(n), reader.Read(n))), Idrak.Models.SafeTensorType.F32);
+                .Replace(".parametrizations.weight.original1", ".weight_v", StringComparison.Ordinal), ((Idrak.Abstraction.Formats.ITensorStore)reader).ShapeOf(n), reader.Read(n))));
 
             List<(string Name, float[] Values)> Loaded(string folder, string? file)
             {

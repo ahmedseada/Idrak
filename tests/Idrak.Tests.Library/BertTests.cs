@@ -361,7 +361,7 @@ internal abstract partial class Tests
             }
 
             tensors.Add(("cls.predictions.decoder.weight", [vocabulary, width], tensors.Single(t => t.Name == "bert.embeddings.word_embeddings.weight").Values));
-            SafeTensorsWriter.Write(Path.Combine(untied, "model.safetensors"), tensors, SafeTensorType.F32);
+            SafeTensorsWriter.Write(Path.Combine(untied, "model.safetensors"), tensors);
             using var separate = LoadBert(untied, device);
             Check(separate.Heads[EncoderHeads.MaskedLanguageModel].Network.Descendants().OfType<Linear>().Last().TiedTo is null, "an untied checkpoint's decoder has weights of its own");
             using (new TensorScope())

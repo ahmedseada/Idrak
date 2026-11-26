@@ -51,7 +51,7 @@ internal abstract partial class Tests
         {
             var a = Enumerable.Range(0, 12).Select(i => MathF.Sin(i) * 3).ToArray();
             var b = Enumerable.Range(0, 5).Select(i => (float)i - 2.5f).ToArray();
-            SafeTensorsWriter.Write(Path.Combine(folder, "part1.safetensors"), [("a", [3, 4], a)], SafeTensorType.F32, new Dictionary<string, string> { ["format"] = "pt" });
+            SafeTensorsWriter.Write(Path.Combine(folder, "part1.safetensors"), [("a", [3, 4], a)], new Dictionary<string, string> { ["format"] = "pt" });
             SafeTensorsWriter.Write(Path.Combine(folder, "part2.safetensors"), [("b", [5], b)], SafeTensorType.BF16);
             File.WriteAllText(Path.Combine(folder, "model.safetensors.index.json"),
                 new JsonObject { ["weight_map"] = new JsonObject { ["a"] = "part1.safetensors", ["b"] = "part2.safetensors" } }.ToJsonString());

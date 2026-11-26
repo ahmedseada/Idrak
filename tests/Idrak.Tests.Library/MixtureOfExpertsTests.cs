@@ -790,7 +790,7 @@ internal abstract partial class Tests
             tensors.Add(family.Transposed(name) ? (stored, [shape[1], shape[0]], Transpose2D(values, shape[0], shape[1])) : (stored, shape, values));
         }
 
-        SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors, SafeTensorType.F32);
+        SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors);
     }
 
     internal static void ExpertCheckpoints(Device device)
