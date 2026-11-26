@@ -242,6 +242,26 @@ public enum FloatSpecials
 public sealed record NumberType(int Bits, NumberKind Kind, bool Signed, int Exponent = 0, int Mantissa = 0, int ExponentBias = 0, bool Subnormals = true,
     FloatSpecials Specials = FloatSpecials.Ieee, IReadOnlyList<double>? Table = null, int Width = 1)
 {
+    // The grid of the type's own numbers (no bias added) the described encoder searches, made the first time an encoder
+    // asks for it and held by this object, so every description holding the object (int16's rows of every length, each its
+    // own description, take their element type's code) shares one. Never part of the type's value: Equals and GetHashCode
+    // read the fields alone. Not readonly: it is made in place (Once).
+    private Once<DescribedEncoder.Grid> grid;
+
+    // A copy (a `with` expression) is a number type of its own: its fields copied, not the grid made for the original.
+    // Every positional field is copied here.
+    private NumberType(NumberType original)
+    {
+        (Bits, Kind, Signed, Exponent, Mantissa, ExponentBias, Subnormals, Specials, Table, Width) = (original.Bits, original.Kind, original.Signed, original.Exponent,
+            original.Mantissa, original.ExponentBias, original.Subnormals, original.Specials, original.Table, original.Width);
+    }
+
+    /// <summary>
+    /// The grid of the type's own numbers, no bias added (<see cref="DescribedEncoder.Grid"/>), made the first time it is
+    /// asked for and held; asked only of a number of up to 16 bits. Null where it has no finite number.
+    /// </summary>
+    internal DescribedEncoder.Grid? Grid => grid.Get(this, static t => DescribedEncoder.Grid.Unbiased(t));
+
     /// <summary>A whole number of <paramref name="bits"/> bits (two's complement when <paramref name="signed"/>).</summary>
     public static NumberType Integer(int bits, bool signed) => new(bits, NumberKind.Integer, signed);
 
@@ -592,9 +612,9 @@ public sealed partial record TypeDescription(int Values, int Bytes, NumberType C
 }
 
 /// <summary>
-/// One thing a description makes of itself, held by the description (a field of it, one a consumer): made the first time
-/// it is asked for, by one thread (the others wait for it), then read without a lock; null is a value made like any other.
-/// A making that throws leaves it unmade. The field is never readonly (it is made in place).
+/// One thing a description (or a number type) makes of itself, held by it (a field of it, one a consumer): made the first
+/// time it is asked for, by one thread (the others wait for it), then read without a lock; null is a value made like any
+/// other. A making that throws leaves it unmade. The field is never readonly (it is made in place).
 /// </summary>
 /// <typeparam name="T">What is made.</typeparam>
 internal struct Once<T> where T : class
@@ -604,10 +624,10 @@ internal struct Once<T> where T : class
     private object? gate;
 
     /// <summary>The value, made from <paramref name="owner"/> by <paramref name="make"/> the first time.</summary>
-    public T? Get(TypeDescription owner, Func<TypeDescription, T?> make) => Volatile.Read(ref made) ? value : Make(owner, make);
+    public T? Get<TOwner>(TOwner owner, Func<TOwner, T?> make) => Volatile.Read(ref made) ? value : Make(owner, make);
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private T? Make(TypeDescription owner, Func<TypeDescription, T?> make) => LazyInitializer.EnsureInitialized(ref value, ref made, ref gate, () => make(owner));
+    private T? Make<TOwner>(TOwner owner, Func<TOwner, T?> make) => LazyInitializer.EnsureInitialized(ref value, ref made, ref gate, () => make(owner));
 }
 
 /// <summary>
@@ -2189,9 +2209,16 @@ internal sealed class DescribedEncoder
 
         /// <summary>
         /// The grid of <paramref name="type"/> plus <paramref name="bias"/>, or null (not one number of up to 16 bits, or no
-        /// finite number): made for the encoder asking, which holds it (the encoder is made once a description, and held by it).
+        /// finite number): with no bias (+0), the type's own, made once and held by the number type itself
+        /// (<see cref="NumberType.Grid"/>: one for every description holding that object); with another, made for the encoder
+        /// asking, which holds it (the encoder is made once a description, and held by it).
         /// </summary>
-        public static Grid? Of(NumberType type, double bias) => type.Width == 1 && type.Bits <= 16 && type.Valid ? Make(type, bias, null) : null;
+        public static Grid? Of(NumberType type, double bias) => type.Width == 1 && type.Bits <= 16 && type.Valid
+            ? BitConverter.DoubleToInt64Bits(bias) == 0 ? type.Grid : Make(type, bias, null)
+            : null;
+
+        /// <summary>The grid of <paramref name="type"/>'s own numbers, no bias added (made once a number type: <see cref="NumberType.Grid"/>).</summary>
+        internal static Grid? Unbiased(NumberType type) => Make(type, 0, null);
 
         /// <summary>The grid of <paramref name="type"/> plus <paramref name="bias"/> over the codes <paramref name="holds"/> takes (all where null).</summary>
         public static Grid? Of(NumberType type, double bias, Func<ulong, bool>? holds) => holds is null ? Of(type, bias)

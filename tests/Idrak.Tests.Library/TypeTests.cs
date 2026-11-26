@@ -637,6 +637,14 @@ internal abstract partial class Tests
                   && ReferenceEquals(mine.CpuFingerprint, mine.CpuFingerprint) && mine.CpuFingerprint == theirs.CpuFingerprint && !ReferenceEquals(mine.CpuFingerprint, theirs.CpuFingerprint),
                 $"{row}: each description object makes and holds its own reader, writer and lane plan; an equal one made apart, or a copy, its own");
 
+            // The code's grid (no bias) is the number type's own: rows of every length hold their element type's code object,
+            // so their encoders share one grid; a copy of the number type makes its own; neither takes part in its value.
+            var (rowCode, copiedCode) = (mine.Code, mine.Code with { });
+            Check(ReferenceEquals(rowCode, theirs.Code) && ReferenceEquals(rowCode, element.Description.Code) && rowCode.Grid is not null
+                  && ReferenceEquals(DescribedEncoder.Grid.Of(rowCode, 0), DescribedEncoder.Grid.Of(element.ForRow(k + 32).Description.Code, 0)) && ReferenceEquals(rowCode.Grid, rowCode.Grid)
+                  && !ReferenceEquals(rowCode.Grid, copiedCode.Grid) && rowCode == copiedCode && rowCode.GetHashCode() == copiedCode.GetHashCode(),
+                $"{row}: its code's grid is held by the number type, one for its rows of every length; a copy of the type makes its own, equal by value");
+
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {row}: {stored.Length} bytes for {n} rows, relative error {error / energy:0.0e+0}, the CPU's product within {worst:0.0e+0}"));
         }
 
