@@ -488,7 +488,7 @@ internal abstract partial class Tests
         string folder = TempFolder();
         try
         {
-            WriteExpertCheckpoint(folder, "Qwen2MoeForCausalLM", spec, new RandomWeights(94));
+            WriteExpertCheckpoint(folder, "Qwen2MoeForCausalLM", QwenArchitectures.Qwen2Moe(), spec, new RandomWeights(94));
             var random2 = new Random(4);
             var sequences = Enumerable.Range(0, 4).Select(_ =>
             {
@@ -541,20 +541,9 @@ internal abstract partial class Tests
         return Parsed(config);
     }
 
-    // The families of the architectures these tests write, reached directly.
-    internal static IPretrainedArchitecture ExpertFamily(string architecture) => architecture switch
+    // The weights of spec (drawn from weights) as the checkpoint of family (the architecture its config names), with its config.
+    internal static void WriteExpertCheckpoint(string folder, string architecture, IPretrainedArchitecture family, DecoderSpec spec, RandomWeights weights)
     {
-        "MixtralForCausalLM" => MistralArchitectures.Mixtral(),
-        "Qwen2MoeForCausalLM" => QwenArchitectures.Qwen2Moe(),
-        "Qwen3MoeForCausalLM" => QwenArchitectures.Qwen3Moe(),
-        "LlamaForCausalLM" => Idrak.Text.Plugins.Llama.LlamaArchitectures.Llama(),
-        _ => throw new ArgumentException($"no family for {architecture} in these tests", nameof(architecture)),
-    };
-
-    // The weights of spec (drawn from weights) as the family's checkpoint, with its config.
-    internal static void WriteExpertCheckpoint(string folder, string architecture, DecoderSpec spec, RandomWeights weights)
-    {
-        var family = ExpertFamily(architecture);
         using (spec.Build(weights, new DecoderBuildOptions { Device = Device.Cpu }))
         {
         }
@@ -573,28 +562,28 @@ internal abstract partial class Tests
 
     internal static void ExpertCheckpoints(Device device)
     {
-        DecoderSpec Read(JsonObject config) => ExpertFamily((string)config["architectures"]![0]!).Spec(config, []);
+        DecoderSpec Read(IPretrainedArchitecture family, JsonObject config) => family.Spec(config, []);
 
         // Configs: each family's keys and defaults.
-        var mixtral = Read(ExpertConfig("MixtralForCausalLM", SmallSpec with { Experts = 8, ExpertsPerToken = 2 }));
+        var mixtral = Read(MistralArchitectures.Mixtral(), ExpertConfig("MixtralForCausalLM", SmallSpec with { Experts = 8, ExpertsPerToken = 2 }));
         Check(mixtral is { Experts: 8, ExpertsPerToken: 2, ExpertFfDim: 0, SharedExpertFfDim: 0, NormalizeTopK: true, ExpertLayers: null, QkvBias: false },
             $"Mixtral: {mixtral.ToJson().ToJsonString()}");
         var qwen2Config = ExpertConfig("Qwen2MoeForCausalLM", SmallSpec with { Experts = 60, ExpertsPerToken = 4, ExpertFfDim = 14, SharedExpertFfDim = 56 });
         qwen2Config.Remove("norm_topk_prob");
         qwen2Config["decoder_sparse_step"] = 2;
-        var qwen2 = Read(qwen2Config);
+        var qwen2 = Read(QwenArchitectures.Qwen2Moe(), qwen2Config);
         Check(qwen2 is { Experts: 60, ExpertsPerToken: 4, ExpertFfDim: 14, SharedExpertFfDim: 56, NormalizeTopK: false, QkvBias: true }
               && !qwen2.IsExpertLayer(0) && qwen2.IsExpertLayer(1), $"Qwen2-MoE: {qwen2.ToJson().ToJsonString()}");
         var qwen3Config = ExpertConfig("Qwen3MoeForCausalLM", SmallSpec with { Experts = 128, ExpertsPerToken = 8, ExpertFfDim = 7, NormalizeTopK = true });
         qwen3Config["mlp_only_layers"] = new JsonArray(0);
-        var qwen3 = Read(qwen3Config);
+        var qwen3 = Read(QwenArchitectures.Qwen3Moe(), qwen3Config);
         Check(qwen3 is { Experts: 128, ExpertsPerToken: 8, ExpertFfDim: 7, NormalizeTopK: true, QkNorm: true } && !qwen3.IsExpertLayer(0) && qwen3.IsExpertLayer(1),
             $"Qwen3-MoE: {qwen3.ToJson().ToJsonString()}");
         try
         {
             var dense = ExpertConfig("MixtralForCausalLM", SmallSpec with { Experts = 8, ExpertsPerToken = 2 });
             dense["architectures"] = new JsonArray("LlamaForCausalLM");
-            Read(dense);
+            Read(Idrak.Text.Plugins.Llama.LlamaArchitectures.Llama(), dense);
             Check(false, "a dense family should refuse experts");
         }
         catch (NotSupportedException ex)
@@ -618,15 +607,16 @@ internal abstract partial class Tests
         int[] ids = [2, 9, 14, 3, 7, 1, 20];
         using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device);
         string[] architectures = ["MixtralForCausalLM", "Qwen2MoeForCausalLM", "Qwen3MoeForCausalLM"];
+        IPretrainedArchitecture[] families = [MistralArchitectures.Mixtral(), QwenArchitectures.Qwen2Moe(), QwenArchitectures.Qwen3Moe()];
         string cache = Path.Combine(Path.GetTempPath(), "ns-gguf-" + Guid.NewGuid().ToString("N"));
         for (int f = 0; f < 3; f++)
         {
-            var spec = Read(ExpertConfig(architectures[f], ExpertSpecs[f].Spec));
+            var spec = Read(families[f], ExpertConfig(architectures[f], ExpertSpecs[f].Spec));
             var weights = new RandomWeights(95 + f);
             string folder = TempFolder();
             try
             {
-                WriteExpertCheckpoint(folder, architectures[f], spec, weights);
+                WriteExpertCheckpoint(folder, architectures[f], families[f], spec, weights);
                 var expected = ReferenceDecoder(spec, weights, ids);
                 using (var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
                 {

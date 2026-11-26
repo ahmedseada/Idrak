@@ -286,8 +286,9 @@ internal abstract partial class Tests
         string folder = TempFolder();
         try
         {
-            spec = Idrak.Text.Plugins.Mistral.MistralArchitectures.Mixtral().Spec(ExpertConfig("MixtralForCausalLM", spec), []);
-            WriteExpertCheckpoint(folder, "MixtralForCausalLM", spec, new RandomWeights(81));
+            var mixtral = Idrak.Text.Plugins.Mistral.MistralArchitectures.Mixtral();
+            spec = mixtral.Spec(ExpertConfig("MixtralForCausalLM", spec), []);
+            WriteExpertCheckpoint(folder, "MixtralForCausalLM", mixtral, spec, new RandomWeights(81));
             float[] Predict(PretrainedOptions options, out PretrainedModel model)
             {
                 model = PretrainedModel.Load(folder, options with { Device = target });
