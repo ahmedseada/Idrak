@@ -8,8 +8,8 @@ using Idrak.Diagnostics;
 namespace Idrak.Cli.Commands.Health;
 
 /// <summary>
-/// <c>idrak devices</c> (<c>dev</c>): every device with its backend, name, memory, compute units, subgroup size, matrix
-/// units, kernel width and whether a plain run uses it (the test runner's <c>--list-devices</c>), and each backend that
+/// <c>idrak devices</c> (<c>dev</c>): every device with its backend, name, memory, compute units, subgroup size,
+/// kernel width and whether a plain run uses it (the test runner's <c>--list-devices</c>), and each backend that
 /// found none with the reason.
 /// </summary>
 internal sealed class DevicesCommand : Command
@@ -18,7 +18,7 @@ internal sealed class DevicesCommand : Command
 
     public override IReadOnlyCollection<string> Aliases => ["dev"];
 
-    public override string Summary => "Every device: backend, name, memory, compute units, subgroup size, matrix units, kernel width";
+    public override string Summary => "Every device: backend, name, memory, compute units, subgroup size, kernel width";
 
     public override string Usage => """
 
@@ -27,7 +27,7 @@ internal sealed class DevicesCommand : Command
 
         Columns: Memory (the device's memory; the CPU: what the process may use), CUs (compute units; the CPU: logical
         processors), Lanes (subgroup, warp or wavefront size; the CPU: float lanes per vector), Width (threads per
-        workgroup of the kernels, chosen from the device's limits), Matrix (matrix units), In a plain run (yes: listed
+        workgroup of the kernels, chosen from the device's limits), In a plain run (yes: listed
         by Device.Available and tested by a plain test run; by name: only when named).
 
         Examples:
@@ -44,12 +44,12 @@ internal sealed class DevicesCommand : Command
         var rows = devices.Select(d => (IReadOnlyList<string>)
         [
             d.Device, d.Backend, d.Error is null ? d.Name : Messages.T("cannot start: {0}", d.Error), Machine.Bytes(d.MemoryBytes), Machine.Number(d.ComputeUnits),
-            Machine.Number(d.SubgroupSize), Machine.Number(d.KernelWidth), d.Error is null ? d.MatrixUnits ? yes : no : "-",
+            Machine.Number(d.SubgroupSize), Machine.Number(d.KernelWidth),
             d.Listed ? yes : Messages.T("by name"), Joined(d.KernelsUnavailable is { } off ? Messages.T("kernels unavailable: {0}", off) : null,
                 d.IsDefault ? Messages.T("default device") : d.Note),
-        ]).Concat(missing.Select(b => (IReadOnlyList<string>)[$"{b.Kind}:-", b.Display, Messages.T("none found: {0}", b.UnavailableReason), "-", "-", "-", "-", "-", "-", ""]));
+        ]).Concat(missing.Select(b => (IReadOnlyList<string>)[$"{b.Kind}:-", b.Display, Messages.T("none found: {0}", b.UnavailableReason), "-", "-", "-", "-", "-", ""]));
         context.Table([Messages.T("Device"), Messages.T("Backend"), Messages.T("Name"), Messages.T("Memory"), Messages.T("CUs"), Messages.T("Lanes"),
-            Messages.T("Width"), Messages.T("Matrix"), Messages.T("In a plain run"), Messages.T("Note")], rows);
+            Messages.T("Width"), Messages.T("In a plain run"), Messages.T("Note")], rows);
         context.WriteJson(new JsonObject
         {
             ["default"] = Device.Default.ToString(),

@@ -145,10 +145,8 @@ public sealed class VisionTransformerEncoder : Module
     /// Builds the encoder from the tensors under <paramref name="prefix"/> (<c>embeddings.patch_embedding.{weight,bias}</c>
     /// [dim, channels, patch, patch], <c>embeddings.position_embedding.weight</c> [patches, dim],
     /// <c>encoder.layers.N.{layer_norm1, self_attn.{q,k,v,out}_proj, layer_norm2, mlp.fc1, mlp.fc2}.{weight,bias}</c> with
-    /// linear weights [out, in], <c>post_layernorm.{weight,bias}</c>), read one at a time. The projections (attention and
-    /// MLP) keep the precision <paramref name="weights"/> asks for (by default as stored: a bfloat16 checkpoint's stay
-    /// bfloat16, half the memory, computed in float32: <see cref="StoredWeights"/>); the patch convolution, the position
-    /// embedding, the norms and every bias are float32. Every float32 tensor is a parameter.
+    /// linear weights [out, in], <c>post_layernorm.{weight,bias}</c>), read one at a time. Every tensor is float32 and a
+    /// parameter.
     /// </summary>
     /// <exception cref="InvalidDataException">A tensor's shape disagrees with the configuration, or the activation is unknown.</exception>
     public static VisionTransformerEncoder FromTensors(VisionTransformerConfig config, ITensorStore tensors, string prefix, Device? device = null)

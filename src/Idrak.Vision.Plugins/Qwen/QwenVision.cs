@@ -215,10 +215,6 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
     public QwenImageProcessor Processor(bool grayscale = false) => QwenImageProcessor.FromFolder(_folder, Config, grayscale);
 
     /// <inheritdoc />
-    /// <remarks>
-    /// The parts <see cref="VisionEncoderOptions.TrainedParts"/> names are built with float32 weights, the other as
-    /// <see cref="VisionEncoderOptions.Weights"/> says (a bfloat16 checkpoint's projections stay bfloat16 by default).
-    /// </remarks>
     public override IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null)
     {
         var device = options?.Device ?? Device.Default;

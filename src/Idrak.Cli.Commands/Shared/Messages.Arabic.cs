@@ -89,7 +89,6 @@ internal static partial class Messages
         ["CUs"] = "وحدات الحوسبة",
         ["Lanes"] = "المسارات",
         ["Width"] = "العرض",
-        ["Matrix"] = "المصفوفات",
         ["In a plain run"] = "في التشغيل العادي",
         ["Note"] = "ملاحظة",
         ["cannot start: {0}"] = "تعذر التشغيل: {0}",
@@ -153,8 +152,6 @@ internal static partial class Messages
         ["{0} compute units"] = "وحدات حوسبة: {0}",
         ["subgroup {0}"] = "المجموعة الفرعية: {0}",
         ["kernels width {0}"] = "عرض النوى: {0}",
-        ["matrix units"] = "وحدات مصفوفات",
-        ["no matrix units"] = "بلا وحدات مصفوفات",
         ["listed"] = "مدرج",
         ["by name only"] = "بالاسم فقط",
         ["Each device's limits (memory, subgroup size, matrix units) decide which kernels run and what models fit."] =
@@ -362,8 +359,8 @@ internal static partial class Messages
         ["Sets a config value (JSON values such as [\"a.dll\"] or 4 are kept as JSON)"] = "تعيين قيمة في الإعدادات (تحفظ قيم JSON مثل [\"a.dll\"] أو 4 بصيغة JSON)",
         ["Removes a config value"] = "إزالة قيمة من الإعدادات",
         ["Every config value (or a profile's), and the file's path"] = "كل قيم الإعدادات (أو قيم ملف شخصي)، ومسار الملف",
-        ["Every device: backend, name, memory, compute units, subgroup size, matrix units, kernel width"] =
-            "كل الأجهزة: الواجهة الخلفية والاسم والذاكرة ووحدات الحوسبة وحجم المجموعة الفرعية ووحدات المصفوفات وعرض النوى",
+        ["Every device: backend, name, memory, compute units, subgroup size, kernel width"] =
+            "كل الأجهزة: الواجهة الخلفية والاسم والذاكرة ووحدات الحوسبة وحجم المجموعة الفرعية وعرض النوى",
         ["What works on this machine and what to fix: runtime, backends, devices, caches, disk, environment"] =
             "ما يعمل على هذا الجهاز وما يجب إصلاحه: بيئة التشغيل والواجهات الخلفية والأجهزة والتخزين المؤقت والقرص والبيئة",
         ["Every environment variable Idrak reads: value, default and meaning"] = "كل متغيرات البيئة التي تقرؤها إدراك: القيمة والافتراضي والمعنى",

@@ -259,7 +259,7 @@ internal sealed class BenchCommand : Command
         }
 
         string prompt = Prompt(tokenizer, promptTokens);
-        var layout = ModelChoices.CacheLayout(choice, model);           // --kv, IDRAK_KV_CACHE_TYPE, else the run's element type (plan 37, T2)
+        var layout = ModelChoices.CacheLayout(choice);           // --kv, IDRAK_KV_CACHE_TYPE, else the run's element type (plan 37, T2)
         string kv = layout.Name;
         int window = Math.Min(Math.Max(context.IntOption("--num-ctx", promptTokens + tokens + 1), promptTokens + tokens + 1), model.MaxPositions);
         var generator = model.CreateGenerator(layout, window);
@@ -291,14 +291,6 @@ internal sealed class BenchCommand : Command
         }
 
         progress.Clear();
-        if (ProductRoutes.Current == ProductRoute.Measured)
-        {
-            foreach (var (product, lane) in ProductRoutes.Choices.OrderBy(c => c.Key, StringComparer.Ordinal))
-            {
-                context.Write($"  measured lane: {product}: {lane}");
-            }
-        }
-
         var drafted = context.Option("--draft") is { } draftName
             ? BenchDraft(context, draftName, run, generator, prompt, options, Median(generated), repeats, promptTokens + tokens + 1, document)
             : [];
@@ -403,7 +395,7 @@ internal sealed class BenchCommand : Command
         }
 
         using var model = ModelChoices.Load(context, choice, run.Device);
-        var draft = model.CreateGenerator(ModelChoices.CacheLayout(choice, model), contextLength);
+        var draft = model.CreateGenerator(ModelChoices.CacheLayout(choice), contextLength);
         draft.KeepCache = false;                                        // every run reads its whole prompt again, as the target's
         if (SpeculativeDecoding.Refusal(target.Tokenizer, draft) is { } reason)
         {
@@ -512,8 +504,6 @@ internal sealed class BenchCommand : Command
                 ["max_calls"] = settle.MaxCalls,
             },
             ["small"] = small,
-            ["packed_formats"] = new JsonArray([.. formats.Select(f => (JsonNode)f)]),
-            ["routes"] = ProductRoutes.Current.ToString().ToLowerInvariant(),
         };
         return results;
     }

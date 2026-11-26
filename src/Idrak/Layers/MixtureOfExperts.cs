@@ -427,10 +427,9 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
         else
         {
             weights = Tensor.Empty([tokens, 1, k], device, track: false);
-            var indexType = backend.IndexTypeOf(Ops.RouteTopK);                   // what the routing writes (plan 37, T1)
-            offsets = Tensor.Empty([experts + 1], device, indexType, track: false);
-            tokenOfRow = Tensor.Empty([slots], device, indexType, track: false);
-            slotRow = Tensor.Empty([slots], device, indexType, track: false);
+            offsets = Tensor.Empty([experts + 1], device, track: false);
+            tokenOfRow = Tensor.Empty([slots], device, track: false);
+            slotRow = Tensor.Empty([slots], device, track: false);
         }
 
         Tensor? rows = null, gated = null, outputs = null, slotOrder = null;

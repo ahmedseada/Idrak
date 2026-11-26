@@ -288,7 +288,6 @@ internal sealed class DoctorCommand : Command
                 facts.Add(Messages.T("kernels width {0}", width));
             }
 
-            facts.Add(d.MatrixUnits ? Messages.T("matrix units") : Messages.T("no matrix units"));
             string use = d.IsDefault ? Messages.T("default device") : d.Listed ? Messages.T("listed") : d.Note is { Length: > 0 } n ? n : Messages.T("by name only");
             if (d.KernelsUnavailable is { } off)
             {

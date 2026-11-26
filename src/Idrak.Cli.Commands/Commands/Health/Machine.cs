@@ -61,7 +61,6 @@ internal static class Machine
         ["memoryBytes"] = d.MemoryBytes,
         ["computeUnits"] = d.ComputeUnits,
         ["subgroupSize"] = d.SubgroupSize,
-        ["matrixUnits"] = d.MatrixUnits,
         ["kernelWidth"] = d.KernelWidth,
         ["driver"] = d.Driver,
         ["kind"] = d.HardwareKind,

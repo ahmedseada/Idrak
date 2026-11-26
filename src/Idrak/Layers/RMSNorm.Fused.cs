@@ -26,7 +26,7 @@ public sealed partial class RMSNorm
         k.ThrowIfDisposed();
         v.ThrowIfDisposed();
         if ((queryNorm is null) != (keyNorm is null) || (cos is null) != (sin is null) || (cache is null) != (position is null)
-            || cache is { FusedWriteLayout: null } || !q.Backend.FusedKernels)
+            || cache is { FusedWriteLayout: null })
         {
             return null;
         }
@@ -49,8 +49,7 @@ public sealed partial class RMSNorm
 
         if (!q.Backend.NormRopeHeads(q.Storage, k.Storage, v.Storage, n, t, heads, kvHeads, dim, queryNorm?.Gain.Storage, queryNorm?.Epsilon ?? 0f,
             queryNorm?.Offset ?? 0f, keyNorm?.Gain.Storage, keyNorm?.Epsilon ?? 0f, keyNorm?.Offset ?? 0f, cos?.Storage, sin?.Storage, positions.Storage,
-            cos?.Shape[1] ?? 0, interleaved, yq.Storage, (yk ?? cache!.Keys).Storage, (yv ?? cache!.Values).Storage, position?.Storage, capacity, stride,
-            false))
+            cos?.Shape[1] ?? 0, interleaved, yq.Storage, (yk ?? cache!.Keys).Storage, (yv ?? cache!.Values).Storage, position?.Storage, capacity, stride))
         {
             yq.Dispose();
             yk?.Dispose();

@@ -398,7 +398,7 @@ public sealed class ImagePrefillInputs : IDisposable
             .ToDictionary(r => r, r => (Tensor.PersistentZeros([batch * steps, r.Rope.Scaled(r.HeadDim).Frequencies.Length], device),
                 Tensor.PersistentZeros([batch * steps, r.Rope.Scaled(r.HeadDim).Frequencies.Length], device)));
         var buffers = new ImageBlocks.Buffers(Tensor.PersistentZeros([imageTokens, dim], device),
-            Tensor.Empty([batch * steps], device, device.Backend.IndexTypeOf(Ops.Gather), zeroed: true, track: false),   // the gather's index type (plan 37, T1b)
+            Tensor.Empty([batch * steps], device, zeroed: true, track: false),
             windows.ToDictionary(w => w, _ => (Tensor.PersistentZeros([batch * steps], device), Tensor.PersistentZeros([batch * steps], device))))
         {
             Rotary = rotary,

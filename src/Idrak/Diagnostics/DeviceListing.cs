@@ -46,9 +46,6 @@ public sealed record DeviceInfo
     /// <summary>Lanes that run in lockstep (subgroup, warp or wavefront; the CPU: float lanes of a SIMD vector).</summary>
     public int? SubgroupSize { get; init; }
 
-    /// <summary>Whether the device's products run on matrix units.</summary>
-    public bool MatrixUnits { get; init; }
-
     /// <summary>Threads per workgroup (block) of the device's kernels, as chosen from its limits; null when none.</summary>
     public int? KernelWidth { get; init; }
 
@@ -156,7 +153,6 @@ public static class DeviceListing
         var result = info with
         {
             Name = backend.Name,
-            MatrixUnits = backend.MatrixUnits,
             MemoryBytes = hardware.MemoryBytes,
             ComputeUnits = hardware.ComputeUnits,
             SubgroupSize = hardware.SubgroupSize,

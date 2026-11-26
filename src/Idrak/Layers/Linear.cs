@@ -149,9 +149,8 @@ public sealed partial class Linear : Module, IAdaptableLinear, ITiedWeights, INa
         using var offload = Offloading.EnterMany(layers, input);       // offloaded weights of all the layers staged together
         int k = input.Shape[^1], rows = input.Size / Math.Max(1, k);
         var capabilities = input.Backend.Capabilities;
-        bool fusedKernels = input.Backend.FusedKernels;
         // The checks are plain loops: no closure or delegate is allocated per call (this runs per block and decoding step).
-        bool fused = !Autograd.IsEnabled && layers.Length is > 1 and <= 3 && rows <= capabilities.FewRows && fusedKernels
+        bool fused = !Autograd.IsEnabled && layers.Length is > 1 and <= 3 && rows <= capabilities.FewRows
             && AllPlainFloat(layers, k);
         if (fused)
         {

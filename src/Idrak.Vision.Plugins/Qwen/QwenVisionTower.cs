@@ -38,8 +38,7 @@ public sealed class QwenVisionTower : Module
 
     /// <summary>
     /// The tower from the vision part's tensors (<see cref="QwenVision.OpenTensors"/>: <c>patch_embed.proj.weight</c>,
-    /// <c>blocks.N.…</c>), read one at a time, on <paramref name="device"/>. Projections keep the precision
-    /// <paramref name="weights"/> asks for (as stored by default); the patch embedding, norms and biases are float32.
+    /// <c>blocks.N.…</c>), read one at a time, on <paramref name="device"/>.
     /// </summary>
     public static QwenVisionTower FromTensors(QwenVisionConfig config, QwenVlVariant variant, ITensorStore tensors, Device device)
     {

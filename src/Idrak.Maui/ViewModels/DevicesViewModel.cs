@@ -226,10 +226,6 @@ public sealed class DevicesViewModel : ViewModel
             Add(rows, "compute units", info.ComputeUnits?.ToString(CultureInfo.InvariantCulture));
             Add(rows, "lanes", info.SubgroupSize?.ToString(CultureInfo.InvariantCulture));
             Add(rows, "kernel width", info.KernelWidth?.ToString(CultureInfo.InvariantCulture));
-            if (info.Error is null)
-            {
-                rows.Add(new("matrix units", info.MatrixUnits ? "yes" : "no"));
-            }
 
             if (d.Memory is { } m)
             {

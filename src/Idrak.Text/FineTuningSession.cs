@@ -52,8 +52,6 @@ public sealed class FineTuningSession : IDisposable
     private readonly FineTuner.CustomLoss? _defaultCustom;
     private readonly Random _random;
     private readonly List<TextGenerator> _generators = [];
-    private IDisposable? _float8;
-    private bool _float8Pending;
     private FineTuner.StepRunner? _runner;
     private readonly ActivationRung? _resumedRung;                        // the rung the checkpoint resumed from settled on
     private ILearningRateScheduler? _schedule;
@@ -73,8 +71,7 @@ public sealed class FineTuningSession : IDisposable
     /// <param name="options">Settings; <see cref="FineTuningOptions.Epochs"/>, <see cref="FineTuningOptions.EvaluateEvery"/> and <see cref="FineTuningOptions.SaveEvery"/> are a run's, not read here.</param>
     /// <param name="totalSteps">The optimizer steps the schedule spans (the learning rate's warm-up and decay are over them).</param>
     /// <param name="sample">
-    /// Sequences like the ones to come, for what is decided once: whether they hold images (the vision side), and the FP8
-    /// check (<see cref="FineTuningOptions.Float8"/>; without a sample it runs on the first step's sequences). Null: none.
+    /// Sequences like the ones to come, for what is decided once: whether they hold images (the vision side). Null: none.
     /// </param>
     /// <param name="trace">Receives a line per batch and per decision, as in <see cref="FineTuner.Train(PretrainedModel, IReadOnlyList{TrainingSequence}, IReadOnlyList{TrainingSequence}?, FineTuningOptions, string?, IProgress{FineTuningProgress}?, CancellationToken, Action{string}?)"/>.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="totalSteps"/> is not positive.</exception>
@@ -85,7 +82,6 @@ public sealed class FineTuningSession : IDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(totalSteps);
         try
         {
-            _float8Pending = Options.Float8 && (sample is null || sample.Count == 0);
             // Room for a whole batch of trained tokens (a recorded step's capacity) and the largest pass a batch can be.
             int rows = Math.Max(Options.BatchTokens, Options.MaxLength);
             Begin(totalSteps, sample ?? [], rows, rows, 0);
@@ -146,7 +142,6 @@ public sealed class FineTuningSession : IDisposable
             }
 
             var parameters = network.TrainableParameters().Concat(vision?.Parameters ?? []).Concat(FineTuner.TrainedParts(options.Parts)).ToList();
-            _float8 = FineTuner.PrepareFloat8(model, train, options, trace);
             Optimizer = FineTuner.CreateOptimizer(parameters, options);
             // Data parallel (plan 23): every rank makes the same batches from the same seed; a step covers the accumulation's
             // batches on every rank, and each rank runs its share of them.
@@ -297,12 +292,6 @@ public sealed class FineTuningSession : IDisposable
 
         cancellationToken.ThrowIfCancellationRequested();
         ReleaseGenerators();                                               // no reply's cache held through the step
-        if (_float8Pending)
-        {
-            _float8Pending = false;
-            _float8 = FineTuner.PrepareFloat8(Model, sequences, Options, _trace);
-        }
-
         var runner = Runner;
         runner.Custom = CustomFor(loss, sequences);
         var batches = FineTuner.MakeBatches(Model, sequences, Options, _random);
@@ -339,12 +328,6 @@ public sealed class FineTuningSession : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         ReleaseGenerators();
         var sequences = FineTuner.Flatten(pairs);
-        if (_float8Pending)
-        {
-            _float8Pending = false;
-            _float8 = FineTuner.PrepareFloat8(Model, sequences, Options, _trace);
-        }
-
         if (!ReferenceEquals(loss, _lastPairLoss))
         {
             (_lastPairLoss, _lastPairCustom) = (loss, new FineTuner.CustomLoss(loss, pairs: true, Options.Teacher));
@@ -635,7 +618,6 @@ public sealed class FineTuningSession : IDisposable
         _seeds?.Dispose();
         Sync?.Dispose();
         (Optimizer as IDisposable)?.Dispose();
-        _float8?.Dispose();
         _ownedVision?.Dispose();
     }
 }
