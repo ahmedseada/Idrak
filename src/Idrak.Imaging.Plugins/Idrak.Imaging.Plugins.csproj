@@ -6,7 +6,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Imaging.Plugins</PackageId>
-    <Description>Image and font formats for Idrak as plug-ins on the library's public API (one namespace per kind): WOFF fonts read and written (Fonts), registered into FontFormats and FontWriters. Reference it and call ImagingPlugins.RegisterAll(), or register one with its own Register().</Description>
+    <Description>Image and font formats for Idrak on the library's public API (one namespace per kind): WOFF fonts read and written (Fonts: WoffFormat and WoffWriter, made and called directly; the font inside read by Idrak.Imaging's OpenType reader and written by its TrueType writer).</Description>
   </PropertyGroup>
 
   <!-- Plan 26: a plug-in package uses the library's public API only; no library assembly grants it internals. Plan 28,

@@ -8,8 +8,8 @@ annotations, bookmarks and redaction (below). Office formats (Word, Excel, Power
 
 ## Documents
 
-A document format is registered by name in `DocumentFormats`, as image codecs are in `ImageCodecs`, and found from a
-file's first bytes; a writer in `DocumentWriters`. This package registers `pdf` for both. A file is opened, not loaded:
+A document format is registered by name in `DocumentFormats` and found from a file's first bytes; a writer in
+`DocumentWriters`. This package registers `pdf` for both. A file is opened, not loaded:
 its objects are read when a page or part asks for them, a page at a time. Every type below is in
 `Idrak.Abstraction.Data` (a global using when implicit usings are on).
 
@@ -45,8 +45,8 @@ foreach (var issue in page.Issues)
   order, `bidi` by default), `tagged` (the order a tagged file's structure gives) or `content` (the runs in content order).
   `DocumentParts.Glyphs` adds each run's glyph ids, places and face.
 - **Images:** raw samples of 1 to 16 bits in grey, RGB, CMYK, indexed, Lab, ICC-based (by its component count),
-  separation and DeviceN colours, with their masks (`Mask()`); JPEG through the registered "jpeg" codec; JPEG 2000, CCITT
-  and JBIG2 handed over encoded, decoded when an app registers a codec of that name in `ImageCodecs`.
+  separation and DeviceN colours, with their masks (`Mask()`); JPEG through the library's JPEG codec (Idrak.Imaging's
+  `JpegCodec`, reached directly); JPEG 2000, CCITT and JBIG2 handed over encoded (the library has no decoder for them).
 - **Vector content:** `DocumentParts.Paths` gives the paths (fill rules, strokes, dashes, colours, clips), shadings,
   patterns, transparency groups and soft masks.
 - **The document's parts:** `Fields` (forms), `Outline` (bookmarks), `Destinations` (named), `PageLabel(index)`,
@@ -79,7 +79,7 @@ using var builder = DocumentWriters.Create("out/newsletter.pdf");        // the 
 builder.Info = new DocumentInfo { Title = "Company newsletter", Author = "Communications team" };
 
 var page = builder.AddPage(595, 842);                                     // A4, in points (1/72 inch)
-page.Image(ImageCodecs.Decode("photos/new-office.jpg"), new DocumentBox(56, 120, 483, 300), DocumentImageEncoding.Auto);
+page.Image(new JpegCodec().Decode(File.ReadAllBytes("photos/new-office.jpg")), new DocumentBox(56, 120, 483, 300), DocumentImageEncoding.Auto);
 page.Path(new DocumentPath([OutlineVerb.Move, OutlineVerb.Line], [56, 100, 539, 100])
 {
     Fill = DocumentFill.None, Stroke = 1, StrokeColour = DocumentColour.Grey(0.4f),
@@ -330,8 +330,8 @@ settings above recorded, `--save` and `--compare` as `idrak bench`'s (the `idrak
 - **Text:** predefined CMaps other than Identity (tables tied to one script) are not built in: such codes are read as two
   bytes and their text comes from `ToUnicode` alone (`not-supported`). A glyph with no code point by any route is
   U+FFFD and counted in `unmapped-glyphs`.
-- **Images:** JPEG 2000, CCITT and JBIG2 are not decoded built in (register a codec), and the parameters of CCITT and
-  JBIG2 are not handed to one; ICC profiles and calibrations are not applied.
+- **Images:** JPEG 2000, CCITT and JBIG2 are not decoded (the library has no decoder for them; `Bytes()` gives them as
+  stored); ICC profiles and calibrations are not applied.
 - **Drawing:** text painted with a pattern is drawn in a solid colour (black for a coloured pattern); free text
   annotations without an appearance are not drawn.
 - **Forms:** a rich text's paragraph alignment is the field's, and a line of several styled runs is laid out with its
