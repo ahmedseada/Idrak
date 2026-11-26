@@ -42,9 +42,98 @@ internal sealed unsafe partial class CpuBackend
         }
     }
 
+    // The layout as `batch` planes of `rows` rows of `cols` values with its last dimension's step 1: the steps between
+    // planes and between rows (dimensions of 1 left out, neighbours that run on merged, a merged run split back where the
+    // sizes divide it); false where it is not so.
+    private static bool Planes(TensorLayout layout, int batch, int rows, int cols, out long planeStep, out long rowStep)
+    {
+        planeStep = rowStep = 0;
+        var shape = layout.Shape;
+        var strides = layout.Strides;
+        Span<long> size = stackalloc long[shape.Length + 1], step = stackalloc long[shape.Length + 1];
+        int count = 0;
+        for (int d = 0; d < shape.Length; d++)
+        {
+            if (shape[d] == 1)
+            {
+                continue;
+            }
+
+            if (count > 0 && step[count - 1] == strides[d] * shape[d])
+            {
+                size[count - 1] *= shape[d];
+                step[count - 1] = strides[d];
+            }
+            else
+            {
+                size[count] = shape[d];
+                step[count] = strides[d];
+                count++;
+            }
+        }
+
+        // Peels `length` values of step `unit` (any step where unit < 0) off the innermost run.
+        bool Peel(long length, long unit, out long taken, Span<long> sizes, Span<long> steps, ref int n)
+        {
+            taken = 0;
+            if (length == 1)
+            {
+                return true;
+            }
+
+            if (n == 0 || sizes[n - 1] % length != 0 || unit >= 0 && steps[n - 1] != unit)
+            {
+                return false;
+            }
+
+            taken = steps[n - 1];
+            if (sizes[n - 1] == length)
+            {
+                n--;
+            }
+            else
+            {
+                sizes[n - 1] /= length;
+                steps[n - 1] *= length;
+            }
+
+            return true;
+        }
+
+        if (!Peel(cols, 1, out _, size, step, ref count) || !Peel(rows, -1, out rowStep, size, step, ref count) || rows > 1 && rowStep <= 0)
+        {
+            return false;
+        }
+
+        if (batch > 1)
+        {
+            if (count != 1 || size[0] != batch)
+            {
+                return false;
+            }
+
+            planeStep = step[0];
+            return true;
+        }
+
+        return count == 0;
+    }
+
     public override void BatchedMatMulStridedKernel(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k,
         bool transA, bool transB, float beta)
     {
+        // Planes the product reads where they lie (a matrix step and a row step each): no copy.
+        if (NativeFloats(a) && NativeFloats(b) && Planes(aLayout, batch, transA ? k : m, transA ? m : k, out long sa, out long la)
+            && Planes(bLayout, batch, transB ? n : k, transB ? k : n, out long sb, out long lb) && batch > 0 && m > 0 && n > 0)
+        {
+            fixed (float* pa = D(a), pb = D(b), pc = V(c))
+            {
+                Product(pa + aLayout.Offset, pb + bLayout.Offset, null, pc, batch, m, n, k, transA, transB, beta, la, null, 0, batch > 1 ? sa : -1, batch > 1 ? sb : -1, lb);
+            }
+
+            return;
+        }
+
         Storage ea = ViewElements(a, aLayout), eb = ViewElements(b, bLayout);
         try
         {

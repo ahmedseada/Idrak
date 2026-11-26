@@ -82,24 +82,28 @@ internal sealed unsafe partial class CpuBackend
 
     // `lda`: the step between A's rows where it is not transposed (0: k, its rows packed). `bType`: B's type where its words
     // hold another type's values (read through it as B is packed, from element `bBase` on), else null.
+    // A view's planes (aStride, bStride: the step between matrices, 0 for one shared, negative where packed; lda, ldb:
+    // between stored rows, 0 or less where packed) are read where they lie.
     private static void Product(float* a, float* b, float* bias, float* c, int batch, int m, int n, int k, bool transA, bool transB, float beta, long lda = 0,
-        IElementType? bType = null, long bBase = 0)
+        IElementType? bType = null, long bBase = 0, long aStride = -1, long bStride = -1, long ldb = 0)
     {
-        var run = new ProductRun(new ProductShape(a, b, bias, c, batch, m, n, k, transA, transB, beta, lda > 0 ? lda : k, bType, bBase));
+        var shape = new ProductShape(a, b, bias, c, batch, m, n, k, transA, transB, beta, lda > 0 ? lda : transA ? m : k, bType, bBase,
+            aStride >= 0 ? aStride : (long)m * k, bStride >= 0 ? bStride : (long)k * n, ldb > 0 ? ldb : transB ? k : n);
+        var run = new ProductRun(shape);
         run.Run(ChosenLanes(bType is null ? "MatMul" : "MatMul typed B", SizeClass((long)batch * m), SizeClass(n) << 6 | SizeClass(k), ref run));
     }
 
     private readonly struct ProductShape(float* a, float* b, float* bias, float* c, int batch, int m, int n, int k, bool transA, bool transB, float beta, long lda,
-        IElementType? bType, long bBase)
+        IElementType? bType, long bBase, long aStride, long bStride, long ldb)
     {
         public readonly float* A = a, B = b, Bias = bias, C = c;
         public readonly int Batch = batch, M = m, N = n, K = k;
         public readonly bool TransA = transA, TransB = transB;
         public readonly float Beta = beta;
-        public readonly long Lda = lda, BBase = bBase;
+        public readonly long Lda = lda, BBase = bBase, AStride = aStride, BStride = bStride, Ldb = ldb;
         public readonly IElementType? BType = bType;
 
-        public ProductShape WithC(float* to) => new(A, B, Bias, to, Batch, M, N, K, TransA, TransB, 0f, Lda, BType, BBase);
+        public ProductShape WithC(float* to) => new(A, B, Bias, to, Batch, M, N, K, TransA, TransB, 0f, Lda, BType, BBase, AStride, BStride, Ldb);
     }
 
     private struct ProductRun(ProductShape shape) : ILanesRun
@@ -185,18 +189,18 @@ internal sealed unsafe partial class CpuBackend
                 int group = item % RowGroups, rest = item / RowGroups, p = rest % Panels, matrix = rest / Panels;
                 int j0 = p * panel, columns = Math.Min(panel, s.N - j0);
                 int i0 = group * RowsPerGroup, i1 = Math.Min(s.M, i0 + RowsPerGroup);
-                float* a = s.A + (long)matrix * s.M * s.K, b = s.B + (long)matrix * s.K * s.N, c = s.C + (long)matrix * s.M * s.N;
+                float* a = s.A + matrix * s.AStride, b = s.B + matrix * s.BStride, c = s.C + (long)matrix * s.M * s.N;
                 Start(s, c, i0, i1, j0, columns);
                 for (int k0 = 0; k0 < s.K; k0 += BlockK)
                 {
                     int kc = Math.Min(BlockK, s.K - k0);
                     if (s.BType is { } type)
                     {
-                        PackTyped(type, s.B, s.BBase + (long)matrix * s.K * s.N, s.N, s.K, s.TransB, k0, kc, j0, columns, panel, packed, temp);
+                        PackTyped(type, s.B, s.BBase + matrix * s.BStride, s.Ldb, s.TransB, k0, kc, j0, columns, panel, packed, temp);
                     }
                     else
                     {
-                        Pack(b, s.N, s.K, s.TransB, k0, kc, j0, columns, panel, packed);
+                        Pack(b, s.Ldb, s.TransB, k0, kc, j0, columns, panel, packed);
                     }
                     for (int i = i0; i < i1; i += TileRows)
                     {
@@ -214,7 +218,7 @@ internal sealed unsafe partial class CpuBackend
                         }
 
                         // A's six rows at k0 (rows past the tile's read its first, their sums dropped) and the step between k's.
-                        nint step = s.TransA ? s.M : 1;
+                        nint step = s.TransA ? (nint)s.Lda : 1;
                         float* r0 = Row(a, s, i, k0), r1 = Row(a, s, rows > 1 ? i + 1 : i, k0), r2 = Row(a, s, rows > 2 ? i + 2 : i, k0);
                         float* r3 = Row(a, s, rows > 3 ? i + 3 : i, k0), r4 = Row(a, s, rows > 4 ? i + 4 : i, k0), r5 = Row(a, s, rows > 5 ? i + 5 : i, k0);
                         Tile<TV, TF>(r0, r1, r2, r3, r4, r5, step, packed, kc, target, ldc);
@@ -232,7 +236,7 @@ internal sealed unsafe partial class CpuBackend
 
         // Row i of op(a) at k0.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static float* Row(float* a, in ProductShape s, int i, int k0) => s.TransA ? a + (long)k0 * s.M + i : a + i * s.Lda + k0;
+        private static float* Row(float* a, in ProductShape s, int i, int k0) => s.TransA ? a + k0 * s.Lda + i : a + i * s.Lda + k0;
     }
 
     // Each output's start: β · c (0 where β is 0), or the bias.
@@ -259,8 +263,9 @@ internal sealed unsafe partial class CpuBackend
         }
     }
 
-    // B's values [k0, k0 + kc) × [j0, j0 + columns) packed k by k, `panel` a k (zeros past the columns).
-    private static void Pack(float* b, int n, int k, bool transB, int k0, int kc, int j0, int columns, int panel, float* packed)
+    // B's values [k0, k0 + kc) × [j0, j0 + columns) packed k by k, `panel` a k (zeros past the columns); `ldb` the step
+    // between B's stored rows (k's rows, or n's where transposed).
+    private static void Pack(float* b, long ldb, bool transB, int k0, int kc, int j0, int columns, int panel, float* packed)
     {
         for (int kk = 0; kk < kc; kk++)
         {
@@ -269,12 +274,12 @@ internal sealed unsafe partial class CpuBackend
             {
                 for (int j = 0; j < columns; j++)
                 {
-                    to[j] = b[(long)(j0 + j) * k + k0 + kk];
+                    to[j] = b[(j0 + j) * ldb + k0 + kk];
                 }
             }
             else
             {
-                new ReadOnlySpan<float>(b + (long)(k0 + kk) * n + j0, columns).CopyTo(new Span<float>(to, columns));
+                new ReadOnlySpan<float>(b + (k0 + kk) * ldb + j0, columns).CopyTo(new Span<float>(to, columns));
             }
 
             for (int j = columns; j < panel; j++)
@@ -286,7 +291,7 @@ internal sealed unsafe partial class CpuBackend
 
     // Pack for a B of another type: each row's run of columns (or, transposed, each column's run of k) read through the
     // type into the packed block (zeros past the columns), the same layout as Pack's.
-    private static void PackTyped(IElementType type, float* words, long matrix, int n, int k, bool transB, int k0, int kc, int j0, int columns, int panel, float* packed,
+    private static void PackTyped(IElementType type, float* words, long matrix, long ldb, bool transB, int k0, int kc, int j0, int columns, int panel, float* packed,
         float* temp)
     {
         if (transB)
@@ -294,7 +299,7 @@ internal sealed unsafe partial class CpuBackend
             float* column = temp + Math.Max(1, type.Description.UnitValues) + BlockK + 32;
             for (int j = 0; j < columns; j++)
             {
-                ReadRange(type, words, matrix + (long)(j0 + j) * k + k0, kc, column, temp);
+                ReadRange(type, words, matrix + (j0 + j) * ldb + k0, kc, column, temp);
                 for (int kk = 0; kk < kc; kk++)
                 {
                     packed[kk * panel + j] = column[kk];
@@ -305,7 +310,7 @@ internal sealed unsafe partial class CpuBackend
         {
             for (int kk = 0; kk < kc; kk++)
             {
-                ReadRange(type, words, matrix + (long)(k0 + kk) * n + j0, columns, packed + kk * panel, temp);
+                ReadRange(type, words, matrix + (k0 + kk) * ldb + j0, columns, packed + kk * panel, temp);
             }
         }
 
