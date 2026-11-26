@@ -41,6 +41,9 @@ internal sealed partial class CpuBackend
         public readonly void End() => GC.KeepAlive(_arrays);
     }
 
+    /// <summary>A width every operation takes instead of its measured one, where it runs here (the lane-bits proof); null: measured.</summary>
+    internal static Lanes? ForcedLanes;
+
     // A choice of width: by the operation, its shape's classes and the vector paths setting.
     private readonly record struct LanesKey(string Operation, int A, int B, CpuVectorPaths Vectors);
 
@@ -65,7 +68,7 @@ internal sealed partial class CpuBackend
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static Lanes ChosenLanes<TR>(string operation, int a, int b, ref TR run) where TR : struct, ILanesRun =>
-        s_lanesChosen.TryGetValue(new LanesKey(operation, a, b, ComputeResources.CpuVectors), out var lanes) ? lanes
+        ForcedLanes is { } forced && LanesRun(forced) ? forced : s_lanesChosen.TryGetValue(new LanesKey(operation, a, b, ComputeResources.CpuVectors), out var lanes) ? lanes
             : MeasureLanes(new LanesKey(operation, a, b, ComputeResources.CpuVectors), ref run);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
