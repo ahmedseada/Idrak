@@ -96,7 +96,7 @@ internal static partial class GcnKernels
     private static GcnKernelSource[] BuildDecoding()
     {
         var kernels = new List<GcnKernelSource>();
-        kernels.Add(AttentionRows("attention_rows_f32", AttentionCache.Float32, spans: false, rows: true));
+        kernels.Add(AttentionRows("attention_rows_f32", spans: false, rows: true));
         kernels.Add(SegmentSpans());
         kernels.Add(ArgMaxRows());
         kernels.Add(ClassMatch());

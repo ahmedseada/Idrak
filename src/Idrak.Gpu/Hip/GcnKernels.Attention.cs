@@ -10,7 +10,7 @@ namespace Idrak.Gpu.Hip;
 // the device-against-CPU tolerance.
 //
 // One kernel shape serves every attention over a range of keys: decoding and the tiled form over a key/value cache
-// (float32, bfloat16 or int8: attention_decode_*; the rows' range is the cache up to the device position, from the
+// (float32: attention_decode_f32; the rows' range is the cache up to the device position, from the
 // window's start) and attention over key ranges read from the device (attention_spans_f32: grouped heads, tables of
 // ranges, and any row strides, so the strided form of a self-attention layer reads its packed projections in place).
 // A block of RowThreads (four waves, declared) takes one query row and one split of its keys (grid y), walking the rows
@@ -41,10 +41,9 @@ namespace Idrak.Gpu.Hip;
 // | attention_spans_f32   | q, keys, values, starts, ends, y, lse, part, counters; heads, group, hpt, rows, keyrows, dim, scale, softcap, chunk, splits, qbatch, qhead, qrow, kbatch, khead, krow, ybatch, yhead, yrow, n | rows x splits | row x key x dim | 4 | 8 |
 // | attention_merge_f32   | part, y, lse; splits, dim, heads, rows, ybatch, yhead, yrow, n                              | rows (or fewer)                   | row x split x dim        | 3     | 4     |
 //
-// attention_decode_*: n = heads · rph query rows, row r of head r / rph sees positions [begin, end) with end = min(pos +
+// attention_decode_f32: n = heads · rph query rows, row r of head r / rph sees positions [begin, end) with end = min(pos +
 // (r mod rph) mod steps, cap - 1) + 1 and begin = end - window (0 without a window); keys and values [heads, cap, dim]
-// (float32), or rows of `words` words (bfloat16 pairs, low half first; int8 bytes, four a word, with one scale per cached
-// row in kscales and vscales [heads, cap]); a soft-cap (softcap > 0) maps each scaled score s to softcap · tanh(s /
+// (float32); a soft-cap (softcap > 0) maps each scaled score s to softcap · tanh(s /
 // softcap). attention_spans_f32: n = batch · heads · rows, query head H = b · heads + h at row i reads its range from
 // starts and ends[(H / hpt) · rows + i] (clamped to [0, keyrows]) and key/value head g = h / group; the query row is at
 // q[b · qbatch + h · qhead + i · qrow], key c at keys[b · kbatch + g · khead + c · krow], the output at y[b · ybatch + h ·
@@ -73,20 +72,13 @@ internal static partial class GcnKernels
     /// <summary>The attention kernels, in the order they join <see cref="All"/>.</summary>
     internal static IReadOnlyList<GcnKernelSource> Attention { get; } =
     [
-        AttentionRows("attention_decode_f32", AttentionCache.Float32, spans: false),
-        AttentionRows("attention_spans_f32", AttentionCache.Float32, spans: true),
+        AttentionRows("attention_decode_f32", spans: false),
+        AttentionRows("attention_spans_f32", spans: true),
         AttentionMerge(),
         AttentionTiled(2),
         AttentionTiled(4),
         AttentionTiled(8),
     ];
-
-    private enum AttentionCache
-    {
-        Float32,
-        BFloat16,
-        Int8,
-    }
 
     private static string AttentionText(FormattableString text) => text.ToString(CultureInfo.InvariantCulture);
 
@@ -144,37 +136,19 @@ internal static partial class GcnKernels
         return sum;
     }
 
-    // An element of a cached row as a float: bfloat16 from its word (shift 16 for the low half, 0 for the high one), int8
-    // from its word's byte (at bit 0, 8, 16 or 24). Float32 values are themselves.
-    private static string AttentionWiden(AttentionCache cache, string x, string shiftOrBit) => cache switch
-    {
-        AttentionCache.BFloat16 => AttentionText($"""
-            v_lshlrev_b32_e32 {x}, {shiftOrBit}, {x}
-            v_and_b32_e32 {x}, 0xffff0000, {x}
-            """),
-        AttentionCache.Int8 => AttentionText($"""
-            v_bfe_i32 {x}, {x}, {shiftOrBit}, 8
-            v_cvt_f32_i32_e32 {x}, {x}
-            """),
-        _ => "",
-    };
-
     // Attention of one query row a block over its range of keys (see the file's remarks).
     // With `rows` (attention_rows_*, GcnKernels.Decoding.cs), each row of a cache also starts no earlier than its
     // sequence's start, starts[(head / hpr) · steps + step] (Backend.AttentionRows); a row whose range is empty gets zeros.
-    private static GcnKernelSource AttentionRows(string name, AttentionCache cache, bool spans, bool rows = false)
+    private static GcnKernelSource AttentionRows(string name, bool spans, bool rows = false)
     {
-        bool int8 = cache == AttentionCache.Int8, packed = cache != AttentionCache.Float32;
         var w = new RowWriter(name, arrays: 1, workgroupY: true, extraLds: 4 * AttentionTile + 4 * AttentionMaxDim);
         int weightsLds = w.ExtraLdsBase, queryLds = w.ExtraLdsBase + 4 * AttentionTile;
         var a = spans
             ? w.Arguments(["q", "keys", "values", "starts", "ends", "y", "lse", "part", "counters"],
                 ["heads", "group", "hpt", "rows", "keyrows", "dim", "scale", "softcap", "chunk", "splits", "qbatch", "qhead", "qrow", "kbatch", "khead", "krow",
                     "ybatch", "yhead", "yrow", "n"])
-            : w.Arguments(int8 ? ["q", "keys", "values", "kscales", "vscales", "pos", "y", "lse", "part", "counters"]
-                    : rows ? ["q", "keys", "values", "pos", "y", "lse", "part", "counters", "starts"] : ["q", "keys", "values", "pos", "y", "lse", "part", "counters"],
-                [.. (packed ? (string[])["rph", "steps", "cap", "dim", "scale", "words", "window", "softcap", "chunk", "splits"]
-                    : ["rph", "steps", "cap", "dim", "scale", "window", "softcap", "chunk", "splits"]), .. (rows ? (string[])["hpr", "n"] : ["n"])]);
+            : w.Arguments(rows ? ["q", "keys", "values", "pos", "y", "lse", "part", "counters", "starts"] : ["q", "keys", "values", "pos", "y", "lse", "part", "counters"],
+                [.. (string[])["rph", "steps", "cap", "dim", "scale", "window", "softcap", "chunk", "splits"], .. (rows ? (string[])["hpr", "n"] : ["n"])]);
         string dim = a.Scalar("dim"), scale = a.Scalar("scale"), softcap = a.Scalar("softcap"), chunk = a.Scalar("chunk"), splits = a.Scalar("splits");
         string q = a.Pointer("q"), keys = a.Pointer("keys"), values = a.Pointer("values"), y = a.Pointer("y"), lse = a.Pointer("lse"), part = a.Pointer("part");
 
@@ -183,7 +157,7 @@ internal static partial class GcnKernels
         w.L($"""
             s_mul_i32 {splitFirst}, s5, {chunk}
             s_add_u32 {splitEnd}, {splitFirst}, {chunk}
-            s_lshl_b32 {rowBytes}, {(spans ? a.Scalar("krow") : packed ? a.Scalar("words") : dim)}, 2
+            s_lshl_b32 {rowBytes}, {(spans ? a.Scalar("krow") : dim)}, 2
             s_add_u32 {dimPlus2}, {dim}, 2
             s_mov_b32 {ln2}, {RowWriter.Ln2}
             v_rcp_f32_e32 {capInverse}, {softcap}
@@ -192,38 +166,13 @@ internal static partial class GcnKernels
         var dimBytes = new string[AttentionSlots];
         var queryAt = new string[AttentionSlots];
         var valueAt = new string[AttentionSlots];
-        var widen = new string[AttentionSlots];
         for (int k = 0; k < AttentionSlots; k++)
         {
             (dims[k], dimBytes[k], queryAt[k]) = (w.V(), w.V(), w.V());
             w.L($"v_add_u32_e32 {dims[k]}, 0x{RowThreads * k:x}, {w.Tid}");
             w.L($"v_lshlrev_b32_e32 {dimBytes[k]}, 2, {dims[k]}");
             w.L($"v_add_u32_e32 {queryAt[k]}, 0x{queryLds:x}, {dimBytes[k]}");
-            string t = w.V();
-            switch (cache)
-            {
-                case AttentionCache.BFloat16:
-                    (valueAt[k], widen[k]) = (w.V(), w.V());
-                    w.L($"""
-                        v_lshrrev_b32_e32 {t}, 1, {dims[k]}
-                        v_lshlrev_b32_e32 {valueAt[k]}, 2, {t}
-                        v_and_b32_e32 {t}, 1, {dims[k]}
-                        v_xor_b32_e32 {t}, 1, {t}
-                        v_lshlrev_b32_e32 {widen[k]}, 4, {t}
-                        """);
-                    break;
-                case AttentionCache.Int8:
-                    (valueAt[k], widen[k]) = (w.V(), w.V());
-                    w.L($"""
-                        v_and_b32_e32 {valueAt[k]}, -4, {dims[k]}
-                        v_and_b32_e32 {t}, 3, {dims[k]}
-                        v_lshlrev_b32_e32 {widen[k]}, 3, {t}
-                        """);
-                    break;
-                default:
-                    (valueAt[k], widen[k]) = (dimBytes[k], "");
-                    break;
-            }
+            valueAt[k] = dimBytes[k];
         }
 
         string tid4 = w.V(), weightAt = w.V();
@@ -247,7 +196,7 @@ internal static partial class GcnKernels
                 v_cvt_u32_f32_e32 {value}, {bits}
                 v_readfirstlane_b32 {position}, {value}
                 s_sub_u32 {last}, {a.Scalar("cap")}, 1
-                s_mul_i32 {capRow}, {a.Scalar("cap")}, {(packed ? a.Scalar("words") : dim)}
+                s_mul_i32 {capRow}, {a.Scalar("cap")}, {dim}
                 """);
             (byRph, bySteps) = (AttentionReciprocal(w, a.Scalar("rph")), AttentionReciprocal(w, a.Scalar("steps")));
             byTables = rows ? AttentionReciprocal(w, a.Scalar("hpr")) : "";
@@ -256,7 +205,7 @@ internal static partial class GcnKernels
         w.BeginRows(a.Scalar("n"));
 
         // This row's range [begin, end) and the offsets (in floats) of its query row, its key/value head and its output.
-        string begin = w.S(), end = w.S(), queryOffset, cacheOffset, outputOffset, scaleOffset = "";
+        string begin = w.S(), end = w.S(), queryOffset, cacheOffset, outputOffset;
         if (spans)
         {
             var (headAll, index) = AttentionDivMod(w, w.Row, a.Scalar("rows"), byRows);
@@ -317,10 +266,6 @@ internal static partial class GcnKernels
             queryOffset = AttentionIndex(w, (w.Row, dim));
             outputOffset = queryOffset;
             cacheOffset = AttentionIndex(w, (head, capRow));
-            if (int8)
-            {
-                scaleOffset = AttentionIndex(w, (head, a.Scalar("cap")));
-            }
         }
 
         string lo = w.S(), hi = w.S();
@@ -328,7 +273,6 @@ internal static partial class GcnKernels
         w.L($"s_min_u32 {hi}, {end}, {splitEnd}");
         string qb = w.ElementAddress(q, queryOffset), kb = w.ElementAddress(keys, cacheOffset), vb = w.ElementAddress(values, cacheOffset);
         string yb = w.ElementAddress(y, outputOffset);
-        string ksb = int8 ? w.ElementAddress(a.Pointer("kscales"), scaleOffset) : "", vsb = int8 ? w.ElementAddress(a.Pointer("vscales"), scaleOffset) : "";
 
         // The query row into LDS.
         for (int k = 0; k < AttentionSlots; k++)
@@ -366,14 +310,13 @@ internal static partial class GcnKernels
 
         w.L($"s_mov_b32 {c0}, {lo}");
         w.Label(".La_tile");
-        string count = w.S(), inTile = w.SPair(), score = w.V(), valueScale = w.V();
+        string count = w.S(), inTile = w.SPair(), score = w.V();
         w.L($"""
             s_cmp_ge_u32 {c0}, {hi}
             s_cbranch_scc1 .La_tiles_end
             s_sub_u32 {count}, {hi}, {c0}
             s_min_u32 {count}, {count}, 0x{AttentionTile:x}
             v_mov_b32_e32 {score}, {RowWriter.NegativeInfinity}
-            v_mov_b32_e32 {valueScale}, 0
             v_cmp_gt_u32_e32 vcc, {count}, {w.Tid}
             s_and_saveexec_b64 {inTile}, vcc
             """);
@@ -394,59 +337,20 @@ internal static partial class GcnKernels
         string queries = AttentionText($"%v[{AttentionRange(w, 4)}]");
         int qFirst = AttentionFirst(queries);
         var xs = new string[4];
-        switch (cache)
+        for (int e = 0; e < 4; e++)
         {
-            case AttentionCache.Float32:
-                for (int e = 0; e < 4; e++)
-                {
-                    xs[e] = w.V();
-                    w.L($"global_load_dword {xs[e]}, {at4}, {kb}{AttentionOffset(4 * e)}");
-                }
-
-                break;
-            case AttentionCache.BFloat16:
-                {
-                    string w0 = w.V(), w1 = w.V();
-                    w.L($"global_load_dword {w0}, {at4}, {kb}");
-                    w.L($"global_load_dword {w1}, {at4}, {kb} offset:4");
-                    for (int e = 0; e < 4; e++)
-                    {
-                        xs[e] = w.V();
-                    }
-
-                    w.L($"""
-                        v_lshlrev_b32_e32 {xs[0]}, 16, {w0}
-                        v_and_b32_e32 {xs[1]}, 0xffff0000, {w0}
-                        v_lshlrev_b32_e32 {xs[2]}, 16, {w1}
-                        v_and_b32_e32 {xs[3]}, 0xffff0000, {w1}
-                        """);
-                    break;
-                }
-
-            default:
-                {
-                    string w0 = w.V();
-                    w.L($"global_load_dword {w0}, {at4}, {kb}");
-                    for (int e = 0; e < 4; e++)
-                    {
-                        xs[e] = w.V();
-                        w.L($"v_bfe_i32 {xs[e]}, {w0}, {8 * e}, 8");
-                        w.L($"v_cvt_f32_i32_e32 {xs[e]}, {xs[e]}");
-                    }
-
-                    break;
-                }
+            xs[e] = w.V();
+            w.L($"global_load_dword {xs[e]}, {at4}, {kb}{AttentionOffset(4 * e)}");
         }
 
-        w.L($"ds_read_b128 {queries}, {queryRead}");
+        w.L($"ds_read_b128 {queries}, {queryRead}");        w.L($"ds_read_b128 {queries}, {queryRead}");
         for (int e = 0; e < 4; e++)
         {
             w.L($"v_fma_f32 {dot}, %v{qFirst + e}, {xs[e]}, {dot}");
         }
 
-        int keyStep = cache switch { AttentionCache.Float32 => 16, AttentionCache.BFloat16 => 8, _ => 4 };
         w.L($"""
-            v_add_u32_e32 {at4}, {keyStep}, {at4}
+            v_add_u32_e32 {at4}, 16, {at4}
             v_add_u32_e32 {queryRead}, 16, {queryRead}
             s_add_u32 {d}, {d}, 4
             s_branch .La_dot
@@ -459,37 +363,13 @@ internal static partial class GcnKernels
             string x = w.V(), qe = w.V();
             w.L($"s_cmp_le_u32 {rest}, {e}");
             w.L($"s_cbranch_scc1 .La_dot_tail");
-            switch (cache)
-            {
-                case AttentionCache.Float32:
-                    w.L($"global_load_dword {x}, {at4}, {kb}{AttentionOffset(4 * e)}");
-                    break;
-                case AttentionCache.BFloat16:
-                    w.L($"global_load_dword {x}, {at4}, {kb}{AttentionOffset(4 * (e >> 1))}");
-                    w.L($"{(e % 2 == 0 ? AttentionText($"v_lshlrev_b32_e32 {x}, 16, {x}") : AttentionText($"v_and_b32_e32 {x}, 0xffff0000, {x}"))}");
-                    break;
-                default:
-                    w.L($"global_load_dword {x}, {at4}, {kb}");
-                    w.L($"v_bfe_i32 {x}, {x}, {8 * e}, 8");
-                    w.L($"v_cvt_f32_i32_e32 {x}, {x}");
-                    break;
-            }
+            w.L($"global_load_dword {x}, {at4}, {kb}{AttentionOffset(4 * e)}");
 
             w.L($"ds_read_b32 {qe}, {queryRead}{AttentionOffset(4 * e)}");
             w.L($"v_fma_f32 {dot}, {qe}, {x}, {dot}");
         }
 
         w.Label(".La_dot_tail");
-        if (int8)
-        {
-            string keyScale = w.V(), at = w.V();
-            w.L($"""
-                v_lshlrev_b32_e32 {at}, 2, {key}
-                global_load_dword {keyScale}, {at}, {ksb}
-                global_load_dword {valueScale}, {at}, {vsb}
-                v_mul_f32_e32 {dot}, {dot}, {keyScale}
-                """);
-        }
 
         string capped = w.V();
         w.L($"""
@@ -520,16 +400,7 @@ internal static partial class GcnKernels
             v_exp_f32_e32 {alpha}, {alpha}
             {RowWriter.Exp(p, score, shift)}
             """);
-        if (int8)
-        {
-            string weighted = w.V();
-            w.L($"v_mul_f32_e32 {weighted}, {p}, {valueScale}");
-            w.L($"ds_write_b32 {weightAt}, {weighted}");
-        }
-        else
-        {
-            w.L($"ds_write_b32 {weightAt}, {p}");
-        }
+        w.L($"ds_write_b32 {weightAt}, {p}");
 
         w.L($"v_mov_b32_e32 {total}, {p}");
         w.Reduce(RowWriter.Add, total);
@@ -581,7 +452,6 @@ internal static partial class GcnKernels
             w.L($"ds_read_b128 {weights}, {weightRead}");
             for (int e = 0; e < 4; e++)
             {
-                w.L($"{AttentionWiden(cache, vs[e], widen[k])}");
                 w.L($"v_fma_f32 {acc[k]}, %v{wFirst + e}, {vs[e]}, {acc[k]}");
             }
 
@@ -598,7 +468,6 @@ internal static partial class GcnKernels
                 s_cbranch_scc1 .La_acc{k}_end
                 global_load_dword {v1}, {o}, {vb}
                 ds_read_b32 {w1}, {weightRead}
-                {AttentionWiden(cache, v1, widen[k])}
                 v_fma_f32 {acc[k]}, {w1}, {v1}, {acc[k]}
                 v_add_u32_e32 {o}, {rowBytes}, {o}
                 v_add_u32_e32 {weightRead}, 4, {weightRead}
