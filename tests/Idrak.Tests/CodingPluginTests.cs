@@ -6,7 +6,6 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak;
-using Idrak.Abstraction.Plugins;
 using Idrak.Abstraction.Reinforcement;
 using Idrak.Abstraction.Testing;
 using Idrak.Cluster;
@@ -19,61 +18,17 @@ using Idrak.Text;
 using Idrak.Text.Generation;
 using Idrak.Text.Reinforcement;
 
-// Plan 27, R4: the command sandboxes (process, Idrak.Text's; container, the coding plug-in's) and the coding plug-in of
-// Idrak.Reinforcement.Plugins: its environment on task suites written here (a tiny C# project with a hidden test built by
-// the real dotnet, and a quick suite checked by git grep), its rewards, its episodes in parallel, and R3's policy with a
-// teacher term trained on it by R2's trainer. The chat model is a script (or the tests' tiny decoder): no download.
+// Plan 27, R4: the command sandboxes (process, Idrak.Text's; container, the coding plug-in's): a program run within its
+// limits, a command started interactively, who asks for it, and the container's command line.
 internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CodingPluginGroup =
     [
-        ("command sandboxes: process is Idrak.Text's in CommandSandboxes; it runs a program without a shell, enforces the programs allowed, its time, output and memory limits (stopping the command), hands each line of output to CommandLimits.Output as it is written, refuses network off, processes and CPUs naming container, and stops on cancellation; the coding tools run every command through the sandbox their options name, which alone checks the programs allowed (the tools hand a program not allowed over, and run_command says the sandbox's refusal)", d => { if (d == Device.Cpu) ProcessSandboxLimits(); }),
+        ("command sandboxes: process runs a program without a shell, enforces the programs allowed, its time, output and memory limits (stopping the command), hands each line of output to CommandLimits.Output as it is written, refuses network off, processes and CPUs naming container, and stops on cancellation; a program not allowed is refused with the sandbox's words", d => { if (d == Device.Cpu) ProcessSandboxLimits(); }),
         ("command sandboxes: interactive start: process starts a command with its standard input, output and error as streams (a child of this program echoes each line sent to it on its output, an error line on its error stream, and exits with its code at the end of its input; its variables set); the memory stays flat over thousands of lines; Stop and a dispose end its whole process tree, the time limit stops it; a program not allowed or not found is a refused start, a limit it cannot keep throws naming container, a cancelled start throws; a sandbox without an interactive start (container, an app's) refuses with the reason", d => { if (d == Device.Cpu) ProcessSandboxInteractive(); }),
-        ("command sandboxes: requester: CommandLimits.Requester (who asks, as the words of a sentence, for a sandbox that asks the user first) is \"the agent\" by default and in the coding tools' limits, Purpose (what the command is for) is none by default; a copy keeps the ones given, and they change nothing about the run (the process sandbox runs the same command with another requester)", d => { if (d == Device.Cpu) CommandRequester(); }),
+        ("command sandboxes: requester: CommandLimits.Requester (who asks, as the words of a sentence, for a sandbox that asks the user first) is \"the agent\" by default, Purpose (what the command is for) is none by default; a copy keeps the ones given, and they change nothing about the run (the process sandbox runs the same command with another requester)", d => { if (d == Device.Cpu) CommandRequester(); }),
         ("command sandboxes: container refuses when no program is found or no image is set (naming IDRAK_SANDBOX_PROGRAM and IDRAK_SANDBOX_IMAGE), and builds its command line: the workspace mounted, the network off unless allowed, the memory, CPU and process limits, the user, the variables, the image, then the command", d => { if (d == Device.Cpu) ContainerSandboxCommandLine(); }),
-        ("plugins: coding: CodingPlugin is the plug-in \"coding\" of ReinforcementPlugins.All; Register twice registers the coding environment, its four rewards and the container sandbox once, from Idrak.Reinforcement.Plugins; Unregister leaves the registries as found; the rewards pass the reward suite", d => { if (d == Device.Cpu) CodingPluginRegisters(); }),
-        ("plugins: coding: on a C# suite (a project, a hidden test, a restore) and a scripted model: a seeded episode replays the same; the reward follows verification (solved, not solved, out of rounds); setup runs once per task and is reused; a broken setup is left out and reported; a test edit is overwritten by the hidden tests and reported, and refused when asked", d => { if (d == Device.Cpu) CodingEpisodes(); }),
-        ("plugins: coding: the coding environment passes the environment suite; episodes stepped in parallel (R2's collector) give the rewards, info and conversations of one at a time, measured both ways", d => { if (d == Device.Cpu) CodingSuiteAndParallel(); }),
-        ("plugins: coding: verification and tool commands are limited by the task's own verification measured once when it is prepared (timeout-scale times it, at least timeout-least, at most 600 and 300 s), so a program that never ends costs seconds; verify-timeout and command-timeout given are used as they are", d => { if (d == Device.Cpu) CodingMeasuredLimits(); }),
-        ("plugins: coding: R3's on-policy distillation on the coding environment under R2's trainer (grpo and a teacher term; no coding code of its own): only the assistant's tokens train, the prompts and the tools' results never, in one-turn and multi-turn episodes", CodingDistillation),
     ];
-
-    // The scripted replies: each is made once, so a replay offers the very same messages (their tool-call lists compare by reference).
-    private static readonly ChatMessage CodingRead = new("assistant", "Reading.", ToolCalls: [new ToolCall("read_file", new JsonObject { ["path"] = "Greeter.cs" })]);
-    private static readonly ChatMessage CodingMissing = new("assistant", "", ToolCalls: [new ToolCall("read_file", new JsonObject { ["path"] = "Missing.cs" })]);
-    private static readonly ChatMessage CodingFix = new("assistant", "Fixing.",
-        ToolCalls: [new ToolCall("edit_file", new JsonObject { ["path"] = "Greeter.cs", ["old_text"] = "\"Bye\"", ["new_text"] = "\"Hello\"" })]);
-    private static readonly ChatMessage CodingTestEdit = new("assistant", "",
-        ToolCalls: [new ToolCall("write_file", new JsonObject { ["path"] = "tests/Check.cs", ["content"] = "return 0;\n" })]);
-    private static readonly ChatMessage CodingDone = new("assistant", "Done.");
-
-    // A suite of three C# tasks: hello and hi (Greet must say it; the hidden tests/Check.cs exits 0 when it does), whose
-    // setup restores the project, and broken, whose setup fails.
-    private static string WriteCSharpSuite(string root)
-    {
-        string suite = Path.Combine(root, "suite");
-        const string Project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n"
-                               + "    <UseAppHost>false</UseAppHost>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n";
-        foreach (var (id, word) in new[] { ("hello", "Hello"), ("hi", "Hi") })
-        {
-            string task = Path.Combine(suite, "csharp", id);
-            Directory.CreateDirectory(Path.Combine(task, "workspace"));
-            Directory.CreateDirectory(Path.Combine(task, "verify", "tests"));
-            File.WriteAllText(Path.Combine(task, "task.json"), $$"""
-                {"prompt": "Make Greet say {{word}}.", "language": "csharp", "setup": ["dotnet restore -nodeReuse:false"],
-                 "verify": ["dotnet build --no-restore -nodeReuse:false", "dotnet bin/Debug/net10.0/Greeter.dll"]}
-                """);
-            File.WriteAllText(Path.Combine(task, "workspace", "Greeter.csproj"), Project);
-            File.WriteAllText(Path.Combine(task, "workspace", "Greeter.cs"), "static class Greeter\n{\n    public static string Greet() => \"Bye\";\n}\n");
-            File.WriteAllText(Path.Combine(task, "verify", "tests", "Check.cs"), $"return Greeter.Greet() == \"{word}\" ? 0 : 1;\n");
-        }
-
-        string broken = Path.Combine(suite, "csharp", "broken");
-        Directory.CreateDirectory(Path.Combine(broken, "workspace"));
-        File.WriteAllText(Path.Combine(broken, "task.json"), """{"prompt": "Anything.", "setup": ["dotnet build missing.csproj -nodeReuse:false"], "verify": []}""");
-        File.WriteAllText(Path.Combine(broken, "workspace", "a.txt"), "x");
-        return suite;
-    }
 
     // A quick suite: one task whose verification is git grep (no build), for runs of many episodes.
     private static string WriteQuickSuite(string root)
@@ -88,14 +43,6 @@ internal abstract partial class DesktopTests : Tests
     }
 
     private static string CodingTemp() => Path.Combine(Path.GetTempPath(), "idrak-coding-test-" + Guid.NewGuid().ToString("N"));
-
-    // Registers the coding plug-in for a test; gives back whether it was registered before (so the test leaves it as found).
-    private static bool CodingRegistered()
-    {
-        bool before = CodingPlugin.IsRegistered;
-        CodingPlugin.Register();
-        return before;
-    }
 
     // A command sandbox that records what it is asked and answers as told.
     private sealed class RecordingSandbox(CommandResult answer) : ICommandSandbox
@@ -117,12 +64,6 @@ internal abstract partial class DesktopTests : Tests
 
     private static void ProcessSandboxLimits()
     {
-        var registered = CommandSandboxes.Get(CommandSandboxes.Process);
-        Check(registered is ProcessCommandSandbox && CommandSandboxes.Origin(CommandSandboxes.Process) == Overrides.Library, "process is the library's, from Idrak.Text");
-        Check(Environment.GetEnvironmentVariable(CommandSandboxes.EnvironmentVariable) is not null || new CodingToolOptions().Sandbox == CommandSandboxes.Process,
-            "the coding tools' default sandbox is process (IDRAK_SANDBOX unset)");
-        ThrowsNaming<NotSupportedException>(() => CommandSandboxes.Get("coding-test-nobody"), "an unregistered sandbox", "not registered", "process", "Idrak.Reinforcement.Plugins");
-
         string root = CodingTemp();
         Directory.CreateDirectory(root);
         try
@@ -164,29 +105,8 @@ internal abstract partial class DesktopTests : Tests
                 ThrowsNaming<NotSupportedException>(() => Run(limits, "dotnet", "--version"), $"a command asking process to {what}", "container");
             }
 
-            ThrowsNaming<NotSupportedException>(() => _ = new CodingTools(root, new CodingToolOptions { Network = false }), "coding tools with the network off on process", "container", "network");
-            ThrowsNaming<NotSupportedException>(() => _ = new CodingTools(root, new CodingToolOptions { Sandbox = "coding-test-nobody" }), "coding tools on an unregistered sandbox", "not registered");
-
-            // The coding tools give every command, split into words with its folder and limits, to their sandbox.
-            var recorder = new RecordingSandbox(new CommandResult(null, false, "", TimeSpan.Zero, false) { OutOfMemory = true });
-            Directory.CreateDirectory(Path.Combine(root, "sub"));
-            var tools = new CodingTools(root, new CodingToolOptions { Commands = ["dotnet"], CommandTimeout = TimeSpan.FromSeconds(30), MaxMemoryBytes = 1L << 20,
-                Environment = new Dictionary<string, string> { ["CODING_TEST"] = "1" } }, recorder);
-            string text = tools.RunCommandAsync("dotnet build \"my app.csproj\" -c Release", "sub", 5).GetAwaiter().GetResult();
-            var call = recorder.Calls.Single();
-            Check(call.Command.SequenceEqual(["dotnet", "build", "my app.csproj", "-c", "Release"]) && call.Directory == Path.Combine(tools.Workspace, "sub"),
-                $"the words and the folder: {string.Join(" | ", call.Command)} in {call.Directory}");
-            Check(call.Limits is { Time.TotalSeconds: 5, MaxMemoryBytes: 1L << 20, Network: true } && call.Limits.Programs!.SequenceEqual(["dotnet"]) && call.Limits.Root == tools.Workspace
-                  && call.Limits.Environment!["CODING_TEST"] == "1" && call.Limits.Environment["CI"] == "1", "the limits: the call's time, the memory, the programs, the root, the variables");
-            Check(text.Contains("stopped: it used more than the memory limit (1 MB)", StringComparison.Ordinal), $"run_command says a command was stopped for its memory: {text}");
-            // The programs allowed are checked in one place, the sandbox (G-1 1a, L6): the tools keep no copy of the check.
-            tools.RunCommandAsync("python x.py").GetAwaiter().GetResult();
-            Check(recorder.Calls.Count == 2 && recorder.Calls[1].Command[0] == "python" && recorder.Calls[1].Limits.Programs!.SequenceEqual(["dotnet"]),
-                $"a program not allowed goes to the sandbox with the programs allowed: the tools do not check it themselves ({recorder.Calls.Count} calls)");
-            string refusedText = new CodingTools(root, new CodingToolOptions { Commands = ["dotnet"] }).RunCommandAsync("python x.py").GetAwaiter().GetResult();
             var direct = sandbox.RunAsync(["python", "x.py"], root, new CommandLimits { Programs = ["dotnet"] }).AsTask().GetAwaiter().GetResult();
-            Check(direct.Refused && refusedText == direct.Output && refusedText == "Error: 'python' is not an allowed program. Allowed: dotnet.",
-                $"the process sandbox refuses it, and run_command says the sandbox's words: {refusedText}");
+            Check(direct.Refused && direct.Output == "Error: 'python' is not an allowed program. Allowed: dotnet.", $"the process sandbox refuses it, in its words: {direct.Output}");
         }
         finally
         {
@@ -200,9 +120,8 @@ internal abstract partial class DesktopTests : Tests
     private static async Task ProcessSandboxInteractiveAsync()
     {
         var limits = new CommandLimits();
-        ICommandSandbox registered = CommandSandboxes.Get(CommandSandboxes.Process);
-        Check(registered.CheckStart(limits) is null, "the registered process sandbox starts commands interactively (CheckStart is null)");
         var sandbox = new ProcessCommandSandbox { PollInterval = TimeSpan.FromMilliseconds(5) };
+        Check(sandbox.CheckStart(limits) is null, "the process sandbox starts commands interactively (CheckStart is null)");
         var (file, prefix) = LocalhostCluster.ProgramOf(typeof(DesktopTests).Assembly);
         string[] Child(string scenario) => [file, .. prefix, "--sandbox-child", scenario];
         var wait = TimeSpan.FromSeconds(60);
@@ -305,7 +224,7 @@ internal abstract partial class DesktopTests : Tests
             // A sandbox without an interactive start refuses, saying why and naming one that can.
             foreach (ICommandSandbox without in new ICommandSandbox[] { new RecordingSandbox(new CommandResult(0, false, "", TimeSpan.Zero, false)), new ContainerSandbox(new ContainerSandboxOptions { Image = "coding-test:1" }) })
             {
-                Check(without.CheckStart(limits) is { } why && why.Contains("cannot start a command interactively", StringComparison.Ordinal) && why.Contains(CommandSandboxes.Process, StringComparison.Ordinal),
+                Check(without.CheckStart(limits) is { } why && why.Contains("cannot start a command interactively", StringComparison.Ordinal) && why.Contains(sandbox.Name, StringComparison.Ordinal),
                     $"{without.Name}: CheckStart says it cannot, naming process");
                 ThrowsNaming<NotSupportedException>(() => without.StartAsync(["dotnet"], root, limits).AsTask().GetAwaiter().GetResult(), $"{without.Name}: an interactive start", "cannot start a command interactively");
             }
@@ -410,7 +329,6 @@ internal abstract partial class DesktopTests : Tests
         Directory.CreateDirectory(root);
         try
         {
-            Check(new CodingTools(root, new CodingToolOptions()).Limits.Requester == "the agent", "the coding tools ask as the agent");
             var sandbox = new ProcessCommandSandbox { PollInterval = TimeSpan.FromMilliseconds(1) };
             var asAgent = sandbox.RunAsync(["dotnet", "--version"], root, npm with { Requester = "the agent", Purpose = null }).AsTask().GetAwaiter().GetResult();
             var asNpm = sandbox.RunAsync(["dotnet", "--version"], root, npm).AsTask().GetAwaiter().GetResult();
@@ -440,7 +358,6 @@ internal abstract partial class DesktopTests : Tests
             var noImage = new ContainerSandbox(new ContainerSandboxOptions { Program = null, Programs = ["dotnet"], Image = null });
             Check(noImage.FindProgram() is not null && noImage.Check(limits) is { } image && image.Contains(ContainerSandboxOptions.ImageVariable, StringComparison.Ordinal),
                 "no image: refused, naming IDRAK_SANDBOX_IMAGE");
-            ThrowsNaming<NotSupportedException>(() => _ = new CodingTools(root, new CodingToolOptions(), noImage), "coding tools on a container without an image", "IDRAK_SANDBOX_IMAGE");
 
             var sandbox = new ContainerSandbox(new ContainerSandboxOptions { Program = null, Image = "coding-test/sdk:1", Network = null, User = "1000:1000", ExtraArguments = ["--cap-drop", "ALL"] });
             var full = new CommandLimits
@@ -468,407 +385,6 @@ internal abstract partial class DesktopTests : Tests
         finally
         {
             Directory.Delete(root, recursive: true);
-        }
-
-        bool before = CodingRegistered();
-        try
-        {
-            Check(CommandSandboxes.Get(CommandSandboxes.Container) is ContainerSandbox && CommandSandboxes.Origin(CommandSandboxes.Container) == "Idrak.Reinforcement.Plugins",
-                $"container is the coding plug-in's: {CommandSandboxes.Origin(CommandSandboxes.Container)}");
-        }
-        finally
-        {
-            if (!before)
-            {
-                CodingPlugin.Unregister();
-            }
-        }
-    }
-
-    private static void CodingPluginRegisters()
-    {
-        Check(CodingPlugin.Plugin.Name == "coding" && ReinforcementPlugins.All.Contains(CodingPlugin.Plugin), "the plug-in \"coding\" of ReinforcementPlugins.All");
-        bool before = CodingPlugin.IsRegistered;
-        string State() => $"{string.Join(",", EnvironmentKinds.Names)} | {string.Join(",", RewardFunctions.Names)} | {string.Join(",", CommandSandboxes.Names)}";
-        try
-        {
-            CodingPlugin.Unregister();
-            string found = State();
-            CodingPlugin.Register();
-            CodingPlugin.Register();
-            Check(EnvironmentKinds.Names.Count(n => n == "coding") == 1 && EnvironmentKinds.Get("coding") is CodingEnvironmentKind, "the coding environment once");
-            Check(new[] { "tests-passed", "verify-fraction", "rounds", "tool-errors" }.All(n => RewardFunctions.Names.Count(r => r == n) == 1 && RewardFunctions.Origin(n) == "Idrak.Reinforcement.Plugins"),
-                "the four rewards once, from Idrak.Reinforcement.Plugins");
-            Check(CommandSandboxes.Names.Count(n => n == "container") == 1, "the container sandbox once");
-            CodingPlugin.Unregister();
-            Check(State() == found, $"Unregister leaves the registries as found:\n{found}\nnow:\n{State()}");
-            CodingPlugin.Register();
-
-            RewardInput Input(bool passed, int commands, int passedCommands, int rounds, int errors) => new("Fix it.", "Done.", null, new EpisodeInfo()
-                .Set(CodingInfo.VerifyPassed, passed).Set(CodingInfo.VerifyCommands, commands).Set(CodingInfo.VerifyPassedCommands, passedCommands)
-                .Set(CodingInfo.Rounds, rounds).Set(CodingInfo.ToolErrors, errors).Set(CodingInfo.ToolCalls, rounds));
-            RewardInput[] samples = [Input(true, 2, 2, 3, 0), Input(false, 2, 1, 5, 2), Input(true, 0, 0, 1, 0), Input(false, 4, 0, 40, 7)];
-            foreach (var reward in CodingRewards.All)
-            {
-                Conformance.CheckRewardFunction(reward, samples).ThrowIfFailed();
-            }
-
-            float[] Score(string name, IReadOnlyDictionary<string, string>? options = null) => RewardFunctions.Get(name).ScoreAsync(samples, options).AsTask().GetAwaiter().GetResult();
-            Check(Score("tests-passed").SequenceEqual([1f, 0f, 1f, 0f]), "tests-passed");
-            Check(Score("verify-fraction").SequenceEqual([1f, 0.5f, 1f, 0f]), "verify-fraction: in order up to the first failure; none and passed is 1");
-            AssertClose([-0.03f, -0.05f, -0.01f, -0.4f], Score("rounds"), 1e-6f, "rounds: 0.01 a reply");
-            AssertClose([0f, -0.2f, 0f, -0.7f], Score("tool-errors", new Dictionary<string, string> { ["penalty"] = "0.1" }), 1e-6f, "tool-errors with a penalty of 0.1");
-            AssertClose([-0.01f, -0.03f, 0f, -0.38f], Score("rounds", new Dictionary<string, string> { ["free"] = "2" }), 1e-6f, "rounds past 2 free");
-            ThrowsNaming<ArgumentException>(() => Score("rounds", new Dictionary<string, string> { ["weight"] = "1" }), "an option rounds does not take", "'weight'", "penalty, free");
-            ThrowsNaming<ArgumentException>(() => RewardFunctions.Get("tests-passed").ScoreAsync([new RewardInput("p", "a")]).AsTask().GetAwaiter().GetResult(),
-                "an answer without the coding environment's info", "verify_passed", "coding environment");
-        }
-        finally
-        {
-            if (!before)
-            {
-                CodingPlugin.Unregister();
-            }
-        }
-    }
-
-    // An episode played with the actions given (one after another, until it ends): every step.
-    private static List<EnvironmentStep<ChatObservation>> PlayCoding(IEnvironment<ChatObservation, ChatMessage> environment, int seed, IReadOnlyList<ChatMessage> actions)
-    {
-        environment.Reset(seed);
-        var steps = new List<EnvironmentStep<ChatObservation>>();
-        foreach (var action in actions)
-        {
-            steps.Add(environment.StepAsync(action).AsTask().GetAwaiter().GetResult());
-            if (steps[^1].Done)
-            {
-                break;
-            }
-        }
-
-        return steps;
-    }
-
-    private static string ShowInfo(EpisodeInfo? info) => info?.ToString() ?? "";
-
-    private static void CodingEpisodes()
-    {
-        bool before = CodingRegistered();
-        string root = CodingTemp();
-        string suite = WriteCSharpSuite(root), work = Path.Combine(root, "work");
-        var kind = EnvironmentKinds.Get("coding");
-        var options = new Dictionary<string, string>
-        {
-            ["suite"] = suite, ["system"] = "Fix the code.", ["rounds"] = "6", ["reward"] = "tests-passed:1,rounds:1,tool-errors:1", ["work"] = work, ["workspaces"] = "2",
-        };
-        var first = (CodingEnvironment)kind.Create(new EnvironmentRequest(options));
-        var second = (CodingEnvironment)kind.Create(new EnvironmentRequest(options));
-        CodingEnvironment? refusing = null;
-        try
-        {
-            Check(first.ObservationSpace == Space.Conversation && first.ActionSpace == Space.Conversation, "conversations in, replies out");
-
-            // Seeds that draw each task: an order of the tasks from the seed, the first whose setup passes.
-            int hello = -1, hi = -1;
-            for (int seed = 0; seed < 64 && (hello < 0 || hi < 0 || first.BrokenTasks.Count == 0); seed++)
-            {
-                var observation = first.Reset(seed);
-                Check(observation.Messages is [{ Role: "system", Content: "Fix the code." }, { Role: "user" }] && observation.Tools!.Count == 6, "the first observation: the system prompt, the task, the tools");
-                (hello, hi) = first.Task!.Id switch { "csharp/hello" when hello < 0 => (seed, hi), "csharp/hi" when hi < 0 => (hello, seed), _ => (hello, hi) };
-                Check(first.Task.Id != "csharp/broken", "a task whose setup failed is never played");
-            }
-
-            Check(hello >= 0 && hi >= 0, $"seeds for both tasks: {hello}, {hi}");
-            Check(first.BrokenTasks.Keys.SequenceEqual(["csharp/broken"]) && first.BrokenTasks["csharp/broken"].Contains("missing.csproj", StringComparison.Ordinal),
-                $"the broken setup is left out and reported: {string.Join(", ", first.BrokenTasks.Keys)}");
-
-            // Solved, with a failed call on the way; replayed in another environment from the same seed.
-            ChatMessage[] solve = [CodingRead, CodingMissing, CodingFix, CodingDone];
-            var played = PlayCoding(first, hello, solve);
-            string prepared = Path.Combine(work, "prepared", "001");
-            string assets = Path.Combine(prepared, "obj", "project.assets.json");
-            var restored = File.GetLastWriteTimeUtc(assets);
-            var replay = PlayCoding(second, hello, solve);
-            Check(played.Count == 4 && replay.Count == 4, $"four steps: {played.Count}, {replay.Count}");
-            for (int i = 0; i < played.Count; i++)
-            {
-                Check(played[i].Observation.Equals(replay[i].Observation) && played[i].Reward == replay[i].Reward && played[i].Terminated == replay[i].Terminated
-                      && ShowInfo(played[i].Info) == ShowInfo(replay[i].Info), $"step {i} replays the same: {ShowInfo(played[i].Info)} | {ShowInfo(replay[i].Info)}");
-            }
-
-            Check(played.Take(3).All(s => s is { Reward: 0f, Done: false }), "no reward before the end");
-            var end = played[^1];
-            Check(end is { Terminated: true, Truncated: false }, "an answer without a tool call ends the episode");
-            Check(ShowInfo(end.Info) == "broken_tasks=csharp/broken, outcome=Passed, rounds=4, task=csharp/hello, test_edits=, tool_calls=3, tool_errors=1, verify_commands=2, verify_passed=true, verify_passed_commands=2",
-                $"the end's info: {ShowInfo(end.Info)}");
-            AssertClose([1f - 0.04f - 0.05f], [end.Reward], 1e-6f, "the reward: tests passed, less 0.01 a round and 0.05 a failed call");
-            Check(end.Observation.Messages.Count == 2 + 4 + 3 && end.Observation.Messages[3] is { Role: "tool", ToolName: "read_file" } read && read.Content.Contains("\"Bye\"", StringComparison.Ordinal)
-                  && end.Observation.Messages[5].Content.StartsWith("Error:", StringComparison.Ordinal), "the tools' results are the observations: the file, the error");
-            Check(first.Verification!.Output.Contains("dotnet build", StringComparison.Ordinal), "the verification's output");
-            Check(File.GetLastWriteTimeUtc(assets) == restored && Directory.GetDirectories(Path.Combine(work, "prepared")).Length == 3,
-                "setup ran once per task: the episodes cloned the prepared copy, restored once");
-            Check(!Directory.EnumerateFileSystemEntries(Path.Combine(work, "episodes")).Any(), "an ended episode's workspace is deleted");
-
-            // Not solved: the build passes, the hidden test fails.
-            var wrong = PlayCoding(first, hi, [CodingFix, CodingDone])[^1];
-            Check(!wrong.Info!.Get(CodingInfo.VerifyPassed) && wrong.Info.Get(CodingInfo.VerifyPassedCommands) == 1 && wrong.Info.Get(CodingInfo.Outcome) == "Failed",
-                $"not solved: {ShowInfo(wrong.Info)}");
-            AssertClose([-0.02f], [wrong.Reward], 1e-6f, "not solved: the penalties alone");
-            Check(RewardFunctions.Get("verify-fraction").ScoreAsync([new RewardInput("", "", null, wrong.Info)]).AsTask().GetAwaiter().GetResult()[0] == 0.5f, "half the verification passed");
-
-            // Out of rounds: still calling tools at the last one; verification still runs.
-            var budget = PlayCoding(first, hello, [CodingRead, CodingMissing, CodingRead, CodingMissing, CodingRead, CodingMissing, CodingDone]);
-            Check(budget.Count == 6 && budget[^1] is { Truncated: true, Terminated: false } && budget[^1].Info!.Get(CodingInfo.Outcome) == "OutOfBudget",
-                $"the rounds run out: {budget.Count} steps, {ShowInfo(budget[^1].Info)}");
-
-            // A test edit: the hidden tests overwrite it (the task passes), and it is reported.
-            var edited = PlayCoding(first, hello, [CodingFix, CodingTestEdit, CodingDone])[^1];
-            Check(edited.Info!.Get(CodingInfo.TestEdits) == "tests/Check.cs" && edited.Info.Get(CodingInfo.VerifyPassed) && !edited.Info.Contains(CodingInfo.Refused),
-                $"a test edit reported, the hidden tests copied over it: {ShowInfo(edited.Info)}");
-
-            // Refused when asked: no verification, counted as failed.
-            refusing = (CodingEnvironment)kind.Create(new EnvironmentRequest(new Dictionary<string, string>(options) { ["refuse-test-edits"] = "true", ["work"] = Path.Combine(root, "work-refusing") }));
-            var refused = PlayCoding(refusing, hello, [CodingFix, CodingTestEdit, CodingDone])[^1];
-            Check(refused.Info!.Get(CodingInfo.Refused) == "test-edits" && !refused.Info.Get(CodingInfo.VerifyPassed) && refused.Info.Get(CodingInfo.TestEdits) == "tests/Check.cs",
-                $"a test edit refused: {ShowInfo(refused.Info)}");
-            AssertClose([-0.03f], [refused.Reward], 1e-6f, "a refused episode: the penalties alone");
-            Check(refusing.Verification!.Output.StartsWith("refused", StringComparison.Ordinal), "the verification did not run");
-
-            ThrowsNaming<InvalidOperationException>(() => first.StepAsync(CodingDone).AsTask().GetAwaiter().GetResult(), "a step after the end", "reset");
-            ThrowsNaming<ArgumentException>(() => kind.Create(new EnvironmentRequest(new Dictionary<string, string> { ["suite"] = suite, ["rounds"] = "many" })), "a bad option", "rounds=many");
-            ThrowsNaming<ArgumentException>(() => kind.Create(new EnvironmentRequest(new Dictionary<string, string> { ["suite"] = suite, ["filter"] = "nothing-matches" })), "a filter that leaves nothing", "nothing-matches");
-        }
-        finally
-        {
-            first.Dispose();
-            second.Dispose();
-            refusing?.Dispose();
-            Check(!Directory.Exists(work) && !Directory.Exists(Path.Combine(root, "work-refusing")), "the last environment of a run deletes its copies");
-            CodingWorkspace.Delete(root);
-            if (!before)
-            {
-                CodingPlugin.Unregister();
-            }
-        }
-    }
-
-    // A policy that plays a script: its first reply fixes Greeter.cs, its second answers (the coding tests' collector runs).
-    private sealed class ScriptedCoder : IPolicy<ChatObservation, ChatMessage>
-    {
-        public ValueTask<PolicyActions<ChatMessage>> ActAsync(IReadOnlyList<ChatObservation> observations, ActionSampling sampling, CancellationToken cancellationToken = default)
-        {
-            var actions = observations.Select(o => o.Messages.Count(m => m.Role == "assistant") == 0 ? CodingFix : CodingDone).ToList();
-            return ValueTask.FromResult(new PolicyActions<ChatMessage>(actions, [.. actions.Select(_ => new ActionRecord([1], [-1f], float.NaN, [1]))]));
-        }
-
-        public UpdateStats Update(RolloutBatch<ChatObservation, ChatMessage> batch, IPolicyLoss loss, IReadOnlyList<int>? episodes = null, IReadOnlyDictionary<string, string>? lossOptions = null) =>
-            throw new NotSupportedException("a script does not learn");
-
-        public void Save(string path) => throw new NotSupportedException();
-
-        public void Load(string path) => throw new NotSupportedException();
-
-        public void Dispose()
-        {
-        }
-    }
-
-    private static void CodingMeasuredLimits()
-    {
-        bool before = CodingRegistered();
-        string root = CodingTemp();
-        var recorder = new RecordingSandbox(new CommandResult(0, false, "", TimeSpan.Zero, false));
-        CommandSandboxes.Register(recorder);
-        try
-        {
-            var kind = EnvironmentKinds.Get("coding");
-            int made = 0;
-
-            // The episode's verification limit and a tool command's, the quick suite's verification answered at once by the recorder.
-            (TimeSpan Verify, TimeSpan Command) Limits(Dictionary<string, string> extra)
-            {
-                var options = new Dictionary<string, string> { ["suite"] = WriteQuickSuite(Path.Combine(root, $"suite-{made++}")), ["system"] = "Fix it.", ["rounds"] = "4", ["sandbox"] = recorder.Name };
-                foreach (var (key, value) in extra)
-                {
-                    options[key] = value;
-                }
-
-                using var environment = (CodingEnvironment)kind.Create(new EnvironmentRequest(options));
-                environment.Reset(1);
-                var command = new ChatMessage("assistant", "", ToolCalls: [new ToolCall("run_command", new JsonObject { ["command"] = "git status" })]);
-                environment.StepAsync(command).AsTask().GetAwaiter().GetResult();
-                var tool = recorder.Calls[^1].Limits.Time;
-                environment.StepAsync(CodingDone).AsTask().GetAwaiter().GetResult();
-                return (recorder.Calls[^1].Limits.Time, tool);
-            }
-
-            var measured = Limits([]);
-            Check(measured == (TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30)), $"a verification measured at once: both limits the least, 30 s: {measured}");
-            var least = Limits(new() { ["timeout-least"] = "2" });
-            Check(least == (TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2)), $"timeout-least 2: {least}");
-            var most = Limits(new() { ["timeout-least"] = "1000" });
-            Check(most == (TimeSpan.FromSeconds(600), TimeSpan.FromSeconds(300)), $"never past 600 s for verification and 300 s for a tool command: {most}");
-            var given = Limits(new() { ["verify-timeout"] = "7", ["command-timeout"] = "9" });
-            Check(given == (TimeSpan.FromSeconds(7), TimeSpan.FromSeconds(9)), $"verify-timeout and command-timeout as given: {given}");
-            ThrowsNaming<ArgumentException>(() => kind.Create(new EnvironmentRequest(new Dictionary<string, string> { ["suite"] = WriteQuickSuite(Path.Combine(root, "bad")), ["timeout-scale"] = "x" })),
-                "a timeout-scale that is not a number", "timeout-scale");
-        }
-        finally
-        {
-            CommandSandboxes.Unregister(recorder.Name);
-            if (!before)
-            {
-                CodingPlugin.Unregister();
-            }
-
-            if (Directory.Exists(root))
-            {
-                Directory.Delete(root, true);
-            }
-        }
-    }
-
-    private static void CodingSuiteAndParallel()
-    {
-        bool before = CodingRegistered();
-        string root = CodingTemp();
-        try
-        {
-            // The environment suite on the quick suite, the actions drawn from the scripted replies.
-            ChatMessage[] replies = [CodingDone, CodingRead, CodingFix, CodingMissing];
-            var quick = new Dictionary<string, string> { ["suite"] = WriteQuickSuite(root), ["system"] = "Fix it.", ["rounds"] = "4" };
-            Conformance.CheckEnvironmentKind<ChatObservation, ChatMessage>(EnvironmentKinds.Get("coding"), (random, _) => replies[random.Next(replies.Length)], quick, maxSteps: 6,
-                new ContractCheckOptions { RandomCases = 1 }).ThrowIfFailed();
-
-            // Episodes in parallel give what they give one at a time; the time of both ways is measured.
-            var options = new Dictionary<string, string> { ["suite"] = WriteCSharpSuite(root), ["filter"] = "csharp/h", ["system"] = "Fix the code.", ["workspaces"] = "4" };
-            var kind = EnvironmentKinds.Get("coding");
-            // Two seeds for each task (hello solved, hi not), by the environment's rule: the tasks in an order drawn from the seed.
-            int Drawn(int seed)
-            {
-                int[] order = [0, 1];
-                new Random(seed).Shuffle(order);
-                return order[0];
-            }
-
-            int[] seeds = [.. Enumerable.Range(1, 200).Where(s => Drawn(s) == 0).Take(2), .. Enumerable.Range(1, 200).Where(s => Drawn(s) == 1).Take(2)];
-            EpisodeStart[] starts = [.. seeds.Select((seed, i) => new EpisodeStart(i, seed, i))];
-            using var policy = new ScriptedCoder();
-            using var sequential = new RolloutCollector<ChatObservation, ChatMessage>(kind, options, seed: 1, environments: 1, parallelSteps: false);
-            using var parallel = new RolloutCollector<ChatObservation, ChatMessage>(kind, options, seed: 1, environments: 4, parallelSteps: true);
-            using (sequential.CollectAsync(policy, [starts[0], starts[2]], new ActionSampling()).AsTask().GetAwaiter().GetResult())   // both tasks' setup, outside the timing
-            {
-            }
-
-            var clock = Stopwatch.StartNew();
-            using var one = sequential.CollectAsync(policy, starts, new ActionSampling()).AsTask().GetAwaiter().GetResult();
-            var oneTime = clock.Elapsed;
-            clock.Restart();
-            using var many = parallel.CollectAsync(policy, starts, new ActionSampling()).AsTask().GetAwaiter().GetResult();
-            var manyTime = clock.Elapsed;
-            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                $"    coding episodes (4, each a dotnet build and run): one at a time {oneTime.TotalSeconds:F1} s, four at once {manyTime.TotalSeconds:F1} s, {Environment.ProcessorCount} cores"));
-            Check(one.Rewards.ToArray().SequenceEqual(many.Rewards.ToArray()), $"the same rewards: {string.Join(", ", one.Rewards.ToArray())} | {string.Join(", ", many.Rewards.ToArray())}");
-            Check(one.Rewards.ToArray().Distinct().Count() == 2, $"both tasks drawn, one solved and one not: {string.Join(", ", one.Rewards.ToArray())}");
-            for (int e = 0; e < starts.Length; e++)
-            {
-                Check(ShowInfo(one.Trajectories[e].Info) == ShowInfo(many.Trajectories[e].Info)
-                      && one.Trajectories[e].Observations.SequenceEqual(many.Trajectories[e].Observations), $"episode {e}: the same info and conversation");
-            }
-        }
-        finally
-        {
-            CodingWorkspace.Delete(root);
-            if (!before)
-            {
-                CodingPlugin.Unregister();
-            }
-        }
-    }
-
-    private static void CodingDistillation(Device device)
-    {
-        bool before = CodingRegistered();
-        string root = CodingTemp();
-        string folder = WriteChatModelWith(TinyChatSpec(), ChatMlTemplate);
-        try
-        {
-            string quick = WriteQuickSuite(root);
-            using var studentModel = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-            using var teacherModel = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-            using var teacher = DistillationTeachers.FromModel(teacherModel);
-            var session = new FineTuningSession(studentModel, SessionOptions(1e-2f) with { Teacher = teacher }, totalSteps: 8);
-            using var policy = new LanguageModelPolicy(session, new LanguageModelPolicyOptions { MaxNewTokens = 6, TeacherWeight = 1f, ToolsInPrompt = false });   // the tiny model's 256 positions hold no tool descriptions
-            var environmentOptions = new Dictionary<string, string> { ["suite"] = quick, ["system"] = "Fix it.", ["rounds"] = "2" };
-
-            // The student's own episodes in the coding environment, R2's trainer with grpo and the teacher term.
-            int checkedEpisodes = 0;
-            var trainer = new ReinforcementTrainer<ChatObservation, ChatMessage>(EnvironmentKinds.Get("coding"), policy, new ReinforcementOptions
-            {
-                Algorithm = "grpo", EpisodesPerIteration = 4, GroupSize = 4, Iterations = 2, Seed = 3, Environments = 1, ParallelSteps = false, EnvironmentOptions = environmentOptions,
-            })
-            {
-                OnBatch = (_, batch) =>
-                {
-                    var layouts = policy.Lay(batch);
-                    for (int e = 0; e < batch.Episodes; e++)
-                    {
-                        var trained = layouts[e].Sequences.SelectMany(s => s.Tokens.Where((_, t) => s.Trained[t]));
-                        Check(trained.SequenceEqual(batch.Trajectories[e].Records.SelectMany(r => r.Tokens)), $"episode {e}: the replies' ids alone are trained");
-                        checkedEpisodes++;
-                    }
-                },
-            };
-            var result = trainer.Train();
-            Check(result.Iterations == 2 && checkedEpisodes == 8 && result.History.All(h => double.IsFinite(h.Loss)), $"two iterations on the coding environment: {result.Iterations}, {checkedEpisodes} episodes");
-
-            // Multi-turn: a reply that reads a file, then an answer; the file's text comes back as a tool message, never trained.
-            var kind = EnvironmentKinds.Get("coding");
-            var tokenizer = studentModel.Tokenizer!;
-            var trajectories = new List<Trajectory<ChatObservation, ChatMessage>>();
-            foreach (var (script, index) in new[] { (new[] { CodingFix, CodingDone }, 0), (new[] { CodingRead, CodingDone }, 1) })
-            {
-                using var environment = (IEnvironment<ChatObservation, ChatMessage>)kind.Create(new EnvironmentRequest(environmentOptions));
-                var observations = new List<ChatObservation> { environment.Reset(7) };
-                var records = new List<ActionRecord>();
-                var rewards = new List<float>();
-                EnvironmentStep<ChatObservation> step = default;
-                foreach (var reply in script)
-                {
-                    var observation = observations[^1];
-                    int[] prompt = [.. tokenizer.Encode(policy.Chat.RenderPrompt(new ChatRequest(observation.Messages, observation.Tools, observation.Think)))];
-                    int[] ids = [.. tokenizer.Encode(reply.Content + "<|im_end|>")];
-                    records.Add(Turn(prompt, ids));
-                    step = environment.StepAsync(reply).AsTask().GetAwaiter().GetResult();
-                    observations.Add(step.Observation);
-                    rewards.Add(step.Reward);
-                }
-
-                Check(step.Observation.Messages.Any(m => m.Role == "tool") && step.Done, $"script {index}: a tool's result in the conversation, then the end");
-                trajectories.Add(new Trajectory<ChatObservation, ChatMessage>(index, 7, observations, script, records, rewards, step.Terminated, step.Truncated, group: 0));
-            }
-
-            using var multi = new RolloutBatch<ChatObservation, ChatMessage>(trajectories);
-            Check(multi.Rewards.ToArray().Max() == 1f && multi.Rewards.ToArray().Sum() == 1f, $"one solved, one not: {string.Join(", ", multi.Rewards.ToArray())}");
-            multi.Estimate(AdvantageEstimators.Get("group"));
-            var turns = policy.Lay(multi);
-            for (int e = 0; e < turns.Count; e++)
-            {
-                var trained = turns[e].Sequences.SelectMany(s => s.Tokens.Where((_, t) => s.Trained[t]));
-                Check(trained.SequenceEqual(trajectories[e].Records.SelectMany(r => r.Tokens)), $"multi-turn episode {e} ({turns[e].Mode}): the two replies' ids alone are trained");
-            }
-
-            var stats = policy.Update(multi, PolicyLosses.Get("grpo"));
-            Check(float.IsFinite(stats.Loss) && stats.Units == trajectories.Sum(t => t.Units), $"grpo and the teacher term over the multi-turn episodes: {stats}");
-        }
-        finally
-        {
-            Directory.Delete(folder, true);
-            CodingWorkspace.Delete(root);
-            if (!before)
-            {
-                CodingPlugin.Unregister();
-            }
         }
     }
 }
