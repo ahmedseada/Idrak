@@ -110,16 +110,12 @@ public sealed class CharGpt : IDisposable
     public Device Device { get; private set; }
 
     /// <summary>
-    /// Builds an untrained model: the library's "gpt" recipe (<see cref="NetworkRecipes"/>) with a feed-forward of 4 · dim
+    /// Builds an untrained model: the library's GPT (<see cref="Architectures.Gpt"/>) with a feed-forward of 4 · dim
     /// and dropout 0.1, every layer's weights drawn in order from <paramref name="random"/> (a <c>new Random(2)</c> by default).
     /// </summary>
     public static CharGpt Create(GptConfig config, Device device, Random? random = null)
     {
-        var model = NetworkRecipes.Build("gpt", new JsonObject
-        {
-            ["vocabulary"] = config.Vocabulary.Length, ["context"] = config.Context, ["dim"] = config.Dim, ["heads"] = config.Heads,
-            ["layers"] = config.Layers, ["ffDim"] = 4 * config.Dim, ["dropout"] = 0.1f,
-        }).OnDevice(device).WithRandom(random ?? new Random(2)).Named("char-gpt").Build();
+        var model = Architectures.Gpt(config.Vocabulary.Length, config.Context, config.Dim, config.Heads, config.Layers, 4 * config.Dim, 0.1f).OnDevice(device).WithRandom(random ?? new Random(2)).Named("char-gpt").Build();
         return new CharGpt(config, model, device);
     }
 
