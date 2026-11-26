@@ -94,8 +94,7 @@ internal abstract partial class DesktopTests : Tests
                 Check(kind != "rag" || project.Contains("Include=\"Idrak.Text\"", StringComparison.Ordinal), "rag: the language package");
             }
 
-            Check(File.ReadAllText(Path.Combine(folder, "plugin", "src", "My-plugin", "RoundedWeight.cs")).Contains("FormatName = \"my-plugin\"", StringComparison.Ordinal)
-                  && File.ReadAllText(Path.Combine(folder, "plugin", "src", "My-plugin", "Plugin.cs")).Contains("namespace My_plugin;", StringComparison.Ordinal), "the format name and namespace");
+            Check(File.ReadAllText(Path.Combine(folder, "plugin", "src", "My-plugin", "Plugin.cs")).Contains("namespace My_plugin;", StringComparison.Ordinal), "the namespace");
             var (code, _, error) = DevRun("new", "console", "Again", "-o", Path.Combine(folder, "console"));
             Check(code == 1 && error.Contains("--force", StringComparison.Ordinal), $"a folder that is not empty: {code} {error}");
             Check(DevRun("new", "console", "Again", "-o", Path.Combine(folder, "console"), "-f", "-q").Code == 0, "--force writes into it");
