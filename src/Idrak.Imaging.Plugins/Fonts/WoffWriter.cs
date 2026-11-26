@@ -8,7 +8,7 @@ namespace Idrak.Imaging.Plugins.Fonts;
 
 /// <summary>
 /// "woff": writes a face as a WOFF 1.0 font (.woff). The face is first written as an sfnt by the font writer
-/// <see cref="SfntWriter"/> names (the library's "truetype", reached through <c>FontWriters</c> at run time), with
+/// <see cref="SfntWriter"/> names (the library's "truetype", <see cref="TrueTypeWriter"/>, reached directly), with
 /// the options given (a subset, the layout tables, names, the curve tolerance and hinting all pass through); then
 /// <see cref="Encode"/> packs it: each table zlib-compressed through <see cref="ZLibStream"/> at
 /// <see cref="CompressionLevel"/> and kept so only when that is smaller (else stored as it is), every table on a 4-byte
@@ -65,11 +65,16 @@ public sealed class WoffWriter : IFontWriter
         }
     }
 
-    // The font writers were registered (FontWriters) and picked by name: not on the new design yet.
-    private static IFontWriter WriterNamed(string name) => throw new NotSupportedException($"The font writer '{name}' by name is not on the new design yet.");
+    // The font writers were registered (FontWriters) and picked by name: not on the new design yet. The default, the
+    // library's "truetype" (TrueTypeWriter), is reached directly; another name stops.
+    private static readonly TrueTypeWriter TrueType = new();
+
+    private static IFontWriter WriterNamed(string name) =>
+        name.Equals(TrueTypeWriter.WriterName, StringComparison.OrdinalIgnoreCase) ? TrueType
+        : throw new NotSupportedException($"The font writer '{name}' by name is not on the new design yet.");
 
     /// <inheritdoc/>
-    /// <exception cref="NotSupportedException">Always for now: the writer <see cref="SfntWriter"/> names is looked up by name, which is not on the new design yet.</exception>
+    /// <exception cref="NotSupportedException"><see cref="SfntWriter"/> names a writer other than the default, "truetype": a font writer by name is not on the new design yet.</exception>
     /// <exception cref="NotSupportedException">The sfnt writer refuses the face (its message says what it cannot hold).</exception>
     /// <exception cref="InvalidDataException">The sfnt writer wrote no sfnt font.</exception>
     public void Write(IFontFace face, Stream destination, FontWriteOptions options)
