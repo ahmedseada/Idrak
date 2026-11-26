@@ -18,7 +18,7 @@ namespace Idrak.Reinforcement;
 /// </summary>
 public sealed record OffPolicyOptions
 {
-    /// <summary>The algorithm: a <see cref="QLosses"/> name (dqn, or an app's). <c>IDRAK_RL_DQN_LOSS</c>.</summary>
+    /// <summary>The algorithm: a <see cref="QLosses"/> name (dqn). <c>IDRAK_RL_DQN_LOSS</c>.</summary>
     public string Algorithm { get; init; } = QLosses.Dqn;
 
     /// <summary>Double Q-learning (van Hasselt et al. 2016): the loss's option <c>double</c>; null for the loss's own (false). <c>IDRAK_RL_DQN_DOUBLE</c>.</summary>

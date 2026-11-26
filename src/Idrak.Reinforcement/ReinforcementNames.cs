@@ -4,8 +4,8 @@
 namespace Idrak.Reinforcement;
 
 /// <summary>
-/// The names this package registers: the advantage estimators (<c>AdvantageEstimators</c>) and the policy losses
-/// (<c>PolicyLosses</c>, a trainer's algorithm), and the keys of their options.
+/// The names of this package's advantage estimators and policy losses (a trainer's algorithm), and the keys of the options
+/// a run gives them.
 /// </summary>
 public static class ReinforcementNames
 {
@@ -72,10 +72,10 @@ public static class ReinforcementNames
     /// <summary>The divisor of the step's sum when the loss normalizes by a constant (Dr. GRPO, Liu et al. 2025, arXiv:2503.20783).</summary>
     public const string ConstantKey = "constant";
 
-    /// <summary>The library's estimators, in their registration order.</summary>
+    /// <summary>The library's estimators.</summary>
     public static IReadOnlyList<string> Estimators { get; } = [Gae, Group, LeaveOneOut, Returns];
 
-    /// <summary>The library's policy losses, in their registration order.</summary>
+    /// <summary>The library's policy losses.</summary>
     public static IReadOnlyList<string> Algorithms { get; } = [Reinforce, Ppo, Grpo];
 }
 

@@ -6,18 +6,40 @@ using Idrak.Abstraction.Reinforcement;
 
 namespace Idrak.Reinforcement;
 
-// The library's advantage estimators (AdvantageEstimators). Every sum runs in a fixed order, in double precision, rounded
+// The library's advantage estimators, their options their constructors'. Every sum runs in a fixed order, in double precision, rounded
 // to float once when written: episode by episode in the input's order, each episode's steps backwards from its last, a
 // group's episodes in their order (rule 86). None keeps state between calls; the pooled arrays one rents are returned in
 // `finally`.
 internal static class Estimators
 {
-    public static void Register()
+    // The options by key the contracts still pass: the estimators' and the losses' options are their constructors', so
+    // every key is one they do not take.
+    public static void NoOptions(string what, IReadOnlyDictionary<string, string>? options)
     {
-        AdvantageEstimators.Register(new GeneralizedAdvantageEstimator());
-        AdvantageEstimators.Register(new GroupAdvantageEstimator());
-        AdvantageEstimators.Register(new LeaveOneOutEstimator());
-        AdvantageEstimators.Register(new ReturnsEstimator());
+        if (options is { Count: > 0 })
+        {
+            throw new ArgumentException($"The {what} takes its options as constructor parameters, not by key (given '{string.Join("', '", options.Keys)}').", nameof(options));
+        }
+    }
+
+    // A number option within [min, max].
+    public static float InRange(float value, float min, float max, string name) =>
+        value >= min && value <= max ? value
+            : throw new ArgumentOutOfRangeException(name, value, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{name} is a number in [{min}, {max}]."));
+
+    // A choice among `choices`.
+    public static string OneOf(string value, string name, params ReadOnlySpan<string> choices)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        foreach (string choice in choices)
+        {
+            if (string.Equals(choice, value, StringComparison.OrdinalIgnoreCase))
+            {
+                return choice;
+            }
+        }
+
+        throw new ArgumentException($"{name} is one of {string.Join(", ", choices.ToArray())}, not '{value}'.", name);
     }
 
     // The outputs' lengths, and values when the estimator needs them.
@@ -131,31 +153,32 @@ internal static class Estimators
 /// Using Generalized Advantage Estimation", arXiv:1506.02438). With the critic's value V(s_t) of each step's observation,
 /// the temporal-difference error δ_t = r_t + γ V(s_{t+1}) − V(s_t), where V after the last step is the episode's final value
 /// when it was truncated and 0 when it terminated; the advantage A_t = δ_t + γλ A_{t+1} (A after the last step 0), summed
-/// backwards from each episode's last step; the return R_t = A_t + V(s_t) (the value head's target, TD(λ)). Options:
-/// gamma (γ, default 0.99), lambda (λ, default 0.95), normalize (the batch's advantages to mean 0 and spread 1, default false).
+/// backwards from each episode's last step; the return R_t = A_t + V(s_t) (the value head's target, TD(λ)). Options (the
+/// constructor's): gamma (γ in [0, 1], default 0.99), lambda (λ in [0, 1], default 0.95), normalize (the batch's advantages
+/// to mean 0 and spread 1, default false).
 /// </summary>
-internal sealed class GeneralizedAdvantageEstimator : IAdvantageEstimator, IOptionSchema
+internal sealed class GeneralizedAdvantageEstimator : IAdvantageEstimator
 {
-    private static readonly OptionSpec<float> Gamma = OptionSpec.Number(ReinforcementNames.GammaKey, 0.99f, 0f, 1f, summary: "the discount γ");
-    private static readonly OptionSpec<float> Lambda = OptionSpec.Number(ReinforcementNames.LambdaKey, 0.95f, 0f, 1f, summary: "GAE's λ");
-    private static readonly OptionSpec<bool> Normalize = OptionSpec.Flag(ReinforcementNames.NormalizeAdvantagesKey, summary: "the batch's advantages to mean 0 and spread 1");
+    private readonly float _gamma, _lambda;
+    private readonly bool _normalize;
+
+    public GeneralizedAdvantageEstimator(float gamma = 0.99f, float lambda = 0.95f, bool normalize = false)
+    {
+        _gamma = Estimators.InRange(gamma, 0f, 1f, nameof(gamma));
+        _lambda = Estimators.InRange(lambda, 0f, 1f, nameof(lambda));
+        _normalize = normalize;
+    }
 
     public string Name => ReinforcementNames.Gae;
-
-    public string Summary => "generalized advantage estimation (Schulman et al. 2015): TD errors of a critic summed with γλ; needs value estimates";
-
-    public OptionSchema Options { get; } = new($"advantage estimator {ReinforcementNames.Gae}", Gamma, Lambda, Normalize);
-
-    public IReadOnlySet<string> Keys => Options.Keys;
 
     public bool UsesValues => true;
 
     public void Estimate(AdvantageInput input, Span<float> advantages, Span<float> returns, IReadOnlyDictionary<string, string>? options = null)
     {
-        var read = Options.Parse(options);
-        double gamma = read.Get(Gamma);
-        double lambda = read.Get(Lambda);
-        bool normalize = read.Get(Normalize);
+        Estimators.NoOptions($"advantage estimator {Name}", options);
+        double gamma = _gamma;
+        double lambda = _lambda;
+        bool normalize = _normalize;
         Estimators.CheckOutputs(Name, input, advantages, returns, needsValues: true);
         int end = 0;
         for (int e = 0; e < input.Episodes; e++)
@@ -188,29 +211,29 @@ internal sealed class GeneralizedAdvantageEstimator : IAdvantageEstimator, IOpti
 /// is compared with its group's (the episodes that answered the same situation): A_i = (R_i − mean(R)) / (std(R) + ε), or
 /// A_i = R_i − mean(R) without the scale (Liu et al. 2025, "Understanding R1-Zero-Like Training: A Critical Perspective",
 /// arXiv:2503.20783, drop it as a bias towards easy and hard groups); std is the sample deviation (n − 1), so a group of one
-/// gets 0. Every step of the episode gets A_i; the return of a step is its reward-to-go. Options: scale (default true),
-/// epsilon (default 1e-4). Needs no critic.
+/// gets 0. Every step of the episode gets A_i; the return of a step is its reward-to-go. Options (the constructor's):
+/// scale (default true), epsilon (at least 0, default 1e-4). Needs no critic.
 /// </summary>
-internal sealed class GroupAdvantageEstimator : IAdvantageEstimator, IOptionSchema
+internal sealed class GroupAdvantageEstimator : IAdvantageEstimator
 {
-    private static readonly OptionSpec<bool> Scale = OptionSpec.Flag(ReinforcementNames.ScaleKey, true, summary: "divide by the group's spread");
-    private static readonly OptionSpec<float> Epsilon = OptionSpec.Number(ReinforcementNames.EpsilonKey, 1e-4f, 0f, summary: "added to the spread before dividing");
+    private readonly bool _scale;
+    private readonly float _epsilon;
+
+    public GroupAdvantageEstimator(bool scale = true, float epsilon = 1e-4f)
+    {
+        _scale = scale;
+        _epsilon = Estimators.InRange(epsilon, 0f, float.MaxValue, nameof(epsilon));
+    }
 
     public string Name => ReinforcementNames.Group;
-
-    public string Summary => "group-relative advantages (GRPO, Shao et al. 2024): an episode's return less its group's mean, over the group's deviation or not";
-
-    public OptionSchema Options { get; } = new($"advantage estimator {ReinforcementNames.Group}", Scale, Epsilon);
-
-    public IReadOnlySet<string> Keys => Options.Keys;
 
     public bool UsesValues => false;
 
     public void Estimate(AdvantageInput input, Span<float> advantages, Span<float> returns, IReadOnlyDictionary<string, string>? options = null)
     {
-        var read = Options.Parse(options);
-        bool scale = read.Get(Scale);
-        double epsilon = read.Get(Epsilon);
+        Estimators.NoOptions($"advantage estimator {Name}", options);
+        bool scale = _scale;
+        double epsilon = _epsilon;
         Estimators.CheckOutputs(Name, input, advantages, returns, needsValues: false);
         GroupEstimate(input, advantages, (totals, members, count, result) =>
         {
@@ -288,21 +311,15 @@ internal sealed class GroupAdvantageEstimator : IAdvantageEstimator, IOptionSche
 /// A_i = R_i − (1 / (k − 1)) Σ_{j ≠ i} R_j, an unbiased baseline since it does not depend on episode i; a group of one gets 0.
 /// Every step of the episode gets A_i; the return of a step is its reward-to-go. No options; needs no critic.
 /// </summary>
-internal sealed class LeaveOneOutEstimator : IAdvantageEstimator, IOptionSchema
+internal sealed class LeaveOneOutEstimator : IAdvantageEstimator
 {
     public string Name => ReinforcementNames.LeaveOneOut;
-
-    public string Summary => "leave-one-out advantages (RLOO, Ahmadian et al. 2024): an episode's return less the mean of its group's others";
-
-    public OptionSchema Options { get; } = new($"advantage estimator {ReinforcementNames.LeaveOneOut}");
-
-    public IReadOnlySet<string> Keys => Options.Keys;
 
     public bool UsesValues => false;
 
     public void Estimate(AdvantageInput input, Span<float> advantages, Span<float> returns, IReadOnlyDictionary<string, string>? options = null)
     {
-        _ = Options.Parse(options);
+        Estimators.NoOptions($"advantage estimator {Name}", options);
         Estimators.CheckOutputs(Name, input, advantages, returns, needsValues: false);
         GroupAdvantageEstimator.GroupEstimate(input, advantages, static (totals, members, count, result) =>
         {
@@ -327,31 +344,33 @@ internal sealed class LeaveOneOutEstimator : IAdvantageEstimator, IOptionSchema
 /// Connectionist Reinforcement Learning"; Sutton and Barto 2018, section 13.3): G_t = r_t + γ G_{t+1}, summed backwards from
 /// each episode's last step, where G after the last step is the episode's final value when it was truncated and the input
 /// has values, else 0. The advantage is G_t less a baseline (section 13.4): none (A_t = G_t), mean (the batch's mean of G,
-/// summed in step order) or value (the critic's V(s_t); the input must have values). The return is G_t. Options: gamma
-/// (γ, default 0.99), baseline (default none), normalize (the batch's advantages to mean 0 and spread 1, default false).
+/// summed in step order) or value (the critic's V(s_t); the input must have values). The return is G_t. Options (the
+/// constructor's): gamma (γ in [0, 1], default 0.99), baseline (none, mean or value; default none), normalize (the batch's
+/// advantages to mean 0 and spread 1, default false).
 /// </summary>
-internal sealed class ReturnsEstimator : IAdvantageEstimator, IOptionSchema
+internal sealed class ReturnsEstimator : IAdvantageEstimator
 {
-    private static readonly OptionSpec<float> Gamma = OptionSpec.Number(ReinforcementNames.GammaKey, 0.99f, 0f, 1f, summary: "the discount γ");
-    private static readonly OptionSpec<string> Baseline = OptionSpec.Choice(ReinforcementNames.BaselineKey, "none", "none", "mean", "value");
-    private static readonly OptionSpec<bool> Normalize = OptionSpec.Flag(ReinforcementNames.NormalizeAdvantagesKey, summary: "the batch's advantages to mean 0 and spread 1");
+    private readonly float _gamma;
+    private readonly string _baseline;
+    private readonly bool _normalize;
+
+    public ReturnsEstimator(float gamma = 0.99f, string baseline = "none", bool normalize = false)
+    {
+        _gamma = Estimators.InRange(gamma, 0f, 1f, nameof(gamma));
+        _baseline = Estimators.OneOf(baseline, nameof(baseline), "none", "mean", "value");
+        _normalize = normalize;
+    }
 
     public string Name => ReinforcementNames.Returns;
-
-    public string Summary => "discounted returns (REINFORCE, Williams 1992), less a baseline (none, the batch's mean, or the critic's value) or not";
-
-    public OptionSchema Options { get; } = new($"advantage estimator {ReinforcementNames.Returns}", Gamma, Baseline, Normalize);
-
-    public IReadOnlySet<string> Keys => Options.Keys;
 
     public bool UsesValues => false;
 
     public void Estimate(AdvantageInput input, Span<float> advantages, Span<float> returns, IReadOnlyDictionary<string, string>? options = null)
     {
-        var read = Options.Parse(options);
-        double gamma = read.Get(Gamma);
-        string baseline = read.Get(Baseline);
-        bool normalize = read.Get(Normalize);
+        Estimators.NoOptions($"advantage estimator {Name}", options);
+        double gamma = _gamma;
+        string baseline = _baseline;
+        bool normalize = _normalize;
         Estimators.CheckOutputs(Name, input, advantages, returns, needsValues: baseline == "value");
         int end = 0;
         double sum = 0;

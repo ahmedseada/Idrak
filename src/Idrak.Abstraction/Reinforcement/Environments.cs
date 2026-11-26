@@ -102,11 +102,19 @@ public sealed record EnvironmentRequest(IReadOnlyDictionary<string, string>? Opt
 /// </summary>
 public interface IEnvironmentKind
 {
+    /// <summary>The kind's name ("prompts", "coding"): what a trainer's messages, telemetry and checkpoints call it.</summary>
+    string Name { get; }
+
     /// <summary>The type of the observations of the environments it creates (the TObservation of <see cref="IEnvironment{TObservation, TAction}"/>).</summary>
     Type ObservationType { get; }
 
     /// <summary>The type of their actions (the TAction of <see cref="IEnvironment{TObservation, TAction}"/>).</summary>
     Type ActionType { get; }
+
+    /// <summary>A new environment made with <paramref name="request"/>'s options and seed; the caller disposes it.</summary>
+    /// <param name="request">The kind's options and the seed of what the environment draws once when it is made.</param>
+    /// <exception cref="ArgumentException">An option the kind does not take (the message names it), or a bad value.</exception>
+    IEnvironment Create(EnvironmentRequest request);
 }
 
 /// <summary>

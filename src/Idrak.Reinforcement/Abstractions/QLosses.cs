@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
-using System.Runtime.CompilerServices;
 
 namespace Idrak.Reinforcement.Abstractions;
 
@@ -93,18 +92,16 @@ public sealed class QLossInput
 
 /// <summary>
 /// A Q-learning loss: from the online network's action values at a mini-batch's states and the target network's at
-/// the next states, a one-element loss whose gradient trains the online network (<c>OffPolicyTrainer</c>), registered in
-/// <see cref="QLosses"/> under its <see cref="IKind.Name"/> ("dqn"), with the option keys <see cref="Loss"/> takes
-/// (<see cref="IConfigurableKind.Keys"/>). The library's is DQN's ("dqn": Mnih et al. 2015, with double Q-learning as an
-/// option). Thread-safe: it keeps no state.
+/// the next states, a one-element loss whose gradient trains the online network (<c>OffPolicyTrainer</c>). The library's
+/// is DQN's ("dqn": Mnih et al. 2015, with double Q-learning as an option); its options are its constructor's.
+/// Thread-safe: it keeps no state.
 /// </summary>
-public interface IQLoss : IConfigurableKind
+public interface IQLoss
 {
-
     /// <summary>The mini-batch's loss, one element, finite; its gradient flows to <see cref="QLossInput.Values"/>.</summary>
     /// <param name="input">The online values, the targets' parts.</param>
-    /// <param name="options">The loss's options by key (<see cref="IConfigurableKind.Keys"/>), values as text; null for its defaults.</param>
-    /// <exception cref="ArgumentException">An option the loss does not take (the message names it and <see cref="IConfigurableKind.Keys"/>), a bad value, or an input without what the loss needs (the online next values).</exception>
+    /// <param name="options">The loss's options by key, values as text; null for its defaults.</param>
+    /// <exception cref="ArgumentException">An option the loss does not take (the message names it), a bad value, or an input without what the loss needs (the online next values).</exception>
     Tensor Loss(QLossInput input, IReadOnlyDictionary<string, string>? options = null);
 
     /// <summary>
@@ -117,7 +114,7 @@ public interface IQLoss : IConfigurableKind
 }
 
 /// <summary>
-/// The Q-learning losses an off-policy trainer can use, by name (ignoring case): its algorithm. The library's:
+/// The names of the Q-learning losses and their option keys. The library's:
 /// <list type="bullet">
 /// <item><see cref="Dqn"/> ("dqn"): the deep Q-network's temporal-difference loss (Mnih et al. 2015, "Human-level control
 /// through deep reinforcement learning", Nature 518): y = r + d · max_a Q'(s', a) with the target network Q' and the
@@ -127,10 +124,6 @@ public interface IQLoss : IConfigurableKind
 /// Double Q-learning", AAAI): y = r + d · Q'(s', argmax_a Q(s', a)), the action chosen by the online network and valued by
 /// the target one.</item>
 /// </list>
-/// No R1 registry fits an off-policy algorithm (<c>PolicyLosses</c> reads the log-probabilities of a policy that acted,
-/// which a Q-network has not), so this one lives with the trainer that uses it, in Idrak.Reinforcement. Register another
-/// with <see cref="Register"/>; one under a library name shadows the library's, which <see cref="Unregister"/> brings back,
-/// guarded by its <see cref="SetPolicy">policy</see>.
 /// </summary>
 public static class QLosses
 {
@@ -142,105 +135,4 @@ public static class QLosses
 
     /// <summary>Double Q-learning (true or false): "double".</summary>
     public const string DoubleKey = "double";
-
-    private static readonly SlotTable<string, IQLoss> Table = BuiltIn();
-
-    private static SlotTable<string, IQLoss> BuiltIn()
-    {
-        var table = new SlotTable<string, IQLoss>(nameof(QLosses), (slot, app, library) => new GuardedLoss(slot, app, library), StringComparer.OrdinalIgnoreCase);
-        table.RegisterDefault(Dqn, new DqnLoss());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="loss"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IQLoss loss)
-    {
-        ArgumentNullException.ThrowIfNull(loss);
-        ArgumentException.ThrowIfNullOrWhiteSpace(loss.Name);
-        Table.Register(loss.Name, loss, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's loss <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The loss registered as <paramref name="name"/>, or null.</summary>
-    public static IQLoss? Find(string name) => Table.Find(name);
-
-    /// <summary>The loss registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static IQLoss Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(QLosses), name, Table.Keys,
-            $"Q-learning loss '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with QLosses.Register.");
-
-    /// <summary>The library's loss <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IQLoss? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the loss <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's loss <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> computes the library's; <see cref="SlotPolicy.Shadow"/> lets the library's answer
-    /// and compares the app's value on a sample of calls).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered loss as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(l => $"{l.Name}: {l.Summary}"));
-
-    // An app's loss over the library's: each call falls back on its own, or is compared with the library's. A compared
-    // call computes the app's loss without recording it (the library's is the one trained on).
-    private sealed class GuardedLoss(Slot slot, IQLoss app, IQLoss library) : IQLoss
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        // The library's loss may answer in the app's place (a fall-back, a shadow), so the next values are given when either reads them.
-        public bool NeedsNextValues(IReadOnlyDictionary<string, string>? options = null) => app.NeedsNextValues(options) || library.NeedsNextValues(options);
-
-        public Tensor Loss(QLossInput input, IReadOnlyDictionary<string, string>? options = null)
-        {
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                var run = slot.Shadow();
-                var answer = library.Loss(input, options);
-                if (run is not null)
-                {
-                    run.Answered();
-                    try
-                    {
-                        Tensor other;
-                        using (Autograd.NoGrad())
-                        {
-                            other = app.Loss(input, options);
-                        }
-
-                        run.Done(Comparisons.Difference(answer.ToArray(), other.ToArray(), 1e-5f));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return answer;
-            }
-
-            try
-            {
-                return app.Loss(input, options);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return library.Loss(input, options);
-            }
-        }
-    }
 }

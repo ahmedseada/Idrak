@@ -61,10 +61,13 @@ public static class ReinforcementTrainer
     /// <param name="options">The run's settings; null for <see cref="ReinforcementOptions.FromEnvironment"/>.</param>
     /// <param name="progress">Where the run's progress is shown; null for nowhere.</param>
     /// <param name="cancellationToken">Stops the run between iterations.</param>
-    /// <exception cref="NotSupportedException">No kind of that name is registered.</exception>
+    /// <exception cref="NotSupportedException">Always for now: the kinds were registered (<c>EnvironmentKinds</c>) and picked by name, which is not on the new design yet.</exception>
     public static ReinforcementResult Train<TObservation, TAction>(string environmentKind, IPolicy<TObservation, TAction> policy, ReinforcementOptions? options = null,
         IProgressReporter? progress = null, CancellationToken cancellationToken = default) =>
-        Train(EnvironmentKinds.Get(environmentKind), policy, options, progress, cancellationToken);
+        Train(EnvironmentKindNamed(environmentKind), policy, options, progress, cancellationToken);
+
+    // The environment kinds were registered (EnvironmentKinds) and picked by name, which is not on the new design yet.
+    private static IEnvironmentKind EnvironmentKindNamed(string name) => throw new NotSupportedException($"The environment kind '{name}' by name is not on the new design yet.");
 }
 
 /// <summary>
@@ -153,32 +156,50 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
 
     /// <summary>
     /// The run's control point at each iteration boundary (Plan 27, R11), or null for none: the dashboard's pause, resume and
-    /// stop, or a launcher's control file, as <see cref="RunSteerings.For"/> gives them for the policy's collectives (on a
+    /// stop, or a launcher's control file, as <c>RunSteerings.For</c> gave them for the policy's collectives (on a
     /// cluster every rank's trainer takes its own rank's). The boundary before iteration N is its step N (0 for the first).
     /// </summary>
     public IRunSteering? Steering { get; init; }
 
     /// <summary>Runs the iterations (see the type), on the calling thread.</summary>
     /// <param name="cancellationToken">Stops the run between iterations.</param>
+    /// <exception cref="NotSupportedException">Always for now: the policy loss, the pair source and the advantage estimator were picked by name, which is not on the new design yet.</exception>
     public ReinforcementResult Train(CancellationToken cancellationToken = default) => TrainAsync(cancellationToken).AsTask().GetAwaiter().GetResult();
+
+    // The learning-rate schedules were registered (LearningRateSchedules) and picked by name, which is not on the new design yet.
+    private static ILearningRateScheduler ScheduleNamed(string name, LearningRateScheduleSettings settings, IOptimizer optimizer, int steps) =>
+        throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");
+
+    // The pair sources were registered (PreferencePairSources) and picked by name, made with the run's PairOptions: not on
+    // the new design yet.
+    private static IPreferencePairSource PairSourceNamed(string name) => throw new NotSupportedException($"The preference pair source '{name}' by name is not on the new design yet.");
+
+    // The policy losses were registered (PolicyLosses) and picked by the run's algorithm, made with its settings (Clip,
+    // KlWeight, KlEstimator, EntropyWeight, ValueWeight, Normalization, LossOptions): not on the new design yet.
+    private static IPolicyLoss LossNamed(ReinforcementOptions o) => throw new NotSupportedException($"The policy loss '{o.Algorithm}' by name is not on the new design yet.");
+
+    // The advantage estimators were registered (AdvantageEstimators) and picked by name, made with the run's settings
+    // (Gamma, Lambda, GroupScale, NormalizeAdvantages, EstimatorOptions): not on the new design yet.
+    private static IAdvantageEstimator EstimatorNamed(string name) => throw new NotSupportedException($"The advantage estimator '{name}' by name is not on the new design yet.");
 
     /// <summary>Runs the iterations (see the type); awaits the environments that wait.</summary>
     /// <param name="cancellationToken">Stops the run between iterations.</param>
+    /// <exception cref="NotSupportedException">Always for now: the policy loss, the pair source and the advantage estimator were picked by name, which is not on the new design yet.</exception>
     public async ValueTask<ReinforcementResult> TrainAsync(CancellationToken cancellationToken = default)
     {
         var o = Options;
         o.Validate();
         // Preference training (Craft's plan, R0): a pair source's choices and a preference loss instead of a policy loss.
-        var pairSource = o.Pairs is { } pairsName ? PreferencePairSources.Get(pairsName) : null;
+        var pairSource = o.Pairs is { } pairsName ? PairSourceNamed(pairsName) : null;
         IPreferencePolicy<TObservation, TAction>? preferences = null;
         if (pairSource is not null)
         {
             preferences = _policy as IPreferencePolicy<TObservation, TAction> ?? throw new NotSupportedException(
-                $"ReinforcementOptions.Pairs ({pairSource.Name}) trains on preferences: {_policy.GetType().Name} is not an IPreferencePolicy (Idrak.Text's LanguageModelPolicy is).");
+                $"ReinforcementOptions.Pairs ({o.Pairs}) trains on preferences: {_policy.GetType().Name} is not an IPreferencePolicy (Idrak.Text's LanguageModelPolicy is).");
             preferences.CheckPreferences(o.PreferenceLoss, o.PreferenceLossOptions, o.PreferenceReference);   // an unknown loss fails before the first rollout
         }
 
-        var loss = pairSource is null ? PolicyLosses.Get(o.Algorithm) : null;
+        var loss = pairSource is null ? LossNamed(o) : null;
         int groupSize = GroupSize(o, pairSource?.NeedsGroups == true);
         if (o.EpisodesPerIteration % groupSize != 0)
         {
@@ -188,7 +209,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
 
         if (o.Estimator is { } named)
         {
-            _ = AdvantageEstimators.Get(named);                                         // an unknown name fails before the first rollout
+            _ = EstimatorNamed(named);                                                   // an unknown name fails before the first rollout
         }
 
         int epochs = o.Epochs > 0 ? o.Epochs : pairSource is null && string.Equals(o.Algorithm, ReinforcementNames.Ppo, StringComparison.OrdinalIgnoreCase) ? 4 : 1;
@@ -200,7 +221,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
         if (scheduled is not null)
         {
             scheduled.MaxGradientNorm = o.MaxGradientNorm;
-            schedule = LearningRateSchedules.Factory(o.Schedule, o.ScheduleSettings)(scheduled.Optimizer, Math.Max(1, o.Iterations * updatesPerIteration));
+            schedule = ScheduleNamed(o.Schedule, o.ScheduleSettings, scheduled.Optimizer, Math.Max(1, o.Iterations * updatesPerIteration));
         }
 
         // Resume: the policy and its optimizer, then the schedule replayed to where the run was.
@@ -215,7 +236,6 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
             }
         }
 
-        var lossOptions = loss is null ? null : LossOptions(o, loss);
         int evaluationSeed = o.EvaluationSeed ?? Seeds.Derive(seed, Seeds.Evaluation);
         var device = scheduled?.Device ?? Device.Default;
         var history = new List<IterationSummary>();
@@ -297,8 +317,8 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
             IterationSummary summary;
             using (batch)
             {
-                var estimator = AdvantageEstimators.Get(EstimatorName(o, batch.HasValues));
-                batch.Estimate(estimator, EstimatorOptions(o, estimator));
+                var estimator = EstimatorNamed(EstimatorName(o, batch.HasValues));
+                batch.Estimate(estimator);
                 OnBatch?.Invoke(iteration, batch);
                 var rolloutTime = Stopwatch.GetElapsedTime(rolloutStart);
 
@@ -336,7 +356,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
                 {
                     // A preference round: the batch's pairs chosen once, then an update on them per epoch (none without a pair).
                     choices.Clear();
-                    pairSource.Choose(batch.Trajectories, choices, o.PairOptions);
+                    pairSource.Choose(batch.Trajectories, choices);
                     for (int epoch = 0; epoch < epochs && choices.Count > 0; epoch++)
                     {
                         long step = Stopwatch.GetTimestamp();
@@ -358,7 +378,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
                         }
 
                         long step = Stopwatch.GetTimestamp();
-                        Count(_policy.Update(batch, loss!, chosen, lossOptions), step);
+                        Count(_policy.Update(batch, loss!, chosen), step);
                     }
                 }
 
@@ -478,58 +498,6 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
 
         return string.Equals(o.Algorithm, ReinforcementNames.Ppo, StringComparison.OrdinalIgnoreCase) && hasValues ? ReinforcementNames.Gae : ReinforcementNames.Returns;
     }
-
-    // The run's settings the estimator takes, then the extra options as they are.
-    private static Dictionary<string, string> EstimatorOptions(ReinforcementOptions o, IAdvantageEstimator estimator)
-    {
-        var options = new Dictionary<string, string>(StringComparer.Ordinal);
-        void Put(string key, string? value)
-        {
-            if (value is not null && estimator.Keys.Contains(key))
-            {
-                options[key] = value;
-            }
-        }
-
-        Put(ReinforcementNames.GammaKey, Text(o.Gamma));
-        Put(ReinforcementNames.LambdaKey, Text(o.Lambda));
-        Put(ReinforcementNames.ScaleKey, o.GroupScale is { } scale ? (scale ? "true" : "false") : null);
-        Put(ReinforcementNames.NormalizeAdvantagesKey, o.NormalizeAdvantages is { } normalize ? (normalize ? "true" : "false") : null);
-        foreach (var (key, value) in o.EstimatorOptions ?? new Dictionary<string, string>())
-        {
-            options[key] = value;
-        }
-
-        return options;
-    }
-
-    // The run's settings the loss takes, then the extra options as they are.
-    private static Dictionary<string, string> LossOptions(ReinforcementOptions o, IPolicyLoss loss)
-    {
-        var options = new Dictionary<string, string>(StringComparer.Ordinal);
-        void Put(string key, string? value)
-        {
-            if (value is not null && loss.Keys.Contains(key))
-            {
-                options[key] = value;
-            }
-        }
-
-        Put(ReinforcementNames.ClipKey, Text(o.Clip));
-        Put(ReinforcementNames.KlKey, Text(o.KlWeight));
-        Put(ReinforcementNames.KlEstimatorKey, o.KlEstimator);
-        Put(ReinforcementNames.EntropyKey, Text(o.EntropyWeight));
-        Put(ReinforcementNames.ValueKey, Text(o.ValueWeight));
-        Put(ReinforcementNames.NormalizeKey, o.Normalization);
-        foreach (var (key, value) in o.LossOptions ?? new Dictionary<string, string>())
-        {
-            options[key] = value;
-        }
-
-        return options;
-    }
-
-    private static string Text(float value) => value.ToString("R", CultureInfo.InvariantCulture);
 
     // The episode order of a pass: 0, 1, … shuffled (Fisher-Yates) from the pass's seed when the pass is split.
     private static void Shuffle(int[] order, int seed, bool shuffle)

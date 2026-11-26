@@ -299,9 +299,13 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
             trained.AddRange(_spread.Parameters());
         }
 
-        Optimizer = OptimizerKinds.Factory(options.Optimizer, new OptimizerSettings(options.LearningRate, options.WeightDecay))(trained);
+        Optimizer = OptimizerNamed(options.Optimizer, new OptimizerSettings(options.LearningRate, options.WeightDecay), trained);
         MaxGradientNorm = options.MaxGradientNorm;
     }
+
+    // The optimizers were registered (OptimizerKinds) and picked by name, which is not on the new design yet.
+    private static Optimizer OptimizerNamed(string name, OptimizerSettings settings, IReadOnlyList<Tensor> parameters) =>
+        throw new NotSupportedException($"The optimizer '{name}' by name is not on the new design yet.");
 
     /// <summary>The observations the policy reads.</summary>
     public Space ObservationSpace { get; }
@@ -467,7 +471,7 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
             var total = loss.Loss(input, lossOptions);
             if (total.Size != 1)
             {
-                throw new InvalidOperationException($"The policy loss {loss.Name} gave {total.Size} values: a loss is one element.");
+                throw new InvalidOperationException($"The policy loss {loss.GetType().Name} gave {total.Size} values: a loss is one element.");
             }
 
             Optimizer.ZeroGrad();

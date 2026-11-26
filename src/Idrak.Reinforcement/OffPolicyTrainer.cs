@@ -146,7 +146,7 @@ public sealed class OffPolicyTrainer : IDisposable
 
         target.Freeze();
         SyncTarget(1f);
-        Optimizer = OptimizerKinds.Factory(Options.Optimizer, new OptimizerSettings(Options.LearningRate, Options.WeightDecay))([.. network.Parameters()]);
+        Optimizer = OptimizerNamed(Options.Optimizer, new OptimizerSettings(Options.LearningRate, Options.WeightDecay), [.. network.Parameters()]);
         Replay = new ReplayBuffer(Options.ReplayCapacity, _observationSize);
     }
 
@@ -182,7 +182,7 @@ public sealed class OffPolicyTrainer : IDisposable
 
     /// <summary>
     /// The run's control point at each round's boundary (Plan 27, R11), or null for none: a launcher's control file, as
-    /// <see cref="RunSteerings.For"/> gives it for a run in one process. The boundary before a round is its step: the
+    /// <c>RunSteerings.For</c> gave it for a run in one process. The boundary before a round is its step: the
     /// environment steps done before it.
     /// </summary>
     public IRunSteering? Steering { get; init; }
@@ -272,17 +272,30 @@ public sealed class OffPolicyTrainer : IDisposable
 
     /// <summary>Runs the rounds (see the type), on the calling thread.</summary>
     /// <param name="cancellationToken">Stops the run between rounds.</param>
+    /// <exception cref="NotSupportedException">Always for now: the loss was picked by name, which is not on the new design yet.</exception>
     public OffPolicyResult Train(CancellationToken cancellationToken = default) => TrainAsync(cancellationToken).AsTask().GetAwaiter().GetResult();
+
+    // The optimizers were registered (OptimizerKinds) and picked by name, which is not on the new design yet.
+    private static Optimizer OptimizerNamed(string name, OptimizerSettings settings, IReadOnlyList<Tensor> parameters) =>
+        throw new NotSupportedException($"The optimizer '{name}' by name is not on the new design yet.");
+
+    // The learning-rate schedules were registered (LearningRateSchedules) and picked by name, which is not on the new design yet.
+    private static ILearningRateScheduler ScheduleNamed(string name, LearningRateScheduleSettings settings, IOptimizer optimizer, int steps) =>
+        throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");
+
+    // The Q-learning losses were registered (QLosses) and picked by the run's algorithm, made with its settings (DoubleQ,
+    // Huber, LossOptions): not on the new design yet.
+    private static IQLoss LossNamed(OffPolicyOptions o) => throw new NotSupportedException($"The Q-learning loss '{o.Algorithm}' by name is not on the new design yet.");
 
     /// <summary>Runs the rounds (see the type); awaits the environments that wait.</summary>
     /// <param name="cancellationToken">Stops the run between rounds.</param>
+    /// <exception cref="NotSupportedException">Always for now: the loss was picked by name, which is not on the new design yet.</exception>
     public async ValueTask<OffPolicyResult> TrainAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var o = Options;
-        var loss = QLosses.Get(o.Algorithm);
-        var lossOptions = LossOptions(o, loss);
-        bool needsNext = loss.NeedsNextValues(lossOptions);
+        var loss = LossNamed(o);
+        bool needsNext = loss.NeedsNextValues();
         int environments = o.Environments;
         long rounds = (o.Steps + environments - 1) / environments;
         long reportRounds = Math.Max(1, o.ReportEvery / environments), targetRounds = Math.Max(1, o.TargetEvery / environments);
@@ -293,7 +306,7 @@ public sealed class OffPolicyTrainer : IDisposable
             totalUpdates += Trains(r, o) ? o.GradientSteps : 0;
         }
 
-        var schedule = LearningRateSchedules.Factory(o.Schedule, o.ScheduleSettings)(Optimizer, (int)Math.Clamp(totalUpdates, 1, int.MaxValue));
+        var schedule = ScheduleNamed(o.Schedule, o.ScheduleSettings, Optimizer, (int)Math.Clamp(totalUpdates, 1, int.MaxValue));
         int seed = o.Seed;
         int evaluationSeed = o.EvaluationSeed ?? Seeds.Derive(seed, EvaluationStream);
 
@@ -324,7 +337,7 @@ public sealed class OffPolicyTrainer : IDisposable
                 }
             }
 
-            return await RunAsync(o, loss, lossOptions, needsNext, schedule, slots, first, updates, episodes, rounds, reportRounds, targetRounds, evaluateRounds, saveRounds,
+            return await RunAsync(o, loss, needsNext, schedule, slots, first, updates, episodes, rounds, reportRounds, targetRounds, evaluateRounds, saveRounds,
                 evaluationSeed, cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -356,7 +369,7 @@ public sealed class OffPolicyTrainer : IDisposable
         _target.Dispose();
     }
 
-    private async ValueTask<OffPolicyResult> RunAsync(OffPolicyOptions o, IQLoss loss, Dictionary<string, string> lossOptions, bool needsNext, ILearningRateScheduler schedule,
+    private async ValueTask<OffPolicyResult> RunAsync(OffPolicyOptions o, IQLoss loss, bool needsNext, ILearningRateScheduler schedule,
         EnvironmentSlot[] slots, long first, long updates, int episodes, long rounds, long reportRounds, long targetRounds, long evaluateRounds, long saveRounds, int evaluationSeed,
         CancellationToken cancellationToken)
     {
@@ -470,7 +483,7 @@ public sealed class OffPolicyTrainer : IDisposable
                     {
                         long start = Stopwatch.GetTimestamp();
                         float rate = Optimizer.LearningRate;
-                        var (value, q, norm) = Update(loss, lossOptions, needsNext, sample, Seeds.Derive(seed, ReplayStream, updates), o);
+                        var (value, q, norm) = Update(loss, needsNext, sample, Seeds.Derive(seed, ReplayStream, updates), o);
                         updates++;
                         schedule.Step();
                         windowLoss += value;
@@ -573,31 +586,9 @@ public sealed class OffPolicyTrainer : IDisposable
         return (float)(o.EpsilonStart + progress * (o.EpsilonEnd - o.EpsilonStart) / o.EpsilonFraction);
     }
 
-    // The run's settings the loss takes, then the extra options as they are.
-    private static Dictionary<string, string> LossOptions(OffPolicyOptions o, IQLoss loss)
-    {
-        var options = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (o.DoubleQ is { } doubleQ && loss.Keys.Contains(QLosses.DoubleKey))
-        {
-            options[QLosses.DoubleKey] = doubleQ ? "true" : "false";
-        }
-
-        if (o.Huber is { } huber && loss.Keys.Contains(QLosses.HuberKey))
-        {
-            options[QLosses.HuberKey] = huber.ToString("R", CultureInfo.InvariantCulture);
-        }
-
-        foreach (var (key, value) in o.LossOptions ?? new Dictionary<string, string>())
-        {
-            options[key] = value;
-        }
-
-        return options;
-    }
-
     // One update: a mini-batch drawn from the buffer, the targets' parts without gradients, the loss recorded on the
     // online network's values, its gradient clipped and stepped. The loss, the batch's mean Q(s, a) and the gradient norm.
-    private (double Loss, double Q, double Norm) Update(IQLoss loss, Dictionary<string, string> lossOptions, bool needsNext, Sample s, int drawSeed, OffPolicyOptions o)
+    private (double Loss, double Q, double Norm) Update(IQLoss loss, bool needsNext, Sample s, int drawSeed, OffPolicyOptions o)
     {
         int batch = s.Batch;
         Replay.Sample(new Random(drawSeed), s.Indices.AsSpan(0, batch));
@@ -623,10 +614,10 @@ public sealed class OffPolicyTrainer : IDisposable
         var values = _network.Forward(Tensor.From(s.Observations.AsSpan(0, rows), [batch, _observationSize], Device));
         var input = new QLossInput(values, s.ActionsTaken.AsMemory(0, batch), s.Rewards.AsMemory(0, batch), s.Discounts.AsMemory(0, batch),
             s.NextTarget.AsMemory(0, batch * _actions), needsNext ? s.NextOnline.AsMemory(0, batch * _actions) : default);
-        var total = loss.Loss(input, lossOptions);
+        var total = loss.Loss(input);
         if (total.Size != 1)
         {
-            throw new InvalidOperationException($"The Q-learning loss {loss.Name} gave {total.Size} values: a loss is one element.");
+            throw new InvalidOperationException($"The Q-learning loss {o.Algorithm} gave {total.Size} values: a loss is one element.");
         }
 
         Optimizer.ZeroGrad();

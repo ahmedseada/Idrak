@@ -9,35 +9,36 @@ namespace Idrak.Reinforcement;
 /// DQN's loss (<see cref="QLosses.Dqn"/>; Mnih et al. 2015, Nature 518, "Human-level control through deep reinforcement
 /// learning", Algorithm 1): the target y_i = r_i + d_i · max_a Q'(s'_i, a), with double Q-learning (van Hasselt, Guez and
 /// Silver 2016, equation 4) y_i = r_i + d_i · Q'(s'_i, argmax_a Q(s'_i, a)) (the first of equal values on a tie), computed on
-/// the host in double precision and rounded once; then the Huber loss of δ (option <c>huber</c>, 1 by default: the paper's
+/// the host in double precision and rounded once; then the Huber loss of δ (the constructor's huber, 1 by default: the paper's
 /// error clipped to [−1, 1], PyTorch's smooth L1 of β 1) of Q(s_i, a_i) − y_i, ½ x² for |x| ≤ δ and δ (|x| − ½ δ) beyond, or
 /// ½ x² for δ = 0, averaged over the batch: L = (1 / B) Σ_i w_i ℓ_i, one reduction in transition order (rule 86). Q(s_i, a_i)
-/// is taken from the recorded values by a one-hot mask, so the gradient reaches only the actions taken.
+/// is taken from the recorded values by a one-hot mask, so the gradient reaches only the actions taken. Its options are its
+/// constructor's: huber (δ, at least 0) and doubleQ (double Q-learning, false by default).
 /// </summary>
-internal sealed class DqnLoss : IQLoss, IOptionSchema
+internal sealed class DqnLoss : IQLoss
 {
-    private static readonly OptionSpec<float> Huber = OptionSpec.Number(QLosses.HuberKey, 1f, 0f, summary: "the Huber loss's δ");
-    private static readonly OptionSpec<bool> Double = OptionSpec.Flag(QLosses.DoubleKey, summary: "double Q-learning");
+    private readonly float _huber;
+    private readonly bool _double;
+
+    public DqnLoss(float huber = 1f, bool doubleQ = false)
+    {
+        _huber = Estimators.InRange(huber, 0f, float.MaxValue, nameof(huber));
+        _double = doubleQ;
+    }
 
     public string Name => QLosses.Dqn;
 
-    public string Summary => "DQN (Mnih et al. 2015): a Huber loss of Q(s, a) against r + γ max Q'(s', ·) of a target network; double Q-learning (van Hasselt et al. 2016) as an option";
-
-    public OptionSchema Options { get; } = new($"Q-learning loss {QLosses.Dqn}", Huber, Double);
-
-    public IReadOnlySet<string> Keys => Options.Keys;
-
-    public bool NeedsNextValues(IReadOnlyDictionary<string, string>? options = null) => Options.Parse(options).Get(Double);
+    public bool NeedsNextValues(IReadOnlyDictionary<string, string>? options = null) => _double;
 
     public Tensor Loss(QLossInput input, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentNullException.ThrowIfNull(input);
-        var read = Options.Parse(options);
-        float delta = read.Get(Huber);
-        bool doubleQ = read.Get(Double);
+        Estimators.NoOptions($"Q-learning loss {Name}", options);
+        float delta = _huber;
+        bool doubleQ = _double;
         if (doubleQ && input.NextValues.IsEmpty)
         {
-            throw new ArgumentException($"The Q-learning loss {Name} with '{QLosses.DoubleKey}' true chooses the next action by the online network: the input has no next values of it (QLossInput.NextValues).");
+            throw new ArgumentException($"The Q-learning loss {Name} with double Q-learning chooses the next action by the online network: the input has no next values of it (QLossInput.NextValues).");
         }
 
         int batch = input.Batch, actions = input.ActionCount;
