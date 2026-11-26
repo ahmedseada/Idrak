@@ -52,12 +52,6 @@ public enum TelemetryLevel
     Devices = 1 << 8,
 
     /// <summary>
-    /// The override loop (<see cref="Abstraction.Overrides"/>): every failure of an app's implementation (reaching the
-    /// caller with a hint, or answered by the library default), and every call compared under <see cref="SlotPolicy.Shadow"/>.
-    /// </summary>
-    Overrides = 1 << 9,
-
-    /// <summary>
     /// Settings suggested from what the device reports and what a run measured (<see cref="SettingSuggestion"/>: a vision
     /// reader's encoder and prompt precision where the device has tensor cores, the pages that fit together, the cache's
     /// and the weights' format). Each once per reader; the built-in <see cref="ConsoleLogger"/> and
@@ -88,7 +82,7 @@ public enum TelemetryLevel
     Mcp = 1 << 13,
 
     /// <summary>Everything.</summary>
-    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Overrides | Suggestions | Network | Stages | Mcp,
+    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Suggestions | Network | Stages | Mcp,
 }
 
 /// <summary>
@@ -183,16 +177,6 @@ public interface ITelemetryHook
 
     /// <summary>A device loaded its kernel set, from the kernel cache or made first (<see cref="TelemetryLevel.Devices"/>).</summary>
     void OnKernelsLoaded(in KernelsLoaded e)
-    {
-    }
-
-    /// <summary>An app's implementation of a slot threw: the error reached the caller, or the library default answered (<see cref="TelemetryLevel.Overrides"/>).</summary>
-    void OnOverrideFailed(in OverrideFailed e)
-    {
-    }
-
-    /// <summary>A call of a <see cref="SlotPolicy.Shadow"/> slot ran both implementations and compared them (<see cref="TelemetryLevel.Overrides"/>).</summary>
-    void OnOverrideCompared(in OverrideCompared e)
     {
     }
 
@@ -683,28 +667,6 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Devices) != 0)
             {
                 h.OnGraphRecordingFailed(in e);
-            }
-        }
-    }
-
-    internal static void OverrideFailed(in OverrideFailed e)
-    {
-        foreach (var h in s_hooks)
-        {
-            if ((h.Levels & TelemetryLevel.Overrides) != 0)
-            {
-                h.OnOverrideFailed(in e);
-            }
-        }
-    }
-
-    internal static void OverrideCompared(in OverrideCompared e)
-    {
-        foreach (var h in s_hooks)
-        {
-            if ((h.Levels & TelemetryLevel.Overrides) != 0)
-            {
-                h.OnOverrideCompared(in e);
             }
         }
     }

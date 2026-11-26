@@ -27,7 +27,6 @@ internal sealed class TraceCommand : Command
         ["tools"] = TelemetryLevel.Tools,
         ["engine"] = TelemetryLevel.Engine,
         ["devices"] = TelemetryLevel.Devices,
-        ["overrides"] = TelemetryLevel.Overrides,
         ["network"] = TelemetryLevel.Network,
         ["mcp"] = TelemetryLevel.Mcp,
         ["all"] = TelemetryLevel.All,
@@ -35,7 +34,7 @@ internal sealed class TraceCommand : Command
 
     /// <summary>What is traced without <c>--levels</c>: everything but the per-operation events and gradient norms.</summary>
     public const TelemetryLevel DefaultLevels = TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Layers
-        | TelemetryLevel.Inference | TelemetryLevel.Tools | TelemetryLevel.Engine | TelemetryLevel.Devices | TelemetryLevel.Overrides | TelemetryLevel.Suggestions | TelemetryLevel.Network | TelemetryLevel.Mcp;
+        | TelemetryLevel.Inference | TelemetryLevel.Tools | TelemetryLevel.Engine | TelemetryLevel.Devices | TelemetryLevel.Suggestions | TelemetryLevel.Network | TelemetryLevel.Mcp;
 
     public override string Name => "trace";
 
@@ -46,7 +45,7 @@ internal sealed class TraceCommand : Command
         "       --stacks [-o FILE.nettrace] [report options] [--] COMMAND [arguments] [options]\n" +
         "       --read FILE.nettrace [report options]\n\n" +
         "Runs COMMAND (any idrak command) with Idrak's telemetry subscribed: training epochs and batches, every layer's\n" +
-        "forward pass, inference calls, tool calls, engine events and an app's overrides falling back, printed as they\n" +
+        "forward pass, inference calls, tool calls and engine events, printed as they\n" +
         "happen (to the error output with --json), or written to FILE.jsonl with --out. Put '--' before COMMAND when it has\n" +
         "options of its own; the common options given before it (--device, --json, --quiet, --verbose, --plugin, --config,\n" +
         "--cache) are passed on to it.\n\n" +
@@ -55,7 +54,6 @@ internal sealed class TraceCommand : Command
         "      --levels LIST   what to trace, separated by commas: training, batches, gradients, layers, operations\n" +
         "                      (every tensor operation and kernel, very verbose), inference, tools, engine,\n" +
         "                      devices (GPU failures and operations retried on the CPU),\n" +
-        "                      overrides (an app's implementation falling back or compared in shadow),\n" +
         "                      network (a cluster's transfers, collectives, ranks and faults),\n" +
         "                      mcp (MCP sessions, requests, tool calls, refusals, cancellations sent), all\n" +
         "                      (default: all but operations and gradients)\n" +

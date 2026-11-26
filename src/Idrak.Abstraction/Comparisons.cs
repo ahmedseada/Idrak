@@ -7,8 +7,7 @@ namespace Idrak.Abstraction;
 /// How an implementation's output differs from the library default's (the expected one): floating-point values within a
 /// tolerance relative to the expected value (absolute below 1), token ids, text and other values exactly. Each returns
 /// null when the two agree, else a message naming the first difference. The conformance kit
-/// (<c>Idrak.Abstraction.Testing</c>) and <see cref="SlotPolicy.Shadow"/> compare with these, so a check in an app's
-/// tests and a comparison on its real traffic say the same thing.
+/// (<c>Idrak.Abstraction.Testing</c>) compares with these.
 /// </summary>
 public static class Comparisons
 {

@@ -11,8 +11,7 @@ namespace Idrak.Abstraction.Diagnostics;
 /// <summary>Writes human-readable progress to the console (or any <see cref="TextWriter"/>).</summary>
 /// <param name="levels">
 /// What to print. <see cref="TelemetryLevel.Training"/> gives one line per epoch. Device failures
-/// (<see cref="TelemetryLevel.Devices"/>) and an app's overrides failing or compared (<see cref="TelemetryLevel.Overrides"/>)
-/// are always printed, unless <paramref name="levels"/> is <see cref="TelemetryLevel.None"/>.
+/// (<see cref="TelemetryLevel.Devices"/>) are always printed, unless <paramref name="levels"/> is <see cref="TelemetryLevel.None"/>.
 /// </param>
 /// <param name="epochInterval">Print every n-th epoch (the first and last are always printed; "*" marks a new best).</param>
 /// <param name="batchInterval">Print every n-th batch when <see cref="TelemetryLevel.Batches"/> is on.</param>
@@ -23,7 +22,7 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     private readonly TextWriter _out = output ?? Console.Out;
 
     /// <inheritdoc />
-    public TelemetryLevel Levels { get; } = levels == TelemetryLevel.None ? levels : levels | TelemetryLevel.Devices | TelemetryLevel.Overrides | TelemetryLevel.Suggestions;
+    public TelemetryLevel Levels { get; } = levels == TelemetryLevel.None ? levels : levels | TelemetryLevel.Devices | TelemetryLevel.Suggestions;
 
     /// <inheritdoc />
     public void OnTrainingStarted(in TrainingStarted e)
@@ -154,16 +153,6 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     /// <inheritdoc />
     public void OnGraphRecordingFailed(in GraphRecordingFailed e) =>
         _out.WriteLine($"Device {e.Device} could not record {e.Work} as a graph: {e.Reason}; it runs as ordinary steps");
-
-    /// <inheritdoc />
-    public void OnOverrideFailed(in OverrideFailed e) =>
-        _out.WriteLine($"Override {e.Registry}/{e.Slot} ({e.Implementation}, {e.Origin}) threw {e.Exception.GetType().Name}: {e.Exception.Message}; "
-            + (e.FellBack ? "the library default answered" : "the error reached the caller") + (e.Hint is { } hint ? Environment.NewLine + "  " + hint : ""));
-
-    /// <inheritdoc />
-    public void OnOverrideCompared(in OverrideCompared e) =>
-        _out.WriteLine($"Shadow {e.Registry}/{e.Slot} ({e.Implementation}): {(e.Agreed ? "agrees" : "differs: " + e.Difference)}; "
-                       + string.Create(CultureInfo.InvariantCulture, $"library {e.LibraryTime.TotalMilliseconds:F3} ms, {e.LibraryBytes:N0} B; override {e.OverrideTime.TotalMilliseconds:F3} ms, {e.OverrideBytes:N0} B"));
 
     /// <inheritdoc />
     public void OnSuggestion(in SettingSuggestion e) => _out.WriteLine($"Suggested for {e.Device}: {e.Setting} = {e.Value} ({e.Reason}) [{e.Source}]");
@@ -512,12 +501,6 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnGraphRecordingFailed(in GraphRecordingFailed e) => Write(e);
 
     /// <inheritdoc />
-    public void OnOverrideFailed(in OverrideFailed e) => Write(e);
-
-    /// <inheritdoc />
-    public void OnOverrideCompared(in OverrideCompared e) => Write(e);
-
-    /// <inheritdoc />
     public void OnSuggestion(in SettingSuggestion e) => Write(e);
 
     /// <inheritdoc />
@@ -565,12 +548,11 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <summary>
     /// Starts logging to <paramref name="path"/> (overwritten if it exists). Device failures
-    /// (<see cref="TelemetryLevel.Devices"/>) and an app's overrides failing or compared
-    /// (<see cref="TelemetryLevel.Overrides"/>) are always logged, unless <paramref name="levels"/> is <see cref="TelemetryLevel.None"/>.
+    /// (<see cref="TelemetryLevel.Devices"/>) are always logged, unless <paramref name="levels"/> is <see cref="TelemetryLevel.None"/>.
     /// </summary>
     public JsonLinesLogger(string path, TelemetryLevel levels = TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Inference)
     {
-        _channel = new ChannelTelemetry(levels == TelemetryLevel.None ? levels : levels | TelemetryLevel.Devices | TelemetryLevel.Overrides | TelemetryLevel.Suggestions);
+        _channel = new ChannelTelemetry(levels == TelemetryLevel.None ? levels : levels | TelemetryLevel.Devices | TelemetryLevel.Suggestions);
         var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 16, useAsync: true);
         _writer = Task.Run(() => WriteAsync(stream));
     }
@@ -631,12 +613,6 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnGraphRecordingFailed(in GraphRecordingFailed e) => _channel.OnGraphRecordingFailed(in e);
-
-    /// <inheritdoc />
-    public void OnOverrideFailed(in OverrideFailed e) => _channel.OnOverrideFailed(in e);
-
-    /// <inheritdoc />
-    public void OnOverrideCompared(in OverrideCompared e) => _channel.OnOverrideCompared(in e);
 
     /// <inheritdoc />
     public void OnSuggestion(in SettingSuggestion e) => _channel.OnSuggestion(in e);
@@ -894,31 +870,6 @@ public static class TelemetryJson
                 w.WriteString("device", e.Device);
                 w.WriteString("work", e.Work);
                 w.WriteString("reason", e.Reason);
-                break;
-            case OverrideFailed e:
-                w.WriteString("event", "override_failed");
-                w.WriteString("registry", e.Registry);
-                w.WriteString("slot", e.Slot);
-                w.WriteString("implementation", e.Implementation);
-                w.WriteString("origin", e.Origin);
-                w.WriteString("error", e.Exception.GetType().FullName);
-                w.WriteString("message", e.Exception.Message);
-                w.WriteBoolean("fell_back", e.FellBack);
-                if (e.Hint is { } overrideHint) w.WriteString("hint", overrideHint);
-                break;
-            case OverrideCompared e:
-                w.WriteString("event", "override_compared");
-                w.WriteString("registry", e.Registry);
-                w.WriteString("slot", e.Slot);
-                w.WriteString("implementation", e.Implementation);
-                w.WriteString("origin", e.Origin);
-                w.WriteBoolean("agreed", e.Agreed);
-                if (e.Difference is { } difference) w.WriteString("difference", difference);
-                if (e.Exception is { } thrown) w.WriteString("error", thrown.GetType().FullName);
-                w.WriteNumber("library_ms", e.LibraryTime.TotalMilliseconds);
-                w.WriteNumber("override_ms", e.OverrideTime.TotalMilliseconds);
-                w.WriteNumber("library_bytes", e.LibraryBytes);
-                w.WriteNumber("override_bytes", e.OverrideBytes);
                 break;
             case OutOfMemoryRecovered e:
                 w.WriteString("event", "out_of_memory_recovered");
