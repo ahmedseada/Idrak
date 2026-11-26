@@ -8,7 +8,7 @@ namespace Idrak.Abstraction.Devices;
 /// it, and a point that waits for its work. <see cref="Backend"/> implements it; a new device derives from
 /// <see cref="Backend"/>, which has no kernel for an operation until the device adds one of its own, and adds the
 /// capability interfaces it has (<see cref="IGraphCaptureBackend"/>, <see cref="IKernelProfiler"/>,
-/// <see cref="IRowAttentionBackend"/>, <see cref="ISegmentedAttentionBackend"/>, <see cref="IMatrixUnitBackend"/>,
+/// <see cref="IRowAttentionBackend"/>, <see cref="ISegmentedAttentionBackend"/>,
 /// <see cref="IRecurrentKernels"/>,
 /// <see cref="IOffloadingBackend"/>, <see cref="IPeerCopyBackend"/>, <see cref="IMemoryReport"/>,
 /// <see cref="ILongLivedAllocations"/>), each read once when the backend starts.

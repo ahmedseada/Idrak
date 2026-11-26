@@ -422,11 +422,10 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     private OwnKernelSet? _ownKernels;
 
     // The capabilities this device implements, read once when it starts (rule 75): the operations they hold reach the
-    // device's kernels through these, and SupportsGraphs, FusedKernels and MatrixUnits follow from them.
+    // device's kernels through these, and SupportsGraphs and FusedKernels follow from them.
     private readonly IGraphCaptureBackend? _graphs;
     private readonly IRowAttentionBackend? _rows;
     private readonly ISegmentedAttentionBackend? _segmented;
-    private readonly IMatrixUnitBackend? _matrixUnits;
     private readonly IRecurrentKernels? _recurrent;
     private readonly IOffloadingBackend? _offloading;
     private readonly IPeerCopyBackend? _peers;
@@ -447,7 +446,6 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
         _graphs = this as IGraphCaptureBackend;
         _rows = this as IRowAttentionBackend;
         _segmented = this as ISegmentedAttentionBackend;
-        _matrixUnits = this as IMatrixUnitBackend;
         _recurrent = this as IRecurrentKernels;
         _offloading = this as IOffloadingBackend;
         _peers = this as IPeerCopyBackend;
@@ -653,31 +651,15 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     public bool SupportsGraphs => _graphs is { } graphs && graphs.CaptureEnabled;
 
     /// <summary>
-    /// Whether this device has matrix units the <c>MixedPrecision</c> modes run on (<see cref="IMatrixUnitBackend"/>): the
-    /// fused training products, the LoRA products and the bfloat16 copies of tied heads are worth it only where these exist.
-    /// </summary>
-    public bool MatrixUnits => _matrixUnits is not null;
-
-    /// <summary>Whether head size <paramref name="dim"/> has matrix-unit flash attention for training on this device.</summary>
-    public bool MatrixUnitAttention(int dim) => _matrixUnits is { } units && units.AttentionHeadDim(dim);
-
-    /// <summary>
     /// Whether this device's tiled attention <paramref name="operation"/> (<see cref="Operations.Ops.AttentionTiled"/>) writes its
     /// output token-major when its <see cref="AttentionVariant.Merged"/> asks, for head size <paramref name="dim"/> and the
-    /// <paramref name="variant"/>'s window and cap, on the calling thread (its <c>MixedPrecision</c>): only then is it asked.
+    /// <paramref name="variant"/>'s window and cap: only then is it asked.
     /// None does by default; the attention's caller then rearranges the heads itself.
     /// </summary>
     public virtual bool MergesAttention(Operation operation, int dim, AttentionVariant variant) => false;
 
     /// <summary>What the device reports about its hardware, for listings and diagnostics; empty when it reports nothing.</summary>
     public virtual BackendHardware Hardware => new();
-
-    /// <summary>
-    /// Null when this device runs bfloat16 products on matrix units (tensor cores, <see cref="IMatrixUnitBackend"/>);
-    /// otherwise why not. A device without matrix units may say why in its own words.
-    /// </summary>
-    public virtual string? TensorCoresUnavailable() =>
-        _matrixUnits is { } units ? units.TensorCoresUnavailable() : "the device computes matrix products in float32";
 
     /// <summary>Keeping tensors in system memory when the device is full (<see cref="IOffloadingBackend"/>), or null when the device has no such support.</summary>
     public IMemoryOffload? Offload => _offloading?.Offload;
@@ -1052,66 +1034,8 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// </summary>
     public virtual bool MatMulBiasKernel(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k) => false;
 
-    /// <summary>
-    /// c = beta·c + a·op(b) + u·op(v) in one product (a LoRA adapter's term as one more k step): a [m, k], b [k, n]
-    /// (transposed: [n, k]), u [m, rank], v [rank, n] (with <paramref name="transB"/>: [n, rank]), rank ≤ 32, all rows
-    /// contiguous. Returns false when the device has no such pass (callers then compute the two products separately).
-    /// </summary>
-    public bool MatMulLowRankKernel(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank) =>
-        _matrixUnits is { } own && own.MatMulLowRank(a, b, c, m, n, k, transB, beta, u, v, rank);
-
-    /// <summary>
-    /// c = beta·c + op(a)·op(b) on bfloat16 tensor cores, with row strides: a [m, k] stored with <paramref name="lda"/>
-    /// floats per row (transposed: [k, m] rows), b [k, n] with <paramref name="ldb"/> (transposed: [n, k] rows), c [m, n]
-    /// with <paramref name="ldc"/>; offsets in elements. <paramref name="bias"/> [n] is added to every row (modes None and
-    /// Gelu). <see cref="GemmEpilogue.Gelu"/> writes gelu(product + bias) and, when <paramref name="aux"/> is given, the
-    /// pre-activations into it (same layout as c); <see cref="GemmEpilogue.GeluGradient"/> multiplies the product by
-    /// gelu'(aux). Returns false when the device has no tensor cores (callers use the composed operations).
-    /// </summary>
-    public bool GemmStridedKernel(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB,
-        Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias = null, GemmEpilogue epilogue = GemmEpilogue.None,
-        Storage? aux = null, long auxOffset = 0) =>
-        _matrixUnits is { } own && own.GemmStrided(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux,
-            auxOffset);
-
-    /// <summary>
-    /// Causal attention (positions c ≤ t) read in place from [batch, steps, *] rows: query head h (= kv · group + g, g &lt;
-    /// group) of batch b at step t at q[qOffset + (b·steps + t)·qRow + h·dim], keys and values of kv head kv at k /
-    /// v[offset + (b·steps + c)·kRow + kv·dim] (offsets and row strides in floats, multiples of 4). With the scores s_c =
-    /// scale · q·k_c for c ≤ t, writes y[(b·steps + t)·heads·dim + h·dim] = Σ_c softmax(s)_c · v_c ([batch, steps,
-    /// heads·dim], heads = kvHeads · group) and, when given, the log-sum-exp ln Σ_c exp(s_c) of the scaled scores at
-    /// [(b·kvHeads + kv)·group·steps + g·steps + t] ([batch·kvHeads, group·steps]) for the backward pass. Devices may run it
-    /// on bfloat16 matrix units (q, k, v and the probabilities rounded to bfloat16, float32 sums), so it agrees with
-    /// float32 attention to about 1e-2. Returns false when the device has no such kernels, or none for this head size
-    /// (callers rearrange the heads and use <see cref="AttentionTiled"/>).
-    /// </summary>
-    public bool AttentionStridedKernel(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
-        Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale) =>
-        _matrixUnits is { } own && own.AttentionStrided(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
-
-    /// <summary>
-    /// Gradients of <see cref="AttentionStrided"/> given its y and log-sum-exp and dOutput (y's layout): with P_tc =
-    /// exp(s_tc - logSumExp_t) (the scores recomputed from q and k), D_t = Σ_d y_t · dOutput_t and dS_tc = P_tc ·
-    /// (dOutput_t · v_c - D_t), adds scale · Σ_c dS_tc · k_c to dq_t, scale · Σ_t dS_tc · q_t to dk_c and Σ_t P_tc · dOutput_t
-    /// to dv_c (dk and dv summed over the query heads of their group), each laid out as q, k, v (the same row strides,
-    /// their own offsets). q, k and v may be one storage at three offsets, and dq, dk and dv another, as
-    /// <c>Tensor.CausalAttentionPacked</c> passes them. Returns false when the device has no such kernels.
-    /// </summary>
-    public bool AttentionStridedBackwardKernel(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
-        Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset,
-        int batch, int kvHeads, int group, int steps, int dim, float scale) =>
-        _matrixUnits is { } own && own.AttentionStridedBackward(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk,
-            dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
-
     /// <summary>y[j] += Σ_r x[offset + r·ld + j] for j &lt; cols (column sums of a strided block; the bias gradient of a slice).</summary>
     public virtual void SumColumnsKernel(Storage x, long offset, int ld, Storage y, int rows, int cols) => throw NoKernel(nameof(SumColumns));
-
-    /// <summary>
-    /// Until disposed, 8-bit products on this device reuse the quantized form of an operand they have already quantized
-    /// (same memory, layout and size), for callers that multiply one unchanged tensor several times (the query, key and
-    /// value projections of one input). Null when the device quantizes nothing.
-    /// </summary>
-    public virtual IDisposable? ReuseQuantizedOperands() => null;
 
     /// <summary>output = residual + dropout(x) (the mask of <see cref="Dropout"/> with <paramref name="seed"/>).</summary>
     public virtual void AddDropoutKernel(Storage residual, Storage x, Storage output, int n, float p, uint seed)
@@ -1617,12 +1541,12 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// attention reads, in one pass (inference): query heads RMS-normalized with gain (when <paramref name="gainQ"/> is
     /// set; keys then with <paramref name="gainK"/>) and rotated as <see cref="Rope"/> (half 0: no rotation) into
     /// yq [batch, heads, steps, cols]; keys the same and values unchanged into yk and yv [batch, kvHeads, capacity, stride]
-    /// at row position[0] + s (a cache; row s when <paramref name="position"/> is null), as floats or bfloat16 pairs.
+    /// at row position[0] + s (a cache; row s when <paramref name="position"/> is null).
     /// Returns false when the device has no such kernel (callers then run the steps one by one).
     /// </summary>
     public virtual bool NormRopeHeadsKernel(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols,
         Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions,
-        int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16) => false;
+        int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride) => false;
 
     /// <summary>
     /// Token cross-entropy for language-model training, per row r of logits [rows, vocabulary] with target class t_r and
@@ -1678,7 +1602,7 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
 
     /// <summary>
     /// Whether <see cref="AttentionSegmented"/> and its gradient run for this head size (with the current
-    /// <c>MixedPrecision</c>): the device's own answer (<see cref="ISegmentedAttentionBackend"/>), else false.
+    /// variant): the device's own answer (<see cref="ISegmentedAttentionBackend"/>), else false.
     /// </summary>
     public bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) =>
         _segmented is { } own && own.SupportsSegmented(dim, variant);
@@ -1807,9 +1731,9 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// True when attention over key ranges runs faster on this device composed — the full scores [heads, rows, keyRows]
     /// through <see cref="BatchedMatMul"/>, <see cref="ScaleMaskSoftmax"/> (with <paramref name="mask"/>, [rows, keyRows],
     /// or none when every row sees every key) and <see cref="BatchedMatMul"/> again (<see cref="ComposedAttention"/>) —
-    /// than through <see cref="AttentionSpans"/>, for this shape and the current <see cref="MixedPrecision"/>. Given the
+    /// than through <see cref="AttentionSpans"/>, for this shape. Given the
     /// real operands (one table of ranges, as many key/value heads as query heads, no soft-cap), so a device measures both
-    /// on itself (into scratch memory of its own), once per shape and precision, and keeps the choice as it keeps its
+    /// on itself (into scratch memory of its own), once per shape, and keeps the choice as it keeps its
     /// other measured choices (per device and driver). Called only when the device's free memory holds the scores with
     /// margin (<see cref="AvailableMemory"/>; <c>Tensor.AttentionFastest</c> checks). With <paramref name="training"/>
     /// (the gradient is recorded) the choice is the faster of the two with their gradients, forward and backward
@@ -2053,19 +1977,6 @@ public sealed class MemoryAccountant(Func<long?> limit, string deviceName)
 
     /// <summary>Counts cached bytes freed to the driver.</summary>
     public void Freed(long bytes) => Interlocked.Add(ref _cached, -bytes);
-}
-
-/// <summary>What <see cref="Backend.GemmStrided"/> does with each product before storing it.</summary>
-public enum GemmEpilogue
-{
-    /// <summary>Store it (plus the bias).</summary>
-    None = 0,
-
-    /// <summary>Store gelu(product + bias) (tanh approximation), keeping product + bias in the auxiliary tensor when given.</summary>
-    Gelu = 1,
-
-    /// <summary>Store product · gelu'(auxiliary): the gradient through a GELU whose inputs the auxiliary tensor holds.</summary>
-    GeluGradient = 2,
 }
 
 /// <summary>The activation <see cref="Backend.Convolution"/> applies to each output after the bias (a fused inference epilogue).</summary>

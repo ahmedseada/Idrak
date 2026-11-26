@@ -740,7 +740,7 @@ internal static partial class PtxKernels
     /// </summary>
     internal static (string[] Names, string Source) DescribedModule(DescribedPlan p, int align, bool pairs, int sharedLimit = int.MaxValue)
     {
-        var sb = new StringBuilder(NativeHeader);
+        var sb = new StringBuilder($".version 7.0\n.target {TensorCoreTarget}\n.address_size 64\n");
         sb.AppendLine();
         sb.AppendLine(".extern .shared .align 16 .b8 described_smem[];");
         var words = (p.CodeTable ?? []).Concat(p.Factors.SelectMany(f => f.Table ?? [])).Select(v => BitConverter.SingleToUInt32Bits((float)v)).ToArray();

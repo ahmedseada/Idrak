@@ -6,11 +6,11 @@ namespace Idrak.Gpu.Cuda;
 // Convolutions, average pooling and image resampling (PtxKernels.Convolution.cs).
 //
 // A convolution or one of its gradients runs one of: the composed path (patches unfolded by im2col and the measured
-// products, on bfloat16 tensor cores under MixedPrecision where the products go there: Backend.Convolution.cs), an
+// products: Backend.Convolution.cs), an
 // implicit product reading the operands where they lie (64 × 64 tiles with 4 × 4 outputs a thread, or 16 × 16 tiles;
 // the weight gradient also at 1, 4, 16, 64, 256 or 1,024 splits of its sum over positions: ConvWeightSplits), or the
 // depthwise kernels (one input channel per group). Which is fastest is measured per shape on first use
-// (TuneOp.Convolution, keyed by the shape, the pass, the precision, the activation and the groups; CudaBackend.Tuning.cs)
+// (TuneOp.Convolution, keyed by the shape, the pass, the activation and the groups; CudaBackend.Tuning.cs)
 // and kept in the tuning cache. While nothing can be measured (a graph being recorded, the profiler, IDRAK_AUTOTUNE=0)
 // the formula's choice runs: the depthwise kernels where they apply, else the implicit product, on 64 × 64 tiles when
 // they would be at least half full (the composed path for products of fewer rows than a quarter of a small tile), with the

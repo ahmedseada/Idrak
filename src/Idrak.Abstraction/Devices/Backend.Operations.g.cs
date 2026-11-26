@@ -1102,174 +1102,6 @@ public abstract partial class Backend
         }
     }
 
-    /// <summary>
-    /// c = beta·c + a·op(b) + u·op(v) in one product (a LoRA adapter's term as one more k step): a [m, k], b [k, n]
-    /// (transposed: [n, k]), u [m, rank], v [rank, n] (with <paramref name="transB"/>: [n, rank]), rank ≤ 32, all rows
-    /// contiguous. Returns false when the device has no such pass (callers then compute the two products separately).
-    /// </summary>
-    /// <remarks>Runs <see cref="Ops.MatMulLowRank"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MatMulLowRankKernel</c>.</remarks>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
-    {
-        return _kernels is null && _moves is null ? MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank) : ReferenceEquals(_kernels, s_guardedKernels) ? MatMulLowRankGuarded(a, b, c, m, n, k, transB, beta, u, v, rank) : MatMulLowRankRegistered(a, b, c, m, n, k, transB, beta, u, v, rank);
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool MatMulLowRankRegistered(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
-    {
-        using var operation = EnterOperation();
-        if (Kernel(OperationIndex.MatMulLowRank) is OperationKernels.MatMulLowRank kernel)
-        {
-            return kernel(this, a, b, c, m, n, k, transB, beta, u, v, rank);
-        }
-
-        return RefusedKernelsFallBack ? MatMulLowRankGuarded(a, b, c, m, n, k, transB, beta, u, v, rank) : MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank);
-    }
-
-    // MatMulLowRank on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool MatMulLowRankGuarded(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
-    {
-        try
-        {
-            return MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank);
-        }
-        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.MatMulLowRank))
-        {
-            FellBack(Ops.MatMulLowRank.Name, refused, "the caller's path");
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// c = beta·c + op(a)·op(b) on bfloat16 tensor cores, with row strides: a [m, k] stored with <paramref name="lda"/>
-    /// floats per row (transposed: [k, m] rows), b [k, n] with <paramref name="ldb"/> (transposed: [n, k] rows), c [m, n]
-    /// with <paramref name="ldc"/>; offsets in elements. <paramref name="bias"/> [n] is added to every row (modes None and
-    /// Gelu). <see cref="GemmEpilogue.Gelu"/> writes gelu(product + bias) and, when <paramref name="aux"/> is given, the
-    /// pre-activations into it (same layout as c); <see cref="GemmEpilogue.GeluGradient"/> multiplies the product by
-    /// gelu'(aux). Returns false when the device has no tensor cores (callers use the composed operations).
-    /// </summary>
-    /// <remarks>Runs <see cref="Ops.GemmStrided"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GemmStridedKernel</c>.</remarks>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias = null, GemmEpilogue epilogue = GemmEpilogue.None, Storage? aux = null, long auxOffset = 0)
-    {
-        return _kernels is null && _moves is null ? GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : ReferenceEquals(_kernels, s_guardedKernels) ? GemmStridedGuarded(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : GemmStridedRegistered(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool GemmStridedRegistered(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias, GemmEpilogue epilogue, Storage? aux, long auxOffset)
-    {
-        using var operation = EnterOperation();
-        if (Kernel(OperationIndex.GemmStrided) is OperationKernels.GemmStrided kernel)
-        {
-            return kernel(this, a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
-        }
-
-        return RefusedKernelsFallBack ? GemmStridedGuarded(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
-    }
-
-    // GemmStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool GemmStridedGuarded(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias, GemmEpilogue epilogue, Storage? aux, long auxOffset)
-    {
-        try
-        {
-            return GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
-        }
-        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GemmStrided))
-        {
-            FellBack(Ops.GemmStrided.Name, refused, "the caller's path");
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Causal attention (positions c ≤ t) read in place from [batch, steps, *] rows: query head h (= kv · group + g, g &lt;
-    /// group) of batch b at step t at q[qOffset + (b·steps + t)·qRow + h·dim], keys and values of kv head kv at k /
-    /// v[offset + (b·steps + c)·kRow + kv·dim] (offsets and row strides in floats, multiples of 4). With the scores s_c =
-    /// scale · q·k_c for c ≤ t, writes y[(b·steps + t)·heads·dim + h·dim] = Σ_c softmax(s)_c · v_c ([batch, steps,
-    /// heads·dim], heads = kvHeads · group) and, when given, the log-sum-exp ln Σ_c exp(s_c) of the scaled scores at
-    /// [(b·kvHeads + kv)·group·steps + g·steps + t] ([batch·kvHeads, group·steps]) for the backward pass. Devices may run it
-    /// on bfloat16 matrix units (q, k, v and the probabilities rounded to bfloat16, float32 sums), so it agrees with
-    /// float32 attention to about 1e-2. Returns false when the device has no such kernels, or none for this head size
-    /// (callers rearrange the heads and use <see cref="AttentionTiled"/>).
-    /// </summary>
-    /// <remarks>Runs <see cref="Ops.AttentionStrided"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionStridedKernel</c>.</remarks>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool AttentionStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
-    {
-        return _kernels is null && _moves is null ? AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionStridedGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : AttentionStridedRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool AttentionStridedRegistered(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
-    {
-        using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionStrided) is OperationKernels.AttentionStrided kernel)
-        {
-            return kernel(this, q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
-        }
-
-        return RefusedKernelsFallBack ? AttentionStridedGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
-    }
-
-    // AttentionStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool AttentionStridedGuarded(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
-    {
-        try
-        {
-            return AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
-        }
-        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionStrided))
-        {
-            FellBack(Ops.AttentionStrided.Name, refused, "the caller's path");
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Gradients of <see cref="AttentionStrided"/> given its y and log-sum-exp and dOutput (y's layout): with P_tc =
-    /// exp(s_tc - logSumExp_t) (the scores recomputed from q and k), D_t = Σ_d y_t · dOutput_t and dS_tc = P_tc ·
-    /// (dOutput_t · v_c - D_t), adds scale · Σ_c dS_tc · k_c to dq_t, scale · Σ_t dS_tc · q_t to dk_c and Σ_t P_tc · dOutput_t
-    /// to dv_c (dk and dv summed over the query heads of their group), each laid out as q, k, v (the same row strides,
-    /// their own offsets). q, k and v may be one storage at three offsets, and dq, dk and dv another, as
-    /// <c>Tensor.CausalAttentionPacked</c> passes them. Returns false when the device has no such kernels.
-    /// </summary>
-    /// <remarks>Runs <see cref="Ops.AttentionStridedBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionStridedBackwardKernel</c>.</remarks>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool AttentionStridedBackward(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
-    {
-        return _kernels is null && _moves is null ? AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionStridedBackwardGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : AttentionStridedBackwardRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool AttentionStridedBackwardRegistered(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
-    {
-        using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionStridedBackward) is OperationKernels.AttentionStridedBackward kernel)
-        {
-            return kernel(this, q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
-        }
-
-        return RefusedKernelsFallBack ? AttentionStridedBackwardGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
-    }
-
-    // AttentionStridedBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool AttentionStridedBackwardGuarded(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
-    {
-        try
-        {
-            return AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
-        }
-        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionStridedBackward))
-        {
-            FellBack(Ops.AttentionStridedBackward.Name, refused, "the caller's path");
-            return default;
-        }
-    }
-
     /// <summary>y[j] += Σ_r x[offset + r·ld + j] for j &lt; cols (column sums of a strided block; the bias gradient of a slice).</summary>
     /// <remarks>Runs <see cref="Ops.SumColumns"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SumColumnsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -4933,35 +4765,35 @@ public abstract partial class Backend
     /// attention reads, in one pass (inference): query heads RMS-normalized with gain (when <paramref name="gainQ"/> is
     /// set; keys then with <paramref name="gainK"/>) and rotated as <see cref="Rope"/> (half 0: no rotation) into
     /// yq [batch, heads, steps, cols]; keys the same and values unchanged into yk and yv [batch, kvHeads, capacity, stride]
-    /// at row position[0] + s (a cache; row s when <paramref name="position"/> is null), as floats or bfloat16 pairs.
+    /// at row position[0] + s (a cache; row s when <paramref name="position"/> is null).
     /// Returns false when the device has no such kernel (callers then run the steps one by one).
     /// </summary>
     /// <remarks>Runs <see cref="Ops.NormRopeHeads"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>NormRopeHeadsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool NormRopeHeads(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
+    public bool NormRopeHeads(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride)
     {
-        return _kernels is null && _moves is null ? NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : ReferenceEquals(_kernels, s_guardedKernels) ? NormRopeHeadsGuarded(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : NormRopeHeadsRegistered(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
+        return _kernels is null && _moves is null ? NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride) : ReferenceEquals(_kernels, s_guardedKernels) ? NormRopeHeadsGuarded(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride) : NormRopeHeadsRegistered(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool NormRopeHeadsRegistered(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
+    private bool NormRopeHeadsRegistered(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride)
     {
         using var operation = EnterOperation();
         if (Kernel(OperationIndex.NormRopeHeads) is OperationKernels.NormRopeHeads kernel)
         {
-            return kernel(this, q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
+            return kernel(this, q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride);
         }
 
-        return RefusedKernelsFallBack ? NormRopeHeadsGuarded(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
+        return RefusedKernelsFallBack ? NormRopeHeadsGuarded(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride) : NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride);
     }
 
     // NormRopeHeads on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool NormRopeHeadsGuarded(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
+    private bool NormRopeHeadsGuarded(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride)
     {
         try
         {
-            return NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
+            return NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride);
         }
         catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.NormRopeHeads))
         {
@@ -6508,10 +6340,6 @@ public abstract partial class Backend
         own[OperationIndex.AddBroadcastScalar] = Overrides(b.AddBroadcastScalarKernel);
         own[OperationIndex.MatMulMany] = Overrides(b.MatMulManyKernel);
         own[OperationIndex.MatMulBias] = Overrides(b.MatMulBiasKernel);
-        own[OperationIndex.MatMulLowRank] = b._matrixUnits is not null;
-        own[OperationIndex.GemmStrided] = b._matrixUnits is not null;
-        own[OperationIndex.AttentionStrided] = b._matrixUnits is not null;
-        own[OperationIndex.AttentionStridedBackward] = b._matrixUnits is not null;
         own[OperationIndex.SumColumns] = Overrides(b.SumColumnsKernel);
         own[OperationIndex.AddDropout] = Overrides(b.AddDropoutKernel);
         own[OperationIndex.BatchedMatMul] = Overrides(b.BatchedMatMulKernel);

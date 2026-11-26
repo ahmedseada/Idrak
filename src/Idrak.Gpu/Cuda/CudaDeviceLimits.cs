@@ -253,26 +253,17 @@ internal static partial class PtxKernels
         return position;
     }
 
-    /// <summary>Dynamic shared memory a tensor-core kernel asks for at launch (bytes; 0 for none).</summary>
-    public static int DynamicSharedBytes(string kernel) =>
-        kernel.StartsWith("flash_tc_bwd", StringComparison.Ordinal)
-            ? kernel.Contains("_kv_", StringComparison.Ordinal)
-                ? FlashTensorBackwardKvShared(kernel.EndsWith("d64", StringComparison.Ordinal) ? 64 : 128)
-                : FlashTensorBackwardQShared(kernel.EndsWith("d64", StringComparison.Ordinal) ? 64 : 128)
-            : kernel.StartsWith("gemm8_", StringComparison.Ordinal) ? EightBitShared : 0;
-
     /// <summary>
     /// Why the kernels of a module cannot run on a device (null when they can): each kernel's static shared memory must fit
-    /// what a block may declare, and static plus dynamic what a block may opt in to.
+    /// what a block may declare.
     /// </summary>
     public static string? Fits(string moduleSource, CudaDeviceLimits limits)
     {
         foreach (var (kernel, staticBytes) in StaticSharedBytes(moduleSource))
         {
-            int total = staticBytes + DynamicSharedBytes(kernel);
-            if (staticBytes > limits.SharedPerBlock || total > limits.SharedPerBlockOptin)
+            if (staticBytes > limits.SharedPerBlock)
             {
-                return $"{kernel} needs {total} bytes of shared memory per block ({staticBytes} static); the GPU allows {limits.SharedPerBlock} static, {limits.SharedPerBlockOptin} in all";
+                return $"{kernel} needs {staticBytes} bytes of shared memory per block; the GPU allows {limits.SharedPerBlock}";
             }
         }
 

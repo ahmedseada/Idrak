@@ -35,7 +35,7 @@ internal sealed class CudaStorage(CudaBackend backend, ulong pointer, int length
 /// and reused, so a training loop stops calling cuMemAlloc after its first iteration), and all
 /// kernels are the PTX from <see cref="PtxKernels"/>, launched on the default stream.
 /// </summary>
-internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMatrixUnitBackend, IMemoryReport
+internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMemoryReport
 {
     private static readonly Lazy<(int Count, string Reason)> Probe = new(ProbeDriver);
     private static readonly Lazy<CudaBackend>[] Instances = CreateInstances();
@@ -114,34 +114,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMa
     /// <summary>The kernel shapes generated for this GPU (tests and diagnostics).</summary>
     internal KernelShapes Shapes => _shapes;
 
-    // The tensor-core modules (where the device reaches the target they declare, PtxKernels.TensorCoreTarget), loaded on
-    // first use; null when unavailable.
-    private Dictionary<string, IntPtr>? _tensorCore;
-
-    // Set (with a release write) only after the load ended and its results were stored: a caller that sees it reads them.
-    private bool _tensorCoreTried;
-
-    // Every entry to the tensor-core load takes this: one thread loads, the others wait for its result (never the slower path).
-    private readonly object _tensorCoreLock = new();
-
-    /// <summary>How many times this backend tried to load the tensor-core modules: once, whatever the threads (tests).</summary>
-    internal int TensorCoreLoads { get; private set; }
-
-    /// <summary>Why bfloat16 tensor-core products are unavailable on this GPU (null when they are available or untried).</summary>
-    public string? TensorCoreUnavailableReason { get; private set; }
-
-    /// <summary>Tensor-core modules the driver could not load, with its message (empty when all loaded).</summary>
-    public IReadOnlyList<string> TensorCoreModuleErrors { get; private set; } = [];
-
-    // Every tensor-core kernel that loaded (attention even when the products did not).
-    private Dictionary<string, IntPtr> _tensorCoreAny = [];
-
-    /// <summary>
-    /// Tensor-core products copy a transposed operand into [m, k] / [k, n] layout first. Off: the transposing kernels
-    /// measured as fast as the plain one (tests --bench-gemm), so the copy only costs time and memory.
-    /// </summary>
-    internal static bool PretransposeForTensorCores;
-
     // Dynamic shared memory of the next launch on this thread (consumed by Launch).
     [ThreadStatic]
     private static uint t_sharedBytes;
@@ -170,9 +142,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMa
         return profile;
     }
 
-    /// <summary>Number of tensor-core GEMM launches (for tests and diagnostics).</summary>
-    internal long TensorCoreLaunches;
-
     public override BackendCapabilities Capabilities { get; } = new()
     {
         FewRows = PtxKernels.GemvRows,
@@ -180,49 +149,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMa
         TiledAttentionHeadDim = PtxKernels.FlashMaxDim,
         SpanAttentionHeadDim = PtxKernels.FlashMaxDim,                     // set from the device's limits (SpanHeadDim) once they are read
     };
-
-    bool IMatrixUnitBackend.AttentionHeadDim(int dim) => PtxKernels.FlashTensorDim(dim);
-
-    string? IMatrixUnitBackend.TensorCoresUnavailable() =>
-        TensorCoreKernels() is null ? TensorCoreUnavailableReason ?? "the tensor-core products did not load" : null;
-
-    // Whether the thread's MixedPrecision asks for bfloat16 products: the only mode the bfloat16 tensor-core kernels serve
-    // (an fp8 run takes the fp8 kernels where they loaded and float32 elsewhere, counted: ReducedPrecision).
-    private static bool BFloat16Products => MixedPrecision.Current == MatMulPrecision.BFloat16;
-
-    // A loaded tensor-core kernel by name, or null.
-    private IntPtr? TensorKernel(string name)
-    {
-        TensorCoreKernels();
-        return _tensorCoreAny.TryGetValue(name, out var function) ? function : null;
-    }
-
-    // The tensor-core kernels, loaded once on first use whichever entry reaches them first (TensorKernel,
-    // the products, TensorCoresUnavailable): after the first load ended, a lock-free read.
-    private Dictionary<string, IntPtr>? TensorCoreKernels()
-    {
-        if (Volatile.Read(ref _tensorCoreTried))
-        {
-            return _tensorCore;
-        }
-
-        lock (_tensorCoreLock)
-        {
-            if (!_tensorCoreTried)
-            {
-                try
-                {
-                    LoadTensorCores();
-                }
-                finally
-                {
-                    Volatile.Write(ref _tensorCoreTried, true);         // after the results: a failed load is not retried on every product
-                }
-            }
-
-            return _tensorCore;
-        }
-    }
 
     // Why kernels declaring PTX `target` (".target sm_NN") do not load here, or null when they can: the compute capability
     // the device reports is below the one the target names. The comparison is between what the device reports and what
@@ -233,72 +159,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMa
         return needed >= 0 && _computeMajor * 10 + _computeMinor < needed
             ? $"the device reports compute capability {_computeMajor}.{_computeMinor}; the kernels declare {target.ToString()}"
             : null;
-    }
-
-    // Loads the tensor-core modules (under _tensorCoreLock): _tensorCore, _tensorCoreAny and the reasons set before it returns.
-    private void LoadTensorCores()
-    {
-        TensorCoreLoads++;
-        if (BelowTarget(PtxKernels.TensorCoreTarget) is { } below)
-        {
-            TensorCoreUnavailableReason = $"no bfloat16 tensor-core kernels: {below}";
-            return;
-        }
-
-        // Each module on its own: a driver that rejects one (a JIT compiler error) still runs the others. Its error is
-        // the reason tensor cores are off (TensorCoreUnavailableReason), not a failure to report.
-        MakeCurrent();
-        using var quiet = DeviceException.Handled();
-        var kernels = new Dictionary<string, IntPtr>();
-        var signatures = new List<KeyValuePair<IntPtr, (string Name, int Parameters)>>();
-        var errors = new List<string>();
-        foreach (var (moduleName, names, source) in PtxKernels.TensorCoreModules)
-        {
-            if (BelowTarget(PtxKernels.DeclaredTarget(source)) is not null)
-            {
-                continue;                                           // a module whose declared target the device does not reach (fp8's)
-            }
-
-            if (PtxKernels.Fits(source, _limits) is { } tooLarge)
-            {
-                errors.Add($"{moduleName}: not loaded, {tooLarge}");          // judged by the device's reported limits
-                continue;
-            }
-
-            try
-            {
-                IntPtr module = LoadModule(source);
-                foreach (var kernel in names)
-                {
-                    byte[] bytes = Encoding.ASCII.GetBytes(kernel + "\0");
-                    fixed (byte* p = bytes)
-                    {
-                        Check(cuModuleGetFunction(out IntPtr function, module, p), $"cuModuleGetFunction({kernel})");
-                        signatures.Add(new(function, (kernel, PtxKernels.TensorCoreParameterCounts[kernel])));
-                        if (PtxKernels.DynamicSharedBytes(kernel) is > 0 and var sharedBytes)
-                        {
-                            Check(cuFuncSetAttribute(function, FunctionAttributeMaxDynamicSharedSizeBytes, sharedBytes), $"cuFuncSetAttribute({kernel})");
-                        }
-
-                        kernels[kernel] = function;
-                    }
-                }
-            }
-            catch (CudaException e)
-            {
-                errors.Add($"{moduleName}: {e.Message}");
-            }
-        }
-
-        AddSignatures(signatures);                                  // before any of them can be launched
-        TensorCoreModuleErrors = errors;
-        if (errors.Count > 0)
-        {
-            TensorCoreUnavailableReason = string.Join(" | ", errors);
-        }
-
-        _tensorCore = kernels.ContainsKey("gemm_tc_nn_f32") ? kernels : null;
-        _tensorCoreAny = kernels;
     }
 
     // Kernel name and declared parameter count per loaded function: a launch with the wrong number of arguments
@@ -434,7 +294,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMa
         _sgdMomentum = Fn("sgd_momentum_f32");
         _adam = Fn("adam_f32");
         _matmul = Fn("matmul_f32");
-        _kernels = PtxKernels.AdvancedNames.Concat(PtxKernels.DecodingNames).Concat(PtxKernels.QuantizedNames).Concat(PtxKernels.DecoderNames).Concat(PtxKernels.RowNames).Concat(PtxKernels.ConvolutionNames).Concat(PtxKernels.ResamplingNames).Concat(PtxKernels.CtcNames).Concat(PtxKernels.RecurrentNames).Concat(PtxKernels.PointwiseNames).Concat(PtxKernels.RoutingNames).Append("add_dropout_f32").ToDictionary(k => k, Fn);
+        _kernels = PtxKernels.AdvancedNames.Concat(PtxKernels.DecodingNames).Concat(PtxKernels.DecoderNames).Concat(PtxKernels.RowNames).Concat(PtxKernels.ConvolutionNames).Concat(PtxKernels.ResamplingNames).Concat(PtxKernels.CtcNames).Concat(PtxKernels.RecurrentNames).Concat(PtxKernels.PointwiseNames).Concat(PtxKernels.RoutingNames).Append("add_dropout_f32").ToDictionary(k => k, Fn);
         AddSignatures(signatures);                                  // the main module's kernels, before the first launch
         CtcOptIn();
         SequenceBarrier();
@@ -1331,73 +1191,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMa
             long tiles128 = (long)((m + 127) / 128) * ((n + 127) / 128) * batch;
             gemmTile = tiles128 >= Math.Max(1, _multiprocessors) ? 128 : 64;
         }
-        // bfloat16 tensor cores (MixedPrecision): products large enough to fill 128 × 128 tiles, and skinny ones with a
-        // side of 8-63 (a LoRA adapter's rank-16 products: x·A, g·Bᵀ, xᵀ·dt, u·B), which the float kernels ran at 1-3
-        // TFLOPS; with k split across blocks they read their wide operand about as fast as memory allows.
-        bool large = m >= 64 && n >= 64 && k >= 32;
-        // (Also a long k over a small output, such as the rank-16 gradient of a 128-wide key/value projection: 16 × 128 ×
-        // tokens, which the 16 × 16 float kernel ran at 0.1 TFLOPS with 8 blocks.)
-        bool skinny = batch == 1 && Math.Min(m, n) >= 8 && k >= 16
-            && (Math.Max(m, n) >= 256 && (long)m * n * k >= 1 << 24 || Math.Max(m, n) >= 64 && k >= 2048);
-        // Each precision on its own kernels: fp8 products on the fp8 kernels (large ones, where they loaded), bfloat16 on
-        // the bfloat16 ones, float16 on the float16 ones (each line scaled by a power of two first: HalfShifts); a reduced
-        // precision without a kernel here for the call runs float32, counted (ReducedPrecision), never another reduced
-        // type in its place.
-        var precision = MixedPrecision.Current;
-        bool reduced = !few && (large || skinny) && precision != MatMulPrecision.Float32;
-        var tensorCore = reduced ? TensorCoreKernels() : null;
-        if (tensorCore is not null && large && precision == MatMulPrecision.Float8 && EightBitReady(fp8: true) && batch <= 64)
-        {
-            for (int i = 0; i < batch; i++)
-            {
-                ulong at = (ulong)i * mk * 4, bt = (ulong)i * kn * 4, ct = (ulong)i * mn * 4;
-                Gemm8(true, P(a) + at, transA ? m : k, transA, P(b) + bt, transB ? k : n, transB, P(c) + ct, n, m, n, k, beta, 0UL, GemmEpilogue.None, 0UL);
-            }
-
-            return;
-        }
-
-        // The float16 products take one launch: a batch within the grid's z and y limits, rows within one launch's.
-        bool half = precision == MatMulPrecision.Float16;
-        if (precision != MatMulPrecision.BFloat16
-            && !(half && tensorCore is not null && tensorCore.ContainsKey(HalfKernel(transA, transB)) && batch <= maxGridZ && batch <= maxGridY && m <= rowsPerLaunch))
-        {
-            tensorCore = null;
-        }
-
-        if (reduced && tensorCore is null)
-        {
-            ReducedPrecision.InFloat32(this, Ops.BatchedMatMul, (long)batch * (long)(mk + kn));
-        }
-
-        if (tensorCore is not null && (transA || transB) && batch <= maxGridZ && PretransposeForTensorCores)
-        {
-            // The tensor-core kernel is fastest with both operands as stored ([m, k] · [k, n]): a transposed operand is
-            // copied into that layout first (a memory-bound pass, far cheaper than the product it speeds up).
-            Storage? at = transA ? Allocate(batch * m * k, zeroed: false) : null;
-            Storage? bt = transB ? Allocate(batch * k * n, zeroed: false) : null;
-            try
-            {
-                if (at is not null)
-                {
-                    TransposeBatched(a, at, batch, k, m);
-                }
-
-                if (bt is not null)
-                {
-                    TransposeBatched(b, bt, batch, n, k);
-                }
-
-                BatchedMatMul(at ?? a, bt ?? b, c, batch, m, n, k, false, false, beta);
-            }
-            finally
-            {
-                at?.Release();
-                bt?.Release();
-            }
-
-            return;
-        }
 
         for (int first = 0; first < batch; first += maxGridZ)
         {
@@ -1418,25 +1211,9 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMa
 
                 if (_profile is not null)
                 {
-                    string kind = tensorCore is not null ? "gemm_tc" : few ? "gemv" : gemmTile > 0 ? $"gemm{gemmTile}" : "matmul16";
+                    string kind = few ? "gemv" : gemmTile > 0 ? $"gemm{gemmTile}" : "matmul16";
                     _profileLabel = $"{kind}_{(transA ? 't' : 'n')}{(transB ? 't' : 'n')} {rows}x{n}x{k}{(count > 1 ? $" batch {count}" : "")}";
                     _profileFlops = 2.0 * rows * n * k * count;
-                }
-
-                if (tensorCore is not null && half)
-                {
-                    HalfProduct(tensorCore, new FloatProduct(P(a), P(b), m, m, n, k, batch, transA, transB, beta, mk, kn, mn), P(c));
-                    Interlocked.Increment(ref TensorCoreLaunches);
-                    continue;
-                }
-
-                if (tensorCore is not null)
-                {
-                    string kernel = transA ? (transB ? "gemm_tc_tt_f32" : "gemm_tc_tn_f32") : (transB ? "gemm_tc_nt_f32" : "gemm_tc_nn_f32");
-                    TensorCoreRows(tensorCore[kernel], new FloatProduct(P(a) + offset * mk + aRow, P(b) + offset * kn, rows, m, n, k, count, transA, transB, beta, mk, kn, mn),
-                        P(c) + offset * mn + cRow);
-                    Interlocked.Increment(ref TensorCoreLaunches);
-                    continue;
                 }
 
                 if (gemmTile > 0)
@@ -1457,66 +1234,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMa
     // the `m` rows, `count` batch entries `mk`, `kn` and `mn` floats apart.
     private readonly record struct FloatProduct(ulong A, ulong B, int Rows, int M, int N, int K, int Count, bool TransA, bool TransB, float Beta,
         ulong Mk, ulong Kn, ulong Mn);
-
-    // The tensor-core product of `p` into `cAt`. A method of its own: the closure TensorSplits needs is created only when
-    // it runs (inside BatchedMatMulKernel it was created on every call, the few-row and 16 × 16 products included). The
-    // float16 products (`rowShifts` set) also take the shifts of op(a)'s rows and op(b)'s columns (HalfProduct).
-    private void TensorCoreRows(IntPtr function, FloatProduct p, ulong cAt, ulong rowShifts = 0, ulong columnShifts = 0)
-    {
-        bool half = rowShifts != 0;
-        void Run(int splits, ulong target)
-        {
-            int columnTiles = (p.N + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile, rowTiles = (p.Rows + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile;
-            uint gridZ = (uint)(splits > 1 ? splits : p.Count);
-            ulong sa = splits > 1 ? 0UL : p.Mk, sb = splits > 1 ? 0UL : p.Kn, sc = splits > 1 ? 0UL : p.Mn;
-            if (half)
-            {
-                LaunchTensor(function, columnTiles, rowTiles, PtxKernels.TensorTile, splits, gridZ, p.A, p.B, target, U(p.Rows), U(p.N), U(p.K), F(p.Beta), sa, sb, sc,
-                    0UL, U(p.TransA ? p.M : p.K), U(p.TransB ? p.K : p.N), U(p.N), 0UL, rowShifts, columnShifts);
-                return;
-            }
-
-            LaunchTensor(function, columnTiles, rowTiles, PtxKernels.TensorTile, splits, gridZ, p.A, p.B, target, U(p.Rows), U(p.N), U(p.K), F(p.Beta), sa, sb, sc,
-                0UL, U(p.TransA ? p.M : p.K), U(p.TransB ? p.K : p.N), U(p.N), 0UL);
-        }
-
-        Run(p.Count == 1 ? TensorSplits(p.Rows, p.N, p.K, p.Beta, cAt, p.N, (half ? 16 : 0) + (p.TransA ? 2 : 0) + (p.TransB ? 1 : 0), Run) : 1, cAt);
-    }
-
-    // The float16 product of a layout (PtxKernels.TensorCore.cs, …_f16_f32).
-    private static string HalfKernel(bool transA, bool transB) => $"gemm_tc_{(transA ? 't' : 'n')}{(transB ? 't' : 'n')}_f16_f32";
-
-    // The float16 tensor-core product of `p` (all its rows and batch entries in one launch) into `cAt`: first the shift of
-    // every row of op(a) and every column of op(b) (line_shifts_*: the power of two that brings the line's largest
-    // magnitude into [2^14, 2^15), so no value overflows a half and the small ones keep their bits), into scratch memory
-    // given back after the launch (stream order keeps it until the kernels are done); the product scales its tiles by
-    // them before rounding to halves and its sums back after.
-    private void HalfProduct(Dictionary<string, IntPtr> tensorCore, in FloatProduct p, ulong cAt)
-    {
-        var shifts = Allocate(checked(p.Count * (p.M + p.N)), zeroed: false);
-        try
-        {
-            ulong rows = P(shifts), columns = rows + (ulong)p.Count * (ulong)p.M * sizeof(float);
-            // op(a)'s rows: A's rows as stored ([m, k], contiguous), its columns transposed ([k, m]).
-            LineShifts(tensorCore, p.A, rows, p.M, p.K, p.TransA ? p.M : p.K, contiguous: !p.TransA, p.Count, p.Mk);
-            // op(b)'s columns: B's columns as stored ([k, n]), its rows transposed ([n, k], contiguous).
-            LineShifts(tensorCore, p.B, columns, p.N, p.K, p.TransB ? p.K : p.N, contiguous: p.TransB, p.Count, p.Kn);
-            TensorCoreRows(tensorCore[HalfKernel(p.TransA, p.TransB)], p, cAt, rows, columns);
-        }
-        finally
-        {
-            shifts.Release();
-        }
-    }
-
-    // line_shifts_{rows,cols}_f32 over `count` matrices `batch` floats apart: `lines` lines of `length` floats, `ld` apart
-    // (rows: a warp a line, 8 a block; columns: a thread a line).
-    private void LineShifts(Dictionary<string, IntPtr> tensorCore, ulong x, ulong shifts, int lines, int length, int ld, bool contiguous, int count, ulong batch)
-    {
-        uint perBlock = contiguous ? 8u : 256u;
-        Launch(tensorCore[contiguous ? "line_shifts_rows_f32" : "line_shifts_cols_f32"], (uint)((lines + perBlock - 1) / perBlock), (uint)count, 1, 256, 1,
-            x, shifts, U(lines), U(length), U(ld), batch);
-    }
 
     // The register-blocked product of `p` into `cAt`: the tile from the SM count, then measured once per shape (both
     // tiles add k terms in the same order). Once known, read without allocating (no candidate array, no closure).
@@ -1559,438 +1276,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMa
     private void TransposeBatched(Storage x, Storage y, int batch, int rows, int cols) =>
         Launch(K("transpose_f32"), (uint)((cols + 31) / 32), (uint)((rows + 31) / 32), (uint)batch, 32, 8,
             P(x), P(y), U(rows), U(cols), (ulong)rows * (ulong)cols, (ulong)rows * (ulong)cols);
-
-    public override bool MatMulBiasKernel(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
-    {
-        if (m < 64 || n < 64 || k < 32 || !MixedPrecision.UsesTensorCores || TensorCoreKernels() is not { } tensorCore)
-        {
-            return false;
-        }
-
-        if (MixedPrecision.Current == MatMulPrecision.Float8)
-        {
-            // fp8 on the fp8 kernels where they loaded; else the caller's composed product (float32, counted there),
-            // never the bfloat16 kernel in fp8's place.
-            if (!EightBitReady(fp8: true))
-            {
-                return false;
-            }
-
-            Gemm8(true, P(a), k, false, P(b), n, false, P(c), n, m, n, k, 0f, P(bias), GemmEpilogue.None, 0UL);
-            return true;
-        }
-
-        if (_profile is not null)
-        {
-            _profileLabel = $"gemm_tc_nn+bias {m}x{n}x{k}";
-            _profileFlops = 2.0 * m * n * k;
-        }
-
-        LaunchTensor(tensorCore["gemm_tc_nn_f32"], (n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile, (m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile,
-            PtxKernels.TensorTile, 1, 1, P(a), P(b), P(c), U(m), U(n), U(k), F(0f), 0UL, 0UL, 0UL, P(bias), U(k), U(n), U(n), 0UL);
-        Interlocked.Increment(ref TensorCoreLaunches);
-        return true;
-    }
-
-    bool IMatrixUnitBackend.MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
-    {
-        if (m == 0 || n == 0 || k < 16 || rank is < 1 or > 32 || !MixedPrecision.UsesTensorCores || MixedPrecision.Current == MatMulPrecision.Float8
-            || TensorCoreKernels() is not { } tensorCore || !tensorCore.TryGetValue(transB ? "gemm_tc_nt_lr_f32" : "gemm_tc_nn_lr_f32", out var function))
-        {
-            return false;
-        }
-
-        if (_profile is not null)
-        {
-            _profileLabel = $"gemm_tc_{(transB ? "nt" : "nn")}_lr {m}x{n}x{k}+{rank}";
-            _profileFlops = 2.0 * m * n * (k + rank);
-        }
-
-        void Run(int splits, ulong target) =>
-            LaunchTensor(function, (n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile, (m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile,
-                PtxKernels.TensorTile, splits, (uint)splits, P(a), P(b), target, U(m), U(n), U(k), F(beta), 0UL, 0UL, 0UL, 0UL,
-                U(k), U(transB ? k : n), U(n), 0UL, P(u), P(v), U(rank));
-        Run(TensorSplits(m, n, k, beta, P(c), n, transB ? 5 : 4, Run, rank), P(c));
-        Interlocked.Increment(ref TensorCoreLaunches);
-        return true;
-    }
-
-    bool IMatrixUnitBackend.GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB,
-        Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias, GemmEpilogue epilogue,
-        Storage? aux, long auxOffset)
-    {
-        if (m == 0 || n == 0 || TensorCoreKernels() is not { } tensorCore)
-        {
-            return false;
-        }
-
-        if (MixedPrecision.Current == MatMulPrecision.Float8)
-        {
-            // fp8 on the fp8 kernels where they loaded; else the caller's composed products (float32, counted there),
-            // never the bfloat16 kernels in fp8's place.
-            if (!EightBitReady(fp8: true) || k < 16)
-            {
-                return false;
-            }
-
-            Gemm8(true, P(a) + (ulong)aOffset * 4, lda, transA, P(b) + (ulong)bOffset * 4, ldb, transB, P(c) + (ulong)cOffset * 4, ldc, m, n, k, beta,
-                bias is null ? 0UL : P(bias), epilogue, aux is null ? 0UL : P(aux) + (ulong)auxOffset * 4);
-            return true;
-        }
-
-        if (PtxKernels.GemmKernel(transA, transB, epilogue) is not { } kernel || !tensorCore.TryGetValue(kernel, out var function))
-        {
-            return false;
-        }
-
-        if (_profile is not null)
-        {
-            _profileLabel = $"gemm_tc_{(transA ? 't' : 'n')}{(transB ? 't' : 'n')}{(epilogue == GemmEpilogue.None ? "" : epilogue == GemmEpilogue.Gelu ? "+gelu" : "+gelu'")}"
-                            + $"{(bias is null ? "" : "+bias")} {m}x{n}x{k}";
-            _profileFlops = 2.0 * m * n * k;
-        }
-
-        ulong aAt = P(a) + (ulong)aOffset * 4, bAt = P(b) + (ulong)bOffset * 4, cAt = P(c) + (ulong)cOffset * 4;
-        ulong biasAt = bias is null ? 0UL : P(bias), auxAt = aux is null ? 0UL : P(aux) + (ulong)auxOffset * 4;
-        int columnTiles = (n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile, rowTiles = (m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile;
-        void Run(int splits, ulong target)
-        {
-            ReadOnlySpan<ulong> args = [aAt, bAt, target, U(m), U(n), U(k), F(beta), 0UL, 0UL, 0UL, biasAt, U(lda), U(ldb), U(ldc), auxAt];
-            if (epilogue == GemmEpilogue.None)
-            {
-                LaunchTensor(function, columnTiles, rowTiles, PtxKernels.TensorTile, splits, (uint)splits, args);
-            }
-            else
-            {
-                Launch(function, (uint)columnTiles, (uint)rowTiles, 1, PtxKernels.TensorThreads, 1, args);       // GELU epilogues: never split
-            }
-        }
-
-        Run(epilogue == GemmEpilogue.None ? TensorSplits(m, n, k, beta, cAt, ldc, 8 + (transA ? 2 : 0) + (transB ? 1 : 0) + (bias is null ? 0 : 4), Run, lda, ldb) : 1, cAt);
-        Interlocked.Increment(ref TensorCoreLaunches);
-        return true;
-    }
-
-    /// <summary>Benchmarks only: the k splits of plain tensor-core products instead of the heuristic's (1: none).</summary>
-    internal static int? TensorSplitsOverride { get; set; }
-
-    // k splits of a plain tensor-core product with fewer than 4 output tiles per SM and a long k (weight gradients). Before
-    // measuring: about 16 blocks per SM, at most 8 splits of 1024 k or more, or for a few output tiles (a LoRA adapter's
-    // gradients) up to 64 of 256 or more. Then measured once per shape on this card (see CudaBackend.Tuning.cs): `run`
-    // launches the product with a split count into an output address; `variant` names the kernel (numbers, so the key
-    // allocates nothing). The kernel adds the splits in split order (LaunchTensor). Products split with beta 1 (measured
-    // into scratch memory, since they add to c) or 0 with contiguous rows (measured into c, which the final launch writes
-    // again), the ones measured so far. `extra`, `extra2`: what else tells shapes apart.
-    private int TensorSplits(int m, int n, int k, float beta, ulong c, int ldc, int variant, Action<int, ulong> run, int extra = 0, int extra2 = 0)
-    {
-        if (beta != 1f && (beta != 0f || ldc != n))
-        {
-            return 1;
-        }
-
-        int sms = Math.Max(1, _multiprocessors);
-        int tiles = ((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile) * ((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile);
-        int wanted = TensorSplitsOverride ?? (tiles >= 4 * sms ? 1 : (16 * sms + tiles - 1) / tiles);
-        int limit = tiles <= 8 ? Math.Min(64, k / 256) : Math.Min(8, k / 1024);
-        int splits = Math.Clamp(wanted, 1, Math.Max(1, Math.Min(limit, MaxSplits(tiles))));
-        if (TensorSplitsOverride is null && tiles < 4 * sms)
-        {
-            // Once known, read without allocating (no candidate array, no closure).
-            int formula = splits;
-            Span<int> candidates = stackalloc int[SplitCountsLength];
-            candidates = candidates[..SplitCounts(Math.Min(Math.Min(64, k / 128), MaxSplits(tiles)), candidates)];
-            var key = new TuneKey(TuneOp.TensorSplits, variant * 2 + (beta == 0f ? 0 : 1), TuneSizes.Class(m), n, k, ldc, extra, extra2);
-            if (!TryTuned(key, candidates, formula, out splits))
-            {
-                splits = MeasureTensorSplits(key, candidates.ToArray(), formula, m, n, beta, c, ldc, run);
-            }
-        }
-
-        return splits;
-    }
-
-    // Measures TensorSplits' count: with beta 0 into c (the final launch writes it again), with beta 1 into scratch memory
-    // (the formula's count when there is no room for it).
-    private int MeasureTensorSplits(TuneKey key, int[] candidates, int formula, int m, int n, float beta, ulong c, int ldc, Action<int, ulong> run)
-    {
-        if (beta == 0f)
-        {
-            return Tune(key, candidates, formula, count => run(count, c));
-        }
-
-        int splits = formula;
-        WithScratch((long)(m - 1) * ldc + n, scratch => splits = Tune(key, candidates, formula, count => run(count, scratch)));
-        return splits;
-    }
-
-    // The most k splits a tensor-core product with `tiles` output tiles takes: about 16 blocks per SM (TensorSplits' own
-    // aim, rounded the same way). The ordered sum keeps one partial tile per block (LaunchTensor), so its workspace follows
-    // the device's size, not k.
-    private int MaxSplits(int tiles) => Math.Max(1, (16 * Math.Max(1, _multiprocessors) + tiles - 1) / Math.Max(1, tiles));
-
-    // A tensor-core product's launch (PtxKernels.TensorCore.cs, mode 0): columnTiles × rowTiles × gridZ blocks; `args` are
-    // the kernel's arguments but its last two, the split-k sum's workspace and counters, added here. With more than one
-    // split each block writes its partial tile (tileRows × 128 floats) to the workspace, taken from the pool and given back
-    // after the launch (stream order keeps it until the kernel is done), and the last block of each output tile, counted in
-    // the shared split counters (which it leaves zero), adds them in split order: the same sums on every run and for every
-    // row (rule 86), where atomic additions summed in the order the blocks finished.
-    private void LaunchTensor(IntPtr function, int columnTiles, int rowTiles, int tileRows, int splits, uint gridZ, params ReadOnlySpan<ulong> args)
-    {
-        Span<ulong> all = stackalloc ulong[args.Length + 2];
-        args.CopyTo(all);
-        all[^2] = 0UL;
-        all[^1] = 0UL;
-        Storage? part = null;
-        if (splits > 1)
-        {
-            int tiles = columnTiles * rowTiles;
-            part = Allocate(checked(splits * tiles * tileRows * PtxKernels.TensorTile), zeroed: false);
-            all[^2] = P(part);
-            all[^1] = P(SplitCounters(tiles));
-        }
-
-        try
-        {
-            Launch(function, (uint)columnTiles, (uint)rowTiles, gridZ, PtxKernels.TensorThreads, 1, all);
-        }
-        finally
-        {
-            part?.Release();
-        }
-    }
-
-    // The 8-bit products and their quantizers loaded (each where the device reaches its module's declared PTX target:
-    // PtxKernels.Float8Target for FP8, PtxKernels.TensorCoreTarget for INT8).
-    // Benchmarks: x [rows][ld] quantized by rows (the a operand's quantizer).
-    internal void QuantizeRowsForBenchmark(bool fp8, Storage x, int ld, Storage output, Storage scale, int rows, int k) =>
-        QuantizeOperand(fp8, P(x), ld, byRows: true, output, scale, rows, k, PtxKernels.EightBitPaddedK(k));
-
-    internal bool EightBitReady(bool fp8)
-    {
-        return TensorKernel(fp8 ? "gemm8_e4m3_f32" : "gemm8_s8_f32") is not null && TensorKernel(fp8 ? "quant_rows_e4m3" : "quant_rows_s8") is not null;
-    }
-
-    // c = beta·c + f(op(a)·op(b)) on 8-bit tensor cores (addresses in bytes, strides in floats): op(a) is quantized per row
-    // and op(b) per column into k-major bytes (padded to a multiple of 64 k), then the 8-bit product applies the scales.
-    internal void Gemm8(bool fp8, ulong a, int lda, bool transA, ulong b, int ldb, bool transB, ulong c, int ldc, int m, int n, int k,
-        float beta, ulong bias, GemmEpilogue epilogue, ulong aux)
-    {
-        int kp = PtxKernels.EightBitPaddedK(k);
-        // op(a) [m, k]: stored [m][lda] (rows) or, transposed, [k][lda] (columns). op(b) needs [n][k]: stored
-        // transposed [n][ldb] (rows) or as is, [k][ldb] (columns).
-        var (a8, sa, ownA) = Quantized(fp8, a, lda, byRows: !transA, m, k, kp);
-        var (b8, sb, ownB) = Quantized(fp8, b, ldb, byRows: transB, n, k, kp);
-        try
-        {
-            if (_profile is not null)
-            {
-                _profileLabel = $"gemm8_{(fp8 ? "e4m3" : "s8")}_{(transA ? 't' : 'n')}{(transB ? 't' : 'n')}"
-                                + $"{(epilogue == GemmEpilogue.None ? "" : epilogue == GemmEpilogue.Gelu ? "+gelu" : "+gelu'")}{(bias == 0 ? "" : "+bias")} {m}x{n}x{k}";
-                _profileFlops = 2.0 * m * n * k;
-            }
-
-            t_sharedBytes = PtxKernels.EightBitShared;
-            Launch(TensorKernel(PtxKernels.EightBitKernel(fp8, epilogue))!.Value, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
-                (uint)((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), 1, PtxKernels.TensorThreads, 1,
-                P(a8), P(b8), c, U(m), U(n), U(kp), F(beta), P(sa), P(sb), bias, U(kp), U(kp), U(ldc), aux);
-            Interlocked.Increment(ref TensorCoreLaunches);
-        }
-        finally
-        {
-            if (ownA)
-            {
-                a8.Release();
-                sa.Release();
-            }
-
-            if (ownB)
-            {
-                b8.Release();
-                sb.Release();
-            }
-        }
-    }
-
-    // Quantized operands kept while a ReuseQuantizedOperands scope is open (on the thread that opened it).
-    [ThreadStatic]
-    private static Dictionary<(ulong Address, int Ld, bool ByRows, int Rows, int K, bool Fp8), (Storage Values, Storage Scales)>? t_reuse;
-
-    // The operand quantized (or the kept copy): Owned = the caller releases it.
-    private (Storage Values, Storage Scales, bool Owned) Quantized(bool fp8, ulong x, int ld, bool byRows, int rows, int k, int kp)
-    {
-        var key = (x, ld, byRows, rows, k, fp8);
-        if (t_reuse is { } reuse && reuse.TryGetValue(key, out var kept))
-        {
-            return (kept.Values, kept.Scales, false);
-        }
-
-        var values = Allocate(Math.Max(1, rows * kp / 4), zeroed: false);
-        var scales = Allocate(rows, zeroed: false);
-        QuantizeOperand(fp8, x, ld, byRows, values, scales, rows, k, kp);
-        if (t_reuse is { } open)
-        {
-            open[key] = (values, scales);
-            return (values, scales, false);
-        }
-
-        return (values, scales, true);
-    }
-
-    public override IDisposable? ReuseQuantizedOperands()
-    {
-        if (t_reuse is not null || MixedPrecision.Current != MatMulPrecision.Float8)
-        {
-            return null;                                            // nested, or nothing is quantized
-        }
-
-        t_reuse = [];
-        return new ReuseScope();
-    }
-
-    private sealed class ReuseScope : IDisposable
-    {
-        public void Dispose()
-        {
-            if (t_reuse is { } reuse)
-            {
-                t_reuse = null;
-                foreach (var (values, scales) in reuse.Values)
-                {
-                    values.Release();
-                    scales.Release();
-                }
-            }
-        }
-    }
-
-    // out [rows][kp] bytes (k-major) + scale [rows] from x: byRows: x rows [rows][ld] of `k` values; else x [k][ld] whose
-    // `rows` columns become the output rows.
-    private void QuantizeOperand(bool fp8, ulong x, int ld, bool byRows, Storage output, Storage scale, int rows, int k, int kp)
-    {
-        if (byRows)
-        {
-            Launch(TensorKernel(fp8 ? "quant_rows_e4m3" : "quant_rows_s8")!.Value, (uint)rows, 1, 1, 256, 1, x, P(output), P(scale), U(ld), U(kp), U(rows), U(k));
-            return;
-        }
-
-        const int Chunk = 64;
-        bool delayed = fp8 && DelayedColumnScaling && _captureThread == 0;
-        var key = (x, ld, rows, k);
-        if (delayed)
-        {
-            Storage? kept;
-            lock (_keptMaxima)
-            {
-                _keptMaxima.Remove(key, out kept);
-            }
-
-            if (kept is not null)
-            {
-                var record = Allocate(rows, zeroed: true);
-                QuantizeColumnsDelayed(fp8, x, ld, output, scale, rows, k, kp, kept, record);
-                kept.Release();
-                Keep(key, record);
-                return;
-            }
-        }
-
-        var amax = Allocate(rows, zeroed: true);
-        bool keepAmax = false;
-        try
-        {
-            Launch(TensorKernel(fp8 ? "absmax_cols_e4m3" : "absmax_cols_s8")!.Value, (uint)((rows + 255) / 256), (uint)((k + Chunk - 1) / Chunk), 1, 256, 1,
-                x, P(amax), U(ld), U(k), U(rows), U(Chunk));
-            QuantizeColumnsWithMaxima(fp8, x, ld, output, scale, rows, k, kp, amax, null);
-            if (delayed)
-            {
-                Keep(key, amax);                                    // the first time: exact maxima, kept for the next
-                keepAmax = true;
-            }
-        }
-        finally
-        {
-            if (!keepAmax)
-            {
-                amax.Release();
-            }
-        }
-    }
-
-    private void Keep((ulong X, int Ld, int Rows, int K) key, Storage maxima)
-    {
-        lock (_keptMaxima)
-        {
-            if (_keptMaxima.Count >= 4096)
-            {
-                foreach (var old in _keptMaxima.Values)
-                {
-                    old.Release();
-                }
-
-                _keptMaxima.Clear();
-            }
-
-            if (_keptMaxima.Remove(key, out var previous))
-            {
-                previous.Release();
-            }
-
-            _keptMaxima[key] = maxima;
-        }
-    }
-
-    // The column quantization with given maxima (one per output row: the absmax_cols result, or maxima kept from an
-    // earlier pass for delayed scaling: with `record` set they are doubled as headroom, larger values saturating);
-    // `record` (zeroed) receives this x's maxima.
-    internal void QuantizeColumnsWithMaxima(bool fp8, ulong x, int ld, Storage output, Storage scale, int rows, int k, int kp, Storage maxima,
-        Storage? record)
-    {
-        Launch(TensorKernel(fp8 ? "quant_cols_e4m3" : "quant_cols_s8")!.Value, (uint)((rows + 31) / 32), (uint)(kp / 32), 1, 32, 8,
-            x, P(output), P(maxima), P(scale), U(ld), U(kp), U(k), U(rows), record is null ? 0UL : P(record), 0UL);
-    }
-
-    // Delayed scaling: quantized with twice the kept maxima (headroom: step-to-step growth does not saturate) while
-    // recording x's own, then the correction pass quantizes again, with the recorded maxima, the 32-column strips where a
-    // value more than doubled and saturated (a few blocks per strip, which return at once when none did). FP8's exponent
-    // keeps the relative precision the same under the larger scale.
-    internal void QuantizeColumnsDelayed(bool fp8, ulong x, int ld, Storage output, Storage scale, int rows, int k, int kp, Storage kept,
-        Storage record)
-    {
-        QuantizeColumnsWithMaxima(fp8, x, ld, output, scale, rows, k, kp, kept, record);
-        Launch(TensorKernel(fp8 ? "quant_cols_e4m3" : "quant_cols_s8")!.Value, (uint)((rows + 31) / 32), (uint)Math.Min(kp / 32, 4), 1, 32, 8,
-            x, P(output), P(record), P(scale), U(ld), U(kp), U(k), U(rows), 0UL, P(kept));
-    }
-
-    /// <summary>
-    /// FP8 training: column operands are quantized with the maxima the same operand (address and shape) had the last
-    /// time, measured in the same pass, plus a correction pass for columns that grew (one read of x instead of two).
-    /// Off by default; IDRAK_FP8_DELAYED=1 turns it on.
-    /// </summary>
-    internal static bool DelayedColumnScaling { get; set; } = Environment.GetEnvironmentVariable("IDRAK_FP8_DELAYED") is "1" or "true";
-
-    // Kept column maxima per operand (address, leading dimension, columns, rows), bounded: cleared past 4096 entries.
-    private readonly Dictionary<(ulong X, int Ld, int Rows, int K), Storage> _keptMaxima = [];
-
-    // Benchmarks and tests: the column quantization of x [k][ld] (rows = its columns) by the two-launch pair (variant 0),
-    // with given maxima, recording x's own (2), or that plus the correction pass (3: delayed scaling as training uses it;
-    // record zeroed).
-    internal void QuantizeColumnsVariant(bool fp8, Storage x, int ld, Storage output, Storage scale, int rows, int k, int variant,
-        Storage? maxima = null, Storage? record = null)
-    {
-        if (variant == 2)
-        {
-            QuantizeColumnsWithMaxima(fp8, P(x), ld, output, scale, rows, k, PtxKernels.EightBitPaddedK(k), maxima!, record);
-            return;
-        }
-
-        if (variant == 3)
-        {
-            QuantizeColumnsDelayed(fp8, P(x), ld, output, scale, rows, k, PtxKernels.EightBitPaddedK(k), maxima!, record!);
-            return;
-        }
-
-        QuantizeOperand(fp8, P(x), ld, byRows: false, output, scale, rows, k, PtxKernels.EightBitPaddedK(k));
-    }
 
     public override void SgdStepKernel(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
@@ -2196,13 +1481,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMa
     /// Launches a kernel. Every argument is widened to a 64-bit slot; the driver reads each
     /// parameter's actual size from the slot's start, which on little-endian hosts is the value itself.
     /// </summary>
-    // The native lane's pack kernels over `rows` rows of kp values (PtxKernels.NativePackGrid).
-    private void LaunchPack(IntPtr function, int rows, int kp, params ReadOnlySpan<ulong> args)
-    {
-        var (x, y) = PtxKernels.NativePackGrid(rows, kp);
-        Launch(function, x, y, 256, 1, args);
-    }
-
     private void Launch(IntPtr function, uint gridX, uint gridY, uint blockX, uint blockY, params ReadOnlySpan<ulong> args) =>
         Launch(function, gridX, gridY, 1, blockX, blockY, args);
 

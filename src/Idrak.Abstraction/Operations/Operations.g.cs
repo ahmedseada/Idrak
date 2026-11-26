@@ -36,119 +36,115 @@ internal static class OperationIndex
     public const int AddBroadcastScalar = 20;
     public const int MatMulMany = 21;
     public const int MatMulBias = 22;
-    public const int MatMulLowRank = 23;
-    public const int GemmStrided = 24;
-    public const int AttentionStrided = 25;
-    public const int AttentionStridedBackward = 26;
-    public const int SumColumns = 27;
-    public const int AddDropout = 28;
-    public const int BatchedMatMul = 29;
-    public const int Softmax = 30;
-    public const int SoftmaxBackward = 31;
-    public const int ArgMax = 32;
-    public const int LogSoftmaxTopK = 33;
-    public const int ClassMatch = 34;
-    public const int NormStats = 35;
-    public const int NormApply = 36;
-    public const int NormBackward = 37;
-    public const int GroupScaleShift = 38;
-    public const int GroupReduce = 39;
-    public const int WeightNorm = 40;
-    public const int WeightNormBackward = 41;
-    public const int InvSqrt = 42;
-    public const int Gather = 43;
-    public const int OneHot = 44;
-    public const int ScatterAdd = 45;
-    public const int Im2Col = 46;
-    public const int Col2Im = 47;
-    public const int MaxPool = 48;
-    public const int MaxPoolBackward = 49;
-    public const int MaxPoolBackward2 = 50;
-    public const int Convolution = 51;
-    public const int ConvolutionBackwardInput = 52;
-    public const int ConvolutionBackwardWeight = 53;
-    public const int AvgPool = 54;
-    public const int AvgPoolBackward = 55;
-    public const int ResizeNormalize = 56;
-    public const int Interpolate2d = 57;
-    public const int Interpolate2dBackward = 58;
-    public const int AdaptiveAvgPool = 59;
-    public const int AdaptiveAvgPoolBackward = 60;
-    public const int AdaptiveMaxPool = 61;
-    public const int AdaptiveMaxPoolBackward = 62;
-    public const int CtcLoss = 63;
-    public const int CtcLossBackward = 64;
-    public const int LstmCell = 65;
-    public const int LstmCellBackward = 66;
-    public const int GruCell = 67;
-    public const int GruCellBackward = 68;
-    public const int LstmStep = 69;
-    public const int LstmStepBackward = 70;
-    public const int GruStep = 71;
-    public const int GruStepBackward = 72;
-    public const int LstmSequence = 73;
-    public const int LstmSequenceBackward = 74;
-    public const int GruSequence = 75;
-    public const int GruSequenceBackward = 76;
-    public const int BoxIouLoss = 77;
-    public const int BoxIouLossBackward = 78;
-    public const int SigmoidFocalLoss = 79;
-    public const int SigmoidFocalLossBackward = 80;
-    public const int Permute = 81;
-    public const int SumAxis = 82;
-    public const int BroadcastAxis = 83;
-    public const int SgdStep = 84;
-    public const int AdamStep = 85;
-    public const int SumSquares = 86;
-    public const int FusedAdamW = 87;
-    public const int ClipFactor = 88;
-    public const int Dropout = 89;
-    public const int DropoutBackward = 90;
-    public const int ScaleMaskSoftmax = 91;
-    public const int LayerNormFused = 92;
-    public const int LayerNormTrain = 93;
-    public const int LayerNormBackward = 94;
-    public const int BiasGelu = 95;
-    public const int RmsNorm = 96;
-    public const int RmsNormBackward = 97;
-    public const int Rope = 98;
-    public const int RmsNormAffine = 99;
-    public const int AddRmsNormAffine = 100;
-    public const int RmsNormRope = 101;
-    public const int RmsNormRopePair = 102;
-    public const int NormRopeHeads = 103;
-    public const int SoftmaxCrossEntropyRows = 104;
-    public const int GatedActivation = 105;
-    public const int GatedActivationBackward = 106;
-    public const int AttentionDecode = 107;
-    public const int AttentionTiledBackward = 108;
-    public const int AttentionSegmented = 109;
-    public const int AttentionRows = 110;
-    public const int AttentionSegmentedBackward = 111;
-    public const int AttentionTiled = 112;
-    public const int AttentionSpans = 113;
-    public const int AttentionSpansStrided = 114;
-    public const int AttentionSpansBackward = 115;
-    public const int DecoderMask = 116;
-    public const int KeyValueWrite = 117;
-    public const int SampleRows = 118;
-    public const int PenalizeRows = 119;
-    public const int HistoryPush = 120;
-    public const int RouteTopK = 121;
-    public const int ExpertGatedPair = 122;
-    public const int ExpertMatMul = 123;
-    public const int StridedCopy = 124;
-    public const int BatchedMatMulStrided = 125;
-    public const int AttentionTiledStrided = 126;
-    public const int AttentionTiledStridedBackward = 127;
-    public const int StoredMatMul = 128;
-    public const int KeyValueWriteStrided = 129;
-    public const int StoredMatMulMany = 130;
-    public const int StoredMatMulGatedPair = 131;
-    public const int StoredMatMulAddRmsNorm = 132;
+    public const int SumColumns = 23;
+    public const int AddDropout = 24;
+    public const int BatchedMatMul = 25;
+    public const int Softmax = 26;
+    public const int SoftmaxBackward = 27;
+    public const int ArgMax = 28;
+    public const int LogSoftmaxTopK = 29;
+    public const int ClassMatch = 30;
+    public const int NormStats = 31;
+    public const int NormApply = 32;
+    public const int NormBackward = 33;
+    public const int GroupScaleShift = 34;
+    public const int GroupReduce = 35;
+    public const int WeightNorm = 36;
+    public const int WeightNormBackward = 37;
+    public const int InvSqrt = 38;
+    public const int Gather = 39;
+    public const int OneHot = 40;
+    public const int ScatterAdd = 41;
+    public const int Im2Col = 42;
+    public const int Col2Im = 43;
+    public const int MaxPool = 44;
+    public const int MaxPoolBackward = 45;
+    public const int MaxPoolBackward2 = 46;
+    public const int Convolution = 47;
+    public const int ConvolutionBackwardInput = 48;
+    public const int ConvolutionBackwardWeight = 49;
+    public const int AvgPool = 50;
+    public const int AvgPoolBackward = 51;
+    public const int ResizeNormalize = 52;
+    public const int Interpolate2d = 53;
+    public const int Interpolate2dBackward = 54;
+    public const int AdaptiveAvgPool = 55;
+    public const int AdaptiveAvgPoolBackward = 56;
+    public const int AdaptiveMaxPool = 57;
+    public const int AdaptiveMaxPoolBackward = 58;
+    public const int CtcLoss = 59;
+    public const int CtcLossBackward = 60;
+    public const int LstmCell = 61;
+    public const int LstmCellBackward = 62;
+    public const int GruCell = 63;
+    public const int GruCellBackward = 64;
+    public const int LstmStep = 65;
+    public const int LstmStepBackward = 66;
+    public const int GruStep = 67;
+    public const int GruStepBackward = 68;
+    public const int LstmSequence = 69;
+    public const int LstmSequenceBackward = 70;
+    public const int GruSequence = 71;
+    public const int GruSequenceBackward = 72;
+    public const int BoxIouLoss = 73;
+    public const int BoxIouLossBackward = 74;
+    public const int SigmoidFocalLoss = 75;
+    public const int SigmoidFocalLossBackward = 76;
+    public const int Permute = 77;
+    public const int SumAxis = 78;
+    public const int BroadcastAxis = 79;
+    public const int SgdStep = 80;
+    public const int AdamStep = 81;
+    public const int SumSquares = 82;
+    public const int FusedAdamW = 83;
+    public const int ClipFactor = 84;
+    public const int Dropout = 85;
+    public const int DropoutBackward = 86;
+    public const int ScaleMaskSoftmax = 87;
+    public const int LayerNormFused = 88;
+    public const int LayerNormTrain = 89;
+    public const int LayerNormBackward = 90;
+    public const int BiasGelu = 91;
+    public const int RmsNorm = 92;
+    public const int RmsNormBackward = 93;
+    public const int Rope = 94;
+    public const int RmsNormAffine = 95;
+    public const int AddRmsNormAffine = 96;
+    public const int RmsNormRope = 97;
+    public const int RmsNormRopePair = 98;
+    public const int NormRopeHeads = 99;
+    public const int SoftmaxCrossEntropyRows = 100;
+    public const int GatedActivation = 101;
+    public const int GatedActivationBackward = 102;
+    public const int AttentionDecode = 103;
+    public const int AttentionTiledBackward = 104;
+    public const int AttentionSegmented = 105;
+    public const int AttentionRows = 106;
+    public const int AttentionSegmentedBackward = 107;
+    public const int AttentionTiled = 108;
+    public const int AttentionSpans = 109;
+    public const int AttentionSpansStrided = 110;
+    public const int AttentionSpansBackward = 111;
+    public const int DecoderMask = 112;
+    public const int KeyValueWrite = 113;
+    public const int SampleRows = 114;
+    public const int PenalizeRows = 115;
+    public const int HistoryPush = 116;
+    public const int RouteTopK = 117;
+    public const int ExpertGatedPair = 118;
+    public const int ExpertMatMul = 119;
+    public const int StridedCopy = 120;
+    public const int BatchedMatMulStrided = 121;
+    public const int AttentionTiledStrided = 122;
+    public const int AttentionTiledStridedBackward = 123;
+    public const int StoredMatMul = 124;
+    public const int KeyValueWriteStrided = 125;
+    public const int StoredMatMulMany = 126;
+    public const int StoredMatMulGatedPair = 127;
+    public const int StoredMatMulAddRmsNorm = 128;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 133;
+    public const int Count = 129;
 }
 
 /// <summary>
@@ -297,50 +293,6 @@ public static class OperationKernels
     /// the device has no such pass for these sizes (callers then multiply and add the bias separately).
     /// </summary>
     public delegate bool MatMulBias(Backend backend, Storage a, Storage b, Storage bias, Storage c, int m, int n, int k);
-
-    /// <summary>
-    /// A kernel for <see cref="Ops.MatMulLowRank"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
-    /// c = beta·c + a·op(b) + u·op(v) in one product (a LoRA adapter's term as one more k step): a [m, k], b [k, n]
-    /// (transposed: [n, k]), u [m, rank], v [rank, n] (with <paramref name="transB"/>: [n, rank]), rank ≤ 32, all rows
-    /// contiguous. Returns false when the device has no such pass (callers then compute the two products separately).
-    /// </summary>
-    public delegate bool MatMulLowRank(Backend backend, Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank);
-
-    /// <summary>
-    /// A kernel for <see cref="Ops.GemmStrided"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
-    /// c = beta·c + op(a)·op(b) on bfloat16 tensor cores, with row strides: a [m, k] stored with <paramref name="lda"/>
-    /// floats per row (transposed: [k, m] rows), b [k, n] with <paramref name="ldb"/> (transposed: [n, k] rows), c [m, n]
-    /// with <paramref name="ldc"/>; offsets in elements. <paramref name="bias"/> [n] is added to every row (modes None and
-    /// Gelu). <see cref="GemmEpilogue.Gelu"/> writes gelu(product + bias) and, when <paramref name="aux"/> is given, the
-    /// pre-activations into it (same layout as c); <see cref="GemmEpilogue.GeluGradient"/> multiplies the product by
-    /// gelu'(aux). Returns false when the device has no tensor cores (callers use the composed operations).
-    /// </summary>
-    public delegate bool GemmStrided(Backend backend, Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias, GemmEpilogue epilogue, Storage? aux, long auxOffset);
-
-    /// <summary>
-    /// A kernel for <see cref="Ops.AttentionStrided"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
-    /// Causal attention (positions c ≤ t) read in place from [batch, steps, *] rows: query head h (= kv · group + g, g &lt;
-    /// group) of batch b at step t at q[qOffset + (b·steps + t)·qRow + h·dim], keys and values of kv head kv at k /
-    /// v[offset + (b·steps + c)·kRow + kv·dim] (offsets and row strides in floats, multiples of 4). With the scores s_c =
-    /// scale · q·k_c for c ≤ t, writes y[(b·steps + t)·heads·dim + h·dim] = Σ_c softmax(s)_c · v_c ([batch, steps,
-    /// heads·dim], heads = kvHeads · group) and, when given, the log-sum-exp ln Σ_c exp(s_c) of the scaled scores at
-    /// [(b·kvHeads + kv)·group·steps + g·steps + t] ([batch·kvHeads, group·steps]) for the backward pass. Devices may run it
-    /// on bfloat16 matrix units (q, k, v and the probabilities rounded to bfloat16, float32 sums), so it agrees with
-    /// float32 attention to about 1e-2. Returns false when the device has no such kernels, or none for this head size
-    /// (callers rearrange the heads and use <see cref="Backend.AttentionTiled"/>).
-    /// </summary>
-    public delegate bool AttentionStrided(Backend backend, Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale);
-
-    /// <summary>
-    /// A kernel for <see cref="Ops.AttentionStridedBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
-    /// Gradients of <see cref="Backend.AttentionStrided"/> given its y and log-sum-exp and dOutput (y's layout): with P_tc =
-    /// exp(s_tc - logSumExp_t) (the scores recomputed from q and k), D_t = Σ_d y_t · dOutput_t and dS_tc = P_tc ·
-    /// (dOutput_t · v_c - D_t), adds scale · Σ_c dS_tc · k_c to dq_t, scale · Σ_t dS_tc · q_t to dk_c and Σ_t P_tc · dOutput_t
-    /// to dv_c (dk and dv summed over the query heads of their group), each laid out as q, k, v (the same row strides,
-    /// their own offsets). q, k and v may be one storage at three offsets, and dq, dk and dv another, as
-    /// <c>Tensor.CausalAttentionPacked</c> passes them. Returns false when the device has no such kernels.
-    /// </summary>
-    public delegate bool AttentionStridedBackward(Backend backend, Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale);
 
     /// <summary>
     /// A kernel for <see cref="Ops.SumColumns"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -932,10 +884,10 @@ public static class OperationKernels
     /// attention reads, in one pass (inference): query heads RMS-normalized with gain (when <paramref name="gainQ"/> is
     /// set; keys then with <paramref name="gainK"/>) and rotated as <see cref="Backend.Rope"/> (half 0: no rotation) into
     /// yq [batch, heads, steps, cols]; keys the same and values unchanged into yk and yv [batch, kvHeads, capacity, stride]
-    /// at row position[0] + s (a cache; row s when <paramref name="position"/> is null), as floats or bfloat16 pairs.
+    /// at row position[0] + s (a cache; row s when <paramref name="position"/> is null).
     /// Returns false when the device has no such kernel (callers then run the steps one by one).
     /// </summary>
-    public delegate bool NormRopeHeads(Backend backend, Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16);
+    public delegate bool NormRopeHeads(Backend backend, Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride);
 
     /// <summary>
     /// A kernel for <see cref="Ops.SoftmaxCrossEntropyRows"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -1328,46 +1280,6 @@ public static partial class Ops
     /// the device has no such pass for these sizes (callers then multiply and add the bias separately).
     /// </summary>
     public static readonly Operation<OperationKernels.MatMulBias> MatMulBias = new("MatMulBias", OperationIndex.MatMulBias, KernelSource.None);
-
-    /// <summary>
-    /// c = beta·c + a·op(b) + u·op(v) in one product (a LoRA adapter's term as one more k step): a [m, k], b [k, n]
-    /// (transposed: [n, k]), u [m, rank], v [rank, n] (with <c>transB</c>: [n, rank]), rank ≤ 32, all rows
-    /// contiguous. Returns false when the device has no such pass (callers then compute the two products separately).
-    /// </summary>
-    public static readonly Operation<OperationKernels.MatMulLowRank> MatMulLowRank = new("MatMulLowRank", OperationIndex.MatMulLowRank, KernelSource.None);
-
-    /// <summary>
-    /// c = beta·c + op(a)·op(b) on bfloat16 tensor cores, with row strides: a [m, k] stored with <c>lda</c>
-    /// floats per row (transposed: [k, m] rows), b [k, n] with <c>ldb</c> (transposed: [n, k] rows), c [m, n]
-    /// with <c>ldc</c>; offsets in elements. <c>bias</c> [n] is added to every row (modes None and
-    /// Gelu). <see cref="GemmEpilogue.Gelu"/> writes gelu(product + bias) and, when <c>aux</c> is given, the
-    /// pre-activations into it (same layout as c); <see cref="GemmEpilogue.GeluGradient"/> multiplies the product by
-    /// gelu'(aux). Returns false when the device has no tensor cores (callers use the composed operations).
-    /// </summary>
-    public static readonly Operation<OperationKernels.GemmStrided> GemmStrided = new("GemmStrided", OperationIndex.GemmStrided, KernelSource.None);
-
-    /// <summary>
-    /// Causal attention (positions c ≤ t) read in place from [batch, steps, *] rows: query head h (= kv · group + g, g &lt;
-    /// group) of batch b at step t at q[qOffset + (b·steps + t)·qRow + h·dim], keys and values of kv head kv at k /
-    /// v[offset + (b·steps + c)·kRow + kv·dim] (offsets and row strides in floats, multiples of 4). With the scores s_c =
-    /// scale · q·k_c for c ≤ t, writes y[(b·steps + t)·heads·dim + h·dim] = Σ_c softmax(s)_c · v_c ([batch, steps,
-    /// heads·dim], heads = kvHeads · group) and, when given, the log-sum-exp ln Σ_c exp(s_c) of the scaled scores at
-    /// [(b·kvHeads + kv)·group·steps + g·steps + t] ([batch·kvHeads, group·steps]) for the backward pass. Devices may run it
-    /// on bfloat16 matrix units (q, k, v and the probabilities rounded to bfloat16, float32 sums), so it agrees with
-    /// float32 attention to about 1e-2. Returns false when the device has no such kernels, or none for this head size
-    /// (callers rearrange the heads and use <see cref="Backend.AttentionTiled"/>).
-    /// </summary>
-    public static readonly Operation<OperationKernels.AttentionStrided> AttentionStrided = new("AttentionStrided", OperationIndex.AttentionStrided, KernelSource.None);
-
-    /// <summary>
-    /// Gradients of <see cref="Backend.AttentionStrided"/> given its y and log-sum-exp and dOutput (y's layout): with P_tc =
-    /// exp(s_tc - logSumExp_t) (the scores recomputed from q and k), D_t = Σ_d y_t · dOutput_t and dS_tc = P_tc ·
-    /// (dOutput_t · v_c - D_t), adds scale · Σ_c dS_tc · k_c to dq_t, scale · Σ_t dS_tc · q_t to dk_c and Σ_t P_tc · dOutput_t
-    /// to dv_c (dk and dv summed over the query heads of their group), each laid out as q, k, v (the same row strides,
-    /// their own offsets). q, k and v may be one storage at three offsets, and dq, dk and dv another, as
-    /// <c>Tensor.CausalAttentionPacked</c> passes them. Returns false when the device has no such kernels.
-    /// </summary>
-    public static readonly Operation<OperationKernels.AttentionStridedBackward> AttentionStridedBackward = new("AttentionStridedBackward", OperationIndex.AttentionStridedBackward, KernelSource.None);
 
     /// <summary>
     /// y[j] += Σ_r x[offset + r·ld + j] for j &lt; cols (column sums of a strided block; the bias gradient of a slice).
@@ -1882,7 +1794,7 @@ public static partial class Ops
     /// attention reads, in one pass (inference): query heads RMS-normalized with gain (when <c>gainQ</c> is
     /// set; keys then with <c>gainK</c>) and rotated as <see cref="Backend.Rope"/> (half 0: no rotation) into
     /// yq [batch, heads, steps, cols]; keys the same and values unchanged into yk and yv [batch, kvHeads, capacity, stride]
-    /// at row position[0] + s (a cache; row s when <c>position</c> is null), as floats or bfloat16 pairs.
+    /// at row position[0] + s (a cache; row s when <c>position</c> is null).
     /// Returns false when the device has no such kernel (callers then run the steps one by one).
     /// </summary>
     public static readonly Operation<OperationKernels.NormRopeHeads> NormRopeHeads = new("NormRopeHeads", OperationIndex.NormRopeHeads, KernelSource.None);
@@ -2151,10 +2063,6 @@ public static partial class Ops
         AddBroadcastScalar,
         MatMulMany,
         MatMulBias,
-        MatMulLowRank,
-        GemmStrided,
-        AttentionStrided,
-        AttentionStridedBackward,
         SumColumns,
         AddDropout,
         BatchedMatMul,

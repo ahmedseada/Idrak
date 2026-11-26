@@ -8,7 +8,7 @@ namespace Idrak.Gpu.Cuda;
 
 // Attention over one range of keys per query row (Backend.AttentionSpans), the fast kernels: one module per padded head
 // size, built and loaded the first time a head size needs it (CudaBackend.Spans.cs), so a GPU loads only the sizes it
-// runs. Two kinds:
+// runs.
 //
 // - attention_spans_f32_d{D} (float32, PTX 6.0 for sm_50 and newer): a block of 128 threads takes 64 query rows of one
 //   head (32 for head sizes over 128, so its tiles fit a block: about 69 KB at 256) and walks the keys in tiles of 32.
@@ -21,24 +21,12 @@ namespace Idrak.Gpu.Cuda;
 //   stays for head sizes this one does not take (not a multiple of 4) and devices whose shared memory per block cannot
 //   hold this one's.
 //
-// - attention_spans_tc_d{D}_w{W} (bfloat16 tensor cores, PTX 7.0 for sm_80 and newer; when MixedPrecision asks for
-//   them, as the other tensor-core attention): FlashAttention-2 as flash_tc_fwd (PtxKernels.FlashTensorCore.cs): a block
-//   of W warps takes 16·W query rows (16 per warp, their Q fragments kept in registers), the keys in tiles of 64 staged in
-//   shared memory as bfloat16, S = Q·Kᵀ and O += P·V on mma.m16n8k16 with float32 sums, online softmax in the log2
-//   domain. Head sizes padded to a multiple of 16 (zeros past the real size). W = 4 or 8: measured per device and shape
-//   (CudaBackend.Tuning.cs), 4 before measuring. The same bits at either W: the tiles sit on a fixed grid (keys 64j …
-//   64j + 63, zeros only past keyRows), and a warp computes exactly the grid's tiles that meet its own 16 rows' ranges
-//   (the others it skips, keeping only the block's barriers). A tile's start or its zeros taken from the block's rows
-//   moved a row's tile boundaries with W, so the probabilities were rounded to bfloat16 against other running maxima and
-//   summed in other groups of 16: 8 warps differed from 4 in the last bits (the owner's run on a compute 12.0 GPU: dim
-//   68, 70 rows, 200 keys, random ranges, 2 key/value heads, 4 tables, row 64).
-//
-// Both: query row i of head h sees keys st[t·rows + i] ≤ c < en[t·rows + i] (clamped to [0, keyRows]; floats holding
+// Query row i of head h sees keys st[t·rows + i] ≤ c < en[t·rows + i] (clamped to [0, keyRows]; floats holding
 // integers), t = h / headsPerTable, key/value head h / group. The block walks the keys from the smallest start of its
-// rows (those that see any key; the tensor-core kernels from the tile holding it) to their largest end; a key outside a
+// rows (those that see any key) to their largest end; a key outside a
 // row's range scores -∞ for it, and a row whose range
 // is empty keeps a sum of 0: zeros, and a log-sum-exp of -∞. Head sizes that are multiples of 4 (rows read as float4):
-// up to 256 for the float32 kernel, 128 for the tensor-core one. Grid: x = ⌈rows / rows per block⌉, y = heads.
+// up to 256. Grid: x = ⌈rows / rows per block⌉, y = heads.
 internal static partial class PtxKernels
 {
     /// <summary>The largest head size of the float32 span kernel (A1: 129 to 256 in blocks of 32 rows, 2 a thread).</summary>
@@ -56,14 +44,8 @@ internal static partial class PtxKernels
     /// <summary>Key positions per tile of the float32 span kernel.</summary>
     public const int SpanFloatKeys = 32;
 
-    /// <summary>Key positions per tile of the tensor-core span kernel.</summary>
-    public const int SpanTensorKeys = 64;
-
     // Row stride of the float32 kernel's P tile (floats): a multiple of 4 for its vector reads and writes.
     private const int SpanPStride = SpanFloatKeys + 4;
-
-    /// <summary>Warps per block the tensor-core span kernel is built for (16 query rows each); the first is the default.</summary>
-    public static readonly int[] SpanTensorWarps = [4, 8];
 
     /// <summary>
     /// The padded head size of the float32 span kernel for <paramref name="dim"/> (a multiple of 8 up to 128, of 16 above, up to
@@ -71,14 +53,8 @@ internal static partial class PtxKernels
     /// </summary>
     public static int SpanFloatDim(int dim) => dim > 0 && dim % 4 == 0 && dim <= SpanMaxDim ? dim <= FlashMaxDim ? (dim + 7) / 8 * 8 : (dim + 15) / 16 * 16 : 0;
 
-    /// <summary>The padded head size of the tensor-core span kernel for <paramref name="dim"/> (a multiple of 16), or 0 when it does not take it.</summary>
-    public static int SpanTensorDim(int dim) => dim > 0 && dim % 4 == 0 && dim <= FlashMaxDim ? (dim + 15) / 16 * 16 : 0;
-
     /// <summary>The float32 span kernel's name for padded head size <paramref name="d"/>.</summary>
     public static string SpanFloatName(int d) => string.Create(CultureInfo.InvariantCulture, $"attention_spans_f32_d{d}");
-
-    /// <summary>The tensor-core span kernel's name for padded head size <paramref name="d"/> and <paramref name="warps"/> warps.</summary>
-    public static string SpanTensorName(int d, int warps) => string.Create(CultureInfo.InvariantCulture, $"attention_spans_tc_d{d}_w{warps}");
 
     /// <summary>Dynamic shared memory of the float32 span kernel (bytes): Qᵀ, Kᵀ (then V), P and the block's range.</summary>
     public static int SpanFloatShared(int d) => 4 * (SpanFloatRows(d) * d + SpanFloatKeys * d + SpanFloatRows(d) * SpanPStride + 8);
@@ -94,22 +70,28 @@ internal static partial class PtxKernels
     /// <summary>The float32 span kernel's name for padded head size <paramref name="d"/> reading rows through a layout (AttentionSpansStrided).</summary>
     public static string SpanFloatStridedName(int d) => string.Create(CultureInfo.InvariantCulture, $"attention_spans_f32s_d{d}");
 
+    // The row layout of queries and outputs of the strided float32 kernel (after SpanParameters).
+    private const string SpanLayoutParameters =
+        ".param .u32 p_hq, .param .u32 p_qb, .param .u32 p_qh, .param .u32 p_qr, .param .u32 p_yb, .param .u32 p_yh, .param .u32 p_yr";
+
     // The row layout of keys and values of the strided float32 kernel (after SpanLayoutParameters): key/value head
     // g = b·p_hk + h, key c at k (or v) + b·p_kb + h·p_kh + c·p_kr (floats).
     private const string SpanKeyLayoutParameters = ".param .u32 p_hk, .param .u32 p_kb, .param .u32 p_kh, .param .u32 p_kr";
 
-    /// <summary>The tensor-core span module for padded head size <paramref name="d"/> (PTX 7.0, sm_80; every warp count).</summary>
-    public static (string Name, string[] Kernels, string Source) SpanTensorModule(int d) =>
-        Module(string.Create(CultureInfo.InvariantCulture, $"attention spans tc d{d}"), sb =>
-        {
-            foreach (int warps in SpanTensorWarps)
-            {
-                SpanTensor(sb, d, warps);
-            }
-        });
+    // A module of its own: its PTX version and target, then the kernels `build` writes.
+    private static (string Name, string[] Kernels, string Source) Module(string name, Action<StringBuilder> build, string version, string target)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($".version {version}");
+        sb.AppendLine($".target {target}");
+        sb.AppendLine(".address_size 64");
+        sb.AppendLine();
+        build(sb);
+        string source = sb.ToString();
+        return (name, KernelNames(source), source);
+    }
 
-    // The parameters of both kernels (as attention_spans_f32's; the tensor-core kernel reads p_scale as scale · log2 e and
-    // takes no soft-cap).
+    // The parameters of the kernels (as attention_spans_f32's).
     private const string SpanParameters =
         ".param .u64 p_q, .param .u64 p_k, .param .u64 p_v, .param .u64 p_st, .param .u64 p_en, .param .u64 p_y, .param .u64 p_lse, "
         + ".param .u32 p_rows, .param .u32 p_keys, .param .u32 p_dim, .param .f32 p_scale, .param .u32 p_group, .param .u32 p_hpt";
@@ -177,38 +159,6 @@ internal static partial class PtxKernels
 
         return s.ToString();
     }
-
-    // The tensor-core span kernels' tiles, the same at any warps per block (so every candidate of the measured choice gives
-    // the same bits): the block's first key (%r36) down to a multiple of the tile, so tiles start on a fixed grid; and the
-    // keys of this warp's 16 rows, %r60 = the smallest start of their non-empty ranges (keyRows when none), %r61 = the
-    // largest end (0), from this thread's rows' ranges (%r32-%r35) over the warp. Uses %r62, %p22.
-    private static readonly string SpanTensorTiles = string.Create(CultureInfo.InvariantCulture, $"""
-            and.b32 %r36, %r36, 0x{unchecked((uint)-SpanTensorKeys):X8};
-            setp.gt.s32 %p22, %r33, %r32;
-            selp.b32 %r60, %r32, %r21, %p22;
-            selp.b32 %r61, %r33, 0, %p22;
-            setp.gt.s32 %p22, %r35, %r34;
-            selp.b32 %r62, %r34, %r21, %p22;
-            min.u32 %r60, %r60, %r62;
-            selp.b32 %r62, %r35, 0, %p22;
-            max.u32 %r61, %r61, %r62;
-        {string.Concat(new[] { 16, 8, 4, 2, 1 }.Select(offset => string.Create(CultureInfo.InvariantCulture, $"""
-                shfl.sync.bfly.b32 %r62, %r60, {offset}, 31, 0xffffffff;
-                min.u32 %r60, %r60, %r62;
-                shfl.sync.bfly.b32 %r62, %r61, {offset}, 31, 0xffffffff;
-                max.u32 %r61, %r61, %r62;
-
-            """)))}
-        """);
-
-    // Branches to `label` when tile %r43 (keys %r43 … %r43 + 63) holds none of this warp's keys (warp-uniform): the warp
-    // computes exactly the grid's tiles that meet its rows' ranges, whatever the block's other warps see. Uses %r62, %p22.
-    private static string SpanTensorSkip(string label) => string.Create(CultureInfo.InvariantCulture, $"""
-            setp.lt.u32 %p22, %r43, %r61;
-            add.u32 %r62, %r43, {SpanTensorKeys};
-            setp.gt.and.u32 %p22, %r62, %r60, %p22;
-            @!%p22 bra {label};
-        """);
 
     // ------------------------------------------------------------------ float32
 
@@ -676,367 +626,5 @@ internal static partial class PtxKernels
             }
             """);
         sb.AppendLine(s.ToString());
-    }
-
-    // ------------------------------------------------------------------ tensor cores
-
-    // Stages `rows` rows (absolute first + 0 … rows - 1; zeros at or past `limit` and past the head size in %r22) of a
-    // float32 [*, dim] tensor at `pointer` (rows `rowStride` floats apart: %r22, the head size, unless given) into shared
-    // memory at `shared` as bfloat16 ([rows][d + 8]); `threads` threads, a float4 each per step, along the rows. Steps in
-    // a loop of four at a time (`label` names it) and the rest after it, so a large tile does not keep every step's loads
-    // in registers at once. Uses %r11-%r19, %r53, %rd1-%rd2, %f0-%f3, %p1, %p20.
-    private static string SpanTensorStage(int rows, int d, int threads, string shared, string first, string limit, string pointer, string label,
-        string rowStride = "%r22")
-    {
-        const int Unroll = 4;
-        int quads = d / 4, stride = FlashStride(d), elements = rows * quads, iterations = (elements + threads - 1) / threads;
-        int looped = iterations > Unroll ? iterations / Unroll * Unroll : 0;
-        var s = new StringBuilder();
-
-        // One step: element e = `index` (+ `offset` threads), row e / quads, float4 e % quads.
-        void Step(string index, int offset, bool guard)
-        {
-            s.AppendLine(CultureInfo.InvariantCulture, $$"""
-                    add.u32 %r11, {{index}}, {{offset}};
-                    div.u32 %r12, %r11, {{quads}};
-                    rem.u32 %r13, %r11, {{quads}};
-                    add.u32 %r14, %r12, {{first}};
-                    shl.b32 %r15, %r13, 2;
-                    setp.lt.u32 %p1, %r14, {{limit}};
-                    setp.lt.and.u32 %p1, %r15, %r22, %p1;
-                    {{(guard ? string.Create(CultureInfo.InvariantCulture, $"setp.lt.and.u32 %p1, %r11, {elements}, %p1;") : "")}}
-                    cvt.u64.u32 %rd2, %r15;
-                    mad.wide.u32 %rd1, %r14, {{rowStride}}, %rd2;
-                    shl.b64 %rd1, %rd1, 2;
-                    add.u64 %rd1, %rd1, {{pointer}};
-                    mov.f32 %f0, 0f00000000;
-                    mov.f32 %f1, 0f00000000;
-                    mov.f32 %f2, 0f00000000;
-                    mov.f32 %f3, 0f00000000;
-                    @%p1 ld.global.v4.f32 {%f0, %f1, %f2, %f3}, [%rd1];
-                    cvt.rn.bf16x2.f32 %r16, %f1, %f0;
-                    cvt.rn.bf16x2.f32 %r17, %f3, %f2;
-                    mad.lo.u32 %r18, %r12, {{stride}}, {{shared}};
-                    shl.b32 %r19, %r13, 3;
-                    add.u32 %r18, %r18, %r19;
-                """);
-            s.AppendLine(guard
-                ? string.Create(CultureInfo.InvariantCulture, $"setp.lt.u32 %p1, %r11, {elements};\n@%p1 st.shared.v2.b32 [%r18], {{%r16, %r17}};")
-                : "st.shared.v2.b32 [%r18], {%r16, %r17};");
-        }
-
-        if (looped > 0)
-        {
-            s.AppendLine(CultureInfo.InvariantCulture, $"""
-                    mov.u32 %r53, %r1;
-                {label}:
-                    setp.ge.u32 %p20, %r53, {looped * threads};
-                    @%p20 bra {label}_END;
-                """);
-            for (int u = 0; u < Unroll; u++)
-            {
-                Step("%r53", u * threads, guard: false);
-            }
-
-            s.AppendLine(CultureInfo.InvariantCulture, $"""
-                    add.u32 %r53, %r53, {Unroll * threads};
-                    bra {label};
-                {label}_END:
-                """);
-        }
-
-        for (int it = looped; it < iterations; it++)
-        {
-            Step("%r1", it * threads, guard: (it + 1) * threads > elements);
-        }
-
-        return s.ToString();
-    }
-
-    private static void SpanTensor(StringBuilder sb, int d, int warps)
-    {
-        int stride = FlashStride(d), dTiles = d / 8, kSteps = d / 16, threads = 32 * warps, rowsPerBlock = 16 * warps;
-        int tileBytes = SpanTensorKeys * stride;
-        string name = SpanTensorName(d, warps);
-        var s = new StringBuilder();
-        s.AppendLine(CultureInfo.InvariantCulture, $$"""
-            .visible .entry {{name}}(
-                {{SpanParameters}}
-            )
-            {
-            {{FlashRegisters(d, 4 * dTiles)}}
-                .shared .align 16 .b8 {{name}}_kv[{{Math.Max(2 * tileBytes, rowsPerBlock * stride)}}];
-                .shared .align 4 .b32 {{name}}_range[{{2 * warps}}];
-            {{FlashLanes(stride)}}
-                ld.param.u64 %rd10, [p_q];
-                ld.param.u64 %rd11, [p_k];
-                ld.param.u64 %rd12, [p_v];
-                ld.param.u64 %rd13, [p_st];
-                ld.param.u64 %rd16, [p_en];
-                ld.param.u64 %rd14, [p_y];
-                ld.param.u64 %rd15, [p_lse];
-                cvta.to.global.u64 %rd10, %rd10;
-                cvta.to.global.u64 %rd11, %rd11;
-                cvta.to.global.u64 %rd12, %rd12;
-                cvta.to.global.u64 %rd13, %rd13;
-                cvta.to.global.u64 %rd16, %rd16;
-                cvta.to.global.u64 %rd14, %rd14;
-                ld.param.u32 %r20, [p_rows];
-                ld.param.u32 %r21, [p_keys];
-                ld.param.u32 %r22, [p_dim];
-                ld.param.f32 %f40, [p_scale];
-                ld.param.u32 %r23, [p_group];
-                ld.param.u32 %r28, [p_hpt];
-                mov.u32 %r24, %ctaid.y;
-                mov.u32 %r25, %ctaid.x;
-                mul.lo.u32 %r25, %r25, {{rowsPerBlock}};
-                mul.lo.u32 %r44, %r24, %r20;
-                mul.wide.u32 %rd40, %r44, %r22;
-                shl.b64 %rd40, %rd40, 2;
-                add.u64 %rd10, %rd10, %rd40;
-                add.u64 %rd14, %rd14, %rd40;
-                div.u32 %r44, %r24, %r23;
-                mul.lo.u32 %r44, %r44, %r21;
-                mul.wide.u32 %rd41, %r44, %r22;
-                shl.b64 %rd41, %rd41, 2;
-                add.u64 %rd11, %rd11, %rd41;
-                add.u64 %rd12, %rd12, %rd41;
-                div.u32 %r28, %r24, %r28;
-                mul.lo.u32 %r28, %r28, %r20;
-                mov.u32 %r26, {{name}}_kv;
-                add.u32 %r27, %r26, {{tileBytes}};
-                mov.u32 %r48, {{name}}_range;
-            """);
-
-        // This thread's rows (g and g + 8 of its warp's 16): their ranges; then the block's keys.
-        s.AppendLine(CultureInfo.InvariantCulture, $"""
-                shl.b32 %r30, %r3, 4;
-                add.u32 %r30, %r30, %r25;
-                add.u32 %r30, %r30, %r4;
-                add.u32 %r31, %r30, 8;
-            {SpanRange("%r30", "%r32", "%r33", "%r20", "%r21", "%r28", "%rd13", "%rd16", "%r44", "%rd44", "%rd45", "%f61", "%f62", "%p2")}
-            {SpanRange("%r31", "%r34", "%r35", "%r20", "%r21", "%r28", "%rd13", "%rd16", "%r44", "%rd44", "%rd45", "%f61", "%f62", "%p2")}
-                and.b32 %r45, %r1, {rowsPerBlock - 1};
-                add.u32 %r45, %r45, %r25;
-            {SpanRange("%r45", "%r46", "%r47", "%r20", "%r21", "%r28", "%rd13", "%rd16", "%r44", "%rd44", "%rd45", "%f61", "%f62", "%p2")}
-            """);
-
-        // Q tile → shared → fragments (the range reduction's barrier also orders the staging).
-        s.AppendLine(SpanTensorStage(rowsPerBlock, d, threads, "%r26", "%r25", "%r20", "%rd10", "QS"));
-        s.AppendLine(SpanBlockRange("%r46", "%r47", "%r21", "%r2", "%r3", warps, "%r48", "%r36", "%r37", "%r44", "%r45", "%p3"));
-        s.AppendLine(SpanTensorTiles);
-        s.AppendLine(CultureInfo.InvariantCulture, $"""
-                shl.b32 %r29, %r3, 4;
-                mul.lo.u32 %r29, %r29, {stride};
-                add.u32 %r29, %r29, %r26;
-                add.u32 %r29, %r29, %r6;
-            """);
-        for (int ks = 0; ks < kSteps; ks++)
-        {
-            s.AppendLine(CultureInfo.InvariantCulture, $"ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, [%r29+{ks * 32}];");
-        }
-
-        s.AppendLine($"""
-                bar.sync 0;
-                mov.f32 %f42, 0fFF800000;
-                mov.f32 %f43, 0fFF800000;
-                mov.f32 %f44, 0f00000000;
-                mov.f32 %f45, 0f00000000;
-                add.u32 %r40, %r27, %r6;
-                add.u32 %r41, %r26, %r7;
-                shl.b32 %r42, %r5, 1;
-            {Zeros("%acc", 4 * dTiles)}
-                mov.u32 %r43, %r36;
-            TILE:
-                setp.ge.u32 %p3, %r43, %r37;
-                @%p3 bra TILE_END;
-            """);
-        // The tile's keys and values, zeros only past keyRows (the same tile whatever the block's rows); then this warp's
-        // products only where the tile holds some of its keys.
-        s.AppendLine(SpanTensorStage(SpanTensorKeys, d, threads, "%r26", "%r43", "%r21", "%rd11", "KS"));
-        s.AppendLine(SpanTensorStage(SpanTensorKeys, d, threads, "%r27", "%r43", "%r21", "%rd12", "VS"));
-        s.AppendLine("bar.sync 0;");
-        s.AppendLine(SpanTensorSkip("SKIP"));
-        s.AppendLine(Zeros("%s", 32));
-        for (int ks = 0; ks < kSteps; ks++)
-        {
-            for (int nt2 = 0; nt2 < 4; nt2++)
-            {
-                s.AppendLine(LdMatrix("%tb", "%r41", nt2 * 16 * stride + ks * 32, transpose: false));
-                s.AppendLine(string.Create(CultureInfo.InvariantCulture, $"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{%s{8 * nt2}, %s{8 * nt2 + 1}, %s{8 * nt2 + 2}, %s{8 * nt2 + 3}}}, ")
-                             + string.Create(CultureInfo.InvariantCulture, $"{{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, {{%tb0, %tb1}}, {{%s{8 * nt2}, %s{8 * nt2 + 1}, %s{8 * nt2 + 2}, %s{8 * nt2 + 3}}};"));
-                s.AppendLine(string.Create(CultureInfo.InvariantCulture, $"mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{%s{8 * nt2 + 4}, %s{8 * nt2 + 5}, %s{8 * nt2 + 6}, %s{8 * nt2 + 7}}}, ")
-                             + string.Create(CultureInfo.InvariantCulture, $"{{%qa{4 * ks}, %qa{4 * ks + 1}, %qa{4 * ks + 2}, %qa{4 * ks + 3}}}, {{%tb2, %tb3}}, {{%s{8 * nt2 + 4}, %s{8 * nt2 + 5}, %s{8 * nt2 + 6}, %s{8 * nt2 + 7}}};"));
-            }
-        }
-
-        // Scale, mask by each row's range (key c = tile + 8 nt + 2t + j; row g: [%r32, %r33), g + 8: [%r34, %r35)), maxima.
-        s.AppendLine("""
-                add.u32 %r49, %r43, %r42;
-                mov.f32 %f46, 0fFF800000;
-                mov.f32 %f47, 0fFF800000;
-            """);
-        for (int nt = 0; nt < 8; nt++)
-        {
-            for (int jj = 0; jj < 2; jj++)
-            {
-                s.AppendLine(CultureInfo.InvariantCulture, $"""
-                        add.u32 %r50, %r49, {nt * 8 + jj};
-                        setp.lt.s32 %p4, %r50, %r33;
-                        setp.lt.s32 %p5, %r50, %r35;
-                        setp.ge.and.s32 %p4, %r50, %r32, %p4;
-                        setp.ge.and.s32 %p5, %r50, %r34, %p5;
-                        mul.f32 %s{4 * nt + jj}, %s{4 * nt + jj}, %f40;
-                        mul.f32 %s{4 * nt + jj + 2}, %s{4 * nt + jj + 2}, %f40;
-                        selp.f32 %s{4 * nt + jj}, %s{4 * nt + jj}, 0fFF800000, %p4;
-                        selp.f32 %s{4 * nt + jj + 2}, %s{4 * nt + jj + 2}, 0fFF800000, %p5;
-                        max.f32 %f46, %f46, %s{4 * nt + jj};
-                        max.f32 %f47, %f47, %s{4 * nt + jj + 2};
-                    """);
-            }
-        }
-
-        s.AppendLine("""
-                shfl.sync.bfly.b32 %f48, %f46, 1, 31, 0xffffffff;
-                max.f32 %f46, %f46, %f48;
-                shfl.sync.bfly.b32 %f48, %f46, 2, 31, 0xffffffff;
-                max.f32 %f46, %f46, %f48;
-                shfl.sync.bfly.b32 %f48, %f47, 1, 31, 0xffffffff;
-                max.f32 %f47, %f47, %f48;
-                shfl.sync.bfly.b32 %f48, %f47, 2, 31, 0xffffffff;
-                max.f32 %f47, %f47, %f48;
-                max.f32 %f46, %f46, %f42;
-                max.f32 %f47, %f47, %f43;
-                setp.eq.f32 %p6, %f46, 0fFF800000;
-                selp.f32 %f49, 0f00000000, %f46, %p6;
-                setp.eq.f32 %p7, %f47, 0fFF800000;
-                selp.f32 %f50, 0f00000000, %f47, %p7;
-                sub.f32 %f51, %f42, %f49;
-                ex2.approx.ftz.f32 %f51, %f51;
-                sub.f32 %f52, %f43, %f50;
-                ex2.approx.ftz.f32 %f52, %f52;
-                mov.f32 %f42, %f46;
-                mov.f32 %f43, %f47;
-                mov.f32 %f53, 0f00000000;
-                mov.f32 %f54, 0f00000000;
-            """);
-        for (int nt = 0; nt < 8; nt++)
-        {
-            s.AppendLine(CultureInfo.InvariantCulture, $"""
-                    sub.f32 %s{4 * nt}, %s{4 * nt}, %f49;
-                    ex2.approx.ftz.f32 %s{4 * nt}, %s{4 * nt};
-                    sub.f32 %s{4 * nt + 1}, %s{4 * nt + 1}, %f49;
-                    ex2.approx.ftz.f32 %s{4 * nt + 1}, %s{4 * nt + 1};
-                    sub.f32 %s{4 * nt + 2}, %s{4 * nt + 2}, %f50;
-                    ex2.approx.ftz.f32 %s{4 * nt + 2}, %s{4 * nt + 2};
-                    sub.f32 %s{4 * nt + 3}, %s{4 * nt + 3}, %f50;
-                    ex2.approx.ftz.f32 %s{4 * nt + 3}, %s{4 * nt + 3};
-                    add.f32 %f53, %f53, %s{4 * nt};
-                    add.f32 %f53, %f53, %s{4 * nt + 1};
-                    add.f32 %f54, %f54, %s{4 * nt + 2};
-                    add.f32 %f54, %f54, %s{4 * nt + 3};
-                """);
-        }
-
-        // The row sums stay per thread (the quad's four partial sums are added once, at the end).
-        s.AppendLine("""
-                fma.rn.f32 %f44, %f44, %f51, %f53;
-                fma.rn.f32 %f45, %f45, %f52, %f54;
-            """);
-        for (int nt = 0; nt < dTiles; nt++)
-        {
-            s.AppendLine(CultureInfo.InvariantCulture, $"""
-                    mul.f32 %acc{4 * nt}, %acc{4 * nt}, %f51;
-                    mul.f32 %acc{4 * nt + 1}, %acc{4 * nt + 1}, %f51;
-                    mul.f32 %acc{4 * nt + 2}, %acc{4 * nt + 2}, %f52;
-                    mul.f32 %acc{4 * nt + 3}, %acc{4 * nt + 3}, %f52;
-                """);
-        }
-
-        for (int jj = 0; jj < 4; jj++)
-        {
-            s.AppendLine(PackA("%s", jj));
-            for (int dn2 = 0; dn2 < d / 16; dn2++)
-            {
-                s.AppendLine(LdMatrix("%tb", "%r40", jj * 16 * stride + dn2 * 32, transpose: true));
-                s.AppendLine(Mma("%acc", 2 * dn2, "%pa", "%tb0", "%tb1"));
-                s.AppendLine(Mma("%acc", 2 * dn2 + 1, "%pa", "%tb2", "%tb3"));
-            }
-        }
-
-        s.AppendLine(CultureInfo.InvariantCulture, $"""
-            SKIP:
-                bar.sync 0;
-                add.u32 %r43, %r43, {SpanTensorKeys};
-                bra TILE;
-            TILE_END:
-                shfl.sync.bfly.b32 %f48, %f44, 1, 31, 0xffffffff;
-                add.f32 %f44, %f44, %f48;
-                shfl.sync.bfly.b32 %f48, %f44, 2, 31, 0xffffffff;
-                add.f32 %f44, %f44, %f48;
-                shfl.sync.bfly.b32 %f48, %f45, 1, 31, 0xffffffff;
-                add.f32 %f45, %f45, %f48;
-                shfl.sync.bfly.b32 %f48, %f45, 2, 31, 0xffffffff;
-                add.f32 %f45, %f45, %f48;
-                setp.gt.f32 %p8, %f44, 0f00000000;
-                rcp.rn.f32 %f55, %f44;
-                selp.f32 %f55, %f55, 0f00000000, %p8;
-                setp.gt.f32 %p9, %f45, 0f00000000;
-                rcp.rn.f32 %f56, %f45;
-                selp.f32 %f56, %f56, 0f00000000, %p9;
-                setp.lt.u32 %p10, %r30, %r20;
-                setp.lt.u32 %p11, %r31, %r20;
-                mad.lo.u32 %r51, %r30, %r22, %r42;
-                mul.wide.u32 %rd22, %r51, 4;
-                add.u64 %rd22, %rd22, %rd14;
-                mad.lo.u32 %r51, %r31, %r22, %r42;
-                mul.wide.u32 %rd26, %r51, 4;
-                add.u64 %rd26, %rd26, %rd14;
-            """);
-        for (int nt = 0; nt < dTiles; nt++)
-        {
-            // Columns 8 nt + 2t and the next: written when inside the head size (a multiple of 4, so both or neither).
-            s.AppendLine(CultureInfo.InvariantCulture, $$"""
-                    add.u32 %r52, %r42, {{nt * 8}};
-                    setp.lt.u32 %p12, %r52, %r22;
-                    and.pred %p13, %p12, %p10;
-                    and.pred %p12, %p12, %p11;
-                    mul.f32 %f57, %acc{{4 * nt}}, %f55;
-                    mul.f32 %f58, %acc{{4 * nt + 1}}, %f55;
-                    @%p13 st.global.v2.f32 [%rd22+{{nt * 32}}], {%f57, %f58};
-                    mul.f32 %f57, %acc{{4 * nt + 2}}, %f56;
-                    mul.f32 %f58, %acc{{4 * nt + 3}}, %f56;
-                    @%p12 st.global.v2.f32 [%rd26+{{nt * 32}}], {%f57, %f58};
-                """);
-        }
-
-        // log-sum-exp of the scaled scores (natural log): (m + log2 l) · ln 2, -∞ for a row that saw nothing.
-        s.AppendLine("""
-                setp.eq.u64 %p12, %rd15, 0;
-                @%p12 bra DONE;
-                cvta.to.global.u64 %rd15, %rd15;
-                setp.ne.u32 %p13, %r5, 0;
-                @%p13 bra DONE;
-                mul.wide.u32 %rd24, %r24, %r20;
-                cvt.u64.u32 %rd25, %r30;
-                add.u64 %rd24, %rd24, %rd25;
-                shl.b64 %rd24, %rd24, 2;
-                add.u64 %rd24, %rd24, %rd15;
-                lg2.approx.f32 %f59, %f44;
-                add.f32 %f59, %f59, %f42;
-                mul.f32 %f59, %f59, 0f3F317218;
-                selp.f32 %f59, %f59, 0fFF800000, %p8;
-                lg2.approx.f32 %f60, %f45;
-                add.f32 %f60, %f60, %f43;
-                mul.f32 %f60, %f60, 0f3F317218;
-                selp.f32 %f60, %f60, 0fFF800000, %p9;
-                @%p10 st.global.f32 [%rd24], %f59;
-                @%p11 st.global.f32 [%rd24+32], %f60;
-            DONE:
-                ret;
-            }
-            """);
-        sb.Append(s);
-        sb.AppendLine();
     }
 }

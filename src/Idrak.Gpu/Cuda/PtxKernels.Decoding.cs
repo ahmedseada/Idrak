@@ -11,7 +11,7 @@ internal static partial class PtxKernels
 {
     public static readonly string[] DecodingNames =
     [
-        "scale_mask_softmax_f32", "layernorm_fused_f32", "layernorm_train_f32", "layernorm_bwd_f32", "layernorm_bwd_params_f32", "bias_gelu_f32", "decoder_mask_f32", "kv_write_f32", "kv_write_bf16", "sample_rows_f32",
+        "scale_mask_softmax_f32", "layernorm_fused_f32", "layernorm_train_f32", "layernorm_bwd_f32", "layernorm_bwd_params_f32", "bias_gelu_f32", "decoder_mask_f32", "kv_write_f32", "sample_rows_f32",
         "penalize_rows_f32", "history_push_f32", "sample_candidates_f32", "topk_candidates_f32", "topk_greedy_f32", "sample_candidates_greedy_f32",
     ];
 
@@ -315,38 +315,6 @@ internal static partial class PtxKernels
             setp.le.u32 %p1, %r7, %r8;
             selp.f32 %f2, {Zero}, {F(-1e9f)}, %p1;
             st.global.f32 [%a_mask], %f2;
-            """);
-
-        // bfloat16 cache: word w of row (h, pos + t) = the rounded pair src[h, t, 2w], src[h, t, 2w + 1] (0 past dim),
-        // rounded to nearest, ties to even; a NaN as the CPU's cache keeps it (BFloat16Bits.Round: its payload, made
-        // quiet); one thread per word.
-        Elementwise(sb, "kv_write_bf16", ["src", "cache", "pos"], [("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("u32", "words")],
-            $$"""
-            ld.global.f32 %f1, [%b_pos];
-            cvt.rzi.u32.f32 %r5, %f1;
-            div.u32 %r6, %i, %s_words;
-            rem.u32 %r7, %i, %s_words;
-            div.u32 %r8, %r6, %s_steps;
-            rem.u32 %r9, %r6, %s_steps;
-            mad.lo.u32 %r10, %r8, %s_cap, %r5;
-            add.u32 %r10, %r10, %r9;
-            mad.lo.u32 %r10, %r10, %s_words, %r7;
-            mul.wide.u32 %rd1, %r10, 4;
-            add.u64 %rd1, %b_cache, %rd1;
-            shl.b32 %r11, %r7, 1;
-            mad.lo.u32 %r12, %r6, %s_dim, %r11;
-            mul.wide.u32 %rd2, %r12, 4;
-            add.u64 %rd2, %b_src, %rd2;
-            ld.global.u32 %r13, [%rd2];
-            {{BFloat16Round("%r13", "%r13")}}
-            add.u32 %r15, %r11, 1;
-            mov.u32 %r16, 0;
-            setp.lt.u32 %p1, %r15, %s_dim;
-            @%p1 ld.global.u32 %r16, [%rd2+4];
-            {{BFloat16Round("%r16", "%r16")}}
-            shl.b32 %r16, %r16, 16;
-            or.b32 %r13, %r13, %r16;
-            st.global.u32 [%rd1], %r13;
             """);
 
         // cache[h, pos + t, d] = src[h, t, d]; one thread per source element.

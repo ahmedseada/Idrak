@@ -10,7 +10,7 @@ namespace Idrak.Gpu.Cuda;
 // such as a softmax over a 150k-token vocabulary), and matrix products with few rows (token-by-token decoding).
 internal static partial class PtxKernels
 {
-    public static readonly string[] RowNames = ["gemv_nn_f32", "gemv_nt_f32", "attention_decode_f32", "attention_decode_int8", "attention_rows_f32", "gemm128_f32", "gemm64_f32", "gemv_multi_f32", "attention_flash_f32", "attention_flash_int8", "attn_bwd_d_f32", "attn_bwd_kv_f32", "attn_bwd_q_f32", "attention_decode_bf16", "attention_flash_bf16", "attention_rows_bf16", "attention_flash_rows_bf16", "gemm128_int8_f32", "gemm64_int8_f32", "gemm128_int4_f32", "gemm64_int4_f32", "gemm128_bf16_f32", "gemm64_bf16_f32", "adam8_f32", "transpose_f32", "sumsq_f32", "sum_cols_strided_f32", "multi_sumsq_f32", "sum_blocks_f32", "fold_chunks_f32", "multi_adamw_f32", SpanAttentionName, SpanBackwardKeysName, SpanBackwardQueriesName];
+    public static readonly string[] RowNames = ["gemv_nn_f32", "gemv_nt_f32", "attention_decode_f32", "attention_rows_f32", "gemm128_f32", "gemm64_f32", "gemv_multi_f32", "attention_flash_f32", "attn_bwd_d_f32", "attn_bwd_kv_f32", "attn_bwd_q_f32", "transpose_f32", "sumsq_f32", "sum_cols_strided_f32", "multi_sumsq_f32", "sum_blocks_f32", "fold_chunks_f32", "multi_adamw_f32", SpanAttentionName, SpanBackwardKeysName, SpanBackwardQueriesName];
 
     /// <summary>Threads of a <c>gemm128_f32</c> / <c>gemm64_f32</c> block.</summary>
     public const int GemmThreads = 256;
@@ -224,113 +224,6 @@ internal static partial class PtxKernels
 
     /// <summary>Largest head size <c>attention_decode_f32</c> handles (8 dimensions per lane).</summary>
     public const int DecodeMaxDim = 256;
-
-    // 8-bit Adam (see Backend.AdamStep8Bit): one block of 256 threads per quantization block, one element per thread.
-    // The two code tables go to shared memory; after the update the block's new scales are block maxima, and each
-    // moment is encoded to its nearest code by binary search. Parameters: count = elements, n = blocks.
-    private static void Adam8(StringBuilder sb)
-    {
-        string Encode(string label, string value, string table) => $"""
-            mov.u32 %r20, 0;
-            """ + string.Concat(new[] { 128, 64, 32, 16, 8, 4, 2, 1 }.Select(step => string.Create(CultureInfo.InvariantCulture, $"""
-
-            add.u32 %r21, %r20, {step};
-            shl.b32 %r22, %r21, 2;
-            add.u32 %r22, %r22, {table};
-            ld.shared.f32 %f20, [%r22];
-            setp.le.f32 %p5, %f20, {value};
-            selp.b32 %r20, %r21, %r20, %p5;
-            """))) + $"""
-
-            shl.b32 %r22, %r20, 2;
-            add.u32 %r22, %r22, {table};
-            ld.shared.f32 %f20, [%r22];
-            setp.lt.u32 %p6, %r20, 255;
-            @!%p6 bra {label}_DONE;
-            ld.shared.f32 %f21, [%r22+4];
-            sub.f32 %f21, %f21, {value};
-            sub.f32 %f22, {value}, %f20;
-            setp.lt.f32 %p6, %f21, %f22;
-            @%p6 add.u32 %r20, %r20, 1;
-            {label}_DONE:
-            """;
-
-        RowBlock(sb, "adam8_f32", ["p", "g", "m", "v", "absmax", "map"],
-            [("f32", "lr"), ("f32", "b1"), ("f32", "b2"), ("f32", "c1"), ("f32", "c2"), ("f32", "eps"), ("u32", "count"), ("f32", "gscale"), ("f32", "decay")],
-            $"""
-            mul.wide.u32 %rd1, %tx, 4;
-            add.u64 %rd2, %b_map, %rd1;
-            ld.global.f32 %f1, [%rd2];
-            ld.global.f32 %f2, [%rd2+1024];
-            shl.b32 %r1, %tx, 2;
-            add.u32 %r1, %r1, %spart;
-            st.shared.f32 [%r1], %f1;
-            st.shared.f32 [%r1+1024], %f2;
-            bar.sync 0;
-            add.u32 %r10, %spart, 1024;
-            shl.b32 %r2, %row, 8;
-            add.u32 %r2, %r2, %tx;
-            setp.lt.u32 %p2, %r2, %s_count;
-            cvt.u64.u32 %rd3, %r2;
-            add.u64 %rd4, %b_m, %rd3;
-            add.u64 %rd5, %b_v, %rd3;
-            mul.wide.u32 %rd6, %r2, 4;
-            add.u64 %rd7, %b_p, %rd6;
-            add.u64 %rd8, %b_g, %rd6;
-            ld.global.f32 %f3, [%a_absmax];
-            mul.wide.u32 %rd9, %n, 4;
-            add.u64 %rd10, %a_absmax, %rd9;
-            ld.global.f32 %f4, [%rd10];
-            mov.u32 %r3, 0;
-            mov.u32 %r4, 0;
-            mov.f32 %f5, 0f00000000;
-            mov.f32 %f6, 0f00000000;
-            @%p2 ld.global.u8 %r3, [%rd4];
-            @%p2 ld.global.u8 %r4, [%rd5];
-            @%p2 ld.global.f32 %f5, [%rd8];
-            @%p2 ld.global.f32 %f6, [%rd7];
-            mul.f32 %f5, %f5, %s_gscale;
-            mul.f32 %f6, %f6, %s_decay;
-            shl.b32 %r5, %r3, 2;
-            add.u32 %r5, %r5, %spart;
-            ld.shared.f32 %f7, [%r5];
-            mul.f32 %f7, %f7, %f3;
-            shl.b32 %r5, %r4, 2;
-            add.u32 %r5, %r5, %r10;
-            ld.shared.f32 %f8, [%r5];
-            mul.f32 %f8, %f8, %f4;
-            mul.f32 %f9, %f5, %s_c1;
-            fma.rn.f32 %f7, %s_b1, %f7, %f9;
-            mul.f32 %f9, %f5, %f5;
-            mul.f32 %f9, %f9, %s_c2;
-            fma.rn.f32 %f8, %s_b2, %f8, %f9;
-            sqrt.rn.f32 %f10, %f8;
-            add.f32 %f10, %f10, %s_eps;
-            div.rn.f32 %f11, %f7, %f10;
-            mul.f32 %f11, %f11, %s_lr;
-            sub.f32 %f6, %f6, %f11;
-            @%p2 st.global.f32 [%rd7], %f6;
-            selp.f32 %f7, %f7, 0f00000000, %p2;
-            selp.f32 %f8, %f8, 0f00000000, %p2;
-            abs.f32 %f12, %f7;
-            {BlockReduce("RM", "%f12", "max", Zero)}
-            mov.f32 %f13, %f8;
-            {BlockReduce("RV", "%f13", "max", Zero)}
-            setp.gt.f32 %p3, %f12, 0f00000000;
-            div.rn.f32 %f14, %f7, %f12;
-            selp.f32 %f14, %f14, 0f00000000, %p3;
-            setp.gt.f32 %p4, %f13, 0f00000000;
-            div.rn.f32 %f15, %f8, %f13;
-            selp.f32 %f15, %f15, 0f00000000, %p4;
-            {Encode("EM", "%f14", "%spart")}
-            @%p2 st.global.u8 [%rd4], %r20;
-            {Encode("EV", "%f15", "%r10")}
-            @%p2 st.global.u8 [%rd5], %r20;
-            setp.eq.u32 %p7, %tx, 0;
-            @%p7 st.global.f32 [%a_absmax], %f12;
-            @%p7 st.global.f32 [%rd10], %f13;
-            """, sharedFloats: 512);
-    }
 
     // y[b][c, r] = x[b][r, c] for x [batch][rows, cols]: 32 × 32 tiles through shared memory (padded to 33, so both the
     // row-wise reads and the column-wise writes are conflict-free and coalesced). Block 32 × 8, grid (⌈cols / 32⌉,
@@ -668,59 +561,18 @@ internal static partial class PtxKernels
         MultiSumSquares(sb);
         MultiAdamW(sb);
         Transpose(sb);
-        Adam8(sb);
         GemvNN(sb);
         GemvNN(sb, multi: true);
         GemvNT(sb);
         AttentionDecode(sb);
-        AttentionDecode(sb, int8: true);
-        AttentionDecode(sb, bf16: true);
         AttentionDecode(sb, rows: true);
-        AttentionDecode(sb, bf16: true, rows: true);
         AttentionFlash(sb);
-        AttentionFlash(sb, int8: true);
-        AttentionFlash(sb, bf16: true);
-        AttentionFlash(sb, bf16: true, rows: true);
         AttentionBackward(sb);
         AttentionSpans(sb);
         AttentionSpansBackward(sb);
         Gemm(sb, "gemm128_f32", 128, 8);
         Gemm(sb, "gemm64_f32", 64, 4);
-        foreach (var (format, packed) in new[] { ("int8", 1), ("int4", 2), ("bf16", 3) })
-        {
-            Gemm(sb, $"gemm128_{format}_f32", 128, 8, packed);
-            Gemm(sb, $"gemm64_{format}_f32", 64, 4, packed);
-        }
     }
-
-    // attention_flash_rows_bf16's registers: the sequence's starts (%rds0), the heads per row and scratch.
-    private const string RowsFlashRegisters = """
-
-            .reg .b32 %rs<6>;
-            .reg .b64 %rds<2>;
-            .reg .f32 %fs<1>;
-            .reg .pred %rp<2>;
-        """;
-
-    // attention_flash_rows_bf16: the block's first tile no earlier than the least start of its rows (%r9 to %r32, the same
-    // for every thread: a few loads once per block), which no row's %lo is below.
-    private const string RowsFlashFirstTile = """
-        mov.u32 %rs3, %r9;
-        mov.u32 %rs4, 0xFFFFFFFF;
-        RS:
-        setp.gt.u32 %rp0, %rs3, %r32;
-        @%rp0 bra RS_END;
-        rem.u32 %rs5, %rs3, %r2;
-        mul.wide.u32 %rds1, %rs5, 4;
-        add.u64 %rds1, %rds1, %rds0;
-        ld.global.f32 %fs0, [%rds1];
-        cvt.rzi.u32.f32 %rs5, %fs0;
-        min.u32 %rs4, %rs4, %rs5;
-        add.u32 %rs3, %rs3, 1;
-        bra RS;
-        RS_END:
-        max.u32 %r39, %r39, %rs4;
-        """;
 
     /// <summary>Largest head size <c>attention_flash_f32</c> handles (4 dimensions per lane).</summary>
     public const int FlashMaxDim = 128;
@@ -770,22 +622,16 @@ internal static partial class PtxKernels
     // sum update per row (online softmax), and the lanes then split the head dimension to add Σ_p weight_p · v_p.
     // Every query row reads each key and value once per block instead of once per row. Optionally stores each row's
     // log-sum-exp (for a backward pass). Grid: x = ⌈rowsPerHead / 32⌉, y = heads.
-    // int8: keys and values come from an int8 cache (see AttentionDecode) with per-row scales, dequantized as the tiles
-    // are loaded into shared memory.
-    // bf16: keys and values come from a bfloat16 cache (rows of `words` words, dimension d in half d % 2 of word d / 2).
-    // rows (attention_flash_rows_bf16, with bf16): rows of different lengths (Backend.AttentionRowsBFloat16): row i of head
-    // h also starts no earlier than starts[(h / hpr) · steps + i % steps] (in its %lo); the block's tiles begin at the least
-    // start of its rows (all of one head, so of one sequence), and a row left with no position (padding) writes zeros.
-    private static void AttentionFlash(StringBuilder sb, bool int8 = false, bool bf16 = false, bool rows = false)
+    private static void AttentionFlash(StringBuilder sb)
     {
         const int T = FlashTile, D = FlashMaxDim, Rows = 8;
-        string name = int8 ? "attention_flash_int8" : bf16 && rows ? "attention_flash_rows_bf16" : bf16 ? "attention_flash_bf16" : "attention_flash_f32";
+        const string name = "attention_flash_f32";
         var s = new StringBuilder();
         s.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry {{name}}(
                 .param .u64 p_q, .param .u64 p_k, .param .u64 p_v, .param .u64 p_pos, .param .u64 p_o, .param .u64 p_lse,
-                .param .u32 p_rph, .param .u32 p_steps, .param .u32 p_cap, .param .u32 p_dim, .param .f32 p_scale{{(int8 ? ",\n    .param .u64 p_ks, .param .u64 p_vs, .param .u32 p_words" : bf16 ? ",\n    .param .u32 p_words" : "")}},
-                .param .u32 p_window, .param .f32 p_softcap{{(rows ? ",\n    .param .u64 p_starts, .param .u32 p_hpr" : "")}}
+                .param .u32 p_rph, .param .u32 p_steps, .param .u32 p_cap, .param .u32 p_dim, .param .f32 p_scale,
+                .param .u32 p_window, .param .f32 p_softcap
             )
             {
                 .reg .pred %p<16>;
@@ -804,7 +650,7 @@ internal static partial class PtxKernels
                 .reg .pred %dv<4>;
                 .shared .align 16 .f32 fa_q[{{T * D}}];
                 .shared .align 16 .f32 fa_k[{{T * D}}];
-                .shared .align 16 .f32 fa_v[{{T * D}}];{{(rows ? RowsFlashRegisters : "")}}
+                .shared .align 16 .f32 fa_v[{{T * D}}];
                 ld.param.u64 %rd1, [p_q];
                 ld.param.u64 %rd2, [p_k];
                 ld.param.u64 %rd3, [p_v];
@@ -843,25 +689,12 @@ internal static partial class PtxKernels
                 add.u64 %rd10, %rd1, %rd9;
                 add.u64 %rd11, %rd5, %rd9;
                 cvt.u64.u32 %rd7, %r12;
-                {{(int8 || bf16 ? "ld.param.u32 %r23, [p_words];\n    cvt.u64.u32 %rd20, %r23;\n    mul.lo.u64 %rd12, %rd7, %rd20;" : "mul.lo.u64 %rd12, %rd7, %rd8;")}}
+                mul.lo.u64 %rd12, %rd7, %rd8;
                 shl.b64 %rd12, %rd12, 2;
                 add.u64 %rd13, %rd2, %rd12;
                 add.u64 %rd14, %rd3, %rd12;
                 mul.lo.u32 %r13, %r4, {{T}};
             """);
-        if (int8)
-        {
-            // Scale rows of this head: ks/vs + head · capacity.
-            s.AppendLine("""
-                    ld.param.u64 %rd21, [p_ks];
-                    ld.param.u64 %rd22, [p_vs];
-                    cvta.to.global.u64 %rd21, %rd21;
-                    cvta.to.global.u64 %rd22, %rd22;
-                    mul.wide.u32 %rd23, %r12, 4;
-                    add.u64 %rd21, %rd21, %rd23;
-                    add.u64 %rd22, %rd22, %rd23;
-                """);
-        }
         // Query tile: fa_q[r, d] for rows row0 + r (zeros past the head's rows).
         s.AppendLine(CultureInfo.InvariantCulture, $$"""
                 mov.u32 %r14, %r6;
@@ -886,32 +719,9 @@ internal static partial class PtxKernels
                 bra QL;
             QL_END:
             """);
-        // Per-row limits (last position each row may see) and the block's last position. Rows: the starts of this head's
-        // sequence (starts + 4 · (head / hpr) · steps, %rds0) once; each row's start, from its step (%r22), raises its %lo.
-        if (rows)
-        {
-            s.AppendLine("""
-                    ld.param.u64 %rds0, [p_starts];
-                    cvta.to.global.u64 %rds0, %rds0;
-                    ld.param.u32 %rs0, [p_hpr];
-                    div.u32 %rs1, %r10, %rs0;
-                    mul.lo.u32 %rs1, %rs1, %r2;
-                    mul.wide.u32 %rds1, %rs1, 4;
-                    add.u64 %rds0, %rds0, %rds1;
-                """);
-        }
-
+        // Per-row limits (last position each row may see) and the block's last position.
         for (int i = 0; i < Rows; i++)
         {
-            string rowStart = rows
-                ? string.Create(CultureInfo.InvariantCulture, $"""
-                  mul.wide.u32 %rds1, %r22, 4;
-                  add.u64 %rds1, %rds1, %rds0;
-                  ld.global.f32 %fs0, [%rds1];
-                  cvt.rzi.u32.f32 %rs2, %fs0;
-                  max.u32 %lo{i}, %lo{i}, %rs2;
-                  """)
-                : "";
             s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     mad.lo.u32 %r21, %r8, {{Rows}}, {{i}};
                     add.u32 %r21, %r21, %r9;
@@ -921,7 +731,6 @@ internal static partial class PtxKernels
                     min.u32 %r21, %r21, %r{{24 + i}};
                     add.u32 %r21, %r21, 1;
                     {{WindowStartPtx(string.Create(CultureInfo.InvariantCulture, $"%lo{i}"), "%r21", "%window", "%windowed")}}
-                    {{rowStart}}
                     mov.f32 %m{{i}}, 0fFF800000;
                     mov.f32 %l{{i}}, 0f00000000;
                 """);
@@ -960,7 +769,6 @@ internal static partial class PtxKernels
                 min.u32 %r37, %r37, %r38;
                 add.u32 %r37, %r37, 1;
                 {{WindowStartPtx("%r39", "%r37", "%window", "%windowed")}}
-                {{(rows ? RowsFlashFirstTile : "")}}
             TILE:
                 setp.gt.u32 %p4, %r39, %r36;
                 @%p4 bra TILE_END;
@@ -976,65 +784,14 @@ internal static partial class PtxKernels
                 mov.f32 %f2, 0f00000000;
                 mov.f32 %f3, 0f00000000;
             """);
-        if (bf16)
-        {
-            // Word dim / 2 of the cached row, its half dim % 2 shifted to the top of a float.
-            s.AppendLine("""
-                    shr.u32 %r18, %r16, 1;
-                    mad.lo.u32 %r18, %r17, %r23, %r18;
-                    mul.wide.u32 %rd15, %r18, 4;
-                    add.u64 %rd16, %rd15, %rd13;
-                    add.u64 %rd17, %rd15, %rd14;
-                    and.b32 %r22, %r16, 1;
-                    xor.b32 %r22, %r22, 1;
-                    shl.b32 %r22, %r22, 4;
-                    @%p2 ld.global.u32 %r20, [%rd16];
-                    @%p2 shl.b32 %r20, %r20, %r22;
-                    @%p2 and.b32 %r20, %r20, 0xFFFF0000;
-                    @%p2 mov.b32 %f2, %r20;
-                    @%p2 ld.global.u32 %r20, [%rd17];
-                    @%p2 shl.b32 %r20, %r20, %r22;
-                    @%p2 and.b32 %r20, %r20, 0xFFFF0000;
-                    @%p2 mov.b32 %f3, %r20;
-                """);
-        }
-        else if (int8)
-        {
-            // Word dim / 4 of the cached row, byte dim % 4, times the row's scale.
-            s.AppendLine("""
-                    shr.u32 %r18, %r16, 2;
-                    mad.lo.u32 %r18, %r17, %r23, %r18;
-                    mul.wide.u32 %rd15, %r18, 4;
-                    add.u64 %rd16, %rd15, %rd13;
-                    add.u64 %rd17, %rd15, %rd14;
-                    and.b32 %r22, %r16, 3;
-                    shl.b32 %r22, %r22, 3;
-                    @%p2 ld.global.u32 %r20, [%rd16];
-                    @%p2 bfe.s32 %r20, %r20, %r22, 8;
-                    @%p2 cvt.rn.f32.s32 %f2, %r20;
-                    @%p2 ld.global.u32 %r20, [%rd17];
-                    @%p2 bfe.s32 %r20, %r20, %r22, 8;
-                    @%p2 cvt.rn.f32.s32 %f3, %r20;
-                    mul.wide.u32 %rd15, %r17, 4;
-                    add.u64 %rd16, %rd15, %rd21;
-                    add.u64 %rd17, %rd15, %rd22;
-                    @%p2 ld.global.f32 %f4, [%rd16];
-                    @%p2 ld.global.f32 %f5, [%rd17];
-                    @%p2 mul.f32 %f2, %f2, %f4;
-                    @%p2 mul.f32 %f3, %f3, %f5;
-                """);
-        }
-        else
-        {
-            s.AppendLine("""
-                    mad.lo.u32 %r18, %r17, %r4, %r16;
-                    mul.wide.u32 %rd15, %r18, 4;
-                    add.u64 %rd16, %rd15, %rd13;
-                    add.u64 %rd17, %rd15, %rd14;
-                    @%p2 ld.global.f32 %f2, [%rd16];
-                    @%p2 ld.global.f32 %f3, [%rd17];
-                """);
-        }
+        s.AppendLine("""
+                mad.lo.u32 %r18, %r17, %r4, %r16;
+                mul.wide.u32 %rd15, %r18, 4;
+                add.u64 %rd16, %rd15, %rd13;
+                add.u64 %rd17, %rd15, %rd14;
+                @%p2 ld.global.f32 %f2, [%rd16];
+                @%p2 ld.global.f32 %f3, [%rd17];
+            """);
         s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     mad.lo.u32 %r19, %r16, {{T}}, %r15;
                     shl.b32 %r19, %r19, 2;
@@ -1173,19 +930,9 @@ internal static partial class PtxKernels
                     mul.wide.u32 %rd18, %r22, 4;
                     add.u64 %rd18, %rd18, %rd11;
                 """);
-            if (rows)
-            {
-                s.AppendLine(CultureInfo.InvariantCulture, $"    setp.eq.f32 %rp1, %l{i}, 0f00000000;");     // saw no position: zeros
-            }
-
             for (int j = 0; j < 4; j++)
             {
                 s.AppendLine(CultureInfo.InvariantCulture, $"    mul.f32 %f14, %o{i * 4 + j}, %f13;");
-                if (rows)
-                {
-                    s.AppendLine("    @%rp1 mov.f32 %f14, 0f00000000;");
-                }
-
                 s.AppendLine(CultureInfo.InvariantCulture, $"    @%dv{j} st.global.f32 [%rd18+{128 * j}], %f14;");
             }
 
@@ -1743,11 +1490,7 @@ internal static partial class PtxKernels
     // fused multiply-adds, as the 16 × 16 kernel does, so results do not depend on which kernel ran.
     // Parameters as matmul_f32: a, b, c, m, n, k, transA, transB, beta, batch strides. Grid: x = ⌈n / tile⌉,
     // y = ⌈m / tile⌉, z = batch.
-    //
-    // packed 1 / 2 / 3: B is int8 (per-column scales), 4-bit (a scale per 32 rows and column) or bfloat16 weights [k, n]
-    // packed as for Int8MatMul / Int4MatMul / BFloat16MatMul, expanded as the tile is loaded (prompts through quantized
-    // layers without a float copy of the weights); not transposed. p_scales follows p_sc.
-    private static void Gemm(StringBuilder sb, string name, int tile, int per, int packed = 0)
+    private static void Gemm(StringBuilder sb, string name, int tile, int per)
     {
         const int K = 8;
         int log = (int)Math.Log2(tile), loads = tile * K / GemmThreads, threadsPerRow = tile / per;
@@ -1756,7 +1499,7 @@ internal static partial class PtxKernels
             .visible .entry {{name}}(
                 .param .u64 p_a, .param .u64 p_b, .param .u64 p_c,
                 .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_ta, .param .u32 p_tb, .param .f32 p_beta,
-                .param .u64 p_sa, .param .u64 p_sb, .param .u64 p_sc{{(packed > 0 ? ", .param .u64 p_scales" : "")}}
+                .param .u64 p_sa, .param .u64 p_sb, .param .u64 p_sc
             )
             {
                 .reg .pred %p<16>;
@@ -1784,8 +1527,6 @@ internal static partial class PtxKernels
                 ld.param.u64 %rd4, [p_sa];
                 ld.param.u64 %rd5, [p_sb];
                 ld.param.u64 %rd6, [p_sc];
-                {{(packed > 0 ? "ld.param.u64 %rd29, [p_scales];\n    cvta.to.global.u64 %rd29, %rd29;" : "")}}
-                {{(packed switch { 1 => "add.u32 %r41, %r2, 3;\n    shr.u32 %r41, %r41, 2;", 2 => "add.u32 %r41, %r2, 7;\n    shr.u32 %r41, %r41, 3;", 3 => "add.u32 %r41, %r2, 1;\n    shr.u32 %r41, %r41, 1;", _ => "" })}}
                 mov.u32 %r40, %ctaid.z;
                 cvt.u64.u32 %rd7, %r40;
                 mul.lo.u64 %rd8, %rd7, %rd4;
@@ -1861,74 +1602,7 @@ internal static partial class PtxKernels
                 """);
         }
 
-        for (int r = 0; r < loads && packed > 0; r++)
-        {
-            // Packed B (kk = e / tile, j = e % tile): the word holding b[k, j], its byte / nibble / half, times the scale.
-            int shift = packed switch { 1 => 2, 2 => 3, _ => 1 };
-            string expand = packed switch
-            {
-                1 => """
-                    and.b32 %r43, %r27, 3;
-                    shl.b32 %r43, %r43, 3;
-                    bfe.s32 %r42, %r42, %r43, 8;
-                    cvt.rn.f32.s32 %f2, %r42;
-                    mul.wide.u32 %rd30, %r27, 4;
-                    add.u64 %rd30, %rd30, %rd29;
-                    @%p3 ld.global.f32 %f3, [%rd30];
-                    mul.f32 %f2, %f2, %f3;
-                    """,
-                2 => """
-                    and.b32 %r43, %r27, 7;
-                    shl.b32 %r43, %r43, 2;
-                    bfe.s32 %r42, %r42, %r43, 4;
-                    cvt.rn.f32.s32 %f2, %r42;
-                    shr.u32 %r44, %r28, 5;
-                    shl.b32 %r45, %r41, 3;
-                    mad.lo.u32 %r44, %r44, %r45, %r27;
-                    mul.wide.u32 %rd30, %r44, 4;
-                    add.u64 %rd30, %rd30, %rd29;
-                    @%p3 ld.global.f32 %f3, [%rd30];
-                    mul.f32 %f2, %f2, %f3;
-                    """,
-                _ => """
-                    and.b32 %r43, %r27, 1;
-                    setp.eq.u32 %p12, %r43, 0;
-                    shl.b32 %r44, %r42, 16;
-                    and.b32 %r45, %r42, 0xFFFF0000;
-                    selp.b32 %r42, %r44, %r45, %p12;
-                    mov.b32 %f2, %r42;
-                    """,
-            };
-            s.AppendLine(CultureInfo.InvariantCulture, $$"""
-                    add.u32 %r20, %r6, {{GemmThreads * r}};
-                    shr.u32 %r21, %r20, {{log}};
-                    and.b32 %r22, %r20, {{tile - 1}};
-                    add.u32 %r27, %r10, %r22;
-                    add.u32 %r28, %r11, %r21;
-                    setp.lt.u32 %p3, %r27, %r2;
-                    setp.lt.u32 %p4, %r28, %r3;
-                    and.pred %p3, %p3, %p4;
-                    mul.wide.u32 %rd10, %r28, %r41;
-                    shr.u32 %r46, %r27, {{shift}};
-                    cvt.u64.u32 %rd11, %r46;
-                    add.u64 %rd10, %rd10, %rd11;
-                    shl.b64 %rd10, %rd10, 2;
-                    add.u64 %rd14, %rd10, %rd2;
-                    mov.u32 %r42, 0;
-                    mov.f32 %f3, 0f3F800000;
-                    @%p3 ld.global.u32 %r42, [%rd14];
-                    {{expand}}
-                    mov.f32 %f1, 0f00000000;
-                    @%p3 mov.f32 %f1, %f2;
-                    shl.b32 %r29, %r21, {{log}};
-                    add.u32 %r29, %r29, %r22;
-                    shl.b32 %r29, %r29, 2;
-                    add.u32 %r29, %r29, %r13;
-                    st.shared.f32 [%r29], %f1;
-                """);
-        }
-
-        for (int r = 0; r < loads && packed == 0; r++)
+        for (int r = 0; r < loads; r++)
         {
             // B: not transposed: (kk = e / tile, j = e % tile) with b[k, j] at k·n + j; transposed: (j = e / 8, kk = e % 8)
             // with b stored [n, K]. Stored as bs[kk, j].
@@ -2036,61 +1710,22 @@ internal static partial class PtxKernels
     // Block y of n takes ⌈length / n⌉ positions, at least `minchunk` (measured per shape: with a short filled length the
     // blocks beyond it find nothing to read and only add an empty part, so a short cache runs on fewer blocks than the
     // split count recorded for a full one).
-    // int8: keys and values are an int8 cache (rows of `words` packed words, 4 bytes each, byte d % 4 of word d / 4 for
-    // dimension d) with one scale per cached row in kscales/vscales; a lane reads its dimension's byte and scales it.
-    // bf16: keys and values are bfloat16 pairs (dimension d is half d % 2 of word d / 2, rows of `words` words); a lane
-    // shifts its half into the top of a float.
     // rows (attention_rows_f32, a float32 cache): rows of different lengths decoded together (Backend.AttentionRows): row i
     // of head h also starts no earlier than starts[(h / hpr) · steps + i % steps], the start of its sequence; a row left
     // with no position (padding) writes zeros from its first block and returns before any barrier (the whole block alike).
-    // bf16 and rows (attention_rows_bf16): the same rows over a bfloat16 cache (Backend.AttentionRowsBFloat16).
-    private static void AttentionDecode(StringBuilder sb, bool int8 = false, bool bf16 = false, bool rows = false)
+    private static void AttentionDecode(StringBuilder sb, bool rows = false)
     {
         const int Stride = (2 + DecodeMaxDim) * 4;
-        string stride = int8 || bf16 ? "%s_words" : "%s_dim";
-        string laneOffset = bf16
-            ? """
-              shr.u32 %r17, %lane, 1;
-              mul.wide.u32 %rd7, %r17, 4;
-              and.b32 %r17, %lane, 1;
-              xor.b32 %r17, %r17, 1;
-              shl.b32 %r17, %r17, 4;
-              """
-            : int8
-            ? """
-              shr.u32 %r17, %lane, 2;
-              mul.wide.u32 %rd7, %r17, 4;
-              and.b32 %r17, %lane, 3;
-              shl.b32 %r17, %r17, 3;
-              mul.wide.u32 %rd13, %r13, 4;
-              add.u64 %rd14, %b_kscales, %rd13;
-              add.u64 %rd15, %b_vscales, %rd13;
-              """
-            : "mov.u64 %rd7, %rd8;";
-        int step = int8 ? 32 : bf16 ? 64 : 128;
+        const string stride = "%s_dim";
+        const string laneOffset = "mov.u64 %rd7, %rd8;";
+        const int step = 128;
 
-        // Element i of this lane (dimension lane + 32·i) of the cached row at %rd{base}, as a float in %{kind}f{i} (the
-        // packed word in %{kind}w{i}): a register per element and per row kind (k keys, v values), so the 8 loads of a
+        // Element i of this lane (dimension lane + 32·i) of the cached row at %rd{base}, as a float in %{kind}f{i}: a
+        // register per element and per row kind (k keys, v values), so the 8 loads of a
         // position are in flight together (one register written under each element's predicate made every load wait
         // for the previous element's fma).
-        string Load(int i, string baseRegister, string scaleRegister, char kind) => bf16
-            ? string.Create(CultureInfo.InvariantCulture, $"""
-              @%p{1 + i} ld.global.u32 %{kind}w{i}, [{baseRegister}+{step * i}];
-              @%p{1 + i} shl.b32 %{kind}w{i}, %{kind}w{i}, %r17;
-              @%p{1 + i} and.b32 %{kind}w{i}, %{kind}w{i}, 0xFFFF0000;
-              @%p{1 + i} mov.b32 %{kind}f{i}, %{kind}w{i};
-              """)
-            : int8
-            ? string.Create(CultureInfo.InvariantCulture, $"""
-              @%p{1 + i} ld.global.u32 %{kind}w{i}, [{baseRegister}+{step * i}];
-              @%p{1 + i} bfe.s32 %{kind}w{i}, %{kind}w{i}, %r17, 8;
-              @%p{1 + i} cvt.rn.f32.s32 %{kind}f{i}, %{kind}w{i};
-              @%p{1 + i} mul.f32 %{kind}f{i}, %{kind}f{i}, {scaleRegister};
-              """)
-            : string.Create(CultureInfo.InvariantCulture, $"@%p{1 + i} ld.global.f32 %{kind}f{i}, [{baseRegister}+{step * i}];");
-        string registers = int8 || bf16
-            ? "    .reg .f32 %kf<8>;\n    .reg .f32 %vf<8>;\n    .reg .b32 %kw<8>;\n    .reg .b32 %vw<8>;"
-            : "    .reg .f32 %kf<8>;\n    .reg .f32 %vf<8>;";
+        string Load(int i, string baseRegister, char kind) => string.Create(CultureInfo.InvariantCulture, $"@%p{1 + i} ld.global.f32 %{kind}f{i}, [{baseRegister}+{step * i}];");
+        const string registers = "    .reg .f32 %kf<8>;\n    .reg .f32 %vf<8>;";
         var b = new StringBuilder();
         b.AppendLine($$"""
             div.u32 %r7, %row, %s_rph;
@@ -2153,20 +1788,9 @@ internal static partial class PtxKernels
             add.u64 %rd12, %rd6, %rd10;
             mov.f32 %f2, {Zero};
             """);
-        if (int8)
-        {
-            b.AppendLine("""
-                mul.wide.u32 %rd13, %r15, 4;
-                add.u64 %rd13, %rd13, %rd14;
-                ld.global.f32 %f7, [%rd13];
-                mul.wide.u32 %rd13, %r15, 4;
-                add.u64 %rd13, %rd13, %rd15;
-                ld.global.f32 %f8, [%rd13];
-                """);
-        }
         for (int i = 0; i < 8; i++)
         {
-            b.AppendLine(Load(i, "%rd11", "%f7", 'k'));
+            b.AppendLine(Load(i, "%rd11", 'k'));
         }
 
         for (int i = 0; i < 8; i++)
@@ -2194,7 +1818,7 @@ internal static partial class PtxKernels
             """);
         for (int i = 0; i < 8; i++)
         {
-            b.AppendLine(Load(i, "%rd12", "%f8", 'v'));
+            b.AppendLine(Load(i, "%rd12", 'v'));
         }
 
         for (int i = 0; i < 8; i++)
@@ -2388,26 +2012,7 @@ internal static partial class PtxKernels
             bra FD;
             FD_END:
             """);
-        if (bf16 && rows)
-        {
-            RowBlock(sb, "attention_rows_bf16", ["q", "keys", "values", "pos", "y", "part", "counters", "starts"],
-                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk"), ("u32", "window"),
-                    ("f32", "softcap"), ("u32", "hpr")],
-                b.ToString(), sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim), registers: registers);
-        }
-        else if (bf16)
-        {
-            RowBlock(sb, "attention_decode_bf16", ["q", "keys", "values", "pos", "y", "part", "counters"],
-                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk"), ("u32", "window"), ("f32", "softcap")],
-                b.ToString(), sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim), registers: registers);
-        }
-        else if (int8)
-        {
-            RowBlock(sb, "attention_decode_int8", ["q", "keys", "values", "kscales", "vscales", "pos", "y", "part", "counters"],
-                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk"), ("u32", "window"), ("f32", "softcap")],
-                b.ToString(), sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim), registers: registers);
-        }
-        else if (rows)
+        if (rows)
         {
             RowBlock(sb, "attention_rows_f32", ["q", "keys", "values", "pos", "y", "part", "counters", "starts"],
                 [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "minchunk"), ("u32", "window"), ("f32", "softcap"),
@@ -2423,7 +2028,7 @@ internal static partial class PtxKernels
         }
     }
 
-    // attention_rows_f32 and attention_rows_bf16: the row's own start (%r22 from starts[(head / hpr) · steps + step])
+    // attention_rows_f32: the row's own start (%r22 from starts[(head / hpr) · steps + step])
     // raises its first position (%r28); with none left, block 0 of the row writes its zeros and every block returns.
     private const string RowStartPtx = """
         div.u32 %r22, %r7, %s_hpr;

@@ -5,7 +5,7 @@ namespace Idrak.Abstraction.Devices;
 
 // The optional capabilities of a device (plan 33), each an interface a backend implements or not. Backend reads which
 // of them a device implements once, when it starts (rule 75): its operations then reach the device's kernels through
-// that interface, and the questions callers ask (Backend.SupportsGraphs, Backend.FusedKernels, Backend.MatrixUnits)
+// that interface, and the questions callers ask (Backend.SupportsGraphs, Backend.FusedKernels)
 // follow from it, so no flag has to agree with members that throw or return false by default.
 
 /// <summary>
@@ -56,7 +56,7 @@ public interface IRowAttentionBackend
 {
     /// <summary>
     /// Whether <see cref="AttentionRows"/> runs on this device for head size <paramref name="dim"/> and
-    /// <paramref name="variant"/> (with the current <c>MixedPrecision</c>), so callers batch such rows instead of running
+    /// <paramref name="variant"/>, so callers batch such rows instead of running
     /// them apart.
     /// </summary>
     bool SupportsRows(int dim, AttentionVariant variant);
@@ -74,7 +74,7 @@ public interface ISegmentedAttentionBackend
 {
     /// <summary>
     /// Whether <see cref="AttentionSegmented"/> and its gradient run on this device for head size <paramref name="dim"/>
-    /// and <paramref name="variant"/> (with the current <c>MixedPrecision</c>).
+    /// and <paramref name="variant"/>.
     /// </summary>
     bool SupportsSegmented(int dim, AttentionVariant variant);
 
@@ -85,36 +85,6 @@ public interface ISegmentedAttentionBackend
     /// <inheritdoc cref="Backend.AttentionSegmentedBackwardKernel"/>
     bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys,
         Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant);
-}
-
-/// <summary>
-/// Matrix units (tensor cores) the <c>MixedPrecision</c> modes run on (<see cref="Backend.MatrixUnits"/>): the fused
-/// training products, the LoRA products and the strided attention for training.
-/// Whether this device's units are usable now is read from the device (<see cref="TensorCoresUnavailable"/>).
-/// </summary>
-public interface IMatrixUnitBackend
-{
-    /// <summary>Null when this device runs bfloat16 products on its matrix units; otherwise why not (as the device reports it).</summary>
-    string? TensorCoresUnavailable();
-
-    /// <summary>Whether head size <paramref name="dim"/> has matrix-unit flash attention for training.</summary>
-    bool AttentionHeadDim(int dim);
-
-    /// <inheritdoc cref="Backend.MatMulLowRankKernel"/>
-    bool MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank);
-
-    /// <inheritdoc cref="Backend.GemmStridedKernel"/>
-    bool GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m,
-        int n, int k, float beta, Storage? bias, GemmEpilogue epilogue, Storage? aux, long auxOffset);
-
-    /// <inheritdoc cref="Backend.AttentionStridedKernel"/>
-    bool AttentionStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp,
-        int batch, int kvHeads, int group, int steps, int dim, float scale);
-
-    /// <inheritdoc cref="Backend.AttentionStridedBackwardKernel"/>
-    bool AttentionStridedBackward(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y,
-        Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads,
-        int group, int steps, int dim, float scale);
 }
 
 /// <summary>

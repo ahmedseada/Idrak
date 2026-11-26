@@ -6,9 +6,8 @@ namespace Idrak.Abstraction.Devices;
 /// <summary>
 /// What a device's kernels can do, read by layers and tensors to choose a path instead of checking which device they run
 /// on or reading one backend's kernel constants. Each backend fills it in once; a new backend (AMD, Intel, Apple) states
-/// its own limits here and the layers follow without changes. What a device has beyond its limits (matrix units, kernel
-/// timing) is a capability interface it implements (<see cref="IMatrixUnitBackend"/>, <see cref="IKernelProfiler"/>),
-/// read through <see cref="Backend.MatrixUnits"/> and the interface itself.
+/// its own limits here and the layers follow without changes. What a device has beyond its limits (kernel timing) is a
+/// capability interface it implements (<see cref="IKernelProfiler"/>), read through the interface itself.
 /// </summary>
 public sealed record BackendCapabilities
 {

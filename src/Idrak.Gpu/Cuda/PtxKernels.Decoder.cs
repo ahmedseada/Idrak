@@ -11,7 +11,7 @@ internal static partial class PtxKernels
     /// <summary>Threads of a <c>softmax_ce_rows_f32</c> block (a vocabulary-wide row: more loads in flight than <see cref="RowThreads"/>).</summary>
     public const int SoftmaxCrossEntropyThreads = RowThreads * 4;
 
-    public static readonly string[] DecoderNames =["rms_norm_f32", "rms_norm_backward_f32", "rope_f32", "rms_norm_affine_f32", "gated_act_f32", "gated_act_bwd_f32", "gated_act_bf16_f32", "gated_act_bwd_bf16_f32", "add_rms_norm_affine_f32", "rms_norm_rope_f32", "rms_norm_rope2_f32", "softmax_ce_rows_f32", "norm_rope_heads_f32"];
+    public static readonly string[] DecoderNames =["rms_norm_f32", "rms_norm_backward_f32", "rope_f32", "rms_norm_affine_f32", "gated_act_f32", "gated_act_bwd_f32", "add_rms_norm_affine_f32", "rms_norm_rope_f32", "rms_norm_rope2_f32", "softmax_ce_rows_f32", "norm_rope_heads_f32"];
 
     private static void BuildDecoder(StringBuilder sb)
     {
@@ -356,35 +356,12 @@ internal static partial class PtxKernels
         // launch: rows1 query rows, then rows2 key rows, then rows2 value rows (row = (b·steps + s)·heads + h). Query and
         // key heads are RMS-normalized with their gain when flags & 1, and rotated (half pairs, as rope_f32; half 0: no
         // rotation); values are copied. Queries go to y [batch, heads, steps, cols]; keys and values to y2 / y3
-        // [batch, heads2, cap, stride] at row offset + s, offset = pos[0] when flags & 4 (a cache) else 0, as floats or,
-        // when flags & 2, as bfloat16 (rounded to nearest even, as kv_write_bf16).
+        // [batch, heads2, cap, stride] at row offset + s, offset = pos[0] when flags & 4 (a cache) else 0.
         const string Store = """
             add.u32 %r27, %r21, {1};
-            @%p12 bra {2}_H;
             mul.wide.u32 %rd11, %r27, 4;
             add.u64 %rd11, %rd11, %rd10;
             st.global.f32 [%rd11], {0};
-            bra {2}_D;
-            {2}_H:
-            mul.wide.u32 %rd11, %r27, 2;
-            add.u64 %rd11, %rd11, %rd10;
-            mov.b32 %r28, {0};
-            {{
-            .reg .b32 %bt<3>;
-            .reg .pred %bnan;
-            shr.u32 %bt0, %r28, 16;
-            and.b32 %bt0, %bt0, 1;
-            add.u32 %bt0, %bt0, 0x7FFF;
-            add.u32 %bt1, %r28, %bt0;
-            shr.u32 %bt1, %bt1, 16;
-            and.b32 %bt2, %r28, 0x7FFFFFFF;
-            setp.gt.u32 %bnan, %bt2, 0x7F800000;
-            shr.u32 %bt2, %r28, 16;
-            or.b32 %bt2, %bt2, 0x40;
-            selp.b32 %r28, %bt2, %bt1, %bnan;
-            }}
-            st.global.u16 [%rd11], %r28;
-            {2}_D:
             """;
         RowBlock(sb, "norm_rope_heads_f32", ["x", "gain", "x2", "gain2", "x3", "cos", "sin", "positions", "pos", "y", "y2", "y3"],
             [("u32", "cols"), ("f32", "eps"), ("f32", "offset"), ("u32", "heads"), ("f32", "eps2"), ("f32", "offset2"), ("u32", "heads2"),
@@ -416,8 +393,6 @@ internal static partial class PtxKernels
             setp.ne.and.u32 %p13, %r16, 0, %p15;
             @%p13 ld.global.f32 %f14, [%b_pos];
             @%p13 cvt.rzi.u32.f32 %r25, %f14;
-            and.b32 %r16, %s_flags, 2;
-            setp.ne.and.u32 %p12, %r16, 0, %p15;
             and.b32 %r16, %s_flags, 1;
             setp.ne.u32 %p11, %r16, 0;
             setp.lt.and.u32 %p11, %r20, 2, %p11;
@@ -555,138 +530,6 @@ internal static partial class PtxKernels
             fma.rn.f32 %f16, %f13, %f18, %f16;
             st.global.f32 [%a_dup], %f16;
             NO_DUP:
-            """);
-
-        // bfloat16 variants, one thread per word (elements 2i and 2i + 1, low half first, as bf16_pack_f32 writes them).
-        // Round {f} to bfloat16 bits in the low half of {r} (to nearest, ties to even, in integer arithmetic; a NaN 0x7FC0,
-        // as the CPU's PackBFloat16 packs these words).
-        static string Round(string f, string r) => $"""
-            mov.b32 {r}, {f};
-            {BFloat16Round(r, r, packNaN: true)}
-            """;
-
-        // Element e (%r11) of the pair: its index %r18, its float offset %rd1; past count: done.
-        const string PairElement = """
-            add.u32 %r18, %r10, %r11;
-            setp.ge.u32 %p10, %r18, %s_count;
-            @%p10 bra {0}_END;
-            mul.wide.u32 %rd1, %r18, 4;
-            shl.b32 %r19, %r11, 4;
-            """;
-
-        // gate, up (%f1, %f2) of element e from the packed words %r16, %r17.
-        const string Unpack = """
-            shr.u32 %r21, %r16, %r19;
-            shl.b32 %r21, %r21, 16;
-            mov.b32 %f1, %r21;
-            shr.u32 %r21, %r17, %r19;
-            shl.b32 %r21, %r21, 16;
-            mov.b32 %f2, %r21;
-            """;
-
-        // y = act(gate) · up with gate and up read as floats or as packed bfloat16 (flags & 1: pg, pu), writing any of y
-        // (flags & 4), gate and up packed (flags & 2) and y packed (flags & 8): the feed-forward activation that also
-        // keeps its inputs and output as bfloat16 for the backward pass, or recomputes its output from them.
-        Elementwise(sb, "gated_act_bf16_f32", ["gate", "up", "pg", "pu", "y", "py"], [("u32", "kind"), ("u32", "flags"), ("u32", "count")],
-            """
-            shl.b32 %r10, %i, 1;
-            mov.u32 %r11, 0;
-            mov.u32 %r12, 0;
-            mov.u32 %r13, 0;
-            mov.u32 %r14, 0;
-            and.b32 %r15, %s_flags, 1;
-            setp.ne.u32 %p9, %r15, 0;
-            @%p9 ld.global.b32 %r16, [%a_pg];
-            @%p9 ld.global.b32 %r17, [%a_pu];
-            GA_LOOP:
-            """ + "\n" + string.Format(PairElement, "GA") + "\n" + """
-            @%p9 bra GA_PACKED;
-            add.u64 %rd2, %b_gate, %rd1;
-            ld.global.f32 %f1, [%rd2];
-            add.u64 %rd2, %b_up, %rd1;
-            ld.global.f32 %f2, [%rd2];
-            bra GA_LOADED;
-            GA_PACKED:
-            """ + "\n" + Unpack + "\n" + """
-            GA_LOADED:
-            """ + "\n" + activation + "\n" + """
-            mul.f32 %f5, %f5, %f19;
-            and.b32 %r15, %s_flags, 4;
-            setp.eq.u32 %p11, %r15, 0;
-            @%p11 bra GA_NO_Y;
-            add.u64 %rd2, %b_y, %rd1;
-            st.global.f32 [%rd2], %f5;
-            GA_NO_Y:
-            and.b32 %r15, %s_flags, 2;
-            setp.eq.u32 %p11, %r15, 0;
-            @%p11 bra GA_NO_PACK_IN;
-            """ + "\n" + Round("%f1", "%r22") + "\n" + """
-            shl.b32 %r22, %r22, %r19;
-            or.b32 %r12, %r12, %r22;
-            """ + "\n" + Round("%f2", "%r22") + "\n" + """
-            shl.b32 %r22, %r22, %r19;
-            or.b32 %r13, %r13, %r22;
-            GA_NO_PACK_IN:
-            and.b32 %r15, %s_flags, 8;
-            setp.eq.u32 %p11, %r15, 0;
-            @%p11 bra GA_NO_PACK_Y;
-            """ + "\n" + Round("%f5", "%r22") + "\n" + """
-            shl.b32 %r22, %r22, %r19;
-            or.b32 %r14, %r14, %r22;
-            GA_NO_PACK_Y:
-            add.u32 %r11, %r11, 1;
-            setp.lt.u32 %p12, %r11, 2;
-            @%p12 bra GA_LOOP;
-            GA_END:
-            and.b32 %r15, %s_flags, 2;
-            setp.ne.u32 %p11, %r15, 0;
-            @%p11 st.global.b32 [%a_pg], %r12;
-            @%p11 st.global.b32 [%a_pu], %r13;
-            and.b32 %r15, %s_flags, 8;
-            setp.ne.u32 %p11, %r15, 0;
-            @%p11 st.global.b32 [%a_py], %r14;
-            """);
-
-        // gated_act_bwd_f32 with gate and up read as packed bfloat16 words (pg, pu): no unpacked copy of either.
-        Elementwise(sb, "gated_act_bwd_bf16_f32", ["pg", "pu", "dy", "dgate", "dup"], [("u32", "kind"), ("u32", "flags"), ("u32", "count")],
-            """
-            shl.b32 %r10, %i, 1;
-            mov.u32 %r11, 0;
-            ld.global.b32 %r16, [%a_pg];
-            ld.global.b32 %r17, [%a_pu];
-            GB_LOOP:
-            """ + "\n" + string.Format(PairElement, "GB") + "\n" + Unpack + "\n" + """
-            add.u64 %rd2, %b_dy, %rd1;
-            ld.global.f32 %f13, [%rd2];
-            """ + "\n" + activation + "\n" + """
-            and.b32 %r15, %s_flags, 1;
-            setp.eq.u32 %p11, %r15, 0;
-            @%p11 bra GB_NO_DGATE;
-            mul.f32 %f14, %f13, %f19;
-            add.u64 %rd2, %b_dgate, %rd1;
-            mov.f32 %f15, 0f00000000;
-            and.b32 %r15, %s_flags, 4;
-            setp.eq.u32 %p13, %r15, 0;
-            @%p13 ld.global.f32 %f15, [%rd2];
-            fma.rn.f32 %f15, %f14, %f6, %f15;
-            st.global.f32 [%rd2], %f15;
-            GB_NO_DGATE:
-            and.b32 %r15, %s_flags, 2;
-            setp.eq.u32 %p11, %r15, 0;
-            @%p11 bra GB_NO_DUP;
-            add.u64 %rd2, %b_dup, %rd1;
-            mov.f32 %f16, 0f00000000;
-            and.b32 %r15, %s_flags, 8;
-            setp.eq.u32 %p13, %r15, 0;
-            @%p13 ld.global.f32 %f16, [%rd2];
-            mul.f32 %f18, %f5, %f17;
-            fma.rn.f32 %f16, %f13, %f18, %f16;
-            st.global.f32 [%rd2], %f16;
-            GB_NO_DUP:
-            add.u32 %r11, %r11, 1;
-            setp.lt.u32 %p12, %r11, 2;
-            @%p12 bra GB_LOOP;
-            GB_END:
             """);
 
         // Rotary embedding of x [rows = batch·steps·heads, dim]: one thread per (row, pair). The pair of pair index p is

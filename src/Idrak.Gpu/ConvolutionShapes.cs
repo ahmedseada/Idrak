@@ -55,9 +55,9 @@ internal static class ConvolutionShapes
     /// <summary>The distance in octaves between two keys' positions.</summary>
     public static double Octaves(long positions, long other) => Math.Abs(Math.Log2(Math.Max(1, positions)) - Math.Log2(Math.Max(1, other)));
 
-    /// <summary>A key's variant: the pass, the matrix precision (MixedPrecision), whether an activation is applied, the groups.</summary>
+    /// <summary>A key's variant: the pass, whether an activation is applied, the groups.</summary>
     public static int Variant(int pass, ConvActivation activation, int groups) =>
-        pass | (int)MixedPrecision.Current << 2 | (activation == ConvActivation.None ? 0 : 1 << 4) | groups << 5;
+        pass | (activation == ConvActivation.None ? 0 : 1 << 4) | groups << 5;
 
     /// <summary>Whether every group reads one input channel (depthwise; any number of filters a channel).</summary>
     public static bool Depthwise(in ConvGeometry g, int groups) => groups > 1 && g.C == groups;
