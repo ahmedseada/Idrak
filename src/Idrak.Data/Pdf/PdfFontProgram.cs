@@ -6,7 +6,7 @@ using System.Buffers.Binary;
 namespace Idrak.Data.Pdf;
 
 /// <summary>
-/// A font program a PDF embeds (TrueType, or OpenType), read through <see cref="FontFormats"/> at run time (this assembly
+/// A font program a PDF embeds (TrueType, or OpenType), read through <c>FontFormats</c> at run time (this assembly
 /// does not reference the readers): its face, for drawing (<see cref="DocumentTextRun.Face"/>), and its own <c>cmap</c>
 /// read here both ways: each glyph's lowest code point in the best Unicode subtable (what the glyph says when the file
 /// gives no other way: the third way to text), and the symbol (3,0) and Macintosh (1,0) subtables a simple TrueType
@@ -146,41 +146,15 @@ internal sealed class PdfFontProgram
     public long Bytes { get; private init; }
 
     /// <summary>
-    /// The program in <paramref name="program"/>'s bytes as the first registered font format that accepts them reads it,
+    /// The program in <paramref name="program"/>'s bytes as the first font format that accepts them reads it,
     /// or null when none does or it cannot be read (a program without a <c>cmap</c>, a bare CFF, a damaged file).
     /// </summary>
+    /// <exception cref="NotSupportedException">Always for now: the font formats were tried in their registry's order
+    /// (<c>FontFormats</c>), which is not on the new design yet.</exception>
     public static PdfFontProgram? Read(byte[] program, string name)
     {
-        var header = program.AsSpan(0, Math.Min(program.Length, FontFormats.HeaderBytes));
-        foreach (string formatName in FontFormats.Names)
-        {
-            IFontFormat format;
-            try
-            {
-                format = FontFormats.Get(formatName);
-                if (!format.Accepts(header))
-                {
-                    continue;
-                }
-
-                var faces = format.Read(program, name);
-                if (faces.Count == 0)
-                {
-                    continue;
-                }
-
-                var face = faces[0];
-                var cmap = face.Table("cmap").Span;
-                var (codePoints, symbol, macintosh) = ReadCmap(cmap, face.GlyphCount);
-                return new PdfFontProgram(face, codePoints, symbol, macintosh) { Bytes = program.Length + 4L * codePoints.Length + 4096 };
-            }
-            catch (Exception e) when (e is not (OutOfMemoryException or OperationCanceledException))
-            {
-                return null;   // a program the format cannot read: the file gives its text another way, or none
-            }
-        }
-
-        return null;
+        ArgumentNullException.ThrowIfNull(program);
+        throw new NotSupportedException($"{name}: an embedded font program is read through the registered font formats, which are not on the new design yet.");
     }
 
     /// <summary>The lowest code point the program's best Unicode <c>cmap</c> maps to <paramref name="glyph"/>, or -1.</summary>

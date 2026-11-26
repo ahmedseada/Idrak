@@ -8,14 +8,14 @@ using System.Text;
 namespace Idrak.Data.Pdf;
 
 /// <summary>
-/// The library's PDF writer, registered in <see cref="DocumentWriters"/> as "pdf": pages of images, vector paths and text
+/// The library's PDF writer, registered in <c>DocumentWriters</c> as "pdf": pages of images, vector paths and text
 /// written as they finish, the reader's object model and filters shared. The file: the header, objects written on spans
 /// (numbers invariant, strings escaped, names with <c>#xx</c>), streams Flate-compressed at
 /// <see cref="DocumentWriteOptions.Compression"/> (0 stores them), small objects in object streams and a cross-reference
 /// stream (a classic table for <see cref="DocumentWriteOptions.Version"/> before 1.5, 1.7 unless set), no date or
 /// identifier unless given (<see cref="DocumentWriteOptions.Deterministic"/>): the same input writes the same bytes. Each
 /// page's images go to the file as they are given, its content stream and page object when the next page starts; the page
-/// tree, the fonts (one composite font a face, its program subset through <see cref="FontWriters"/>, a ToUnicode map from
+/// tree, the fonts (one composite font a face, its program subset through <c>FontWriters</c>, a ToUnicode map from
 /// the runs' text) and the cross-reference at <see cref="IDocumentBuilder.Finish"/>. A builder disposed without it writes
 /// the page in hand, the page tree, the catalog and a trailer naming it, and no cross-reference: the reader rebuilds it
 /// and says the file was repaired (fonts, written at the end, are missing). Pages are copied from other PDF documents
@@ -61,14 +61,13 @@ internal sealed class PdfWriter : IDocumentWriter
     }
 
     /// <summary>
-    /// The PDF document behind <paramref name="document"/> (the registry's wrapper of a file it opened looked through,
-    /// <see cref="DocumentFormats.Unwrap"/>): the writer reads its objects to edit it or copy its pages.
+    /// The PDF document <paramref name="document"/> is: the writer reads its objects to edit it or copy its pages.
     /// </summary>
     /// <exception cref="NotSupportedException">It is not a document the library's pdf format opened (the message names its format).</exception>
     internal static PdfDocument Own(IDocument document, string what) =>
-        DocumentFormats.Unwrap(document) as PdfDocument
+        document as PdfDocument
         ?? throw new NotSupportedException(
-            $"The PDF writer {what} PDF documents the library's pdf format opened (DocumentFormats.Default(\"pdf\")), whose objects it reads; this one is a '{document.Format}' document another reader opened: open the file with the library's pdf format.");
+            $"The PDF writer {what} PDF documents the library's pdf format opened, whose objects it reads; this one is a '{document.Format}' document another reader opened: open the file with the library's pdf format.");
 }
 
 /// <summary>A PDF document being written (see <see cref="PdfWriter"/>). Not safe from several threads.</summary>

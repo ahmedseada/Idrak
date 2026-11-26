@@ -393,11 +393,15 @@ public static class ParquetFile
 
     // ------------------------------------------------------------------ column chunks and pages
 
+    // The codecs were registered by their Parquet id (ParquetCodecs): not on the new design yet.
+    private static IParquetCodec CodecOf(int id) =>
+        throw new NotSupportedException($"Parquet compression codec {id}: a codec by its id is not on the new design yet.");
+
     private static ColumnData ReadColumn(Stream stream, ThriftStruct meta, Leaf leaf)
     {
         int codec = meta.Int(4) ?? 0;
         IParquetCodec? decoder = null;                              // looked up once, at the chunk's first compressed page
-        byte[] Decompress(ReadOnlySpan<byte> input, int size) => (decoder ??= ParquetCodecs.Get(codec)).Decompress(input, size);
+        byte[] Decompress(ReadOnlySpan<byte> input, int size) => (decoder ??= CodecOf(codec)).Decompress(input, size);
         long total = meta.Long(5) ?? 0;
         long dataOffset = meta.Long(9) ?? throw new InvalidDataException("Parquet column without a data page offset.");
         long start = meta.Long(11) is { } dict && dict > 0 && dict < dataOffset ? dict : dataOffset;

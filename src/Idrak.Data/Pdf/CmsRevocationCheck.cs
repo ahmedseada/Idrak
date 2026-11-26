@@ -285,6 +285,10 @@ internal sealed class CmsRevocationCheck
         return (null, first ?? $"{named}'s indirect list, whose issuer's certificate is neither trusted nor among the certificates the signature and the document carry");
     }
 
+    // The signature services were registered by their scheme (SignatureServices) and asked through it: not on the new design yet.
+    private static byte[] Send(SignatureServiceRequest request) =>
+        throw new NotSupportedException("A timestamp or revocation request through the signature services by scheme is not on the new design yet.");
+
     // Revocation data fetched from the addresses the certificate names (OCSP first, then its lists with their deltas), through
     // SignatureServices.
     private string Fetch(CmsCertificate certificate, CmsCertificate issuer)
@@ -294,7 +298,7 @@ internal sealed class CmsRevocationCheck
         {
             try
             {
-                byte[] answer = SignatureServices.Send(new SignatureServiceRequest(new Uri(address), SignatureServiceKind.Ocsp)
+                byte[] answer = Send(new SignatureServiceRequest(new Uri(address), SignatureServiceKind.Ocsp)
                 {
                     Body = CmsRevocation.Request(certificate, issuer), Timeout = _options.Timeout, MaxResponseBytes = _maxBytes,
                 });
@@ -346,7 +350,7 @@ internal sealed class CmsRevocationCheck
     }
 
     private byte[] Get(string address) =>
-        SignatureServices.Send(new SignatureServiceRequest(new Uri(address), SignatureServiceKind.RevocationList) { Timeout = _options.Timeout, MaxResponseBytes = _maxBytes });
+        Send(new SignatureServiceRequest(new Uri(address), SignatureServiceKind.RevocationList) { Timeout = _options.Timeout, MaxResponseBytes = _maxBytes });
 
     private static bool Failed(Exception e) => e is IOException or InvalidDataException or UriFormatException or NotSupportedException or OperationCanceledException or TimeoutException;
 }

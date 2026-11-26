@@ -7,7 +7,7 @@ namespace Idrak.Data;
 
 /// <summary>
 /// Hugging Face models by id ("Qwen/Qwen3-0.6B"), the model source this package registers with
-/// <see cref="ModelSources"/> (as "huggingface"), so <c>ModelSource.Resolve</c> and <c>PretrainedModel.Load</c> take
+/// <c>ModelSources</c> (as "huggingface"), so <c>ModelSource.Resolve</c> and <c>PretrainedModel.Load</c> take
 /// an id. An id is looked up in Hugging Face's own cache (models fetched with transformers or huggingface-cli), then in
 /// Idrak's download cache, and downloaded otherwise: only the files the library reads (config, tokenizer, chat template,
 /// generation config and the safetensors weights, else one PyTorch checkpoint read without running it), into

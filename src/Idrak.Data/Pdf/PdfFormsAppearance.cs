@@ -9,7 +9,7 @@ namespace Idrak.Data.Pdf;
 /// <summary>
 /// The font a field's text is written in: a simple font the document holds (or the writer adds: a standard font), written
 /// with its own one-byte codes and widths and named in the appearance's resources as the field's default appearance names
-/// it; or faces the text is set in through <see cref="DocumentTextSetters"/> (every script: the shapers and the reading
+/// it; or faces the text is set in through <c>DocumentTextSetters</c> (every script: the shapers and the reading
 /// order), each embedded through the writer's font path (D6: a composite font of the glyphs used, its ToUnicode).
 /// </summary>
 internal sealed class PdfFieldFont
@@ -918,9 +918,13 @@ internal static class PdfFieldAppearances
             return new SetLine(text, (float)(font.Width(text) * size), null);
         }
 
-        var lines = DocumentTextSetters.Get(options.TextSetter).Set(text, new DocumentTextSetting(font.Faces!, size));
+        var lines = SetterNamed(options.TextSetter).Set(text, new DocumentTextSetting(font.Faces!, size));
         return lines.Count == 0 ? new SetLine(text, 0f, []) : new SetLine(lines[0].Text, lines[0].Width, lines[0].Runs);
     }
+
+    // The text setters were registered (DocumentTextSetters) and looked up by name: not on the new design yet.
+    private static IDocumentTextSetter SetterNamed(string name) =>
+        throw new NotSupportedException($"The text setter '{name}' by name is not on the new design yet.");
 
     // A text's lines wrapped to `width`: a simple font's words broken greedily at spaces (inside a word too long for a line);
     // faces' through the text setter.
@@ -930,7 +934,7 @@ internal static class PdfFieldAppearances
         if (!font.IsSimple)
         {
             var setting = new DocumentTextSetting(font.Faces!, size) { Width = Math.Max(width, 1e-3f) };
-            foreach (var line in DocumentTextSetters.Get(options.TextSetter).Set(text, setting))
+            foreach (var line in SetterNamed(options.TextSetter).Set(text, setting))
             {
                 lines.Add(new SetLine(line.Text, line.Width, line.Runs));
             }

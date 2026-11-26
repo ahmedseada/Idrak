@@ -16,7 +16,7 @@ internal readonly record struct PdfImageMeasures(int Levels, double SmallSteps, 
 /// An image page's image as an image XObject: its values in [0, 1] as 8-bit levels (rounded), grey or RGB, stored
 /// <see cref="DocumentImageEncoding.Flate"/> (exact: the PNG predictor, each row's filter chosen by the smallest sum of
 /// its residuals as libpng chooses, kept where it lowers the rows' residuals by a fifth, then Flate at the options' level)
-/// or <see cref="DocumentImageEncoding.Jpeg"/> (<c>DCTDecode</c>, written by <see cref="ImageEncoders"/>' "jpeg" at
+/// or <see cref="DocumentImageEncoding.Jpeg"/> (<c>DCTDecode</c>, written by <c>ImageEncoders</c>' "jpeg" at
 /// <see cref="DocumentWriteOptions.JpegQuality"/>); <see cref="DocumentImageEncoding.Auto"/> measures the image
 /// (<see cref="DocumentWriteOptions.LineArtLevels"/>, then <see cref="DocumentWriteOptions.SmoothSteps"/>). The image is
 /// measured a band of rows at a time (its levels made for the band, never copied whole), and a Flate image holds one copy
@@ -29,6 +29,9 @@ internal static class PdfWriterImages
     /// <summary>The name of the image encoder JPEG images are written with.</summary>
     public const string JpegEncoder = "jpeg";
 
+    // The image encoders were registered (ImageEncoders) and looked up by name: not on the new design yet.
+    private static IImageEncoder EncoderNamed(string name) => throw new NotSupportedException($"The image encoder '{name}' by name is not on the new design yet.");
+
     // The predictor is kept when its rows' residuals sum to less than this share of the plain rows' (a row's best of five
     // filters is a little smaller than its plain sum even on noise, by chance: a fifth smaller is a predictor that pays).
     private const double PredictorPays = 0.8;
@@ -39,7 +42,7 @@ internal static class PdfWriterImages
     /// <paramref name="softMask"/> above 0 names the grey image object it shows through. The encoding written.
     /// </summary>
     /// <exception cref="ArgumentException">The image is neither grey nor RGB.</exception>
-    /// <exception cref="NotRegisteredException">JPEG was asked and no image encoder "jpeg" is registered.</exception>
+    /// <exception cref="NotSupportedException">JPEG was asked: the image encoder "jpeg" by name is not on the new design yet.</exception>
     public static DocumentImageEncoding Write(PdfFileWriter file, int number, ImageData image, DocumentImageEncoding requested, DocumentWriteOptions options, int softMask = 0)
     {
         if (image.Channels is not (1 or 3))
@@ -51,7 +54,7 @@ internal static class PdfWriterImages
         int width = image.Width, height = image.Height, channels = image.Channels;
         if (encoding == DocumentImageEncoding.Jpeg)
         {
-            WriteJpeg(file, number, image, options, ImageEncoders.Get(JpegEncoder), softMask);
+            WriteJpeg(file, number, image, options, EncoderNamed(JpegEncoder), softMask);
             return encoding;
         }
 
@@ -59,9 +62,9 @@ internal static class PdfWriterImages
         {
             var measures = Measure(image, options.LineArtLevels);
             bool photographic = measures.Levels > options.LineArtLevels && measures.SmallSteps >= options.SmoothSteps;
-            if (photographic && ImageEncoders.Names.Contains(JpegEncoder, StringComparer.OrdinalIgnoreCase))
+            if (photographic)
             {
-                WriteJpeg(file, number, image, options, ImageEncoders.Get(JpegEncoder), softMask);
+                WriteJpeg(file, number, image, options, EncoderNamed(JpegEncoder), softMask);
                 return DocumentImageEncoding.Jpeg;
             }
         }

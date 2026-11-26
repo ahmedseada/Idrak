@@ -3,7 +3,7 @@
 
 namespace Idrak.Data.Abstractions;
 
-/// <summary>The built-in data file formats (registered in <see cref="DataFileFormats"/> under these names by Idrak.Data).</summary>
+/// <summary>The built-in data file formats (registered in <c>DataFileFormats</c> under these names by Idrak.Data).</summary>
 public enum DataFormat
 {
     /// <summary>One JSON object per line (.jsonl, .ndjson).</summary>
@@ -58,7 +58,7 @@ public sealed record ReadOptions
     public DataFormat? Format { get; init; }
 
     /// <summary>
-    /// The format as an <see cref="IDataFileFormat"/> (for example one added with <see cref="DataFileFormats.Register"/>),
+    /// The format as an <see cref="IDataFileFormat"/> (for example one added with <c>DataFileFormats.Register</c>),
     /// instead of choosing it by extension; takes precedence over <see cref="Format"/>.
     /// </summary>
     public IDataFileFormat? FileFormat { get; init; }

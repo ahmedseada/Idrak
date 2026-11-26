@@ -11,12 +11,12 @@ namespace Idrak.Data.Code;
 /// <summary>
 /// The library's language-neutral family "file-text" (plan 36): one pretraining row per source file, <c>{"text", "path",
 /// "language"}</c> as Idrak.Data's <c>code</c> format reads a repository, for every file whose extension names a language
-/// (<see cref="DataFiles.LanguageOf"/>). It proposes no tasks. Duplicates are the row filters' to drop (<see cref="RowFilters"/>),
+/// (<see cref="DataFiles.LanguageOf"/>). It proposes no tasks. Duplicates are the row filters' to drop (<c>RowFilters</c>),
 /// as the extractor passes every family's rows through them.
 /// </summary>
 public sealed class FileTextFamily : ITaskFamily
 {
-    /// <summary>Its name in <see cref="TaskFamilies"/>: "file-text".</summary>
+    /// <summary>Its name in <c>TaskFamilies</c>: "file-text".</summary>
     public const string FamilyName = "file-text";
 
     /// <inheritdoc/>

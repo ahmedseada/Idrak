@@ -17,7 +17,7 @@ public sealed record CodeSource(string Root)
     /// <summary>The coding languages it is read in, by their registered names; empty: those that detect it.</summary>
     public IReadOnlyList<string> Languages { get; init; } = [];
 
-    /// <summary>Its history (<see cref="RepositoryHistories"/>), or null when it has none or none is read.</summary>
+    /// <summary>Its history (<c>RepositoryHistories</c>), or null when it has none or none is read.</summary>
     public IRepositoryHistory? History { get; init; }
 
     /// <summary>How its files are read (skipped folders, the largest file).</summary>
@@ -71,7 +71,7 @@ public sealed record TaskProvenance
 /// it came from. A verifier keeps it only when the check fails on the workspace and passes with the solution.
 /// </summary>
 /// <param name="Id">A stable id (the same source gives the same id).</param>
-/// <param name="Family">The family that made it (<see cref="IKind.Name"/>).</param>
+/// <param name="Family">The family that made it (<c>IKind.Name</c>).</param>
 /// <param name="Prompt">What the task asks, in words.</param>
 public sealed record TaskDraft(string Id, string Family, string Prompt)
 {
@@ -167,12 +167,15 @@ public sealed record HistoryQuery
 }
 
 /// <summary>
-/// A family of coding tasks (<see cref="TaskFamilies"/>): given a <see cref="CodeSource"/>, it proposes <see cref="TaskDraft"/>s,
+/// A family of coding tasks: given a <see cref="CodeSource"/>, it proposes <see cref="TaskDraft"/>s,
 /// streamed (a repository's drafts are never all held at once). It reads files as bytes and walks them once, in order. It
 /// proves nothing itself: a verifier keeps a draft only when its check fails on the workspace and passes with the solution.
 /// </summary>
-public interface ITaskFamily : IKind
+public interface ITaskFamily
 {
+    /// <summary>The family's name.</summary>
+    string Name { get; }
+
     /// <summary>The coding languages it works in (registered names); empty: any.</summary>
     IReadOnlyList<string> Languages => [];
 
@@ -187,7 +190,7 @@ public interface ITaskFamily : IKind
     /// <summary>
     /// The rows it writes for pretraining or tuning (JSON objects, such as <c>{"text", "path", "language"}</c>), in a stable
     /// order, streamed; none by default (a family of tasks only). The extractor passes them through the row filters
-    /// (<see cref="RowFilters"/>) and writes them under its output's rows folder.
+    /// (<see cref="IRowFilter"/>) and writes them under its output's rows folder.
     /// </summary>
     IAsyncEnumerable<JsonObject> RowsAsync(CodeSource source, CancellationToken cancellationToken = default) => CodeRows.None(cancellationToken);
 }
@@ -205,59 +208,15 @@ public static class CodeRows
 }
 
 /// <summary>
-/// The task families by name (ignoring case), for <c>idrak data code --families</c> and <c>CodeExtractorOptions.Families</c>.
-/// The library registers its mechanical families in Idrak.Data (plan 36, G1 and G2); an app or a plug-in registers its own
-/// with <see cref="Register"/>. A name nobody registered is refused with "not registered", naming the registered ones.
-/// </summary>
-public static class TaskFamilies
-{
-    private static readonly SlotTable<string, ITaskFamily> Table = new(nameof(TaskFamilies), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a family's drafts are streamed into a dataset: falling back to another family's would change what the dataset holds");
-
-    // The library's language-neutral families, on first use: file-text (Idrak.Data.Code.FileTextFamily).
-    static TaskFamilies() => Overrides.AsLibraryDefaults(() => Register(new Idrak.Data.Code.FileTextFamily()));
-
-    /// <summary>Registers <paramref name="family"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ITaskFamily family)
-    {
-        ArgumentNullException.ThrowIfNull(family);
-        ArgumentException.ThrowIfNullOrWhiteSpace(family.Name);
-        Table.Register(family.Name, family, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's family <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The family registered as <paramref name="name"/>, or null.</summary>
-    public static ITaskFamily? Find(string name) => Table.Find(name);
-
-    /// <summary>The family registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names it and the registered ones.</exception>
-    public static ITaskFamily Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(TaskFamilies), name, Table.Keys,
-            $"Task family '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); add it with TaskFamilies.Register.");
-
-    /// <summary>The library's family <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static ITaskFamily? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the family <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered family as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(f => $"{f.Name}: {f.Summary}"));
-}
-
-/// <summary>
-/// A repository's history (<see cref="RepositoryHistories"/>): its commits, newest first, streamed one at a time, and each
+/// A repository's history: its commits, newest first, streamed one at a time, and each
 /// commit's diff and files at a commit as streams, never loaded whole. The library's (plan 36, G2) runs <c>git</c> as a
-/// process through the registered command sandbox; an app can register another reader.
+/// process through the command sandbox; an app can bring another reader.
 /// </summary>
-public interface IRepositoryHistory : IKind
+public interface IRepositoryHistory
 {
+    /// <summary>The reader's name ("git").</summary>
+    string Name { get; }
+
     /// <summary>Whether it reads the history of the repository at <paramref name="root"/>.</summary>
     bool CanRead(string root);
 
@@ -269,52 +228,6 @@ public interface IRepositoryHistory : IKind
 
     /// <summary>The bytes of <paramref name="path"/> at <paramref name="commit"/> as a stream the caller disposes, or null when it has no such file.</summary>
     ValueTask<Stream?> OpenFileAsync(string root, string commit, string path, CancellationToken cancellationToken = default);
-}
-
-/// <summary>
-/// The repository-history readers by name (ignoring case). The library registers its git reader in Idrak.Data (plan 36,
-/// G2); an app registers another with <see cref="Register"/>. A name nobody registered is refused with "not registered".
-/// </summary>
-public static class RepositoryHistories
-{
-    private static readonly SlotTable<string, IRepositoryHistory> Table = new(nameof(RepositoryHistories), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a history is read as streams with effects (a process per read): a read is not retried on another reader");
-
-    /// <summary>Registers <paramref name="history"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IRepositoryHistory history)
-    {
-        ArgumentNullException.ThrowIfNull(history);
-        ArgumentException.ThrowIfNullOrWhiteSpace(history.Name);
-        Table.Register(history.Name, history, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's reader <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The reader registered as <paramref name="name"/>, or null.</summary>
-    public static IRepositoryHistory? Find(string name) => Table.Find(name);
-
-    /// <summary>The reader registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names it and the registered ones.</exception>
-    public static IRepositoryHistory Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(RepositoryHistories), name, Table.Keys,
-            $"Repository history '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); add it with RepositoryHistories.Register.");
-
-    /// <summary>The first registered reader that reads the repository at <paramref name="root"/>, or null.</summary>
-    public static IRepositoryHistory? For(string root) => Table.Values.FirstOrDefault(h => h.CanRead(root));
-
-    /// <summary>The library's reader <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IRepositoryHistory? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the reader <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered reader as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(h => $"{h.Name}: {h.Summary}"));
 }
 
 /// <summary>
@@ -334,56 +247,16 @@ public sealed record RowFilterContext
 }
 
 /// <summary>
-/// A filter on rows (<see cref="RowFilters"/>): deduplication (exact, near) and quality checks (size, binary content,
+/// A filter on rows: deduplication (exact, near) and quality checks (size, binary content,
 /// generated files). It keeps rows in their order and reads them once, lazily; a filter that remembers rows (dedupe) keeps
 /// its state per call of <see cref="Apply"/>, so each run starts clean.
 /// </summary>
-public interface IRowFilter : IKind
+public interface IRowFilter
 {
+    /// <summary>The filter's name.</summary>
+    string Name { get; }
+
     /// <summary>The rows of <paramref name="rows"/> it keeps, in order, as they are read; each dropped one is told to <see cref="RowFilterContext.Rejected"/>.</summary>
     IEnumerable<JsonObject> Apply(IEnumerable<JsonObject> rows, RowFilterContext context);
 }
 
-/// <summary>
-/// The row filters by name (ignoring case). The library registers its own in Idrak.Data (plan 36, G2: exact and near
-/// dedupe, size, binary, generated); an app registers another with <see cref="Register"/>. A name nobody registered is
-/// refused with "not registered".
-/// </summary>
-public static class RowFilters
-{
-    private static readonly SlotTable<string, IRowFilter> Table = new(nameof(RowFilters), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a filter decides which rows a dataset keeps, with state across the rows: it is not swapped for another midway");
-
-    /// <summary>Registers <paramref name="filter"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IRowFilter filter)
-    {
-        ArgumentNullException.ThrowIfNull(filter);
-        ArgumentException.ThrowIfNullOrWhiteSpace(filter.Name);
-        Table.Register(filter.Name, filter, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's filter <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The filter registered as <paramref name="name"/>, or null.</summary>
-    public static IRowFilter? Find(string name) => Table.Find(name);
-
-    /// <summary>The filter registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names it and the registered ones.</exception>
-    public static IRowFilter Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(RowFilters), name, Table.Keys,
-            $"Row filter '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); add it with RowFilters.Register.");
-
-    /// <summary>The library's filter <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IRowFilter? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the filter <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered filter as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(f => $"{f.Name}: {f.Summary}"));
-}

@@ -39,11 +39,19 @@ public static class DataFiles
     private static HashSet<string> Skipped(ReadOptions options) => new(options.SkippedFolders ?? ReadOptions.DefaultSkippedFolders, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// The format of <paramref name="path"/> by its extension (.gz stripped), or null for an unknown one. Formats added with
-    /// <see cref="DataFileFormats.Register"/> have no <see cref="DataFormat"/> (null here): see <see cref="DataFileFormats.Find"/>.
+    /// The format of <paramref name="path"/> by its extension (.gz stripped), or null for an unknown one. The formats were
+    /// looked up by extension in their registry, which is gone: not on the new design yet.
     /// </summary>
+    /// <exception cref="NotSupportedException">Always for now.</exception>
     public static DataFormat? FormatOf(string path, bool includeCode = true) =>
-        DataFileFormats.Find(path, includeCode) is { } format && Enum.TryParse<DataFormat>(format.Name, ignoreCase: true, out var builtIn) ? builtIn : null;
+        FormatByExtension(path, includeCode) is { } format && Enum.TryParse<DataFormat>(format.Name, ignoreCase: true, out var builtIn) ? builtIn : null;
+
+    // The data file formats were registered (DataFileFormats) and found by extension and by name: not on the new design yet.
+    private static IDataFileFormat? FormatByExtension(string path, bool includeCode = true) =>
+        throw new NotSupportedException($"'{path}': a data file format by its extension{(includeCode ? "" : " (code left out)")} is not on the new design yet (set ReadOptions.FileFormat).");
+
+    private static IDataFileFormat FormatNamed(string name) =>
+        throw new NotSupportedException($"The data file format '{name}' by name is not on the new design yet (set ReadOptions.FileFormat).");
 
     /// <summary>Whether <paramref name="path"/> is an archive whose entries are read (.zip, .tar, .tar.gz, .tgz).</summary>
     public static bool IsArchive(string path) =>
@@ -59,14 +67,14 @@ public static class DataFiles
             return ReadArchive(path, options);
         }
 
-        var format = Chosen(options) ?? DocumentFormat(DataFileFormats.Find(path, includeCode: true), options)
+        var format = Chosen(options) ?? DocumentFormat(FormatByExtension(path, includeCode: true), options)
                      ?? throw new NotSupportedException($"'{path}': unknown data format (set ReadOptions.Format).");
         return ReadStream(() => Open(path), shown, format, options);
     }
 
     /// <summary>The rows of a stream holding a file of <paramref name="format"/> (<paramref name="path"/> is shown in rows and errors).</summary>
     public static IEnumerable<JsonObject> ReadStream(Func<Stream> open, string path, DataFormat format, ReadOptions options) =>
-        ReadStream(open, path, DataFileFormats.Get(format.ToString()), options);
+        ReadStream(open, path, FormatNamed(format.ToString()), options);
 
     /// <summary>The rows of a stream holding a file of <paramref name="format"/> (<paramref name="path"/> is shown in rows and errors).</summary>
     public static IEnumerable<JsonObject> ReadStream(Func<Stream> open, string path, IDataFileFormat format, ReadOptions options)
@@ -77,34 +85,11 @@ public static class DataFiles
 
     // The format the options set, if any (a format object first, then a built-in by its enum value).
     private static IDataFileFormat? Chosen(ReadOptions options) =>
-        options.FileFormat ?? (options.Format is { } format ? DataFileFormats.Get(format.ToString()) : null);
+        options.FileFormat ?? (options.Format is { } format ? FormatNamed(format.ToString()) : null);
 
     // Documents: every format but a binary one (Parquet) is read as source code (one row per file).
     private static IDataFileFormat? DocumentFormat(IDataFileFormat? format, ReadOptions options) =>
-        options.Documents && format is not null && format.Kind != DataFileKind.Binary ? DataFileFormats.Get(nameof(DataFormat.Code)) : format;
-
-    // The built-in formats, registered in DataFileFormats by LibraryRegistrations (once, before it is first used).
-    internal static void RegisterAll()
-    {
-        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.JsonLines), [".jsonl", ".ndjson"], (open, path, _) => JsonLines(open, path)));
-        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Json), [".json"], Json));
-        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Csv), [".csv"], (open, _, options) => Delimited(open, ',', options)));
-        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Tsv), [".tsv"], (open, _, options) => Delimited(open, '\t', options)));
-        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Parquet), [".parquet"], (open, _, _) => ParquetRows(open)) { Kind = DataFileKind.Binary });
-        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Text), [".txt", ".text", ".md", ".markdown", ".rst"], Text));
-        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Code), [.. CodeLanguages.Keys], Code) { Kind = DataFileKind.Code });
-    }
-
-    private sealed class BuiltIn(string name, string[] extensions, Func<Func<Stream>, string, ReadOptions, IEnumerable<JsonObject>> read) : IDataFileFormat
-    {
-        public string Name => name;
-
-        public IReadOnlyCollection<string> Extensions => extensions;
-
-        public DataFileKind Kind { get; init; } = DataFileKind.Table;
-
-        public IEnumerable<JsonObject> Read(Func<Stream> open, string path, ReadOptions options) => read(open, path, options);
-    }
+        options.Documents && format is not null && format.Kind != DataFileKind.Binary ? FormatNamed(nameof(DataFormat.Code)) : format;
 
     internal static IEnumerable<string> InFolder(string root, string? pattern, ReadOptions options)
     {
@@ -129,7 +114,7 @@ public static class DataFiles
             {
                 string relative = Path.GetRelativePath(root, file).Replace('\\', '/');
                 bool known = options.Format is not null || options.FileFormat is not null || IsArchive(file)
-                             || DataFileFormats.Find(file, options.IncludeCode || options.Documents) is not null;
+                             || FormatByExtension(file, options.IncludeCode || options.Documents) is not null;
                 if (known && (match is null || match.IsMatch(relative) || match.IsMatch(Path.GetFileName(file))))
                 {
                     files.Add(file);
@@ -184,7 +169,7 @@ public static class DataFiles
                 return false;
             }
 
-            var format = DocumentFormat(DataFileFormats.Find(name, options.IncludeCode || options.Documents), options);
+            var format = DocumentFormat(FormatByExtension(name, options.IncludeCode || options.Documents), options);
             return format is not null && !(options.Documents && format.Kind == DataFileKind.Binary);
         }
 
@@ -193,7 +178,7 @@ public static class DataFiles
             using var zip = ZipFile.OpenRead(path);
             foreach (var entry in zip.Entries.Where(e => e.Length > 0 && Wanted(e.FullName)).OrderBy(e => e.FullName, StringComparer.Ordinal))
             {
-                foreach (var row in ReadStream(() => Buffered(entry.Open(), entry.Length, entry.FullName), entry.FullName, DocumentFormat(DataFileFormats.Find(entry.FullName), options)!, options))
+                foreach (var row in ReadStream(() => Buffered(entry.Open(), entry.Length, entry.FullName), entry.FullName, DocumentFormat(FormatByExtension(entry.FullName), options)!, options))
                 {
                     yield return row;
                 }
@@ -217,7 +202,7 @@ public static class DataFiles
             var bytes = new MemoryStream();
             entry.DataStream.CopyTo(bytes);
             var data = bytes.ToArray();
-            foreach (var row in ReadStream(() => Decompressed(new MemoryStream(data), name), name, DocumentFormat(DataFileFormats.Find(name), options)!, options))
+            foreach (var row in ReadStream(() => Decompressed(new MemoryStream(data), name), name, DocumentFormat(FormatByExtension(name), options)!, options))
             {
                 yield return row;
             }

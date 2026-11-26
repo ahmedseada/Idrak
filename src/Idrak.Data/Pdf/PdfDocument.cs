@@ -211,7 +211,8 @@ internal sealed partial class PdfDocument : IDocument
         }
     }
 
-    public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) => DocumentPageDrawers.DrawPage(this, index, options);
+    public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) =>
+        throw new NotSupportedException($"Page {index}: drawing through the page drawers by name (DocumentPageDrawers) is not on the new design yet.");
 
     /// <summary>
     /// Opens the document <paramref name="stream"/> holds (an encrypted one with <see cref="DocumentOptions.Password"/>, as

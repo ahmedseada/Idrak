@@ -10,7 +10,7 @@ namespace Idrak.Data.Pdf;
 /// <summary>
 /// One face of a document being written: embedded once, at the end, as a composite font (<c>Type0</c> over a
 /// <c>CIDFontType2</c>, <c>Identity-H</c>: each glyph shown by its id as two bytes, <c>CIDToGIDMap Identity</c>), its
-/// program written through <see cref="FontWriters"/>' "truetype" (a subset of the glyphs used, their ids kept, or the
+/// program written through <c>FontWriters</c>' "truetype" (a subset of the glyphs used, their ids kept, or the
 /// whole face), <c>/W</c> from the advances, and a <c>ToUnicode</c> map from the runs' text: each glyph the characters
 /// it first stood for, found by aligning a run's glyphs with its text through the face's own character map (the glyphs
 /// in the text's order or reversed, whichever matches more; between two glyphs that match, the characters between them
@@ -23,6 +23,12 @@ internal sealed class PdfWriterFont
 {
     /// <summary>The font writer the programs are written with.</summary>
     public const string ProgramWriter = "truetype";
+
+    // The reading orders and the font writers were registered (ReadingOrders, FontWriters) and looked up by name: not on
+    // the new design yet.
+    private static IReadingOrder OrderNamed(string name) => throw new NotSupportedException($"The reading order '{name}' by name is not on the new design yet.");
+
+    private static IFontWriter WriterNamed(string name) => throw new NotSupportedException($"The font writer '{name}' by name is not on the new design yet.");
 
     // How far ahead a glyph looks for its character when aligning a run.
     private const int Window = 8;
@@ -137,7 +143,7 @@ internal sealed class PdfWriterFont
 
         int forward = Anchors(glyphs, characters, reversed: false, null), backward = Anchors(glyphs, characters, reversed: true, null);
         bool reversed = backward > forward
-                        || (backward == forward && forward == 0 && ReadingOrders.Find(ReadingOrders.Bidi)?.RightToLeft(text) == true);
+                        || (backward == forward && forward == 0 && OrderNamed(ReadingOrders.Bidi).RightToLeft(text) == true);
         var anchors = new List<(int Glyph, int Character)>();
         Anchors(glyphs, characters, reversed, anchors);
 
@@ -252,7 +258,7 @@ internal sealed class PdfWriterFont
                 : new FontWriteOptions { Glyphs = used, KeepLayout = false };
             using (var sink = new PdfBufferStream(bytes.Buffer))
             {
-                FontWriters.Get(ProgramWriter).Write(Face, sink, options);
+                WriterNamed(ProgramWriter).Write(Face, sink, options);
             }
 
             file.BeginStream(program).Raw("/Length1 "u8).Integer(bytes.Length);

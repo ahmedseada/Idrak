@@ -10,7 +10,7 @@ namespace Idrak.Data;
 /// The settings of a code extractor run (plan 36: <c>idrak data code</c>, which turns a repository into pretraining rows
 /// and proven task folders). Every one has an <c>IDRAK_CODE_*</c> variable (<see cref="FromEnvironment"/>), and every
 /// default is the documented rule named beside it, never the only way. Nothing here names a language, a model family or a
-/// provider: the languages come from the registered coding languages, the families from <see cref="TaskFamilies"/>.
+/// provider: the languages come from the registered coding languages, the families from <c>TaskFamilies</c>.
 /// </summary>
 public sealed record CodeExtractorOptions
 {
@@ -65,7 +65,7 @@ public sealed record CodeExtractorOptions
     /// <summary>What a split's groups are unless set: "project" (the project a file or task belongs to).</summary>
     public const string DefaultSplitBy = "project";
 
-    /// <summary>The task families to run, by name (<see cref="TaskFamilies"/>); null (the default): every registered one.</summary>
+    /// <summary>The task families to run, by name (<c>TaskFamilies</c>); null (the default): every registered one.</summary>
     public IReadOnlyList<string>? Families { get; init; }
 
     /// <summary>
@@ -98,7 +98,7 @@ public sealed record CodeExtractorOptions
     /// <summary>The longest a run takes before it stops and writes what it has; null (the default): no limit.</summary>
     public TimeSpan? MaxTime { get; init; }
 
-    /// <summary>The formats the rows are written in, by data format name (<see cref="DataFileFormats"/>): JSON Lines by default.</summary>
+    /// <summary>The formats the rows are written in, by data format name (<c>DataFileFormats</c>): JSON Lines by default.</summary>
     public IReadOnlyList<string> Formats { get; init; } = [nameof(DataFormat.JsonLines)];
 
     /// <summary>How many files or tasks are worked on at once; 0 (the default): <see cref="ComputeResources.MaxCpuThreads"/> when the run starts.</summary>

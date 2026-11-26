@@ -1421,6 +1421,10 @@ internal sealed partial class PdfContentReader : IDisposable
         xy[7] = g.Y + x0 * s.B + y1 * s.D;
     }
 
+    // The text layouts were registered (DocumentTextLayouts) and picked by the options' name: not on the new design yet.
+    private static DocumentText Arrange(IReadOnlyList<DocumentTextRun> runs, float width, float height, DocumentOptions options) =>
+        throw new NotSupportedException($"The text layout '{options.Layout}' by name is not on the new design yet.");
+
     /// <summary>
     /// The page's lines and text through the layout the options name. The layout is given the runs as pieces in the frame
     /// of the page's main text direction (turned text, a turned page and vertical columns read as lines): a run splits where
@@ -1477,7 +1481,7 @@ internal sealed partial class PdfContentReader : IDisposable
             }
 
             bool turned = Math.Abs(sin) > Math.Abs(cos);
-            var arranged = DocumentTextLayouts.Arrange(pieces, turned ? height : width, turned ? width : height, options);
+            var arranged = Arrange(pieces, turned ? height : width, turned ? width : height, options);
             var lines = new List<DocumentLine>(arranged.Lines.Count);
             for (int l = 0; l < arranged.Lines.Count; l++)                      // by index: the layout's lists are interfaces (no enumerator made)
             {

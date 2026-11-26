@@ -17,8 +17,12 @@ internal sealed class PdfFieldFonts(DocumentFormOptions options)
 {
     private IReadOnlyList<IFontFace>? _folder;
 
+    // The font formats were registered (FontFormats) and a folder read through them: not on the new design yet.
+    private static IReadOnlyList<IFontFace> ReadFolder(string folder) =>
+        throw new NotSupportedException($"{folder}: reading fonts through the registered font formats is not on the new design yet.");
+
     /// <summary>The faces of the fonts folder (none when it is not set or not there).</summary>
-    public IReadOnlyList<IFontFace> Folder => _folder ??= options.Fonts is { Length: > 0 } path && Directory.Exists(path) ? FontFormats.ReadFolder(path) : [];
+    public IReadOnlyList<IFontFace> Folder => _folder ??= options.Fonts is { Length: > 0 } path && Directory.Exists(path) ? ReadFolder(path) : [];
 
     /// <summary>
     /// Faces that together show <paramref name="text"/>, the one that shows it alone (or the most of it) first, those named

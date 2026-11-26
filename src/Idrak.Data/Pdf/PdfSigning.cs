@@ -20,7 +20,7 @@ internal readonly record struct PdfSignRequest(string Field, SigningOptions Opti
 /// <c>/Contents</c> reserved, then filled: the bytes hashed around the hole, a CMS SignedData written on the DER (content
 /// type, message digest and ESS signing-certificate-v2 signed; no signing time, the claimed time being <c>/M</c>), signed
 /// with the app's key; B-T adds the timestamp of the signature's value from the authority the app names (through
-/// <see cref="SignatureServices"/>; nothing else is asked), and B-LT then one more update adding the validation data to the
+/// <c>SignatureServices</c>; nothing else is asked), and B-LT then one more update adding the validation data to the
 /// DSS (the chain's and the authority's certificates, the revocation data the app gives or, when it turns it on, fetched),
 /// with its VRI entry. A file's encryption is kept (strings and streams encrypted by its own key; <c>/Contents</c> never).
 /// </summary>
@@ -474,13 +474,17 @@ internal static class PdfSigning
         }
     }
 
+    // The signature services were registered by their scheme (SignatureServices) and asked through it: not on the new design yet.
+    private static byte[] Send(SignatureServiceRequest request) =>
+        throw new NotSupportedException("A timestamp or revocation request through the signature services by scheme is not on the new design yet.");
+
     // The signature's value timestamped by the authority the app named.
     private static (byte[] Token, CmsTimestamp Read) Timestamp(byte[] value, SigningOptions options, long maxBytes)
     {
         var authority = options.TimestampAuthority!;
         byte[] imprint = CmsDigest.Of(options.Digest, value);
         var nonce = new BigInteger(RandomNumberGenerator.GetBytes(8), isUnsigned: true);
-        byte[] response = SignatureServices.Send(new SignatureServiceRequest(authority, SignatureServiceKind.Timestamp)
+        byte[] response = Send(new SignatureServiceRequest(authority, SignatureServiceKind.Timestamp)
         {
             Body = CmsTimestamp.Request(options.Digest, imprint, nonce), Timeout = options.Timeout, MaxResponseBytes = maxBytes,
         });
@@ -1063,7 +1067,7 @@ internal static class PdfSigning
             {
                 try
                 {
-                    byte[] answer = SignatureServices.Send(new SignatureServiceRequest(new Uri(address), SignatureServiceKind.Ocsp)
+                    byte[] answer = Send(new SignatureServiceRequest(new Uri(address), SignatureServiceKind.Ocsp)
                     {
                         Body = CmsRevocation.Request(certificate, issuer), Timeout = options.Timeout, MaxResponseBytes = maxBytes,
                     });
@@ -1084,7 +1088,7 @@ internal static class PdfSigning
             {
                 try
                 {
-                    byte[] list = SignatureServices.Send(new SignatureServiceRequest(new Uri(address), SignatureServiceKind.RevocationList)
+                    byte[] list = Send(new SignatureServiceRequest(new Uri(address), SignatureServiceKind.RevocationList)
                     {
                         Timeout = options.Timeout, MaxResponseBytes = maxBytes,
                     });

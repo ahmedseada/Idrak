@@ -44,9 +44,14 @@ public static class DatasetSpecExtensions
             ? new ChatMapping { User = user, Assistant = spec.Get("assistant") ?? throw new ArgumentException($"{spec.Source}: user= needs assistant= too."), System = spec.Get("system") }
             : null;
 
+        // The dataset sources were registered (DatasetSources: hf:, github:, kaggle:, zenodo:, http(s)://, folders, files) and
+        // tried in order: not on the new design yet.
+        private static IDatasetSource? SourceFor(string source) =>
+            throw new NotSupportedException($"'{source}': a dataset source picked by its name or prefix is not on the new design yet.");
+
         private DatasetRows OpenSource(IDownloader? downloader, IReadOnlyCollection<string>? skippedFolders)
         {
-            var opener = DatasetSources.Find(spec.Source);
+            var opener = SourceFor(spec.Source);
             foreach (var key in spec.Options.Keys.Where(k => !DatasetSpec.CommonOptions.Contains(k, StringComparer.OrdinalIgnoreCase)
                                                              && opener?.Options.Contains(k, StringComparer.OrdinalIgnoreCase) != true))
             {
@@ -65,13 +70,14 @@ public static class DatasetSpecExtensions
 
                 // A built-in format by its DataFormat name, or any registered one by its name.
                 Format = spec.Get("format") is { } format && Enum.TryParse<DataFormat>(format, ignoreCase: true, out var builtIn) ? builtIn : null,
-                FileFormat = spec.Get("format") is { } named && !Enum.TryParse<DataFormat>(named, ignoreCase: true, out _) ? DataFileFormats.Get(named) : null,
+                FileFormat = spec.Get("format") is { } named && !Enum.TryParse<DataFormat>(named, ignoreCase: true, out _)
+                    ? throw new NotSupportedException($"{spec.Source}: the data file format '{named}' by name is not on the new design yet.")
+                    : (IDataFileFormat?)null,
                 JsonProperty = spec.Get("json_property"),
                 Documents = spec.Flag("documents"),
                 SkippedFolders = skippedFolders ?? ReadOptions.DefaultSkippedFolders,
             };
 
-            // The registered sources, in order (see DatasetSources): hf:, github:, kaggle:, zenodo:, http(s)://, folders, files.
             var rows = opener?.Open(spec, read, downloader)
                 ?? throw new FileNotFoundException($"'{spec.Source}' is not a file, a folder or a known source (hf:, github:, kaggle:, zenodo:, http(s)://).");
             return DatasetRows.From(rows);

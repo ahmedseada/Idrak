@@ -768,20 +768,15 @@ internal sealed class PdfImage
         return palette;
     }
 
+    // The image codecs were registered (ImageCodecs) and looked up by name: not on the new design yet.
+    private IImageCodec CodecNamed(string? encoding) =>
+        throw new NotSupportedException($"{_where} is {encoding}: an image codec by name is not on the new design yet (DocumentImage.Bytes gives its data as stored).");
+
     // A JPEG, JPEG 2000, CCITT or JBIG2 image through the codec registered by its encoding's name: its own decode,
     // bounded by its header's size, which must be the dictionary's.
     private ImageData DecodeEncoded()
     {
-        IImageCodec codec;
-        try
-        {
-            codec = ImageCodecs.Get(Info.Encoding);
-        }
-        catch (NotRegisteredException e)
-        {
-            throw new NotRegisteredException(e.Registry, e.Name, e.Registered,
-                $"{_where} is {Info.Encoding}, which no registered image codec reads (registered: {string.Join(", ", e.Registered)}); register one named \"{Info.Encoding}\" with ImageCodecs.Register (DocumentImage.Bytes gives its data as stored).");
-        }
+        var codec = CodecNamed(Info.Encoding);
 
         using var data = Data();
         var bytes = data.Span;
@@ -1400,11 +1395,8 @@ internal sealed class PdfPageImages(PdfFile file, int page, PdfIssues issues)
         var info = image.Info;
         if (info.Encoding != DocumentImage.Raw)
         {
-            if (!ImageCodecs.Names.Contains(info.Encoding, StringComparer.OrdinalIgnoreCase))
-            {
-                issues.Add(DocumentIssue.ImageEncoding,
-                    $"page {page}: {info.Encoding} images, which no registered image codec reads (register one named \"{info.Encoding}\" with ImageCodecs.Register; DocumentImage.Bytes gives their data as stored)");
-            }
+            issues.Add(DocumentIssue.ImageEncoding,
+                $"page {page}: {info.Encoding} images: an image codec by name is not on the new design yet (DocumentImage.Bytes gives their data as stored)");
         }
         else if (info.Problem is { } problem)
         {

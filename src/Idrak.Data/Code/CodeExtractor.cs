@@ -38,8 +38,8 @@ public sealed record CodeExtraction(string Output, string ManifestPath, JsonObje
 
 /// <summary>
 /// Turns a repository or project into data (plan 36, <c>idrak data code</c>): it walks the source once (rule 72; files are
-/// told apart by their bytes, rule 74), runs the chosen task families (<see cref="TaskFamilies"/>) whose languages match the
-/// files', writes their rows through the row filters (<see cref="RowFilters"/>) and their drafts as task folders, and writes
+/// told apart by their bytes, rule 74), runs the chosen task families (<c>TaskFamilies</c>) whose languages match the
+/// files', writes their rows through the row filters (<c>RowFilters</c>) and their drafts as task folders, and writes
 /// <c>manifest.json</c>: the families, the counts asked, kept and rejected with the reasons, and the time.
 /// </summary>
 /// <remarks>
@@ -53,6 +53,9 @@ public sealed record CodeExtraction(string Output, string ManifestPath, JsonObje
 /// <param name="options">The run's settings; null for the defaults.</param>
 public sealed class CodeExtractor(CodeExtractorOptions? options = null)
 {
+    // The task families were registered (TaskFamilies) and looked up by name: not on the new design yet.
+    private static ITaskFamily FamilyNamed(string name) => throw new NotSupportedException($"The task family '{name}' by name is not on the new design yet.");
+
     /// <summary>The run's settings.</summary>
     public CodeExtractorOptions Options { get; } = options ?? new CodeExtractorOptions();
 
@@ -178,15 +181,17 @@ public sealed class CodeExtractor(CodeExtractorOptions? options = null)
         output = Path.GetFullPath(output);
         string root = Path.GetFullPath(source.Root);
 
-        // Everything named is checked before any work: the families, the verifier, the formats.
-        var families = (options.Families ?? [.. TaskFamilies.Names]).Distinct(StringComparer.OrdinalIgnoreCase).Select(TaskFamilies.Get).ToList();
-        var verifier = TaskVerifiers.Choose(options.Verifier);
+        // Everything named is checked before any work: the families, the verifier, the formats. The task families, the
+        // verifiers, the data file formats and the row filters were registered and looked up by name: not on the new design yet.
+        var families = (options.Families ?? throw new NotSupportedException("A code extraction runs every registered task family: a task family by name is not on the new design yet."))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Select(FamilyNamed).ToList();
+        ITaskVerifier? verifier = options.Verifier is null || options.Verifier.Equals(TaskVerifiers.None, StringComparison.OrdinalIgnoreCase) ? null
+            : throw new NotSupportedException($"The task verifier '{options.Verifier}' by name is not on the new design yet.");
         foreach (string format in options.Formats)
         {
-            var known = DataFileFormats.Get(format);
-            if (!known.Name.Equals(nameof(DataFormat.JsonLines), StringComparison.OrdinalIgnoreCase))
+            if (!format.Equals(nameof(DataFormat.JsonLines), StringComparison.OrdinalIgnoreCase))
             {
-                throw new NotSupportedException($"Rows are written as {nameof(DataFormat.JsonLines)}; the data format '{known.Name}' is read only in Idrak.Data, so a code extraction cannot write it.");
+                throw new NotSupportedException($"Rows are written as {nameof(DataFormat.JsonLines)}; the data format '{format}' by name is not on the new design yet.");
             }
         }
 
@@ -208,7 +213,7 @@ public sealed class CodeExtractor(CodeExtractorOptions? options = null)
         var files = Walk(source, options.SkippedFolders, options.MaxFileBytes, inside, skippedFiles);
         progress?.Report(files.Count);
 
-        var filters = RowFilters.Names.Select(RowFilters.Get).ToList();
+        var filters = new List<IRowFilter>();                  // the registered row filters: none on the new design yet
         var state = new RunState(options.MaxTasks);
         var reports = new JsonArray();
         var byLanguages = new Dictionary<string, IReadOnlyList<CodeSourceFile>>(StringComparer.OrdinalIgnoreCase);   // one list per language set
@@ -656,7 +661,7 @@ public sealed class CodeExtractor(CodeExtractorOptions? options = null)
 
         public string Name => family.Name;
 
-        public JsonObject Json { get; } = new() { ["name"] = family.Name, ["summary"] = family.Summary, ["languages"] = new JsonArray([.. family.Languages.Select(l => (JsonNode)l)]) };
+        public JsonObject Json { get; } = new() { ["name"] = family.Name, ["languages"] = new JsonArray([.. family.Languages.Select(l => (JsonNode)l)]) };
 
         public int Files { get; set; }
 

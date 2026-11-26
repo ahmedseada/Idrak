@@ -10,7 +10,7 @@ namespace Idrak.Data.Pdf;
 /// split strings into codes and give CIDs, widths from <c>/W</c> and <c>/DW</c> (vertical: <c>/W2</c> and <c>/DW2</c>),
 /// glyphs through <c>/CIDToGIDMap</c>. Text comes, in this order: the font's ToUnicode CMap; a simple font's encoding (its
 /// base encoding and <c>/Differences</c>) with glyph names read by the Adobe Glyph List's rules; the embedded program's
-/// own <c>cmap</c> (through <see cref="FontFormats"/>), a glyph's lowest code point; otherwise none (the reader puts U+FFFD
+/// own <c>cmap</c> (through <c>FontFormats</c>), a glyph's lowest code point; otherwise none (the reader puts U+FFFD
 /// and counts it). Nothing here is for one language or script. Immutable once read, so one font serves every page and
 /// thread.
 /// </summary>
