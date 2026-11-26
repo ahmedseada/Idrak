@@ -220,7 +220,7 @@ internal abstract partial class Tests
         {
             using var document = PdfReadWritten(bytes);
             var page = document.ReadPage(0, DocumentParts.All);
-            Check(page.Text == "Quarterly report" && page.Paths.Count == 1 && page.Images.Count == 1,
+            Check(page.Text == "Quarterly report" && page.Paths.Count == 1 && page.Images.Count == 1 && PdfSamePixels(page.Images[0].Decode().Pixels, PdfLineArt(1, 64, 32).Pixels),
                 "every level reads the same page");
         }
 
@@ -291,7 +291,10 @@ internal abstract partial class Tests
             {
                 var (image, box) = placed[i];
                 var read = page.Images[i];
-                Check(read.Encoding == DocumentImage.Raw && read.PixelWidth == image.Width && read.PixelHeight == image.Height, $"image {i}: stored raw at its size");
+                var pixels = read.Decode();
+                float[] expected = image.TryGetPlanes(out var held, out _) ? [.. held[0].ToArray().Select(v => v / 255f)] : image.Pixels;
+                Check(read.Encoding == DocumentImage.Raw && pixels.Channels == image.Channels && pixels.Width == image.Width && pixels.Height == image.Height
+                      && PdfSamePixels(pixels.Pixels, expected), $"image {i}: its pixels exact");
                 Check(PdfNear(read.Box, box), $"image {i}: box {read.Box}, written {box}");
             }
 
@@ -347,8 +350,9 @@ internal abstract partial class Tests
                 var read = document.ReadPage(i, DocumentParts.Images).Images.Single();
                 string chosen = read.Encoding == DocumentImage.Jpeg ? "Jpeg" : "Flate";
                 Check(chosen == expected, $"{name}: Auto chose {chosen}, the sample expects {expected}");
-                Check(chosen == "Flate" || new JpegCodec().Decode(read.Bytes().Span).Pixels.AsSpan().SequenceEqual(new JpegCodec().Decode(JpegEncoder.Encode(image, 90)).Pixels),
-                    $"{name}: the codec's round trip");
+                Check(chosen == "Flate" ? PdfSamePixels(read.Decode().Pixels, image.Pixels)
+                        : new JpegCodec().Decode(read.Bytes().Span).Pixels.AsSpan().SequenceEqual(new JpegCodec().Decode(JpegEncoder.Encode(image, 90)).Pixels),
+                    $"{name}: stored exact, or the codec's round trip");
             }
         }
 
@@ -937,7 +941,7 @@ internal abstract partial class Tests
             Check(document.Info.Repaired && document.PageCount == 3, $"repaired: {document.Info.Repaired}, {document.PageCount} pages");
             var vector = document.ReadPage(0, DocumentParts.All);
             var image = document.ReadPage(1, DocumentParts.All).Images.Single();
-            Check(vector.Paths.Count == paths && image.Encoding == DocumentImage.Raw, "its finished pages read back");
+            Check(vector.Paths.Count == paths && PdfSamePixels(image.Decode().Pixels, PdfLineArt(3, 40, 30).Pixels), "its finished pages read back");
             var text = document.ReadPage(2, DocumentParts.All);
             Check(text.Issues.Any(i => i.Kind == DocumentIssue.MissingFont), $"the page in hand is there; its font, written at Finish, is not (counted): {string.Join("; ", text.Issues)}");
 

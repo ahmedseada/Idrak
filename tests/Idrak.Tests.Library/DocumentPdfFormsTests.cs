@@ -250,7 +250,7 @@ internal abstract partial class Tests
 
     // A page drawn with its widgets (or not) at `dpi`, the standard fonts from the test's folder.
     private static ImageData PdfFormsDraw(IDocument document, int page, double dpi, bool annotations = true) =>
-        PdfDrawn(document, page, new DocumentDrawOptions
+        document.DrawPage(page, new DocumentDrawOptions
         {
             Dpi = (float)dpi, Fonts = PdfDrawFonts(),
             Parts = DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths | (annotations ? DocumentParts.Annotations : DocumentParts.None),

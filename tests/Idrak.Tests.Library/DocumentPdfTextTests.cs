@@ -18,9 +18,11 @@ internal abstract partial class Tests
         ("documents pdf: text: reading every D3 sample page's text, timed cold and warm apart, with the managed allocation per page (the same text on every pass)", PdfTextTimed),
         ("documents pdf: text: every D3 sample page's runs as written (text, box within float rounding, font size, font, hidden, order, /ActualText), its lines with their direction and its text in logical order through bidi (right-to-left and mixed lines, ligatures kept whole), unmapped glyphs counted, rotated and cropped pages, vertical text, forms and text matrices", PdfTextSamples),
         ("documents pdf: text: a form that draws itself trips MaxDepth when its page is read, naming the limit and the file; pages read in parallel give the same runs, lines, glyphs and issues as read in order", PdfTextHostileAndParallel),
-        ("documents pdf: text: the options (IncludeHidden leaves invisible runs out with the others' order kept, WordGap decides TJ word gaps), glyphs when asked (none for the standard 14's face, a glyph a character)", PdfTextOptions),
+        ("documents pdf: text: the options (IncludeHidden leaves invisible runs out with the others' order kept, WordGap decides TJ word gaps), glyphs and faces when asked (embedded programs read as their font descriptors' keys say, none for the standard 14)", PdfTextOptions),
         ("documents pdf: text: glyph names to text by the Adobe Glyph List's rules, the standard fonts and their common other names, CMaps (code spaces, bfchar, bfrange with arrays, cidrange, notdef), and a hand-made page (a font the page lacks counted, an inline image holding \" EIQ\", spans named in /Properties, unknown operators passed over, paths in the order)", PdfTextHandMade),
         ("documents pdf: text: once warm, a page of a document kept open allocates what it gives back (runs, their text, lines, text, issues), what the lines layout makes of its runs, and at most a named bound of the reader's own (the content stream's decoding, the list the layout is given): many fonts, right to left, two-byte codes, unmapped glyphs, TrueType", PdfTextAllocation),
+        ("documents pdf: text: TrueType glyphs found by their names in the program's post table (ISO 32000-2, 9.6.5.4), its cmap holding no letter: format 1 by the 258 standard Macintosh names' order, format 2 by their indices; the sample's text, boxes and glyph ids", PdfTextMacNames),
+        ("documents pdf: text: a bare CFF with no /Encoding reads its codes through the program's own encoding: the predefined Expert encoding over the Expert and Expert Subset charsets (each glyph named as the charset names it); the sample's text by the glyph names, boxes and glyph ids", PdfTextCffExpert),
         ("documents pdf: text: vertical text whose /W2 gives position vectors of its own (ISO 32000-2, 9.7.4.3): each glyph drawn from its vertical origin moved by its vector, its box across the column from -vx to its width less vx; the sample's text and boxes", PdfTextVerticalW2),
     ];
 
@@ -417,8 +419,23 @@ internal abstract partial class Tests
             Check(page.Lines[1].Text == line && page.Lines[0].Text == "Words with kerning", $"word gap {gap}: \"{page.Lines[1].Text}\", \"{page.Lines[0].Text}\"");
         }
 
-        // Glyphs when asked: none for the standard 14's face (the codes). (A program the file embeds is read through the font
-        // formats tried by its header, which is not on the new design yet.)
+        // Glyphs when asked: an embedded program read as a face (its glyph ids), none for the standard 14 (the codes).
+        using (var document = PdfOpened(samples["type0-identity"].Path))
+        {
+            var plain = document.ReadPage(0, DocumentParts.Text);
+            Check(plain.Runs.All(r => r.Glyphs.IsEmpty && r.Face is null), "no glyphs or faces when text alone is asked");
+            var page = document.ReadPage(0, DocumentParts.Text | DocumentParts.Glyphs);
+            foreach (var run in page.Runs)
+            {
+                var glyphs = run.Glyphs.Span;
+                Check(run.Face is { } face && face.Family.Contains("DejaVu", StringComparison.Ordinal) && glyphs.Length > 0 && glyphs.Length <= run.Text.Length
+                      && glyphs.ToArray().All(g => g.Glyph > 0 && g.Glyph < face.GlyphCount && g.Advance > 0 && g.X >= run.Box.X - 0.01f && g.X <= run.Box.Right + 0.01f),
+                    $"type0-identity: \"{run.Text}\": face {run.Face?.Family}, {glyphs.Length} glyphs");
+                float right = glyphs[^1].X + glyphs[^1].Advance;
+                Check(MathF.Abs(glyphs[0].X - run.Box.X) < 0.01f && MathF.Abs(right - run.Box.Right) < 0.01f, $"\"{run.Text}\": the glyphs span {glyphs[0].X} to {right}, the box {run.Box}");
+            }
+        }
+
         using (var document = PdfOpened(samples["standard14"].Path))
         {
             var page = document.ReadPage(0, DocumentParts.Text | DocumentParts.Glyphs);

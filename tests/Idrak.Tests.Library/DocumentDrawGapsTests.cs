@@ -7,9 +7,8 @@ using System.Text.Json.Nodes;
 
 // Plan 28: the drawing gaps D7 left, closed (2026-11-19): groups that are not isolated, a stroke's pen under a matrix
 // that is not uniform, Type 3 glyphs that are drawings, a tiling cell clipped to its box (documents drawers); the pen
-// read and written (documents pdf: vector); vertical position vectors (documents pdf: text). (TrueType glyphs by their
-// standard Macintosh names and a bare CFF's own encoding read the program the file embeds, through the font formats tried
-// by its header, which is not on the new design yet.) The samples are
+// read and written (documents pdf: vector); TrueType glyphs by their standard Macintosh names, a bare CFF's own encoding
+// (the Expert encoding and charsets) and vertical position vectors (documents pdf: text). The samples are
 // tools/documents/docfixtures/samples_d7_gaps.py's, drawn against pdfium by "documents drawers: the library's coverage
 // drawer ...".
 internal abstract partial class Tests
@@ -263,6 +262,40 @@ internal abstract partial class Tests
             int[] want = [.. expected[k]!["glyphs"]!.AsArray().Select(v => (int)v!)];
             Check(ids.SequenceEqual(want), $"{what}: run {k} \"{page.Runs[k].Text}\": glyphs {string.Join(" ", ids)}, expected {string.Join(" ", want)}");
         }
+    }
+
+    // TrueType fonts whose cmaps map the space alone: each code's glyph found by its name in the post table (format 1: the
+    // standard Macintosh order; format 2: the standard names by their indices); the text the encoding's.
+    private static void PdfTextMacNames(Device device)
+    {
+        CpuOnly(device);
+        var sample = PdfGapSample("vector-truetype-mac-names");
+        using var document = PdfOpened(sample.Path);
+        var expected = sample.Expected["pages"]![0]!.AsObject();
+        PdfCheckTextPage("vector-truetype-mac-names", document.ReadPage(0, DocumentParts.Text), expected);
+        var page = document.ReadPage(0, DocumentParts.Text | DocumentParts.Glyphs);
+        PdfCheckGlyphIds("vector-truetype-mac-names", page, expected["glyphIds"]!.AsArray());
+        Check(page.Runs.All(r => r.Face?.Format == "opentype"), $"the runs' faces: {string.Join(", ", page.Runs.Select(r => r.Face?.Format ?? "none"))}");
+    }
+
+    // Bare CFF fonts with no /Encoding: their codes' glyphs and text through the program's own encoding, the predefined
+    // Expert encoding, over the Expert and Expert Subset charsets (each glyph's name the charset's).
+    private static void PdfTextCffExpert(Device device)
+    {
+        CpuOnly(device);
+        var sample = PdfGapSample("vector-cff-expert");
+        using var document = PdfOpened(sample.Path);
+        var expected = sample.Expected["pages"]![0]!.AsObject();
+        PdfCheckTextPage("vector-cff-expert", document.ReadPage(0, DocumentParts.Text), expected);
+        var page = document.ReadPage(0, DocumentParts.Text | DocumentParts.Glyphs);
+        PdfCheckGlyphIds("vector-cff-expert", page, expected["glyphIds"]!.AsArray());
+        var face = page.Runs[0].Face!;
+        var names = PdfPostNames(face);
+        Check(face.Format == "cff" && names.TryGetValue("Rsmall", out int r) && r == 72 && names.TryGetValue("zerooldstyle", out int z) && z == 16 && names.TryGetValue("ffl", out int f) && f == 49,
+            $"the Expert charset's names: Rsmall {(names.TryGetValue("Rsmall", out int a) ? a : -1)}, zerooldstyle {(names.TryGetValue("zerooldstyle", out int b) ? b : -1)}, ffl {(names.TryGetValue("ffl", out int c) ? c : -1)} (72, 16, 49 expected)");
+        var subset = PdfPostNames(page.Runs[2].Face!);
+        Check(subset.TryGetValue("dollaroldstyle", out int d) && d == 2 && subset.TryGetValue("commainferior", out int e) && e == 86,
+            $"the Expert Subset charset's names: dollaroldstyle {(subset.TryGetValue("dollaroldstyle", out int g) ? g : -1)}, commainferior {(subset.TryGetValue("commainferior", out int h) ? h : -1)} (2, 86 expected)");
     }
 
     // Vertical text whose /W2 gives some glyphs a position vector of their own: each glyph's box across the column from

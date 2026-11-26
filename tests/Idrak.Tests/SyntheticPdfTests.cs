@@ -106,13 +106,14 @@ internal abstract partial class DesktopTests
                         problems.Add($"{where}: the page is {page.Width} x {page.Height} points for {image.Width} x {image.Height} pixels");
                     }
 
-                    // A JPEG image: the JPEG codec's round trip of the page's pixels, compared as 8-bit levels (a drawn page's table
-                    // of a byte's value and a codec's differ in the last bit: k / 255, k x (1 / 255)).
+                    // The image: exact (Flate), or the JPEG codec's round trip of the page's pixels, compared as 8-bit levels
+                    // (a drawn page's table of a byte's value and a codec's differ in the last bit: k / 255, k x (1 / 255)).
                     var stored = page.Images.Single();
                     jpeg += stored.Encoding == DocumentImage.Jpeg ? 1 : 0;
                     exact += stored.Encoding == DocumentImage.Jpeg ? 0 : 1;
-                    if (stored.Encoding == DocumentImage.Jpeg
-                        && !PdfSynthLevels(new JpegCodec().Decode(stored.Bytes().Span).Pixels).AsSpan().SequenceEqual(PdfSynthLevels(new JpegCodec().Decode(JpegEncoder.Encode(image, 90)).Pixels)))
+                    var expected = stored.Encoding == DocumentImage.Jpeg ? new JpegCodec().Decode(JpegEncoder.Encode(image, 90)).Pixels : image.Pixels;
+                    var storedPixels = stored.Encoding == DocumentImage.Jpeg ? new JpegCodec().Decode(stored.Bytes().Span).Pixels : stored.Decode().Pixels;
+                    if (!PdfSynthLevels(storedPixels).AsSpan().SequenceEqual(PdfSynthLevels(expected)))
                     {
                         problems.Add($"{where}: the {stored.Encoding} image is not the page's pixels");
                     }

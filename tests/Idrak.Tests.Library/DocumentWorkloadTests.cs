@@ -7,7 +7,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Data.Pdf;
-using Idrak.Imaging;
 
 // Plan 28, phase D13: any workload. The limits (DocumentOptions) measured from the machine's memory and settable, and memory
 // bounded at any size, on the large set tools/documents/make_fixtures.py --large writes beside the samples
@@ -214,6 +213,11 @@ internal abstract partial class Tests
                 {
                     var page = source.ReadPage(p, DocumentParts.Text | DocumentParts.Images);
                     var target = builder.AddPage(page.Width, page.Height);
+                    foreach (var image in page.Images)
+                    {
+                        target.Image(image.Decode(), image.Box, DocumentImageEncoding.Auto);
+                    }
+
                     foreach (var run in page.Runs)
                     {
                         float scale = run.FontSize / face.Metrics.UnitsPerEm, x = run.Box.X, y = run.Baseline ?? run.Box.Bottom;
@@ -261,7 +265,7 @@ internal abstract partial class Tests
             int drawn = 0;
             for (int p = 0; p < source.PageCount; p += 5, drawn++)
             {
-                var drawing = new CoverageDocumentDrawer().Draw(source.ReadPage(p, DocumentPageDrawers.PartsFor(options)), options);
+                var drawing = source.DrawPage(p, options);
                 Check(drawing.Image.Width == 612 && drawing.Image.Height == 792, $"page {p} drawn {drawing.Image.Width} x {drawing.Image.Height}");
                 drawHeap = Math.Max(drawHeap, GC.GetTotalMemory(forceFullCollection: false));
                 if (drawn == 20)
@@ -288,7 +292,7 @@ internal abstract partial class Tests
             GC.Collect();
             GC.WaitForPendingFinalizers();
             long before = GC.GetTotalAllocatedBytes(precise: true), at = Stopwatch.GetTimestamp();
-            var drawing = new CoverageDocumentDrawer().Draw(document.ReadPage(0, DocumentPageDrawers.PartsFor(options)), options);
+            var drawing = document.DrawPage(0, options);
             double ms = Stopwatch.GetElapsedTime(at).TotalMilliseconds;
             long used = GC.GetTotalAllocatedBytes(precise: true) - before;
             long pixels = (long)drawing.Image.Width * drawing.Image.Height * drawing.Image.Channels;

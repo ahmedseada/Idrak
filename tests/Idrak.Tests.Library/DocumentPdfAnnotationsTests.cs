@@ -705,9 +705,22 @@ internal abstract partial class Tests
             var clip = page.Clips[clipped!.Clip];
             Check(clip.Fill == DocumentFill.EvenOdd && PdfInside(clip, area[0] + area[2] / 2, area[1] + area[3] / 2) == false && PdfInside(clip, 5, 5) == true,
                 "the crossing path's clip leaves out the area");
+            // The image: its pixels as the sample's .redacted.png, exactly.
+            var picture = page.Images.Single().Decode();
+            byte[] interleaved = new byte[picture.Width * picture.Height * 3];
+            var values = picture.Pixels;
+            for (int p = 0; p < picture.Width * picture.Height; p++)
+            {
+                for (int c = 0; c < 3; c++)
+                {
+                    interleaved[3 * p + c] = (byte)Math.Round(values[c * picture.Width * picture.Height + p] * 255);
+                }
+            }
+
+            Check(Convert.ToHexStringLower(SHA256.HashData(interleaved)) == (string)image["sha256"]!, "the image's pixels are the expected redacted ones");
             // Drawn as redaction-applied draws in pdfium.
             var reference = new PngCodec().Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(sample.Path)!, "redaction-applied.p1.png")));
-            var drawing = PdfDrawn(document, 0, new DocumentDrawOptions { Dpi = 100, Fonts = PdfDrawFonts() });
+            var drawing = document.DrawPage(0, new DocumentDrawOptions { Dpi = 100, Fonts = PdfDrawFonts() });
             var (share, mean) = PdfDrawDifference(drawing.Image, reference, 32);
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"    redacted page against pdfium's redaction-applied: {share * 100:F2}% off by more than 32 levels (mean {mean:F2})"));
             Check(share <= 0.08, string.Create(CultureInfo.InvariantCulture, $"the redacted page draws as redaction-applied: {share * 100:F2}% off"));
@@ -895,8 +908,8 @@ internal abstract partial class Tests
         {
             var page = back.ReadPage(0, DocumentParts.All);
             var filled = page.Paths.Where(p => p.FillPattern?.Cell is not null).ToList();
-            Check(filled.Count == 1 && filled[0].FillPattern!.Cell!.Images.Count == 1, "the pattern's image as redaction-nested.pattern.redacted.png");
-            Check(page.SoftMasks.Count == 1 && page.SoftMasks[0].Content.Images.Count == 1, "the soft mask's image as redaction-nested.mask.redacted.png");
+            Check(filled.Count == 1 && PdfPixelHash(filled[0].FillPattern!.Cell!.Images.Single().Decode()) == (string)pattern["sha256"]!, "the pattern's image as redaction-nested.pattern.redacted.png");
+            Check(page.SoftMasks.Count == 1 && PdfPixelHash(page.SoftMasks[0].Content.Images.Single().Decode()) == (string)mask["sha256"]!, "the soft mask's image as redaction-nested.mask.redacted.png");
             Check(page.Lines.Any(l => l.Text.Trim() == (string)glyph["text"]!), $"the glyphs' line reads '{glyph["text"]}': {string.Join(" | ", page.Lines.Select(l => l.Text))}");
         }
 
@@ -940,6 +953,7 @@ internal abstract partial class Tests
         Check(!PdfImageObjects(bytes).Any(o => originals.Contains(o.Pixels)), "no image in the file is the image or its mask as they were");
         using var back = new PdfFormat().Open(new MemoryStream(bytes), "redaction-masked-redacted.pdf", new DocumentOptions());
         var picture = back.ReadPage(0, DocumentParts.Images).Images.Single();
+        Check(PdfPixelHash(picture.Decode()) == (string)image["sha256"]!, "the image as redaction-masked.image.redacted.png");
         Check(picture.Mask() is { } grey && PdfPixelHash(grey) == (string)mask["sha256"]!, "its soft mask kept, as redaction-masked.mask.redacted.png");
     }
 
@@ -1028,8 +1042,8 @@ internal abstract partial class Tests
             using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(sample.Path)), sample.Path, new DocumentOptions());
             var reference = png.Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(sample.Path)!, $"{name}.p1.png")));
             var options = new DocumentDrawOptions { Dpi = 100, Fonts = fonts, Parts = DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths | DocumentParts.Annotations };
-            var drawing = new CoverageDocumentDrawer().Draw(document.ReadPage(0, DocumentPageDrawers.PartsFor(options)), options);
-            var plain = PdfDrawn(document, 0, options with { Parts = DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths });
+            var drawing = document.DrawPage(0, options);
+            var plain = document.DrawPage(0, options with { Parts = DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths });
             File.WriteAllBytes(Path.Combine(drawn, $"{name}.p1.png"), new PngEncoder().Encode(drawing.Image));
             var (share, mean) = PdfDrawDifference(drawing.Image, reference, 32);
             var (without, _) = PdfDrawDifference(plain.Image, reference, 32);
