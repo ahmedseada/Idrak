@@ -19,7 +19,7 @@ namespace Idrak.Abstraction.Devices;
 // default body), one with no kernel returns its "none" value so the caller takes its own path (a void one rethrows);
 // other errors reach the caller. Its calls take a third path, NameGuarded (the device's kernel in a try region, free
 // until it throws), straight from Name(...) when nothing else takes them off the fast path (its slots are
-// s_guardedKernels), else from NameRegistered; which operations the device owns is looked up only when a kernel is
+// s_guardedKernels), else from NameScoped; which operations the device owns is looked up only when a kernel is
 // refused (the catch's filter).
 public abstract partial class Backend
 {
@@ -38,20 +38,15 @@ public abstract partial class Backend
         }
         else
         {
-            FillRegistered(y, n, value);
+            FillScoped(y, n, value);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void FillRegistered(Storage y, int n, float value)
+    private void FillScoped(Storage y, int n, float value)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Fill) is OperationKernels.Fill kernel)
-        {
-            kernel(this, y, n, value);
-            return;
-        }
-
+        Traced(OperationIndex.Fill);
         if (RefusedKernelsFallBack)
         {
             FillGuarded(y, n, value);
@@ -84,20 +79,15 @@ public abstract partial class Backend
         }
         else
         {
-            UnaryRegistered(op, x, y, n);
+            UnaryScoped(op, x, y, n);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void UnaryRegistered(UnaryOp op, Storage x, Storage y, int n)
+    private void UnaryScoped(UnaryOp op, Storage x, Storage y, int n)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Unary) is OperationKernels.Unary kernel)
-        {
-            kernel(this, op, x, y, n);
-            return;
-        }
-
+        Traced(OperationIndex.Unary);
         if (RefusedKernelsFallBack)
         {
             UnaryGuarded(op, x, y, n);
@@ -130,20 +120,15 @@ public abstract partial class Backend
         }
         else
         {
-            UnaryBackwardRegistered(op, x, y, dy, dx, n);
+            UnaryBackwardScoped(op, x, y, dy, dx, n);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void UnaryBackwardRegistered(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
+    private void UnaryBackwardScoped(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.UnaryBackward) is OperationKernels.UnaryBackward kernel)
-        {
-            kernel(this, op, x, y, dy, dx, n);
-            return;
-        }
-
+        Traced(OperationIndex.UnaryBackward);
         if (RefusedKernelsFallBack)
         {
             UnaryBackwardGuarded(op, x, y, dy, dx, n);
@@ -176,20 +161,15 @@ public abstract partial class Backend
         }
         else
         {
-            BinaryRegistered(op, a, b, c, n);
+            BinaryScoped(op, a, b, c, n);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void BinaryRegistered(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    private void BinaryScoped(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Binary) is OperationKernels.Binary kernel)
-        {
-            kernel(this, op, a, b, c, n);
-            return;
-        }
-
+        Traced(OperationIndex.Binary);
         if (RefusedKernelsFallBack)
         {
             BinaryGuarded(op, a, b, c, n);
@@ -225,20 +205,15 @@ public abstract partial class Backend
         }
         else
         {
-            ExtremumBackwardRegistered(op, a, b, dy, da, db, n);
+            ExtremumBackwardScoped(op, a, b, dy, da, db, n);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ExtremumBackwardRegistered(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
+    private void ExtremumBackwardScoped(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ExtremumBackward) is OperationKernels.ExtremumBackward kernel)
-        {
-            kernel(this, op, a, b, dy, da, db, n);
-            return;
-        }
-
+        Traced(OperationIndex.ExtremumBackward);
         if (RefusedKernelsFallBack)
         {
             ExtremumBackwardGuarded(op, a, b, dy, da, db, n);
@@ -271,20 +246,15 @@ public abstract partial class Backend
         }
         else
         {
-            PowRegistered(x, y, n, exponent);
+            PowScoped(x, y, n, exponent);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void PowRegistered(Storage x, Storage y, int n, float exponent)
+    private void PowScoped(Storage x, Storage y, int n, float exponent)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Pow) is OperationKernels.Pow kernel)
-        {
-            kernel(this, x, y, n, exponent);
-            return;
-        }
-
+        Traced(OperationIndex.Pow);
         if (RefusedKernelsFallBack)
         {
             PowGuarded(x, y, n, exponent);
@@ -317,20 +287,15 @@ public abstract partial class Backend
         }
         else
         {
-            PowBackwardRegistered(x, dy, dx, n, exponent);
+            PowBackwardScoped(x, dy, dx, n, exponent);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void PowBackwardRegistered(Storage x, Storage dy, Storage dx, int n, float exponent)
+    private void PowBackwardScoped(Storage x, Storage dy, Storage dx, int n, float exponent)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.PowBackward) is OperationKernels.PowBackward kernel)
-        {
-            kernel(this, x, dy, dx, n, exponent);
-            return;
-        }
-
+        Traced(OperationIndex.PowBackward);
         if (RefusedKernelsFallBack)
         {
             PowBackwardGuarded(x, dy, dx, n, exponent);
@@ -363,20 +328,15 @@ public abstract partial class Backend
         }
         else
         {
-            ClampRegistered(x, y, n, min, max);
+            ClampScoped(x, y, n, min, max);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ClampRegistered(Storage x, Storage y, int n, float min, float max)
+    private void ClampScoped(Storage x, Storage y, int n, float min, float max)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Clamp) is OperationKernels.Clamp kernel)
-        {
-            kernel(this, x, y, n, min, max);
-            return;
-        }
-
+        Traced(OperationIndex.Clamp);
         if (RefusedKernelsFallBack)
         {
             ClampGuarded(x, y, n, min, max);
@@ -409,20 +369,15 @@ public abstract partial class Backend
         }
         else
         {
-            ClampBackwardRegistered(x, dy, dx, n, min, max);
+            ClampBackwardScoped(x, dy, dx, n, min, max);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ClampBackwardRegistered(Storage x, Storage dy, Storage dx, int n, float min, float max)
+    private void ClampBackwardScoped(Storage x, Storage dy, Storage dx, int n, float min, float max)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ClampBackward) is OperationKernels.ClampBackward kernel)
-        {
-            kernel(this, x, dy, dx, n, min, max);
-            return;
-        }
-
+        Traced(OperationIndex.ClampBackward);
         if (RefusedKernelsFallBack)
         {
             ClampBackwardGuarded(x, dy, dx, n, min, max);
@@ -455,20 +410,15 @@ public abstract partial class Backend
         }
         else
         {
-            LeakyReluRegistered(x, y, n, slope);
+            LeakyReluScoped(x, y, n, slope);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void LeakyReluRegistered(Storage x, Storage y, int n, float slope)
+    private void LeakyReluScoped(Storage x, Storage y, int n, float slope)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LeakyRelu) is OperationKernels.LeakyRelu kernel)
-        {
-            kernel(this, x, y, n, slope);
-            return;
-        }
-
+        Traced(OperationIndex.LeakyRelu);
         if (RefusedKernelsFallBack)
         {
             LeakyReluGuarded(x, y, n, slope);
@@ -501,20 +451,15 @@ public abstract partial class Backend
         }
         else
         {
-            LeakyReluBackwardRegistered(x, dy, dx, n, slope);
+            LeakyReluBackwardScoped(x, dy, dx, n, slope);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void LeakyReluBackwardRegistered(Storage x, Storage dy, Storage dx, int n, float slope)
+    private void LeakyReluBackwardScoped(Storage x, Storage dy, Storage dx, int n, float slope)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LeakyReluBackward) is OperationKernels.LeakyReluBackward kernel)
-        {
-            kernel(this, x, dy, dx, n, slope);
-            return;
-        }
-
+        Traced(OperationIndex.LeakyReluBackward);
         if (RefusedKernelsFallBack)
         {
             LeakyReluBackwardGuarded(x, dy, dx, n, slope);
@@ -547,20 +492,15 @@ public abstract partial class Backend
         }
         else
         {
-            WhereRegistered(condition, a, b, y, n);
+            WhereScoped(condition, a, b, y, n);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void WhereRegistered(Storage condition, Storage a, Storage b, Storage y, int n)
+    private void WhereScoped(Storage condition, Storage a, Storage b, Storage y, int n)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Where) is OperationKernels.Where kernel)
-        {
-            kernel(this, condition, a, b, y, n);
-            return;
-        }
-
+        Traced(OperationIndex.Where);
         if (RefusedKernelsFallBack)
         {
             WhereGuarded(condition, a, b, y, n);
@@ -593,20 +533,15 @@ public abstract partial class Backend
         }
         else
         {
-            WhereBackwardRegistered(condition, dy, da, db, n);
+            WhereBackwardScoped(condition, dy, da, db, n);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void WhereBackwardRegistered(Storage condition, Storage dy, Storage? da, Storage? db, int n)
+    private void WhereBackwardScoped(Storage condition, Storage dy, Storage? da, Storage? db, int n)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.WhereBackward) is OperationKernels.WhereBackward kernel)
-        {
-            kernel(this, condition, dy, da, db, n);
-            return;
-        }
-
+        Traced(OperationIndex.WhereBackward);
         if (RefusedKernelsFallBack)
         {
             WhereBackwardGuarded(condition, dy, da, db, n);
@@ -639,20 +574,15 @@ public abstract partial class Backend
         }
         else
         {
-            AffineRegistered(x, y, n, alpha, beta);
+            AffineScoped(x, y, n, alpha, beta);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AffineRegistered(Storage x, Storage y, int n, float alpha, float beta)
+    private void AffineScoped(Storage x, Storage y, int n, float alpha, float beta)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Affine) is OperationKernels.Affine kernel)
-        {
-            kernel(this, x, y, n, alpha, beta);
-            return;
-        }
-
+        Traced(OperationIndex.Affine);
         if (RefusedKernelsFallBack)
         {
             AffineGuarded(x, y, n, alpha, beta);
@@ -685,20 +615,15 @@ public abstract partial class Backend
         }
         else
         {
-            AxpyRegistered(x, y, n, alpha);
+            AxpyScoped(x, y, n, alpha);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AxpyRegistered(Storage x, Storage y, int n, float alpha)
+    private void AxpyScoped(Storage x, Storage y, int n, float alpha)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Axpy) is OperationKernels.Axpy kernel)
-        {
-            kernel(this, x, y, n, alpha);
-            return;
-        }
-
+        Traced(OperationIndex.Axpy);
         if (RefusedKernelsFallBack)
         {
             AxpyGuarded(x, y, n, alpha);
@@ -731,20 +656,15 @@ public abstract partial class Backend
         }
         else
         {
-            MulAddRegistered(a, b, c, n);
+            MulAddScoped(a, b, c, n);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void MulAddRegistered(Storage a, Storage b, Storage c, int n)
+    private void MulAddScoped(Storage a, Storage b, Storage c, int n)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.MulAdd) is OperationKernels.MulAdd kernel)
-        {
-            kernel(this, a, b, c, n);
-            return;
-        }
-
+        Traced(OperationIndex.MulAdd);
         if (RefusedKernelsFallBack)
         {
             MulAddGuarded(a, b, c, n);
@@ -777,20 +697,15 @@ public abstract partial class Backend
         }
         else
         {
-            AddRowVectorRegistered(a, v, c, rows, cols);
+            AddRowVectorScoped(a, v, c, rows, cols);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AddRowVectorRegistered(Storage a, Storage v, Storage c, int rows, int cols)
+    private void AddRowVectorScoped(Storage a, Storage v, Storage c, int rows, int cols)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AddRowVector) is OperationKernels.AddRowVector kernel)
-        {
-            kernel(this, a, v, c, rows, cols);
-            return;
-        }
-
+        Traced(OperationIndex.AddRowVector);
         if (RefusedKernelsFallBack)
         {
             AddRowVectorGuarded(a, v, c, rows, cols);
@@ -823,20 +738,15 @@ public abstract partial class Backend
         }
         else
         {
-            SumRowsRegistered(x, y, rows, cols);
+            SumRowsScoped(x, y, rows, cols);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SumRowsRegistered(Storage x, Storage y, int rows, int cols)
+    private void SumRowsScoped(Storage x, Storage y, int rows, int cols)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.SumRows) is OperationKernels.SumRows kernel)
-        {
-            kernel(this, x, y, rows, cols);
-            return;
-        }
-
+        Traced(OperationIndex.SumRows);
         if (RefusedKernelsFallBack)
         {
             SumRowsGuarded(x, y, rows, cols);
@@ -869,20 +779,15 @@ public abstract partial class Backend
         }
         else
         {
-            SumRegistered(x, result, n, scale);
+            SumScoped(x, result, n, scale);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SumRegistered(Storage x, Storage result, int n, float scale)
+    private void SumScoped(Storage x, Storage result, int n, float scale)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Sum) is OperationKernels.Sum kernel)
-        {
-            kernel(this, x, result, n, scale);
-            return;
-        }
-
+        Traced(OperationIndex.Sum);
         if (RefusedKernelsFallBack)
         {
             SumGuarded(x, result, n, scale);
@@ -915,20 +820,15 @@ public abstract partial class Backend
         }
         else
         {
-            AxpyAtRegistered(x, y, offset, alpha);
+            AxpyAtScoped(x, y, offset, alpha);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AxpyAtRegistered(Storage x, Storage y, int offset, float alpha)
+    private void AxpyAtScoped(Storage x, Storage y, int offset, float alpha)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AxpyAt) is OperationKernels.AxpyAt kernel)
-        {
-            kernel(this, x, y, offset, alpha);
-            return;
-        }
-
+        Traced(OperationIndex.AxpyAt);
         if (RefusedKernelsFallBack)
         {
             AxpyAtGuarded(x, y, offset, alpha);
@@ -961,20 +861,15 @@ public abstract partial class Backend
         }
         else
         {
-            AddBroadcastScalarRegistered(s, y, n, scale);
+            AddBroadcastScalarScoped(s, y, n, scale);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AddBroadcastScalarRegistered(Storage s, Storage y, int n, float scale)
+    private void AddBroadcastScalarScoped(Storage s, Storage y, int n, float scale)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AddBroadcastScalar) is OperationKernels.AddBroadcastScalar kernel)
-        {
-            kernel(this, s, y, n, scale);
-            return;
-        }
-
+        Traced(OperationIndex.AddBroadcastScalar);
         if (RefusedKernelsFallBack)
         {
             AddBroadcastScalarGuarded(s, y, n, scale);
@@ -1010,20 +905,15 @@ public abstract partial class Backend
         }
         else
         {
-            MatMulManyRegistered(a, m, k, products);
+            MatMulManyScoped(a, m, k, products);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void MatMulManyRegistered(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
+    private void MatMulManyScoped(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.MatMulMany) is OperationKernels.MatMulMany kernel)
-        {
-            kernel(this, a, m, k, products);
-            return;
-        }
-
+        Traced(OperationIndex.MatMulMany);
         if (RefusedKernelsFallBack)
         {
             MatMulManyGuarded(a, m, k, products);
@@ -1070,18 +960,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool MatMulBias(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
     {
-        return _kernels is null && _moves is null ? MatMulBiasKernel(a, b, bias, c, m, n, k) : ReferenceEquals(_kernels, s_guardedKernels) ? MatMulBiasGuarded(a, b, bias, c, m, n, k) : MatMulBiasRegistered(a, b, bias, c, m, n, k);
+        return _kernels is null && _moves is null ? MatMulBiasKernel(a, b, bias, c, m, n, k) : ReferenceEquals(_kernels, s_guardedKernels) ? MatMulBiasGuarded(a, b, bias, c, m, n, k) : MatMulBiasScoped(a, b, bias, c, m, n, k);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool MatMulBiasRegistered(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
+    private bool MatMulBiasScoped(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.MatMulBias) is OperationKernels.MatMulBias kernel)
-        {
-            return kernel(this, a, b, bias, c, m, n, k);
-        }
-
+        Traced(OperationIndex.MatMulBias);
         return RefusedKernelsFallBack ? MatMulBiasGuarded(a, b, bias, c, m, n, k) : MatMulBiasKernel(a, b, bias, c, m, n, k);
     }
 
@@ -1115,20 +1001,15 @@ public abstract partial class Backend
         }
         else
         {
-            SumColumnsRegistered(x, offset, ld, y, rows, cols);
+            SumColumnsScoped(x, offset, ld, y, rows, cols);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SumColumnsRegistered(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    private void SumColumnsScoped(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.SumColumns) is OperationKernels.SumColumns kernel)
-        {
-            kernel(this, x, offset, ld, y, rows, cols);
-            return;
-        }
-
+        Traced(OperationIndex.SumColumns);
         if (RefusedKernelsFallBack)
         {
             SumColumnsGuarded(x, offset, ld, y, rows, cols);
@@ -1161,20 +1042,15 @@ public abstract partial class Backend
         }
         else
         {
-            AddDropoutRegistered(residual, x, output, n, p, seed);
+            AddDropoutScoped(residual, x, output, n, p, seed);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AddDropoutRegistered(Storage residual, Storage x, Storage output, int n, float p, uint seed)
+    private void AddDropoutScoped(Storage residual, Storage x, Storage output, int n, float p, uint seed)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AddDropout) is OperationKernels.AddDropout kernel)
-        {
-            kernel(this, residual, x, output, n, p, seed);
-            return;
-        }
-
+        Traced(OperationIndex.AddDropout);
         if (RefusedKernelsFallBack)
         {
             AddDropoutGuarded(residual, x, output, n, p, seed);
@@ -1222,20 +1098,15 @@ public abstract partial class Backend
         }
         else
         {
-            BatchedMatMulRegistered(a, b, c, batch, m, n, k, transA, transB, beta);
+            BatchedMatMulScoped(a, b, c, batch, m, n, k, transA, transB, beta);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void BatchedMatMulRegistered(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    private void BatchedMatMulScoped(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.BatchedMatMul) is OperationKernels.BatchedMatMul kernel)
-        {
-            kernel(this, a, b, c, batch, m, n, k, transA, transB, beta);
-            return;
-        }
-
+        Traced(OperationIndex.BatchedMatMul);
         if (RefusedKernelsFallBack)
         {
             BatchedMatMulGuarded(a, b, c, batch, m, n, k, transA, transB, beta);
@@ -1268,20 +1139,15 @@ public abstract partial class Backend
         }
         else
         {
-            SoftmaxRegistered(x, y, rows, cols, log);
+            SoftmaxScoped(x, y, rows, cols, log);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SoftmaxRegistered(Storage x, Storage y, int rows, int cols, bool log)
+    private void SoftmaxScoped(Storage x, Storage y, int rows, int cols, bool log)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Softmax) is OperationKernels.Softmax kernel)
-        {
-            kernel(this, x, y, rows, cols, log);
-            return;
-        }
-
+        Traced(OperationIndex.Softmax);
         if (RefusedKernelsFallBack)
         {
             SoftmaxGuarded(x, y, rows, cols, log);
@@ -1316,20 +1182,15 @@ public abstract partial class Backend
         }
         else
         {
-            SoftmaxBackwardRegistered(y, dy, dx, rows, cols, log);
+            SoftmaxBackwardScoped(y, dy, dx, rows, cols, log);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SoftmaxBackwardRegistered(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
+    private void SoftmaxBackwardScoped(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.SoftmaxBackward) is OperationKernels.SoftmaxBackward kernel)
-        {
-            kernel(this, y, dy, dx, rows, cols, log);
-            return;
-        }
-
+        Traced(OperationIndex.SoftmaxBackward);
         if (RefusedKernelsFallBack)
         {
             SoftmaxBackwardGuarded(y, dy, dx, rows, cols, log);
@@ -1362,20 +1223,15 @@ public abstract partial class Backend
         }
         else
         {
-            ArgMaxRegistered(x, y, rows, cols);
+            ArgMaxScoped(x, y, rows, cols);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ArgMaxRegistered(Storage x, Storage y, int rows, int cols)
+    private void ArgMaxScoped(Storage x, Storage y, int rows, int cols)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ArgMax) is OperationKernels.ArgMax kernel)
-        {
-            kernel(this, x, y, rows, cols);
-            return;
-        }
-
+        Traced(OperationIndex.ArgMax);
         if (RefusedKernelsFallBack)
         {
             ArgMaxGuarded(x, y, rows, cols);
@@ -1416,20 +1272,15 @@ public abstract partial class Backend
         }
         else
         {
-            LogSoftmaxTopKRegistered(x, values, indices, rows, cols, k);
+            LogSoftmaxTopKScoped(x, values, indices, rows, cols, k);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void LogSoftmaxTopKRegistered(Storage x, Storage values, Storage indices, int rows, int cols, int k)
+    private void LogSoftmaxTopKScoped(Storage x, Storage values, Storage indices, int rows, int cols, int k)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LogSoftmaxTopK) is OperationKernels.LogSoftmaxTopK kernel)
-        {
-            kernel(this, x, values, indices, rows, cols, k);
-            return;
-        }
-
+        Traced(OperationIndex.LogSoftmaxTopK);
         if (RefusedKernelsFallBack)
         {
             LogSoftmaxTopKGuarded(x, values, indices, rows, cols, k);
@@ -1465,20 +1316,15 @@ public abstract partial class Backend
         }
         else
         {
-            ClassMatchRegistered(predictions, targets, y, rows, cols, threshold);
+            ClassMatchScoped(predictions, targets, y, rows, cols, threshold);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ClassMatchRegistered(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
+    private void ClassMatchScoped(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ClassMatch) is OperationKernels.ClassMatch kernel)
-        {
-            kernel(this, predictions, targets, y, rows, cols, threshold);
-            return;
-        }
-
+        Traced(OperationIndex.ClassMatch);
         if (RefusedKernelsFallBack)
         {
             ClassMatchGuarded(predictions, targets, y, rows, cols, threshold);
@@ -1511,20 +1357,15 @@ public abstract partial class Backend
         }
         else
         {
-            NormStatsRegistered(x, mean, variance, invStd, outer, groups, inner, eps);
+            NormStatsScoped(x, mean, variance, invStd, outer, groups, inner, eps);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void NormStatsRegistered(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
+    private void NormStatsScoped(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.NormStats) is OperationKernels.NormStats kernel)
-        {
-            kernel(this, x, mean, variance, invStd, outer, groups, inner, eps);
-            return;
-        }
-
+        Traced(OperationIndex.NormStats);
         if (RefusedKernelsFallBack)
         {
             NormStatsGuarded(x, mean, variance, invStd, outer, groups, inner, eps);
@@ -1557,20 +1398,15 @@ public abstract partial class Backend
         }
         else
         {
-            NormApplyRegistered(x, mean, invStd, y, outer, groups, inner);
+            NormApplyScoped(x, mean, invStd, y, outer, groups, inner);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void NormApplyRegistered(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
+    private void NormApplyScoped(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.NormApply) is OperationKernels.NormApply kernel)
-        {
-            kernel(this, x, mean, invStd, y, outer, groups, inner);
-            return;
-        }
-
+        Traced(OperationIndex.NormApply);
         if (RefusedKernelsFallBack)
         {
             NormApplyGuarded(x, mean, invStd, y, outer, groups, inner);
@@ -1603,20 +1439,15 @@ public abstract partial class Backend
         }
         else
         {
-            NormBackwardRegistered(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+            NormBackwardScoped(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void NormBackwardRegistered(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
+    private void NormBackwardScoped(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.NormBackward) is OperationKernels.NormBackward kernel)
-        {
-            kernel(this, dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
-            return;
-        }
-
+        Traced(OperationIndex.NormBackward);
         if (RefusedKernelsFallBack)
         {
             NormBackwardGuarded(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
@@ -1651,20 +1482,15 @@ public abstract partial class Backend
         }
         else
         {
-            GroupScaleShiftRegistered(x, scale, shift, y, n, groups, inner, accumulate);
+            GroupScaleShiftScoped(x, scale, shift, y, n, groups, inner, accumulate);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void GroupScaleShiftRegistered(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
+    private void GroupScaleShiftScoped(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.GroupScaleShift) is OperationKernels.GroupScaleShift kernel)
-        {
-            kernel(this, x, scale, shift, y, n, groups, inner, accumulate);
-            return;
-        }
-
+        Traced(OperationIndex.GroupScaleShift);
         if (RefusedKernelsFallBack)
         {
             GroupScaleShiftGuarded(x, scale, shift, y, n, groups, inner, accumulate);
@@ -1697,20 +1523,15 @@ public abstract partial class Backend
         }
         else
         {
-            GroupReduceRegistered(a, b, sumA, sumAB, outer, groups, inner);
+            GroupReduceScoped(a, b, sumA, sumAB, outer, groups, inner);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void GroupReduceRegistered(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
+    private void GroupReduceScoped(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.GroupReduce) is OperationKernels.GroupReduce kernel)
-        {
-            kernel(this, a, b, sumA, sumAB, outer, groups, inner);
-            return;
-        }
-
+        Traced(OperationIndex.GroupReduce);
         if (RefusedKernelsFallBack)
         {
             GroupReduceGuarded(a, b, sumA, sumAB, outer, groups, inner);
@@ -1746,20 +1567,15 @@ public abstract partial class Backend
         }
         else
         {
-            WeightNormRegistered(gain, direction, weight, rows, columns);
+            WeightNormScoped(gain, direction, weight, rows, columns);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void WeightNormRegistered(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    private void WeightNormScoped(Storage gain, Storage direction, Storage weight, int rows, int columns)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.WeightNorm) is OperationKernels.WeightNorm kernel)
-        {
-            kernel(this, gain, direction, weight, rows, columns);
-            return;
-        }
-
+        Traced(OperationIndex.WeightNorm);
         if (RefusedKernelsFallBack)
         {
             WeightNormGuarded(gain, direction, weight, rows, columns);
@@ -1795,20 +1611,15 @@ public abstract partial class Backend
         }
         else
         {
-            WeightNormBackwardRegistered(gain, direction, dweight, dgain, ddirection, rows, columns);
+            WeightNormBackwardScoped(gain, direction, dweight, dgain, ddirection, rows, columns);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void WeightNormBackwardRegistered(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    private void WeightNormBackwardScoped(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.WeightNormBackward) is OperationKernels.WeightNormBackward kernel)
-        {
-            kernel(this, gain, direction, dweight, dgain, ddirection, rows, columns);
-            return;
-        }
-
+        Traced(OperationIndex.WeightNormBackward);
         if (RefusedKernelsFallBack)
         {
             WeightNormBackwardGuarded(gain, direction, dweight, dgain, ddirection, rows, columns);
@@ -1841,20 +1652,15 @@ public abstract partial class Backend
         }
         else
         {
-            InvSqrtRegistered(x, y, n, eps);
+            InvSqrtScoped(x, y, n, eps);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void InvSqrtRegistered(Storage x, Storage y, int n, float eps)
+    private void InvSqrtScoped(Storage x, Storage y, int n, float eps)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.InvSqrt) is OperationKernels.InvSqrt kernel)
-        {
-            kernel(this, x, y, n, eps);
-            return;
-        }
-
+        Traced(OperationIndex.InvSqrt);
         if (RefusedKernelsFallBack)
         {
             InvSqrtGuarded(x, y, n, eps);
@@ -1887,20 +1693,15 @@ public abstract partial class Backend
         }
         else
         {
-            GatherRegistered(table, indices, y, count, dim, vocabulary);
+            GatherScoped(table, indices, y, count, dim, vocabulary);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void GatherRegistered(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
+    private void GatherScoped(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Gather) is OperationKernels.Gather kernel)
-        {
-            kernel(this, table, indices, y, count, dim, vocabulary);
-            return;
-        }
-
+        Traced(OperationIndex.Gather);
         if (RefusedKernelsFallBack)
         {
             GatherGuarded(table, indices, y, count, dim, vocabulary);
@@ -1933,20 +1734,15 @@ public abstract partial class Backend
         }
         else
         {
-            OneHotRegistered(indices, y, count, classes);
+            OneHotScoped(indices, y, count, classes);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void OneHotRegistered(Storage indices, Storage y, int count, int classes)
+    private void OneHotScoped(Storage indices, Storage y, int count, int classes)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.OneHot) is OperationKernels.OneHot kernel)
-        {
-            kernel(this, indices, y, count, classes);
-            return;
-        }
-
+        Traced(OperationIndex.OneHot);
         if (RefusedKernelsFallBack)
         {
             OneHotGuarded(indices, y, count, classes);
@@ -1979,20 +1775,15 @@ public abstract partial class Backend
         }
         else
         {
-            ScatterAddRegistered(dy, indices, dtable, count, dim, vocabulary);
+            ScatterAddScoped(dy, indices, dtable, count, dim, vocabulary);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ScatterAddRegistered(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
+    private void ScatterAddScoped(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ScatterAdd) is OperationKernels.ScatterAdd kernel)
-        {
-            kernel(this, dy, indices, dtable, count, dim, vocabulary);
-            return;
-        }
-
+        Traced(OperationIndex.ScatterAdd);
         if (RefusedKernelsFallBack)
         {
             ScatterAddGuarded(dy, indices, dtable, count, dim, vocabulary);
@@ -2025,20 +1816,15 @@ public abstract partial class Backend
         }
         else
         {
-            Im2ColRegistered(x, cols, in g);
+            Im2ColScoped(x, cols, in g);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void Im2ColRegistered(Storage x, Storage cols, in ConvGeometry g)
+    private void Im2ColScoped(Storage x, Storage cols, in ConvGeometry g)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Im2Col) is OperationKernels.Im2Col kernel)
-        {
-            kernel(this, x, cols, in g);
-            return;
-        }
-
+        Traced(OperationIndex.Im2Col);
         if (RefusedKernelsFallBack)
         {
             Im2ColGuarded(x, cols, in g);
@@ -2071,20 +1857,15 @@ public abstract partial class Backend
         }
         else
         {
-            Col2ImRegistered(dcols, dx, in g);
+            Col2ImScoped(dcols, dx, in g);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void Col2ImRegistered(Storage dcols, Storage dx, in ConvGeometry g)
+    private void Col2ImScoped(Storage dcols, Storage dx, in ConvGeometry g)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Col2Im) is OperationKernels.Col2Im kernel)
-        {
-            kernel(this, dcols, dx, in g);
-            return;
-        }
-
+        Traced(OperationIndex.Col2Im);
         if (RefusedKernelsFallBack)
         {
             Col2ImGuarded(dcols, dx, in g);
@@ -2117,20 +1898,15 @@ public abstract partial class Backend
         }
         else
         {
-            MaxPoolRegistered(x, y, argmax, in g);
+            MaxPoolScoped(x, y, argmax, in g);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void MaxPoolRegistered(Storage x, Storage y, Storage argmax, in ConvGeometry g)
+    private void MaxPoolScoped(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.MaxPool) is OperationKernels.MaxPool kernel)
-        {
-            kernel(this, x, y, argmax, in g);
-            return;
-        }
-
+        Traced(OperationIndex.MaxPool);
         if (RefusedKernelsFallBack)
         {
             MaxPoolGuarded(x, y, argmax, in g);
@@ -2163,20 +1939,15 @@ public abstract partial class Backend
         }
         else
         {
-            MaxPoolBackwardRegistered(dy, argmax, dx, count);
+            MaxPoolBackwardScoped(dy, argmax, dx, count);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void MaxPoolBackwardRegistered(Storage dy, Storage argmax, Storage dx, int count)
+    private void MaxPoolBackwardScoped(Storage dy, Storage argmax, Storage dx, int count)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.MaxPoolBackward) is OperationKernels.MaxPoolBackward kernel)
-        {
-            kernel(this, dy, argmax, dx, count);
-            return;
-        }
-
+        Traced(OperationIndex.MaxPoolBackward);
         if (RefusedKernelsFallBack)
         {
             MaxPoolBackwardGuarded(dy, argmax, dx, count);
@@ -2212,20 +1983,15 @@ public abstract partial class Backend
         }
         else
         {
-            MaxPoolBackward2Registered(dy, argmax, dx, in g);
+            MaxPoolBackward2Scoped(dy, argmax, dx, in g);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void MaxPoolBackward2Registered(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
+    private void MaxPoolBackward2Scoped(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.MaxPoolBackward2) is OperationKernels.MaxPoolBackward2 kernel)
-        {
-            kernel(this, dy, argmax, dx, in g);
-            return;
-        }
-
+        Traced(OperationIndex.MaxPoolBackward2);
         if (RefusedKernelsFallBack)
         {
             MaxPoolBackward2Guarded(dy, argmax, dx, in g);
@@ -2277,20 +2043,15 @@ public abstract partial class Backend
         }
         else
         {
-            ConvolutionRegistered(x, weight, bias, y, in g, filters, groups, activation);
+            ConvolutionScoped(x, weight, bias, y, in g, filters, groups, activation);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ConvolutionRegistered(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
+    private void ConvolutionScoped(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Convolution) is OperationKernels.Convolution kernel)
-        {
-            kernel(this, x, weight, bias, y, in g, filters, groups, activation);
-            return;
-        }
-
+        Traced(OperationIndex.Convolution);
         if (RefusedKernelsFallBack)
         {
             ConvolutionGuarded(x, weight, bias, y, in g, filters, groups, activation);
@@ -2340,20 +2101,15 @@ public abstract partial class Backend
         }
         else
         {
-            ConvolutionBackwardInputRegistered(dy, weight, dx, in g, filters, groups);
+            ConvolutionBackwardInputScoped(dy, weight, dx, in g, filters, groups);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ConvolutionBackwardInputRegistered(Storage dy, Storage weight, Storage dx, in ConvGeometry g, int filters, int groups)
+    private void ConvolutionBackwardInputScoped(Storage dy, Storage weight, Storage dx, in ConvGeometry g, int filters, int groups)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ConvolutionBackwardInput) is OperationKernels.ConvolutionBackwardInput kernel)
-        {
-            kernel(this, dy, weight, dx, in g, filters, groups);
-            return;
-        }
-
+        Traced(OperationIndex.ConvolutionBackwardInput);
         if (RefusedKernelsFallBack)
         {
             ConvolutionBackwardInputGuarded(dy, weight, dx, in g, filters, groups);
@@ -2402,20 +2158,15 @@ public abstract partial class Backend
         }
         else
         {
-            ConvolutionBackwardWeightRegistered(x, dy, dweight, in g, filters, groups);
+            ConvolutionBackwardWeightScoped(x, dy, dweight, in g, filters, groups);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ConvolutionBackwardWeightRegistered(Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups)
+    private void ConvolutionBackwardWeightScoped(Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ConvolutionBackwardWeight) is OperationKernels.ConvolutionBackwardWeight kernel)
-        {
-            kernel(this, x, dy, dweight, in g, filters, groups);
-            return;
-        }
-
+        Traced(OperationIndex.ConvolutionBackwardWeight);
         if (RefusedKernelsFallBack)
         {
             ConvolutionBackwardWeightGuarded(x, dy, dweight, in g, filters, groups);
@@ -2467,20 +2218,15 @@ public abstract partial class Backend
         }
         else
         {
-            AvgPoolRegistered(x, y, in g, countIncludePad, padBottom, padRight);
+            AvgPoolScoped(x, y, in g, countIncludePad, padBottom, padRight);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AvgPoolRegistered(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    private void AvgPoolScoped(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AvgPool) is OperationKernels.AvgPool kernel)
-        {
-            kernel(this, x, y, in g, countIncludePad, padBottom, padRight);
-            return;
-        }
-
+        Traced(OperationIndex.AvgPool);
         if (RefusedKernelsFallBack)
         {
             AvgPoolGuarded(x, y, in g, countIncludePad, padBottom, padRight);
@@ -2516,20 +2262,15 @@ public abstract partial class Backend
         }
         else
         {
-            AvgPoolBackwardRegistered(dy, dx, in g, countIncludePad, padBottom, padRight);
+            AvgPoolBackwardScoped(dy, dx, in g, countIncludePad, padBottom, padRight);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AvgPoolBackwardRegistered(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    private void AvgPoolBackwardScoped(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AvgPoolBackward) is OperationKernels.AvgPoolBackward kernel)
-        {
-            kernel(this, dy, dx, in g, countIncludePad, padBottom, padRight);
-            return;
-        }
-
+        Traced(OperationIndex.AvgPoolBackward);
         if (RefusedKernelsFallBack)
         {
             AvgPoolBackwardGuarded(dy, dx, in g, countIncludePad, padBottom, padRight);
@@ -2573,20 +2314,15 @@ public abstract partial class Backend
         }
         else
         {
-            ResizeNormalizeRegistered(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+            ResizeNormalizeScoped(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ResizeNormalizeRegistered(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
+    private void ResizeNormalizeScoped(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ResizeNormalize) is OperationKernels.ResizeNormalize kernel)
-        {
-            kernel(this, x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
-            return;
-        }
-
+        Traced(OperationIndex.ResizeNormalize);
         if (RefusedKernelsFallBack)
         {
             ResizeNormalizeGuarded(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
@@ -2625,20 +2361,15 @@ public abstract partial class Backend
         }
         else
         {
-            Interpolate2dRegistered(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            Interpolate2dScoped(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void Interpolate2dRegistered(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    private void Interpolate2dScoped(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Interpolate2d) is OperationKernels.Interpolate2d kernel)
-        {
-            kernel(this, x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
-            return;
-        }
-
+        Traced(OperationIndex.Interpolate2d);
         if (RefusedKernelsFallBack)
         {
             Interpolate2dGuarded(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
@@ -2671,20 +2402,15 @@ public abstract partial class Backend
         }
         else
         {
-            Interpolate2dBackwardRegistered(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            Interpolate2dBackwardScoped(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void Interpolate2dBackwardRegistered(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    private void Interpolate2dBackwardScoped(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Interpolate2dBackward) is OperationKernels.Interpolate2dBackward kernel)
-        {
-            kernel(this, dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
-            return;
-        }
-
+        Traced(OperationIndex.Interpolate2dBackward);
         if (RefusedKernelsFallBack)
         {
             Interpolate2dBackwardGuarded(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
@@ -2721,20 +2447,15 @@ public abstract partial class Backend
         }
         else
         {
-            AdaptiveAvgPoolRegistered(x, y, planes, height, width, outHeight, outWidth);
+            AdaptiveAvgPoolScoped(x, y, planes, height, width, outHeight, outWidth);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AdaptiveAvgPoolRegistered(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    private void AdaptiveAvgPoolScoped(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AdaptiveAvgPool) is OperationKernels.AdaptiveAvgPool kernel)
-        {
-            kernel(this, x, y, planes, height, width, outHeight, outWidth);
-            return;
-        }
-
+        Traced(OperationIndex.AdaptiveAvgPool);
         if (RefusedKernelsFallBack)
         {
             AdaptiveAvgPoolGuarded(x, y, planes, height, width, outHeight, outWidth);
@@ -2767,20 +2488,15 @@ public abstract partial class Backend
         }
         else
         {
-            AdaptiveAvgPoolBackwardRegistered(dy, dx, planes, height, width, outHeight, outWidth);
+            AdaptiveAvgPoolBackwardScoped(dy, dx, planes, height, width, outHeight, outWidth);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AdaptiveAvgPoolBackwardRegistered(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    private void AdaptiveAvgPoolBackwardScoped(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AdaptiveAvgPoolBackward) is OperationKernels.AdaptiveAvgPoolBackward kernel)
-        {
-            kernel(this, dy, dx, planes, height, width, outHeight, outWidth);
-            return;
-        }
-
+        Traced(OperationIndex.AdaptiveAvgPoolBackward);
         if (RefusedKernelsFallBack)
         {
             AdaptiveAvgPoolBackwardGuarded(dy, dx, planes, height, width, outHeight, outWidth);
@@ -2816,20 +2532,15 @@ public abstract partial class Backend
         }
         else
         {
-            AdaptiveMaxPoolRegistered(x, y, argmax, planes, height, width, outHeight, outWidth);
+            AdaptiveMaxPoolScoped(x, y, argmax, planes, height, width, outHeight, outWidth);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AdaptiveMaxPoolRegistered(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    private void AdaptiveMaxPoolScoped(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AdaptiveMaxPool) is OperationKernels.AdaptiveMaxPool kernel)
-        {
-            kernel(this, x, y, argmax, planes, height, width, outHeight, outWidth);
-            return;
-        }
-
+        Traced(OperationIndex.AdaptiveMaxPool);
         if (RefusedKernelsFallBack)
         {
             AdaptiveMaxPoolGuarded(x, y, argmax, planes, height, width, outHeight, outWidth);
@@ -2866,20 +2577,15 @@ public abstract partial class Backend
         }
         else
         {
-            AdaptiveMaxPoolBackwardRegistered(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+            AdaptiveMaxPoolBackwardScoped(dy, argmax, dx, planes, height, width, outHeight, outWidth);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AdaptiveMaxPoolBackwardRegistered(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    private void AdaptiveMaxPoolBackwardScoped(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AdaptiveMaxPoolBackward) is OperationKernels.AdaptiveMaxPoolBackward kernel)
-        {
-            kernel(this, dy, argmax, dx, planes, height, width, outHeight, outWidth);
-            return;
-        }
-
+        Traced(OperationIndex.AdaptiveMaxPoolBackward);
         if (RefusedKernelsFallBack)
         {
             AdaptiveMaxPoolBackwardGuarded(dy, argmax, dx, planes, height, width, outHeight, outWidth);
@@ -2932,20 +2638,15 @@ public abstract partial class Backend
         }
         else
         {
-            CtcLossRegistered(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            CtcLossScoped(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void CtcLossRegistered(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    private void CtcLossScoped(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.CtcLoss) is OperationKernels.CtcLoss kernel)
-        {
-            kernel(this, logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
-            return;
-        }
-
+        Traced(OperationIndex.CtcLoss);
         if (RefusedKernelsFallBack)
         {
             CtcLossGuarded(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
@@ -2982,20 +2683,15 @@ public abstract partial class Backend
         }
         else
         {
-            CtcLossBackwardRegistered(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            CtcLossBackwardScoped(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void CtcLossBackwardRegistered(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    private void CtcLossBackwardScoped(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.CtcLossBackward) is OperationKernels.CtcLossBackward kernel)
-        {
-            kernel(this, logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
-            return;
-        }
-
+        Traced(OperationIndex.CtcLossBackward);
         if (RefusedKernelsFallBack)
         {
             CtcLossBackwardGuarded(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
@@ -3029,18 +2725,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmCell(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmCellGuarded(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellRegistered(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmCellGuarded(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellScoped(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool LstmCellRegistered(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
+    private bool LstmCellScoped(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LstmCell) is OperationKernels.LstmCell kernel)
-        {
-            return kernel(this, projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
-        }
-
+        Traced(OperationIndex.LstmCell);
         return RefusedKernelsFallBack ? LstmCellGuarded(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
     }
 
@@ -3073,18 +2765,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmCellBackward(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmCellBackwardGuarded(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardRegistered(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmCellBackwardGuarded(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardScoped(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool LstmCellBackwardRegistered(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    private bool LstmCellBackwardScoped(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LstmCellBackward) is OperationKernels.LstmCellBackward kernel)
-        {
-            return kernel(this, gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
-        }
-
+        Traced(OperationIndex.LstmCellBackward);
         return RefusedKernelsFallBack ? LstmCellBackwardGuarded(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
     }
 
@@ -3117,18 +2805,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruCell(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruCellGuarded(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellRegistered(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruCellGuarded(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellScoped(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool GruCellRegistered(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
+    private bool GruCellScoped(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.GruCell) is OperationKernels.GruCell kernel)
-        {
-            return kernel(this, projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
-        }
-
+        Traced(OperationIndex.GruCell);
         return RefusedKernelsFallBack ? GruCellGuarded(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
     }
 
@@ -3161,18 +2845,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruCellBackward(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruCellBackwardGuarded(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardRegistered(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruCellBackwardGuarded(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardScoped(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool GruCellBackwardRegistered(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    private bool GruCellBackwardScoped(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.GruCellBackward) is OperationKernels.GruCellBackward kernel)
-        {
-            return kernel(this, gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
-        }
-
+        Traced(OperationIndex.GruCellBackward);
         return RefusedKernelsFallBack ? GruCellBackwardGuarded(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
     }
 
@@ -3205,18 +2885,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmStep(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmStepGuarded(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepRegistered(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmStepGuarded(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepScoped(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool LstmStepRegistered(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
+    private bool LstmStepScoped(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LstmStep) is OperationKernels.LstmStep kernel)
-        {
-            return kernel(this, projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
-        }
-
+        Traced(OperationIndex.LstmStep);
         return RefusedKernelsFallBack ? LstmStepGuarded(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
     }
 
@@ -3247,18 +2923,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmStepBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmStepBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmStepBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardScoped(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool LstmStepBackwardRegistered(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    private bool LstmStepBackwardScoped(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LstmStepBackward) is OperationKernels.LstmStepBackward kernel)
-        {
-            return kernel(this, gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
-        }
-
+        Traced(OperationIndex.LstmStepBackward);
         return RefusedKernelsFallBack ? LstmStepBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
     }
 
@@ -3287,18 +2959,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruStep(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruStepGuarded(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepRegistered(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruStepGuarded(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepScoped(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool GruStepRegistered(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
+    private bool GruStepScoped(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.GruStep) is OperationKernels.GruStep kernel)
-        {
-            return kernel(this, projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
-        }
-
+        Traced(OperationIndex.GruStep);
         return RefusedKernelsFallBack ? GruStepGuarded(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
     }
 
@@ -3329,18 +2997,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruStepBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruStepBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruStepBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardScoped(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool GruStepBackwardRegistered(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    private bool GruStepBackwardScoped(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.GruStepBackward) is OperationKernels.GruStepBackward kernel)
-        {
-            return kernel(this, gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
-        }
-
+        Traced(OperationIndex.GruStepBackward);
         return RefusedKernelsFallBack ? GruStepBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
     }
 
@@ -3370,18 +3034,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmSequence(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null && _moves is null ? LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmSequenceGuarded(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceRegistered(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmSequenceGuarded(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceScoped(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool LstmSequenceRegistered(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
+    private bool LstmSequenceScoped(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LstmSequence) is OperationKernels.LstmSequence kernel)
-        {
-            return kernel(this, projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
-        }
-
+        Traced(OperationIndex.LstmSequence);
         return RefusedKernelsFallBack ? LstmSequenceGuarded(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
     }
 
@@ -3411,18 +3071,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmSequenceBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null && _moves is null ? LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmSequenceBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmSequenceBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardScoped(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool LstmSequenceBackwardRegistered(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
+    private bool LstmSequenceBackwardScoped(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LstmSequenceBackward) is OperationKernels.LstmSequenceBackward kernel)
-        {
-            return kernel(this, gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
-        }
-
+        Traced(OperationIndex.LstmSequenceBackward);
         return RefusedKernelsFallBack ? LstmSequenceBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
     }
 
@@ -3450,18 +3106,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruSequence(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null && _moves is null ? GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? GruSequenceGuarded(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceRegistered(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? GruSequenceGuarded(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceScoped(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool GruSequenceRegistered(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
+    private bool GruSequenceScoped(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.GruSequence) is OperationKernels.GruSequence kernel)
-        {
-            return kernel(this, projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
-        }
-
+        Traced(OperationIndex.GruSequence);
         return RefusedKernelsFallBack ? GruSequenceGuarded(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
     }
 
@@ -3490,18 +3142,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruSequenceBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null && _moves is null ? GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? GruSequenceBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? GruSequenceBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardScoped(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool GruSequenceBackwardRegistered(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
+    private bool GruSequenceBackwardScoped(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.GruSequenceBackward) is OperationKernels.GruSequenceBackward kernel)
-        {
-            return kernel(this, gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
-        }
-
+        Traced(OperationIndex.GruSequenceBackward);
         return RefusedKernelsFallBack ? GruSequenceBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
     }
 
@@ -3541,20 +3189,15 @@ public abstract partial class Backend
         }
         else
         {
-            BoxIouLossRegistered(predicted, target, losses, count, overlap, eps);
+            BoxIouLossScoped(predicted, target, losses, count, overlap, eps);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void BoxIouLossRegistered(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
+    private void BoxIouLossScoped(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.BoxIouLoss) is OperationKernels.BoxIouLoss kernel)
-        {
-            kernel(this, predicted, target, losses, count, overlap, eps);
-            return;
-        }
-
+        Traced(OperationIndex.BoxIouLoss);
         if (RefusedKernelsFallBack)
         {
             BoxIouLossGuarded(predicted, target, losses, count, overlap, eps);
@@ -3591,20 +3234,15 @@ public abstract partial class Backend
         }
         else
         {
-            BoxIouLossBackwardRegistered(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+            BoxIouLossBackwardScoped(predicted, target, lossGrads, dPredicted, count, overlap, eps);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void BoxIouLossBackwardRegistered(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
+    private void BoxIouLossBackwardScoped(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.BoxIouLossBackward) is OperationKernels.BoxIouLossBackward kernel)
-        {
-            kernel(this, predicted, target, lossGrads, dPredicted, count, overlap, eps);
-            return;
-        }
-
+        Traced(OperationIndex.BoxIouLossBackward);
         if (RefusedKernelsFallBack)
         {
             BoxIouLossBackwardGuarded(predicted, target, lossGrads, dPredicted, count, overlap, eps);
@@ -3641,20 +3279,15 @@ public abstract partial class Backend
         }
         else
         {
-            SigmoidFocalLossRegistered(logits, targets, losses, count, alpha, gamma);
+            SigmoidFocalLossScoped(logits, targets, losses, count, alpha, gamma);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SigmoidFocalLossRegistered(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
+    private void SigmoidFocalLossScoped(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.SigmoidFocalLoss) is OperationKernels.SigmoidFocalLoss kernel)
-        {
-            kernel(this, logits, targets, losses, count, alpha, gamma);
-            return;
-        }
-
+        Traced(OperationIndex.SigmoidFocalLoss);
         if (RefusedKernelsFallBack)
         {
             SigmoidFocalLossGuarded(logits, targets, losses, count, alpha, gamma);
@@ -3687,20 +3320,15 @@ public abstract partial class Backend
         }
         else
         {
-            SigmoidFocalLossBackwardRegistered(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+            SigmoidFocalLossBackwardScoped(logits, targets, lossGrads, dLogits, count, alpha, gamma);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SigmoidFocalLossBackwardRegistered(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
+    private void SigmoidFocalLossBackwardScoped(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.SigmoidFocalLossBackward) is OperationKernels.SigmoidFocalLossBackward kernel)
-        {
-            kernel(this, logits, targets, lossGrads, dLogits, count, alpha, gamma);
-            return;
-        }
-
+        Traced(OperationIndex.SigmoidFocalLossBackward);
         if (RefusedKernelsFallBack)
         {
             SigmoidFocalLossBackwardGuarded(logits, targets, lossGrads, dLogits, count, alpha, gamma);
@@ -3736,20 +3364,15 @@ public abstract partial class Backend
         }
         else
         {
-            PermuteRegistered(x, y, outShape, inStrides, accumulate);
+            PermuteScoped(x, y, outShape, inStrides, accumulate);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void PermuteRegistered(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
+    private void PermuteScoped(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Permute) is OperationKernels.Permute kernel)
-        {
-            kernel(this, x, y, outShape, inStrides, accumulate);
-            return;
-        }
-
+        Traced(OperationIndex.Permute);
         if (RefusedKernelsFallBack)
         {
             PermuteGuarded(x, y, outShape, inStrides, accumulate);
@@ -3782,20 +3405,15 @@ public abstract partial class Backend
         }
         else
         {
-            SumAxisRegistered(x, y, outer, dim, inner, scale, accumulate);
+            SumAxisScoped(x, y, outer, dim, inner, scale, accumulate);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SumAxisRegistered(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
+    private void SumAxisScoped(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.SumAxis) is OperationKernels.SumAxis kernel)
-        {
-            kernel(this, x, y, outer, dim, inner, scale, accumulate);
-            return;
-        }
-
+        Traced(OperationIndex.SumAxis);
         if (RefusedKernelsFallBack)
         {
             SumAxisGuarded(x, y, outer, dim, inner, scale, accumulate);
@@ -3828,20 +3446,15 @@ public abstract partial class Backend
         }
         else
         {
-            BroadcastAxisRegistered(dy, dx, outer, dim, inner, scale);
+            BroadcastAxisScoped(dy, dx, outer, dim, inner, scale);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void BroadcastAxisRegistered(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
+    private void BroadcastAxisScoped(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.BroadcastAxis) is OperationKernels.BroadcastAxis kernel)
-        {
-            kernel(this, dy, dx, outer, dim, inner, scale);
-            return;
-        }
-
+        Traced(OperationIndex.BroadcastAxis);
         if (RefusedKernelsFallBack)
         {
             BroadcastAxisGuarded(dy, dx, outer, dim, inner, scale);
@@ -3874,20 +3487,15 @@ public abstract partial class Backend
         }
         else
         {
-            SgdStepRegistered(p, g, v, n, lr, momentum);
+            SgdStepScoped(p, g, v, n, lr, momentum);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SgdStepRegistered(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
+    private void SgdStepScoped(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.SgdStep) is OperationKernels.SgdStep kernel)
-        {
-            kernel(this, p, g, v, n, lr, momentum);
-            return;
-        }
-
+        Traced(OperationIndex.SgdStep);
         if (RefusedKernelsFallBack)
         {
             SgdStepGuarded(p, g, v, n, lr, momentum);
@@ -3920,20 +3528,15 @@ public abstract partial class Backend
         }
         else
         {
-            AdamStepRegistered(p, g, m, v, n, lr, beta1, beta2, eps);
+            AdamStepScoped(p, g, m, v, n, lr, beta1, beta2, eps);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AdamStepRegistered(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
+    private void AdamStepScoped(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AdamStep) is OperationKernels.AdamStep kernel)
-        {
-            kernel(this, p, g, m, v, n, lr, beta1, beta2, eps);
-            return;
-        }
-
+        Traced(OperationIndex.AdamStep);
         if (RefusedKernelsFallBack)
         {
             AdamStepGuarded(p, g, m, v, n, lr, beta1, beta2, eps);
@@ -3966,20 +3569,15 @@ public abstract partial class Backend
         }
         else
         {
-            SumSquaresRegistered(x, total, n);
+            SumSquaresScoped(x, total, n);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SumSquaresRegistered(Storage x, Storage total, int n)
+    private void SumSquaresScoped(Storage x, Storage total, int n)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.SumSquares) is OperationKernels.SumSquares kernel)
-        {
-            kernel(this, x, total, n);
-            return;
-        }
-
+        Traced(OperationIndex.SumSquares);
         if (RefusedKernelsFallBack)
         {
             SumSquaresGuarded(x, total, n);
@@ -4008,18 +3606,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool FusedAdamW(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
-        return _kernels is null && _moves is null ? FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : ReferenceEquals(_kernels, s_guardedKernels) ? FusedAdamWGuarded(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : FusedAdamWRegistered(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
+        return _kernels is null && _moves is null ? FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : ReferenceEquals(_kernels, s_guardedKernels) ? FusedAdamWGuarded(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : FusedAdamWScoped(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool FusedAdamWRegistered(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
+    private bool FusedAdamWScoped(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.FusedAdamW) is OperationKernels.FusedAdamW kernel)
-        {
-            return kernel(this, tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
-        }
-
+        Traced(OperationIndex.FusedAdamW);
         return RefusedKernelsFallBack ? FusedAdamWGuarded(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
     }
 
@@ -4056,20 +3650,15 @@ public abstract partial class Backend
         }
         else
         {
-            ClipFactorRegistered(sumSquares, factor, maxNorm);
+            ClipFactorScoped(sumSquares, factor, maxNorm);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ClipFactorRegistered(Storage sumSquares, Storage factor, float maxNorm)
+    private void ClipFactorScoped(Storage sumSquares, Storage factor, float maxNorm)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ClipFactor) is OperationKernels.ClipFactor kernel)
-        {
-            kernel(this, sumSquares, factor, maxNorm);
-            return;
-        }
-
+        Traced(OperationIndex.ClipFactor);
         if (RefusedKernelsFallBack)
         {
             ClipFactorGuarded(sumSquares, factor, maxNorm);
@@ -4102,20 +3691,15 @@ public abstract partial class Backend
         }
         else
         {
-            DropoutRegistered(x, y, n, p, seed);
+            DropoutScoped(x, y, n, p, seed);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void DropoutRegistered(Storage x, Storage y, int n, float p, uint seed)
+    private void DropoutScoped(Storage x, Storage y, int n, float p, uint seed)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Dropout) is OperationKernels.Dropout kernel)
-        {
-            kernel(this, x, y, n, p, seed);
-            return;
-        }
-
+        Traced(OperationIndex.Dropout);
         if (RefusedKernelsFallBack)
         {
             DropoutGuarded(x, y, n, p, seed);
@@ -4148,20 +3732,15 @@ public abstract partial class Backend
         }
         else
         {
-            DropoutBackwardRegistered(dy, dx, n, p, seed);
+            DropoutBackwardScoped(dy, dx, n, p, seed);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void DropoutBackwardRegistered(Storage dy, Storage dx, int n, float p, uint seed)
+    private void DropoutBackwardScoped(Storage dy, Storage dx, int n, float p, uint seed)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.DropoutBackward) is OperationKernels.DropoutBackward kernel)
-        {
-            kernel(this, dy, dx, n, p, seed);
-            return;
-        }
-
+        Traced(OperationIndex.DropoutBackward);
         if (RefusedKernelsFallBack)
         {
             DropoutBackwardGuarded(dy, dx, n, p, seed);
@@ -4194,20 +3773,15 @@ public abstract partial class Backend
         }
         else
         {
-            ScaleMaskSoftmaxRegistered(x, mask, y, rows, cols, maskRows, scale);
+            ScaleMaskSoftmaxScoped(x, mask, y, rows, cols, maskRows, scale);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ScaleMaskSoftmaxRegistered(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
+    private void ScaleMaskSoftmaxScoped(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ScaleMaskSoftmax) is OperationKernels.ScaleMaskSoftmax kernel)
-        {
-            kernel(this, x, mask, y, rows, cols, maskRows, scale);
-            return;
-        }
-
+        Traced(OperationIndex.ScaleMaskSoftmax);
         if (RefusedKernelsFallBack)
         {
             ScaleMaskSoftmaxGuarded(x, mask, y, rows, cols, maskRows, scale);
@@ -4240,20 +3814,15 @@ public abstract partial class Backend
         }
         else
         {
-            LayerNormFusedRegistered(x, gamma, beta, y, rows, cols, eps);
+            LayerNormFusedScoped(x, gamma, beta, y, rows, cols, eps);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void LayerNormFusedRegistered(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
+    private void LayerNormFusedScoped(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LayerNormFused) is OperationKernels.LayerNormFused kernel)
-        {
-            kernel(this, x, gamma, beta, y, rows, cols, eps);
-            return;
-        }
-
+        Traced(OperationIndex.LayerNormFused);
         if (RefusedKernelsFallBack)
         {
             LayerNormFusedGuarded(x, gamma, beta, y, rows, cols, eps);
@@ -4286,20 +3855,15 @@ public abstract partial class Backend
         }
         else
         {
-            LayerNormTrainRegistered(x, gamma, beta, y, stats, rows, cols, eps);
+            LayerNormTrainScoped(x, gamma, beta, y, stats, rows, cols, eps);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void LayerNormTrainRegistered(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
+    private void LayerNormTrainScoped(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LayerNormTrain) is OperationKernels.LayerNormTrain kernel)
-        {
-            kernel(this, x, gamma, beta, y, stats, rows, cols, eps);
-            return;
-        }
-
+        Traced(OperationIndex.LayerNormTrain);
         if (RefusedKernelsFallBack)
         {
             LayerNormTrainGuarded(x, gamma, beta, y, stats, rows, cols, eps);
@@ -4334,20 +3898,15 @@ public abstract partial class Backend
         }
         else
         {
-            LayerNormBackwardRegistered(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+            LayerNormBackwardScoped(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void LayerNormBackwardRegistered(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
+    private void LayerNormBackwardScoped(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.LayerNormBackward) is OperationKernels.LayerNormBackward kernel)
-        {
-            kernel(this, x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
-            return;
-        }
-
+        Traced(OperationIndex.LayerNormBackward);
         if (RefusedKernelsFallBack)
         {
             LayerNormBackwardGuarded(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
@@ -4380,20 +3939,15 @@ public abstract partial class Backend
         }
         else
         {
-            BiasGeluRegistered(x, bias, y, n, cols);
+            BiasGeluScoped(x, bias, y, n, cols);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void BiasGeluRegistered(Storage x, Storage bias, Storage y, int n, int cols)
+    private void BiasGeluScoped(Storage x, Storage bias, Storage y, int n, int cols)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.BiasGelu) is OperationKernels.BiasGelu kernel)
-        {
-            kernel(this, x, bias, y, n, cols);
-            return;
-        }
-
+        Traced(OperationIndex.BiasGelu);
         if (RefusedKernelsFallBack)
         {
             BiasGeluGuarded(x, bias, y, n, cols);
@@ -4426,20 +3980,15 @@ public abstract partial class Backend
         }
         else
         {
-            RmsNormRegistered(x, y, inv, rows, cols, eps);
+            RmsNormScoped(x, y, inv, rows, cols, eps);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void RmsNormRegistered(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
+    private void RmsNormScoped(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.RmsNorm) is OperationKernels.RmsNorm kernel)
-        {
-            kernel(this, x, y, inv, rows, cols, eps);
-            return;
-        }
-
+        Traced(OperationIndex.RmsNorm);
         if (RefusedKernelsFallBack)
         {
             RmsNormGuarded(x, y, inv, rows, cols, eps);
@@ -4472,20 +4021,15 @@ public abstract partial class Backend
         }
         else
         {
-            RmsNormBackwardRegistered(dy, y, inv, dx, rows, cols);
+            RmsNormBackwardScoped(dy, y, inv, dx, rows, cols);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void RmsNormBackwardRegistered(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
+    private void RmsNormBackwardScoped(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.RmsNormBackward) is OperationKernels.RmsNormBackward kernel)
-        {
-            kernel(this, dy, y, inv, dx, rows, cols);
-            return;
-        }
-
+        Traced(OperationIndex.RmsNormBackward);
         if (RefusedKernelsFallBack)
         {
             RmsNormBackwardGuarded(dy, y, inv, dx, rows, cols);
@@ -4522,20 +4066,15 @@ public abstract partial class Backend
         }
         else
         {
-            RopeRegistered(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+            RopeScoped(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void RopeRegistered(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
+    private void RopeScoped(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.Rope) is OperationKernels.Rope kernel)
-        {
-            kernel(this, x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
-            return;
-        }
-
+        Traced(OperationIndex.Rope);
         if (RefusedKernelsFallBack)
         {
             RopeGuarded(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
@@ -4568,20 +4107,15 @@ public abstract partial class Backend
         }
         else
         {
-            RmsNormAffineRegistered(x, gain, y, rows, cols, eps, offset);
+            RmsNormAffineScoped(x, gain, y, rows, cols, eps, offset);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void RmsNormAffineRegistered(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    private void RmsNormAffineScoped(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.RmsNormAffine) is OperationKernels.RmsNormAffine kernel)
-        {
-            kernel(this, x, gain, y, rows, cols, eps, offset);
-            return;
-        }
-
+        Traced(OperationIndex.RmsNormAffine);
         if (RefusedKernelsFallBack)
         {
             RmsNormAffineGuarded(x, gain, y, rows, cols, eps, offset);
@@ -4614,20 +4148,15 @@ public abstract partial class Backend
         }
         else
         {
-            AddRmsNormAffineRegistered(a, b, sum, gain, y, rows, cols, eps, offset);
+            AddRmsNormAffineScoped(a, b, sum, gain, y, rows, cols, eps, offset);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AddRmsNormAffineRegistered(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    private void AddRmsNormAffineScoped(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AddRmsNormAffine) is OperationKernels.AddRmsNormAffine kernel)
-        {
-            kernel(this, a, b, sum, gain, y, rows, cols, eps, offset);
-            return;
-        }
-
+        Traced(OperationIndex.AddRmsNormAffine);
         if (RefusedKernelsFallBack)
         {
             AddRmsNormAffineGuarded(a, b, sum, gain, y, rows, cols, eps, offset);
@@ -4663,20 +4192,15 @@ public abstract partial class Backend
         }
         else
         {
-            RmsNormRopeRegistered(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+            RmsNormRopeScoped(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void RmsNormRopeRegistered(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
+    private void RmsNormRopeScoped(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.RmsNormRope) is OperationKernels.RmsNormRope kernel)
-        {
-            kernel(this, x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
-            return;
-        }
-
+        Traced(OperationIndex.RmsNormRope);
         if (RefusedKernelsFallBack)
         {
             RmsNormRopeGuarded(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
@@ -4712,20 +4236,15 @@ public abstract partial class Backend
         }
         else
         {
-            RmsNormRopePairRegistered(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
+            RmsNormRopePairScoped(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void RmsNormRopePairRegistered(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads, Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2, Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
+    private void RmsNormRopePairScoped(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads, Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2, Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.RmsNormRopePair) is OperationKernels.RmsNormRopePair kernel)
-        {
-            kernel(this, x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
-            return;
-        }
-
+        Traced(OperationIndex.RmsNormRopePair);
         if (RefusedKernelsFallBack)
         {
             RmsNormRopePairGuarded(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
@@ -4770,18 +4289,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool NormRopeHeads(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride)
     {
-        return _kernels is null && _moves is null ? NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride) : ReferenceEquals(_kernels, s_guardedKernels) ? NormRopeHeadsGuarded(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride) : NormRopeHeadsRegistered(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride);
+        return _kernels is null && _moves is null ? NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride) : ReferenceEquals(_kernels, s_guardedKernels) ? NormRopeHeadsGuarded(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride) : NormRopeHeadsScoped(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool NormRopeHeadsRegistered(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride)
+    private bool NormRopeHeadsScoped(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.NormRopeHeads) is OperationKernels.NormRopeHeads kernel)
-        {
-            return kernel(this, q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride);
-        }
-
+        Traced(OperationIndex.NormRopeHeads);
         return RefusedKernelsFallBack ? NormRopeHeadsGuarded(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride) : NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride);
     }
 
@@ -4819,20 +4334,15 @@ public abstract partial class Backend
         }
         else
         {
-            SoftmaxCrossEntropyRowsRegistered(logits, targets, weights, losses, rows, vocabulary, scale);
+            SoftmaxCrossEntropyRowsScoped(logits, targets, weights, losses, rows, vocabulary, scale);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SoftmaxCrossEntropyRowsRegistered(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
+    private void SoftmaxCrossEntropyRowsScoped(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.SoftmaxCrossEntropyRows) is OperationKernels.SoftmaxCrossEntropyRows kernel)
-        {
-            kernel(this, logits, targets, weights, losses, rows, vocabulary, scale);
-            return;
-        }
-
+        Traced(OperationIndex.SoftmaxCrossEntropyRows);
         if (RefusedKernelsFallBack)
         {
             SoftmaxCrossEntropyRowsGuarded(logits, targets, weights, losses, rows, vocabulary, scale);
@@ -4865,20 +4375,15 @@ public abstract partial class Backend
         }
         else
         {
-            GatedActivationRegistered(gate, up, y, n, kind);
+            GatedActivationScoped(gate, up, y, n, kind);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void GatedActivationRegistered(Storage gate, Storage up, Storage y, int n, int kind)
+    private void GatedActivationScoped(Storage gate, Storage up, Storage y, int n, int kind)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.GatedActivation) is OperationKernels.GatedActivation kernel)
-        {
-            kernel(this, gate, up, y, n, kind);
-            return;
-        }
-
+        Traced(OperationIndex.GatedActivation);
         if (RefusedKernelsFallBack)
         {
             GatedActivationGuarded(gate, up, y, n, kind);
@@ -4911,20 +4416,15 @@ public abstract partial class Backend
         }
         else
         {
-            GatedActivationBackwardRegistered(gate, up, dy, dgate, dup, n, kind, flags);
+            GatedActivationBackwardScoped(gate, up, dy, dgate, dup, n, kind, flags);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void GatedActivationBackwardRegistered(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    private void GatedActivationBackwardScoped(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.GatedActivationBackward) is OperationKernels.GatedActivationBackward kernel)
-        {
-            kernel(this, gate, up, dy, dgate, dup, n, kind, flags);
-            return;
-        }
-
+        Traced(OperationIndex.GatedActivationBackward);
         if (RefusedKernelsFallBack)
         {
             GatedActivationBackwardGuarded(gate, up, dy, dgate, dup, n, kind, flags);
@@ -4964,20 +4464,15 @@ public abstract partial class Backend
         }
         else
         {
-            AttentionDecodeRegistered(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            AttentionDecodeScoped(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AttentionDecodeRegistered(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    private void AttentionDecodeScoped(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionDecode) is OperationKernels.AttentionDecode kernel)
-        {
-            kernel(this, q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
-            return;
-        }
-
+        Traced(OperationIndex.AttentionDecode);
         if (RefusedKernelsFallBack)
         {
             AttentionDecodeGuarded(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -5014,20 +4509,15 @@ public abstract partial class Backend
         }
         else
         {
-            AttentionTiledBackwardRegistered(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            AttentionTiledBackwardScoped(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AttentionTiledBackwardRegistered(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    private void AttentionTiledBackwardScoped(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionTiledBackward) is OperationKernels.AttentionTiledBackward kernel)
-        {
-            kernel(this, q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
-            return;
-        }
-
+        Traced(OperationIndex.AttentionTiledBackward);
         if (RefusedKernelsFallBack)
         {
             AttentionTiledBackwardGuarded(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -5056,18 +4546,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
-        return _kernels is null && _moves is null ? AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionSegmentedGuarded(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedRegistered(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        return _kernels is null && _moves is null ? AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionSegmentedGuarded(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedScoped(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool AttentionSegmentedRegistered(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    private bool AttentionSegmentedScoped(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionSegmented) is OperationKernels.AttentionSegmented kernel)
-        {
-            return kernel(this, q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
-        }
-
+        Traced(OperationIndex.AttentionSegmented);
         return RefusedKernelsFallBack ? AttentionSegmentedGuarded(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
@@ -5095,18 +4581,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        return _kernels is null && _moves is null ? AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionRowsGuarded(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsRegistered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        return _kernels is null && _moves is null ? AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionRowsGuarded(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsScoped(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool AttentionRowsRegistered(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    private bool AttentionRowsScoped(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionRows) is OperationKernels.AttentionRows kernel)
-        {
-            return kernel(this, q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
-        }
-
+        Traced(OperationIndex.AttentionRows);
         return RefusedKernelsFallBack ? AttentionRowsGuarded(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
@@ -5130,18 +4612,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
-        return _kernels is null && _moves is null ? AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionSegmentedBackwardGuarded(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardRegistered(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        return _kernels is null && _moves is null ? AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionSegmentedBackwardGuarded(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardScoped(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool AttentionSegmentedBackwardRegistered(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    private bool AttentionSegmentedBackwardScoped(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionSegmentedBackward) is OperationKernels.AttentionSegmentedBackward kernel)
-        {
-            return kernel(this, q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
-        }
-
+        Traced(OperationIndex.AttentionSegmentedBackward);
         return RefusedKernelsFallBack ? AttentionSegmentedBackwardGuarded(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
@@ -5180,20 +4658,15 @@ public abstract partial class Backend
         }
         else
         {
-            AttentionTiledRegistered(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            AttentionTiledScoped(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AttentionTiledRegistered(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    private void AttentionTiledScoped(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionTiled) is OperationKernels.AttentionTiled kernel)
-        {
-            kernel(this, q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
-            return;
-        }
-
+        Traced(OperationIndex.AttentionTiled);
         if (RefusedKernelsFallBack)
         {
             AttentionTiledGuarded(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -5258,20 +4731,15 @@ public abstract partial class Backend
         }
         else
         {
-            AttentionSpansRegistered(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            AttentionSpansScoped(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AttentionSpansRegistered(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    private void AttentionSpansScoped(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionSpans) is OperationKernels.AttentionSpans kernel)
-        {
-            kernel(this, q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
-            return;
-        }
-
+        Traced(OperationIndex.AttentionSpans);
         if (RefusedKernelsFallBack)
         {
             AttentionSpansGuarded(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
@@ -5313,20 +4781,15 @@ public abstract partial class Backend
         }
         else
         {
-            AttentionSpansStridedRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+            AttentionSpansStridedScoped(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AttentionSpansStridedRegistered(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
+    private void AttentionSpansStridedScoped(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionSpansStrided) is OperationKernels.AttentionSpansStrided kernel)
-        {
-            kernel(this, q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
-            return;
-        }
-
+        Traced(OperationIndex.AttentionSpansStrided);
         if (RefusedKernelsFallBack)
         {
             AttentionSpansStridedGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
@@ -5423,20 +4886,15 @@ public abstract partial class Backend
         }
         else
         {
-            AttentionSpansBackwardRegistered(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            AttentionSpansBackwardScoped(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AttentionSpansBackwardRegistered(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    private void AttentionSpansBackwardScoped(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionSpansBackward) is OperationKernels.AttentionSpansBackward kernel)
-        {
-            kernel(this, q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
-            return;
-        }
-
+        Traced(OperationIndex.AttentionSpansBackward);
         if (RefusedKernelsFallBack)
         {
             AttentionSpansBackwardGuarded(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
@@ -5469,20 +4927,15 @@ public abstract partial class Backend
         }
         else
         {
-            DecoderMaskRegistered(position, mask, rows, capacity);
+            DecoderMaskScoped(position, mask, rows, capacity);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void DecoderMaskRegistered(Storage position, Storage mask, int rows, int capacity)
+    private void DecoderMaskScoped(Storage position, Storage mask, int rows, int capacity)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.DecoderMask) is OperationKernels.DecoderMask kernel)
-        {
-            kernel(this, position, mask, rows, capacity);
-            return;
-        }
-
+        Traced(OperationIndex.DecoderMask);
         if (RefusedKernelsFallBack)
         {
             DecoderMaskGuarded(position, mask, rows, capacity);
@@ -5515,20 +4968,15 @@ public abstract partial class Backend
         }
         else
         {
-            KeyValueWriteRegistered(source, cache, position, heads, steps, capacity, dim);
+            KeyValueWriteScoped(source, cache, position, heads, steps, capacity, dim);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void KeyValueWriteRegistered(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    private void KeyValueWriteScoped(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.KeyValueWrite) is OperationKernels.KeyValueWrite kernel)
-        {
-            kernel(this, source, cache, position, heads, steps, capacity, dim);
-            return;
-        }
-
+        Traced(OperationIndex.KeyValueWrite);
         if (RefusedKernelsFallBack)
         {
             KeyValueWriteGuarded(source, cache, position, heads, steps, capacity, dim);
@@ -5575,20 +5023,15 @@ public abstract partial class Backend
         }
         else
         {
-            SampleRowsRegistered(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+            SampleRowsScoped(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SampleRowsRegistered(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
+    private void SampleRowsScoped(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.SampleRows) is OperationKernels.SampleRows kernel)
-        {
-            kernel(this, logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
-            return;
-        }
-
+        Traced(OperationIndex.SampleRows);
         if (RefusedKernelsFallBack)
         {
             SampleRowsGuarded(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
@@ -5626,20 +5069,15 @@ public abstract partial class Backend
         }
         else
         {
-            PenalizeRowsRegistered(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+            PenalizeRowsScoped(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void PenalizeRowsRegistered(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
+    private void PenalizeRowsScoped(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.PenalizeRows) is OperationKernels.PenalizeRows kernel)
-        {
-            kernel(this, logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
-            return;
-        }
-
+        Traced(OperationIndex.PenalizeRows);
         if (RefusedKernelsFallBack)
         {
             PenalizeRowsGuarded(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
@@ -5672,20 +5110,15 @@ public abstract partial class Backend
         }
         else
         {
-            HistoryPushRegistered(ids, history, length, rows, capacity);
+            HistoryPushScoped(ids, history, length, rows, capacity);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void HistoryPushRegistered(Storage ids, Storage history, Storage length, int rows, int capacity)
+    private void HistoryPushScoped(Storage ids, Storage history, Storage length, int rows, int capacity)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.HistoryPush) is OperationKernels.HistoryPush kernel)
-        {
-            kernel(this, ids, history, length, rows, capacity);
-            return;
-        }
-
+        Traced(OperationIndex.HistoryPush);
         if (RefusedKernelsFallBack)
         {
             HistoryPushGuarded(ids, history, length, rows, capacity);
@@ -5727,20 +5160,15 @@ public abstract partial class Backend
         }
         else
         {
-            RouteTopKRegistered(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
+            RouteTopKScoped(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void RouteTopKRegistered(Storage probabilities, Storage weights, Storage offsets, Storage tokenOfRow, Storage slotRow, int tokens, int experts, int k, bool normalize)
+    private void RouteTopKScoped(Storage probabilities, Storage weights, Storage offsets, Storage tokenOfRow, Storage slotRow, int tokens, int experts, int k, bool normalize)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.RouteTopK) is OperationKernels.RouteTopK kernel)
-        {
-            kernel(this, probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
-            return;
-        }
-
+        Traced(OperationIndex.RouteTopK);
         if (RefusedKernelsFallBack)
         {
             RouteTopKGuarded(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
@@ -5780,20 +5208,15 @@ public abstract partial class Backend
         }
         else
         {
-            ExpertGatedPairRegistered(x, offsets, experts, hidden, rows, k, n, activation);
+            ExpertGatedPairScoped(x, offsets, experts, hidden, rows, k, n, activation);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ExpertGatedPairRegistered(Storage x, Storage offsets, ReadOnlySpan<(Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)> experts, Storage hidden, int rows, int k, int n, int activation)
+    private void ExpertGatedPairScoped(Storage x, Storage offsets, ReadOnlySpan<(Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)> experts, Storage hidden, int rows, int k, int n, int activation)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ExpertGatedPair) is OperationKernels.ExpertGatedPair kernel)
-        {
-            kernel(this, x, offsets, experts, hidden, rows, k, n, activation);
-            return;
-        }
-
+        Traced(OperationIndex.ExpertGatedPair);
         if (RefusedKernelsFallBack)
         {
             ExpertGatedPairGuarded(x, offsets, experts, hidden, rows, k, n, activation);
@@ -5831,20 +5254,15 @@ public abstract partial class Backend
         }
         else
         {
-            ExpertMatMulRegistered(x, offsets, experts, y, rows, k, n);
+            ExpertMatMulScoped(x, offsets, experts, y, rows, k, n);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void ExpertMatMulRegistered(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n)
+    private void ExpertMatMulScoped(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.ExpertMatMul) is OperationKernels.ExpertMatMul kernel)
-        {
-            kernel(this, x, offsets, experts, y, rows, k, n);
-            return;
-        }
-
+        Traced(OperationIndex.ExpertMatMul);
         if (RefusedKernelsFallBack)
         {
             ExpertMatMulGuarded(x, offsets, experts, y, rows, k, n);
@@ -5881,20 +5299,15 @@ public abstract partial class Backend
         }
         else
         {
-            StridedCopyRegistered(x, offset, shape, strides, y);
+            StridedCopyScoped(x, offset, shape, strides, y);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void StridedCopyRegistered(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y)
+    private void StridedCopyScoped(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.StridedCopy) is OperationKernels.StridedCopy kernel)
-        {
-            kernel(this, x, offset, shape, strides, y);
-            return;
-        }
-
+        Traced(OperationIndex.StridedCopy);
         if (RefusedKernelsFallBack)
         {
             StridedCopyGuarded(x, offset, shape, strides, y);
@@ -5934,20 +5347,15 @@ public abstract partial class Backend
         }
         else
         {
-            BatchedMatMulStridedRegistered(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+            BatchedMatMulStridedScoped(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void BatchedMatMulStridedRegistered(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    private void BatchedMatMulStridedScoped(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.BatchedMatMulStrided) is OperationKernels.BatchedMatMulStrided kernel)
-        {
-            kernel(this, a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
-            return;
-        }
-
+        Traced(OperationIndex.BatchedMatMulStrided);
         if (RefusedKernelsFallBack)
         {
             BatchedMatMulStridedGuarded(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
@@ -5986,20 +5394,15 @@ public abstract partial class Backend
         }
         else
         {
-            AttentionTiledStridedRegistered(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            AttentionTiledStridedScoped(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AttentionTiledStridedRegistered(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    private void AttentionTiledStridedScoped(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionTiledStrided) is OperationKernels.AttentionTiledStrided kernel)
-        {
-            kernel(this, q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
-            return;
-        }
-
+        Traced(OperationIndex.AttentionTiledStrided);
         if (RefusedKernelsFallBack)
         {
             AttentionTiledStridedGuarded(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -6036,20 +5439,15 @@ public abstract partial class Backend
         }
         else
         {
-            AttentionTiledStridedBackwardRegistered(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            AttentionTiledStridedBackwardScoped(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void AttentionTiledStridedBackwardRegistered(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    private void AttentionTiledStridedBackwardScoped(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.AttentionTiledStridedBackward) is OperationKernels.AttentionTiledStridedBackward kernel)
-        {
-            kernel(this, q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
-            return;
-        }
-
+        Traced(OperationIndex.AttentionTiledStridedBackward);
         if (RefusedKernelsFallBack)
         {
             AttentionTiledStridedBackwardGuarded(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -6085,20 +5483,15 @@ public abstract partial class Backend
         }
         else
         {
-            StoredMatMulRegistered(x, weight, y, m, n, k);
+            StoredMatMulScoped(x, weight, y, m, n, k);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void StoredMatMulRegistered(Storage x, Storage weight, Storage y, int m, int n, int k)
+    private void StoredMatMulScoped(Storage x, Storage weight, Storage y, int m, int n, int k)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.StoredMatMul) is OperationKernels.StoredMatMul kernel)
-        {
-            kernel(this, x, weight, y, m, n, k);
-            return;
-        }
-
+        Traced(OperationIndex.StoredMatMul);
         if (RefusedKernelsFallBack)
         {
             StoredMatMulGuarded(x, weight, y, m, n, k);
@@ -6138,20 +5531,15 @@ public abstract partial class Backend
         }
         else
         {
-            KeyValueWriteStridedRegistered(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+            KeyValueWriteStridedScoped(source, sourceLayout, cache, position, heads, steps, capacity, dim);
         }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void KeyValueWriteStridedRegistered(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    private void KeyValueWriteStridedScoped(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.KeyValueWriteStrided) is OperationKernels.KeyValueWriteStrided kernel)
-        {
-            kernel(this, source, sourceLayout, cache, position, heads, steps, capacity, dim);
-            return;
-        }
-
+        Traced(OperationIndex.KeyValueWriteStrided);
         if (RefusedKernelsFallBack)
         {
             KeyValueWriteStridedGuarded(source, sourceLayout, cache, position, heads, steps, capacity, dim);
@@ -6182,18 +5570,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool StoredMatMulMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products)
     {
-        return _kernels is null && _moves is null ? StoredMatMulManyKernel(x, m, k, products) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulManyGuarded(x, m, k, products) : StoredMatMulManyRegistered(x, m, k, products);
+        return _kernels is null && _moves is null ? StoredMatMulManyKernel(x, m, k, products) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulManyGuarded(x, m, k, products) : StoredMatMulManyScoped(x, m, k, products);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool StoredMatMulManyRegistered(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products)
+    private bool StoredMatMulManyScoped(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.StoredMatMulMany) is OperationKernels.StoredMatMulMany kernel)
-        {
-            return kernel(this, x, m, k, products);
-        }
-
+        Traced(OperationIndex.StoredMatMulMany);
         return RefusedKernelsFallBack ? StoredMatMulManyGuarded(x, m, k, products) : StoredMatMulManyKernel(x, m, k, products);
     }
 
@@ -6226,18 +5610,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool StoredMatMulGatedPair(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products, Storage hidden)
     {
-        return _kernels is null && _moves is null ? StoredMatMulGatedPairKernel(activation, x, m, k, products, hidden) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulGatedPairGuarded(activation, x, m, k, products, hidden) : StoredMatMulGatedPairRegistered(activation, x, m, k, products, hidden);
+        return _kernels is null && _moves is null ? StoredMatMulGatedPairKernel(activation, x, m, k, products, hidden) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulGatedPairGuarded(activation, x, m, k, products, hidden) : StoredMatMulGatedPairScoped(activation, x, m, k, products, hidden);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool StoredMatMulGatedPairRegistered(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products, Storage hidden)
+    private bool StoredMatMulGatedPairScoped(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products, Storage hidden)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.StoredMatMulGatedPair) is OperationKernels.StoredMatMulGatedPair kernel)
-        {
-            return kernel(this, activation, x, m, k, products, hidden);
-        }
-
+        Traced(OperationIndex.StoredMatMulGatedPair);
         return RefusedKernelsFallBack ? StoredMatMulGatedPairGuarded(activation, x, m, k, products, hidden) : StoredMatMulGatedPairKernel(activation, x, m, k, products, hidden);
     }
 
@@ -6277,18 +5657,14 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool StoredMatMulAddRmsNorm(Storage x, Storage weight, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
-        return _kernels is null && _moves is null ? StoredMatMulAddRmsNormKernel(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulAddRmsNormGuarded(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset) : StoredMatMulAddRmsNormRegistered(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        return _kernels is null && _moves is null ? StoredMatMulAddRmsNormKernel(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulAddRmsNormGuarded(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset) : StoredMatMulAddRmsNormScoped(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool StoredMatMulAddRmsNormRegistered(Storage x, Storage weight, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    private bool StoredMatMulAddRmsNormScoped(Storage x, Storage weight, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
         using var operation = EnterOperation();
-        if (Kernel(OperationIndex.StoredMatMulAddRmsNorm) is OperationKernels.StoredMatMulAddRmsNorm kernel)
-        {
-            return kernel(this, x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset);
-        }
-
+        Traced(OperationIndex.StoredMatMulAddRmsNorm);
         return RefusedKernelsFallBack ? StoredMatMulAddRmsNormGuarded(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset) : StoredMatMulAddRmsNormKernel(x, weight, y, m, n, k, residual, sum, gain, normalized, eps, offset);
     }
 

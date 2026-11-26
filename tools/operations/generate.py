@@ -189,7 +189,7 @@ def as_code(lines):
 
 
 def choose(d, returns, guarded, own, indent, last=False):
-    """Appends the call of a device's own kernel from NameRegistered: through NameGuarded where refused kernels fall back."""
+    """Appends the call of a device's own kernel from NameScoped: through NameGuarded where refused kernels fall back."""
     if returns == "void":
         d.append(f"{indent}if (RefusedKernelsFallBack)")
         d.append(f"{indent}{{")
@@ -206,8 +206,8 @@ def choose(d, returns, guarded, own, indent, last=False):
         d.append(f"{indent}return RefusedKernelsFallBack ? {guarded} : {own};")
 
 
-def dispatch_body(d, returns, own, guarded, registered):
-    """The three ways a call runs: the device's own kernel, its guarded call, or the registered path."""
+def dispatch_body(d, returns, own, guarded, scoped):
+    """The three ways a call runs: the device's own kernel, its guarded call, or the scoped path."""
     if returns == "void":
         d.append("        if (_kernels is null && _moves is null)")
         d.append("        {")
@@ -219,10 +219,10 @@ def dispatch_body(d, returns, own, guarded, registered):
         d.append("        }")
         d.append("        else")
         d.append("        {")
-        d.append(f"            {registered};")
+        d.append(f"            {scoped};")
         d.append("        }")
     else:
-        d.append(f"        return _kernels is null && _moves is null ? {own} : ReferenceEquals(_kernels, s_guardedKernels) ? {guarded} : {registered};")
+        d.append(f"        return _kernels is null && _moves is null ? {own} : ReferenceEquals(_kernels, s_guardedKernels) ? {guarded} : {scoped};")
 
 
 def generate():
@@ -315,7 +315,7 @@ def generate():
     d.append("// default body), one with no kernel returns its \"none\" value so the caller takes its own path (a void one rethrows);")
     d.append("// other errors reach the caller. Its calls take a third path, NameGuarded (the device's kernel in a try region, free")
     d.append("// until it throws), straight from Name(...) when nothing else takes them off the fast path (its slots are")
-    d.append("// s_guardedKernels), else from NameRegistered; which operations the device owns is looked up only when a kernel is")
+    d.append("// s_guardedKernels), else from NameScoped; which operations the device owns is looked up only when a kernel is")
     d.append("// refused (the catch's filter).")
     d.append("public abstract partial class Backend")
     d.append("{")
@@ -324,12 +324,12 @@ def generate():
         plain = ", ".join(strip_default(p) for p in split_top(parameters))
         call = f"kernel(this{', ' + arguments if arguments else ''})"
         own = f"{method}Kernel({arguments})"
-        registered = f"{op}Registered({arguments})"
+        scoped = f"{op}Scoped({arguments})"
         guarded = f"{op}Guarded({arguments})"
         if i:
             d.append("")
-        # The fast path (every kernel slot empty and no trace: one field read) is inlined into the call site; the
-        # slot path (NameRegistered) stays out of line.
+        # The fast path (no trace and no guarded moves: one field read) is inlined into the call site; the scoped path
+        # (NameScoped) stays out of line.
         runs = f"Runs <see cref=\"Ops.{op}\"/>: <c>{method}Kernel</c>."
         if any("</remarks>" in line for line in docs):
             d.extend(f"    /// {line.replace('</remarks>', f'<para>{runs}</para></remarks>')}".rstrip() for line in docs)
@@ -339,11 +339,11 @@ def generate():
         d.append("    [MethodImpl(MethodImplOptions.AggressiveInlining)]")
         d.append(f"    public {returns} {method}({parameters})")
         d.append("    {")
-        dispatch_body(d, returns, own, guarded, registered)
+        dispatch_body(d, returns, own, guarded, scoped)
         d.append("    }")
         d.append("")
         d.append("    [MethodImpl(MethodImplOptions.NoInlining)]")
-        d.append(f"    private {returns} {op}Registered({plain})")
+        d.append(f"    private {returns} {op}Scoped({plain})")
         d.append("    {")
         # On a device that guards its moves (an IOffloadingBackend), the call is an operation: no move runs between reading the
         # storages' addresses and queuing the work that uses them.
@@ -353,13 +353,7 @@ def generate():
         composed = default == "Composed"
         fallback_call = f"{op}Composed({arguments})" if composed else "default"
         where = "its composed path" if composed else "the caller's path"
-        d.append(f"        if (Kernel(OperationIndex.{op}) is OperationKernels.{op} kernel)")
-        d.append("        {")
-        d.append(f"            {ret}{call};")
-        if returns == "void":
-            d.append("            return;")
-        d.append("        }")
-        d.append("")
+        d.append(f"        Traced(OperationIndex.{op});")
         choose(d, returns, guarded, own, "        ", last=True)
         d.append("    }")
         # The call on a device whose refused kernels fall back: the device's kernel, and a refused one's fallback (only

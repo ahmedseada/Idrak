@@ -609,20 +609,21 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
         }
     }
 
-    // The kernel in an operation's slot on this device, or null for the device's own (off the fast path: counted when
-    // traced).
+    // A call off the fast path: counted when traced, and the path the next calls take resolved when it is not yet.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private Delegate? Kernel(int operation)
+    private void Traced(int operation)
     {
         Volatile.Read(ref _trace)?.Called(operation);
-        var kernels = _kernels;
-        return kernels is null ? null : kernels.Length != 0 ? kernels[operation] : ResolveKernels(kernels)[operation];
+        if (_kernels is { Length: 0 } unresolved)
+        {
+            _ = ResolveKernels(unresolved);
+        }
     }
 
     // Resolves the slots; stores them unless Kernels changed meanwhile (then the next call resolves again). With every
     // slot empty and no trace the slots are dropped, so calls take the fast path again; or, on a
     // device whose refused kernels fall back, replaced by s_guardedKernels, so calls take NameGuarded (unless the device
-    // guards its moves: then every call is an operation, NameRegistered, which runs NameGuarded inside it).
+    // guards its moves: then every call is an operation, NameScoped, which runs NameGuarded inside it).
     private Delegate?[] ResolveKernels(Delegate?[] unresolved)
     {
         ThrowIfDisposed();                                                 // a disposed backend's sentinel is never resolved

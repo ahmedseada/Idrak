@@ -66,16 +66,6 @@ public abstract partial class Backend
         HostCalled(operation.Name);
     }
 
-    // Whether a library operation runs a kernel of the device's own here, or one in its resolved slot (not its default
-    // body). The slots already resolved are read as they are (null and the guarded slots: none).
-    private bool RunsKernel(int operation)
-    {
-        if (OwnsKernel(operation))
-        {
-            return true;
-        }
-
-        var slots = Volatile.Read(ref _kernels);
-        return slots is not null && (slots.Length != 0 ? slots[operation] : Operations.Kernels.Resolve(this)[operation]) is not null;
-    }
+    // Whether a library operation runs a kernel of the device's own here (not its default body).
+    private bool RunsKernel(int operation) => OwnsKernel(operation);
 }
