@@ -139,15 +139,23 @@ public sealed record PretrainedOptions
     /// <summary>Longest sequence to support (sizes the rotary tables); the model's maximum when null.</summary>
     public int? MaxPositions { get; init; }
 
-    /// <summary>The architecture's name to use instead of the one config.json names (picking an architecture by its name is not on the new design yet: give <see cref="Family"/>).</summary>
+    /// <summary>The architecture's name to use instead of the one config.json names (matched against <see cref="Families"/>' own names).</summary>
     public string? Architecture { get; init; }
 
     /// <summary>
     /// The architecture that reads the checkpoint (its configuration keys and tensor names), handed over directly (a
-    /// family's own, such as Idrak.Text.Plugins' <c>QwenArchitectures.Qwen3()</c>); null: picking it by config.json's name,
-    /// which is not on the new design yet.
+    /// family's own, such as Idrak.Text.Plugins' <c>QwenArchitectures.Qwen3()</c>); null: the family of
+    /// <see cref="Families"/> whose own names (<see cref="IPretrainedArchitecture.Names"/>) hold the name the checkpoint
+    /// calls itself by (config.json's "architectures").
     /// </summary>
     public IPretrainedArchitecture? Family { get; init; }
+
+    /// <summary>
+    /// The families a checkpoint's own name is matched against where it comes in, when no <see cref="Family"/> is handed
+    /// over (Idrak.Text.Plugins' <c>BuiltInFamilies.All</c>, or a package's own list): walked in order, each family's own
+    /// names compared; null: none (give <see cref="Family"/>).
+    /// </summary>
+    public IFamilyProvider? Families { get; init; }
 
     /// <summary>
     /// The format the checkpoint is read by, handed over directly; null: the library's safetensors format
@@ -356,9 +364,32 @@ public sealed class PretrainedModel : IDisposable
     public IPretrainedVision? Vision { get; }
 
     /// <summary>
+    /// The family of <paramref name="families"/> that states <paramref name="name"/> (the name a checkpoint calls itself by)
+    /// among its own names: the list walked in order, each family's names compared, where the checkpoint comes in.
+    /// </summary>
+    private static IPretrainedArchitecture FamilyNamed(IFamilyProvider? families, string name)
+    {
+        foreach (var family in families?.Families ?? [])
+        {
+            foreach (string own in family.Names)
+            {
+                if (string.Equals(own, name, StringComparison.Ordinal))
+                {
+                    return family;
+                }
+            }
+        }
+
+        throw new NotSupportedException(families is null
+            ? $"The checkpoint is a '{name}'; no family was handed over to read it (give PretrainedOptions.Family, or PretrainedOptions.Families to match its name against)."
+            : $"The checkpoint is a '{name}'; none of the families handed over states that name ({string.Join(", ", families.Families.SelectMany(f => f.Names))}).");
+    }
+
+    /// <summary>
     /// Reads the model in <paramref name="folder"/> (a model folder, a .gguf file). Every weight is read from disk one
-    /// tensor at a time, so the model is never held twice. Picking the folder's checkpoint format, its architecture and its
-    /// vision family by name is not on the new design yet.
+    /// tensor at a time, so the model is never held twice. Its architecture is <see cref="PretrainedOptions.Family"/>, or
+    /// the family of <see cref="PretrainedOptions.Families"/> that states the name config.json gives; picking the folder's
+    /// checkpoint format and its vision family by name is not on the new design yet.
     /// </summary>
     public static PretrainedModel Load(string folder, PretrainedOptions? options = null)
     {
@@ -376,7 +407,7 @@ public sealed class PretrainedModel : IDisposable
         var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))!.AsObject();
         string name = options.Architecture ?? (string?)config["architectures"]?[0]
             ?? throw new InvalidDataException("config.json names no architecture; pass PretrainedOptions.Architecture.");
-        var architecture = options.Family ?? NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"Picking the architecture '{name}' by its name (give PretrainedOptions.Family)");
+        var architecture = options.Family ?? FamilyNamed(options.Families, name);
         // A vision-language checkpoint (one with a vision_config) is read by its own vision family, by the same name.
         var visionFamily = config["vision_config"] is JsonObject ? NotOnTheNewDesign.Yet<IVisionFamily>($"Picking the vision family '{name}' by its name") : null;
 

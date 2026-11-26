@@ -34,7 +34,7 @@ public static class LlamaArchitectures
     public static GgufChatTemplate ChatTemplateFallback() => new() { Matches = (_, tokens) => tokens.Contains("<|start_header_id|>"), Template = ChatTemplateText };
 
     /// <summary>LlamaForCausalLM: the common keys and names as they are, written back as config.json with model_type "llama".</summary>
-    public static IPretrainedArchitecture Llama() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec, "llama");
+    public static IPretrainedArchitecture Llama() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec, "llama", [LlamaPlugin.LlamaForCausalLM]);
 
     /// <summary>
     /// llama.cpp's "llama": LlamaForCausalLM (Mistral's files too), MixtralForCausalLM when the file has experts (counted

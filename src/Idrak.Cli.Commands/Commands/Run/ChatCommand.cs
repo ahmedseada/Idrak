@@ -39,8 +39,8 @@ internal sealed class ChatCommand : Command
                                  the same as the grayscale image transform first
               --audio FILE       give an audio-language model a sound with the first message (repeatable; /audio adds
                                  more later)
-        """ + "\n" + ModelChoices.ImageTransformHelp + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
-              --mcp SERVER      let the model call an MCP server's tools: an http(s) URL, or a command that starts
+        """ + "\n" + ModelChoices.WeightsHelp + "\n" + ModelChoices.ImageTransformHelp + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
+              --mcp SERVER     let the model call an MCP server's tools: an http(s) URL, or a command that starts
                                  the server ("npx -y some-server"); repeatable
               --mcp-token TOKEN  the bearer token sent to http(s) MCP servers (idrak mcp serve --transport http
                                  prints its own)
@@ -60,12 +60,12 @@ internal sealed class ChatCommand : Command
         conversation, for now).
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp", "--mcp-token", "--image", "--audio", ModelChoices.ImageTransformOption, ModelChoices.VisionOption];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, ModelChoices.WeightsOption, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp", "--mcp-token", "--image", "--audio", ModelChoices.ImageTransformOption, ModelChoices.VisionOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string>(ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms));
+        new Dictionary<string, string>(ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-w", ModelChoices.WeightsOption)));
 
     public override int Run(CommandContext context)
     {

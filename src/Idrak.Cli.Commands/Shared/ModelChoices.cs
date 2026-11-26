@@ -50,10 +50,11 @@ internal static class ModelChoices
 
     /// <summary>Help lines for <see cref="WeightsOption"/>, aligned as the commands' options are.</summary>
     public const string WeightsHelp = """
-          -w, --weights TYPE     every projection's weight written as TYPE by its type's encoder (a built-in type's
-                                 name: q4_k, q8_0, bfloat16, float8_e4m3, ...; the alias's "weights"); kept as its
-                                 checkpoint stores it when not given
-    """;
+          -w, --weights TYPE     every projection's weight and the token table written as TYPE by its type's encoder
+                                 (a built-in type's name: q4_k, q8_0, int8, bfloat16, float8_e4m3, ...; int8 and int16
+                                 rows carry a float32 scale a row; the alias's "weights"); kept as its checkpoint
+                                 stores it when not given
+        """;
 
     /// <summary>The option giving a vision family's own options, KEY=VALUE (repeatable).</summary>
     public const string VisionOption = "--vision-option";
@@ -309,6 +310,7 @@ internal static class ModelChoices
                 DeviceLayers = choice.DeviceLayers,
                 ExpertPlacement = choice.MoeExperts,
                 Weights = choice.Weights,
+                Families = Idrak.Text.Plugins.BuiltInFamilies.All,
             });
             progress.Clear();
         }

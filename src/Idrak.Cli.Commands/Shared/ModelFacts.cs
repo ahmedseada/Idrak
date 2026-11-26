@@ -68,7 +68,10 @@ internal sealed class ModelFacts
         string? problem = null;
         try
         {
-            spec = NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"Picking the architecture '{architecture}' by its name").Spec(config, notes);
+            // The family that states the checkpoint's own name: the built-in families walked, each one's names compared.
+            var family = Idrak.Text.Plugins.BuiltInFamilies.All.Families.FirstOrDefault(f => f.Names.Contains(architecture, StringComparer.Ordinal))
+                ?? throw new NotSupportedException($"No built-in family states the name '{architecture}'.");
+            spec = family.Spec(config, notes);
         }
         catch (Exception e) when (e is NotSupportedException or KeyNotFoundException or InvalidDataException or InvalidOperationException or NullReferenceException or FormatException)
         {

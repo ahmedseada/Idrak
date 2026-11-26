@@ -335,6 +335,7 @@ internal sealed class CompleteCommand : Command
           -k, --kv FORMAT       KV cache format
               --context N       context window in tokens (default 4096, at most the model's)
               --adapter DIR     merge a LoRA adapter into the weights as they are read
+          -w, --weights TYPE    every projection's weight and the token table written as TYPE, as for run
               --temperature T   sampling, as for run; also --top-k N, --top-p P, --max-tokens N and --seed N
 
         Examples:
@@ -343,10 +344,10 @@ internal sealed class CompleteCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. ModelChoices.ValueOptions, "--temperature", "--top-k", "--top-p", "--max-tokens", "--input", "--stop"];
+        [.. ModelChoices.ValueOptions, ModelChoices.WeightsOption, "--temperature", "--top-k", "--top-p", "--max-tokens", "--input", "--stop"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string>(ModelChoices.ShortForms.Append(KeyValuePair.Create("-i", "--input")));
+        new Dictionary<string, string>(ModelChoices.ShortForms.Append(KeyValuePair.Create("-i", "--input")).Append(KeyValuePair.Create("-w", ModelChoices.WeightsOption)));
 
     public override int Run(CommandContext context)
     {

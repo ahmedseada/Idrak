@@ -865,7 +865,9 @@ internal abstract partial class Tests
                 "written as q8_0 by its encoder");
 
             // Written as int8: each weight's rows as int8 gives them (its codes and a float32 scale a row), and the model runs.
-            using var int8 = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Family = QwenArchitectures.Qwen3(), Weights = I8.Type });
+            // Its family the one of the built-in families that states the name config.json gives (Qwen3ForCausalLM).
+            using var int8 = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Families = Idrak.Text.Plugins.BuiltInFamilies.All, Weights = I8.Type });
+            Check(int8.Architecture.Names.SequenceEqual(["Qwen3ForCausalLM"]) && Idrak.Text.Plugins.BuiltInFamilies.All.Families.Contains(int8.Architecture), "the family found by the checkpoint's own name");
             var rowLinears = Linears(int8.Network).ToList();
             var rowTable = rowLinears.Single(l => l.TiedTo is not null).TiedTo!.Weight;
             Check(rowLinears.Where(l => l.TiedTo is null).All(l => l.Stored is { } s && s.Type == I8.Type.ForRow(s.Shape[1]) && s.Storage.ElementCount == s.Size

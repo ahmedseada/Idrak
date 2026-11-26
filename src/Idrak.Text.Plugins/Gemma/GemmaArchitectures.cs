@@ -23,13 +23,13 @@ public static class GemmaArchitectures
         NormOffset = 1f,                                                  // Gemma scales by (1 + weight)
         EmbeddingScale = MathF.Sqrt(spec.Dim),
         TieEmbeddings = true,
-    }, "gemma");
+    }, "gemma", [GemmaPlugin.GemmaForCausalLM]);
 
     /// <summary>Gemma 2 (<c>Gemma2ForCausalLM</c>): read from checkpoints only.</summary>
-    public static IPretrainedArchitecture Gemma2() => PretrainedFamilies.Architecture((config, notes) => GemmaSpec(config, PretrainedFamilies.CommonSpec(config, notes), version: 2), TensorName);
+    public static IPretrainedArchitecture Gemma2() => PretrainedFamilies.Architecture((config, notes) => GemmaSpec(config, PretrainedFamilies.CommonSpec(config, notes), version: 2), TensorName, [GemmaPlugin.Gemma2ForCausalLM]);
 
     /// <summary>Gemma 3 text (<c>Gemma3ForCausalLM</c>): read from checkpoints only, transformers 5's rope_parameters too.</summary>
-    public static IPretrainedArchitecture Gemma3() => PretrainedFamilies.Architecture((config, notes) => Gemma3Spec(Gemma3Keys(config), notes), TensorName);
+    public static IPretrainedArchitecture Gemma3() => PretrainedFamilies.Architecture((config, notes) => Gemma3Spec(Gemma3Keys(config), notes), TensorName, [GemmaPlugin.Gemma3ForCausalLM]);
 
     /// <summary>
     /// The text decoder of Gemma 3 with images (<c>Gemma3ForConditionalGeneration</c>): Gemma 3's, read from text_config,

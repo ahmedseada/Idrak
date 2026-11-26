@@ -33,6 +33,25 @@ public interface IPretrainedArchitecture
     /// head, for most families).
     /// </summary>
     bool Transposed(string name);
+
+    /// <summary>
+    /// The names a checkpoint calls this family by, as the family states them (config.json's "architectures" entries:
+    /// Qwen3ForCausalLM): what a checkpoint's own name is compared with where it comes in (a loader walking the families it
+    /// was handed, <see cref="IFamilyProvider"/>); none for a family only ever handed in.
+    /// </summary>
+    IReadOnlyList<string> Names => [];
+}
+
+/// <summary>
+/// The families a package hands over (its own, each stating its names, <see cref="IPretrainedArchitecture.Names"/>): an
+/// immutable list, nothing added to it, no lookup in it. A checkpoint's own name (config.json's "architectures") is matched
+/// against the families' own names only where the checkpoint comes in, by walking such a list
+/// (<see cref="PretrainedOptions.Families"/>).
+/// </summary>
+public interface IFamilyProvider
+{
+    /// <summary>The families handed over.</summary>
+    IReadOnlyList<IPretrainedArchitecture> Families { get; }
 }
 
 /// <summary>
@@ -85,6 +104,9 @@ public abstract class PretrainedArchitecture : IPretrainedArchitecture
 
     /// <inheritdoc />
     public virtual bool Transposed(string name) => TransposedProjection(name);
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> Names { get; init; } = [];
 
     /// <summary>
     /// The usual layout rule: every projection (attention, feed-forward, head) is stored as [out, in], the PyTorch Linear

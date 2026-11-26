@@ -11,7 +11,7 @@ namespace Idrak.Models;
 /// <summary>
 /// The pieces model families are made of, for the families of plug-ins and apps (the library has none;
 /// Idrak.Text.Plugins and Idrak.Vision.Plugins do):
-/// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string)"/> for those sharing
+/// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string, IReadOnlyList{string})"/> for those sharing
 /// the common configuration keys and checkpoint names, the specs read from the common configuration keys
 /// (<see cref="CommonSpec"/>, <see cref="ExpertSpec"/>), the configuration of a spec (<see cref="CommonConfig"/>) and the
 /// common checkpoint names (<see cref="CommonTensorName"/>).
@@ -22,44 +22,46 @@ public static class PretrainedFamilies
     /// An architecture with the common configuration keys (<see cref="CommonSpec"/>) and weight names
     /// (<see cref="CommonTensorName"/>: model.embed_tokens, model.layers.i.self_attn.q_proj, input_layernorm,
     /// post_attention_layernorm, mlp.gate_proj/up_proj/down_proj, model.norm, lm_head), which many families share.
-    /// <paramref name="adjust"/> changes the spec read from the common keys (for example biases or q/k norm).
+    /// <paramref name="adjust"/> changes the spec read from the common keys (for example biases or q/k norm);
+    /// <paramref name="names"/> are the names its checkpoints call it by (<see cref="IPretrainedArchitecture.Names"/>).
     /// </summary>
-    public static IPretrainedArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust)
+    public static IPretrainedArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, IReadOnlyList<string>? names = null)
     {
         ArgumentNullException.ThrowIfNull(adjust);
-        return new CommonDecoder(adjust);
+        return new CommonDecoder(adjust) { Names = names ?? [] };
     }
 
     /// <summary>
-    /// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec})"/> that can also write a
+    /// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, IReadOnlyList{string})"/> that can also write a
     /// spec as config.json (<see cref="IConfigWritingArchitecture.Config"/>, through <see cref="CommonConfig"/> with
-    /// <paramref name="modelType"/>), so models of the family can be made from a spec.
+    /// <paramref name="modelType"/>), so models of the family can be made from a spec; <paramref name="names"/> are the
+    /// names its checkpoints call it by (<see cref="IPretrainedArchitecture.Names"/>).
     /// </summary>
-    public static IConfigWritingArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType)
+    public static IConfigWritingArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType, IReadOnlyList<string>? names = null)
     {
         ArgumentNullException.ThrowIfNull(adjust);
         ArgumentException.ThrowIfNullOrWhiteSpace(modelType);
-        return new CommonDecoderWithConfig(adjust, modelType);
+        return new CommonDecoderWithConfig(adjust, modelType) { Names = names ?? [] };
     }
 
     /// <summary>
     /// An architecture from its spec reader and its checkpoint names, with the usual layout
     /// (<see cref="PretrainedArchitecture.TransposedProjection"/>): for a family that only reads its configuration its own way
     /// or names its tensors its own way. A family with more to say implements <see cref="IPretrainedArchitecture"/> and the
-    /// capabilities it has.
+    /// capabilities it has. <paramref name="names"/> are the names its checkpoints call it by (<see cref="IPretrainedArchitecture.Names"/>).
     /// </summary>
-    public static IPretrainedArchitecture Architecture(Func<JsonObject, List<string>, DecoderSpec> spec, Func<string, string?> tensorName)
+    public static IPretrainedArchitecture Architecture(Func<JsonObject, List<string>, DecoderSpec> spec, Func<string, string?> tensorName, IReadOnlyList<string>? names = null)
     {
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentNullException.ThrowIfNull(tensorName);
-        return new ReadDecoder(spec, tensorName);
+        return new ReadDecoder(spec, tensorName) { Names = names ?? [] };
     }
 
-    /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec})"/>, kept for one release.</summary>
+    /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, IReadOnlyList{string})"/>, kept for one release.</summary>
     [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")]
     public static IPretrainedArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust) => CommonArchitecture(adjust);
 
-    /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string)"/>, kept for one release.</summary>
+    /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string, IReadOnlyList{string})"/>, kept for one release.</summary>
     [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")]
     public static IConfigWritingArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType) =>
         CommonArchitecture(adjust, modelType);
