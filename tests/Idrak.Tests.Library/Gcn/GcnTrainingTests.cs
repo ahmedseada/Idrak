@@ -29,7 +29,6 @@ internal abstract partial class Tests
         ("gcn kernels: training: extremum_bwd_f32 (max and min, ties to a, either gradient alone), where_bwd_f32 (NaN and ±0 conditions), clamp_bwd_f32 and leaky_relu_bwd_f32 equal the CPU's bit for bit; pow_bwd_f32 (odd, even, fractional and negative powers of negative and positive bases) and gated_act_bwd_f32 (every kind, added and written) within tolerance; the same bits on two grids and wave orders", GcnTrainingSelections),
         ("gcn kernels: training: norm_apply_f32, norm_bwd_f32, group_scale_shift_f32 (every flag), broadcast_axis_f32, and sum_axis_f32 equal the CPU's over groups of 1 to 400 elements (aligned and not), the same bits on two grids and wave orders", GcnTrainingGroups),
         ("gcn kernels: training: sgd_momentum_f32, adam_f32, dropout_f32 (forward and backward, the CPU's mask bit for bit), add_dropout_f32 and clip_factor_f32 (0, negative, tiny, huge, ∞ and NaN sums) equal the CPU's, the same bits on two grids and wave orders", GcnTrainingOptimizers),
-        ("gcn kernels: training: adam8_f32 equals the CPU's 8-bit Adam (the parameters within tolerance, every moment's code and the block scales bit for bit) over 700 elements (a partial last block), the same bits on two grids and wave orders", GcnTrainingAdam8),
         ("gcn kernels: training: multi_sumsq_f32, sum_blocks_f32, clip_factor_f32 and multi_adamw_f32 equal the CPU's fused AdamW over three tensors (5,000, 300 and 1 elements; with and without clipping; the gradients zeroed), the same bits on two grids and wave orders", GcnTrainingFusedAdamW),
         ("gcn kernels: training: softmax_bwd_f32 (and log-softmax), rms_norm_backward_f32, weight_norm_f32, weight_norm_bwd_f32 (each gradient alone and both) and attn_bwd_d_f32 equal the CPU's over rows of 1 to 2,333 columns, the same bits on two grids and wave orders", GcnTrainingRows),
         ("gcn kernels: training: sum_rows_f32, sum_cols_strided_f32 with one chunk and three (folded by fold_chunks_f32), sum_f32 and sumsq_f32 over one block and several (added by sum_blocks_f32), and sum_axis_rows_f32 equal the CPU's sums, the same bits on two grids and wave orders", GcnTrainingSums),
@@ -153,8 +152,8 @@ internal abstract partial class Tests
     {
         _ = device;
         var names = GcnKernels.Training.Select(k => k.Name).ToArray();
-        Check(names.Length == 58 && names.Distinct().Count() == names.Length,
-            $"58 training kernels (G5c's gated_act_bwd_bf16_f32 and G6c's maxpool_bwd_chain_u32 and maxpool_bwd_walk_f32 among them), each once ({names.Length}): {string.Join(", ", names)}");
+        Check(names.Length == 56 && names.Distinct().Count() == names.Length,
+            $"56 training kernels (G6c's maxpool_bwd_chain_u32 and maxpool_bwd_walk_f32 among them), each once ({names.Length}): {string.Join(", ", names)}");
         foreach (string name in names)
         {
             Check(GcnKernels.All.Count(k => k.Name == name) == 1, $"GcnKernels.All lists {name} once");
@@ -371,45 +370,6 @@ internal abstract partial class Tests
                 TrainingCase($"clip_factor_f32 ({isa}), Σ = {sum}", [[sum], [7f]], [1], (b, s) => b.ClipFactorKernel(s[0], s[1], 1.5f),
                     (m, a, grid, seed) => TrainingDispatch("clip_factor_f32", isa, m, (grid, 1), seed, a[0], a[1], Bits(1.5f), 1UL), (1, 2), worst, "clip_factor_f32");
             }
-        }
-
-        TrainingReport(worst);
-    }
-
-    // A sorted map of 256 codes: signed in [-1, 1], unsigned in [0, 1] (denser near 0, as 8-bit moments' maps are).
-    private static float[] Adam8Map()
-    {
-        var map = new float[512];
-        for (int i = 0; i < 256; i++)
-        {
-            float t = (i - 127.5f) / 127.5f;
-            map[i] = t * t * t;
-            float u = i / 255f;
-            map[256 + i] = u * u;
-        }
-
-        return map;
-    }
-
-    internal static void GcnTrainingAdam8(Device device)
-    {
-        _ = device;
-        var worst = new Dictionary<string, float>();
-        var random = new Random(55);
-        const int N = 700, Blocks = (N + 255) / 256;
-        const float Lr = 1e-3f, B1 = 0.9f, B2 = 0.999f, Eps = 1e-8f, Scale = 0.5f, Decay = 0.999f;
-        var codes = new byte[2 * ((N + 3) / 4 * 4)];
-        random.NextBytes(codes);
-        float[] m = MemoryMarshal.Cast<byte, float>(codes.AsSpan(0, (N + 3) / 4 * 4)).ToArray(), v = MemoryMarshal.Cast<byte, float>(codes.AsSpan((N + 3) / 4 * 4)).ToArray();
-        float[] absmax = TrainingRandom(random, 2 * Blocks, 0.01f, 0.1f);
-        foreach (var isa in TrainingIsas)
-        {
-            float[][] inputs = [TrainingRandom(random, N, -1, 1), TrainingRandom(random, N, -1, 1), m, v, absmax, Adam8Map()];
-            Action<Backend, Storage[]> cpu = (b, s) => b.AdamStep8BitKernel(s[0], s[1], s[2], s[3], s[4], s[5], N, Lr, B1, B2, Eps, Scale, Decay);
-            Action<GcnMemory, ulong[], int, ulong> gcn = (mem, a, grid, seed) => TrainingDispatch("adam8_f32", isa, mem, (grid, 1), seed, a[0], a[1], a[2], a[3], a[4], a[5],
-                Bits(Lr), Bits(B1), Bits(B2), Bits(1f - B1), Bits(1f - B2), Bits(Eps), N, Bits(Scale), Bits(Decay), Blocks);
-            TrainingCase($"adam8_f32 ({isa}), {N} elements: parameters and scales", inputs, [0, 4], cpu, gcn, (1, Blocks), worst, "adam8_f32");
-            TrainingCase($"adam8_f32 ({isa}), {N} elements: the moments' codes", inputs, [2, 3], cpu, gcn, (2, Blocks), worst, "adam8_f32 (codes)", exact: true);
         }
 
         TrainingReport(worst);

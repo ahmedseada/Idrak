@@ -7,21 +7,19 @@ using Idrak;
 using Idrak.Gpu;
 using Idrak.Gpu.Abstractions;
 using Idrak.Gpu.Hip;
-using Idrak.PluginTests;
 using Idrak.Tests.Gcn;
 
 // A plug-in's own GCN kernels (GcnKernel, plan 35 G7b), as CudaKernel runs a plug-in's PTX: the arguments read from the
 // text's .arg lines and every launch checked against them (count, kinds, names in the refusals), the declared block,
 // text refused with its line and column, assembled for every gfx9 processor, cached under a key of its own; run in the
-// GCN interpreter against the CPU (the documentation's example and the outside plug-in's two kernels), and on HIP
-// devices through IKernelLauncher<GcnKernel>.
+// GCN interpreter against the CPU (the documentation's example), and on HIP devices through IKernelLauncher<GcnKernel>.
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] GcnPluginGroup =
     [
         ("gcn plug-in kernels: GcnKernel reads its arguments (names, kinds, offsets) and block from the text's .arg and block lines; arguments that do not match are refused naming the kernel and the argument, a block the text does not declare too; text whose declarations do not read is refused at construction and text that does not assemble at assembly, each with its line and column; IDRAK_HIP_KERNELS leaves plug-in kernels on; another device is refused", GcnPluginShapes),
-        ("gcn plug-in kernels: the documentation's example and the outside plug-in's GCN kernels assemble for gfx900, gfx906, gfx908 and gfx90c into code objects whose metadata declares them as their text does (another kernel's object refused); the cache key of a plug-in's code object changes with its text, the target, the device, the format and the versions, and is never the library set's", GcnPluginAssembles),
-        ("gcn plug-in kernels: the documentation's example (a scale) and the outside plug-in's unpacking and row scaling run in the interpreter for gfx90c and gfx908 over 1, 255, 1,000 and about 70,000 elements (grids of 1 to 5 blocks, grid-stride), equal to the CPU bit for bit; nothing past the count written, no missing wait, race or access out of range", GcnPluginInterpreter),
+        ("gcn plug-in kernels: the documentation's example assembles for gfx900, gfx906, gfx908 and gfx90c into code objects whose metadata declares it as its text does; the cache key of a plug-in's code object changes with its text, the target, the device, the format and the versions, and is never the library set's", GcnPluginAssembles),
+        ("gcn plug-in kernels: the documentation's example (a scale) runs in the interpreter for gfx90c and gfx908 over 1, 255, 1,000 and about 70,000 elements (grids of 1 to 5 blocks, grid-stride), equal to the CPU bit for bit; nothing past the count written, no missing wait, race or access out of range", GcnPluginInterpreter),
         ("hip plug-in kernels: on HIP devices a plug-in's GcnKernel launches through IKernelLauncher<GcnKernel>, equal to the CPU; its function loads once a device and text (assembled, then read from the kernel cache), and a profile times it under its name", HipPluginLaunch),
     ];
 
@@ -54,8 +52,8 @@ internal abstract partial class Tests
     // The processors the plug-in kernels are assembled for: every gfx9 processor the plan names.
     private static readonly string[] PluginIsas = ["gfx900", "gfx906", "gfx908", "gfx90c"];
 
-    // The kernels checked here: the example and the outside plug-in's two.
-    private static GcnKernel[] PluginGcnKernels() => [new GcnKernel(GcnExampleScale, "my_scale"), .. PluginKernels.GcnKernels];
+    // The kernels checked here: the example.
+    private static GcnKernel[] PluginGcnKernels() => [new GcnKernel(GcnExampleScale, "my_scale")];
 
     internal static void GcnPluginShapes(Device device)
     {
@@ -167,7 +165,6 @@ internal abstract partial class Tests
         {
             var isa = GcnIsaVersion.Parse(processor);
             var target = GcnTargets.For(isa);
-            var images = new List<byte[]>();
             foreach (var kernel in kernels)
             {
                 var code = kernel.Assemble(isa);
@@ -181,16 +178,8 @@ internal abstract partial class Tests
                         $"{processor} {kernel.Name}, format {format}: {problem}");
                     var read = GcnCodeObjectReader.Read(image, kernel.Entry);
                     Check(read.Name == kernel.Entry && read.Code.Length > 0, $"{processor} {kernel.Name}, format {format}: found by the interpreter's reader");
-                    if (format == 5)
-                    {
-                        images.Add(image);
-                    }
                 }
             }
-
-            // A code object of another kernel is not this one's.
-            Check(HipBackend.PluginLayout(images[0], kernels[1], out _) is { } other && other.Contains(kernels[1].Entry, StringComparison.Ordinal),
-                $"{processor}: the example's object for {kernels[1].Name}: {HipBackend.PluginLayout(images[0], kernels[1], out _)}");
         }
 
         // The cache key: the text, the target, the device, the format and the versions; never the library set's.
@@ -220,15 +209,10 @@ internal abstract partial class Tests
                 var code = kernel.Assemble(isa);
                 var image = GcnCodeObjectReader.Read(GcnCodeObject.Write(target, isa, 5, [code]), kernel.Entry);
                 int argumentBytes = GcnCodeObject.KernargBytes(code);
-                (int N, int Blocks, int Width)[] runs = kernel.Entry switch
+                (int N, int Blocks)[] runs = [(1, 1), (255, 1), (1000, 4), (70001, 274)];
+                foreach (var (n, blocks) in runs)
                 {
-                    "my_scale" => [(1, 1, 0), (255, 1, 0), (1000, 4, 0), (70001, 274, 0)],
-                    "outside_scale_rows" => [(1, 1, 1), (255, 1, 7), (1000, 2, 1000), (70001, 5, 13), (69888, 3, 65537)],
-                    _ => [(1, 1, 0), (255, 1, 0), (1001, 2, 0), (70001, 5, 0)],
-                };
-                foreach (var (n, blocks, width) in runs)
-                {
-                    compared += PluginRun(kernel, image, argumentBytes, processor, n, blocks, width);
+                    compared += PluginRun(kernel, image, argumentBytes, processor, n, blocks);
                 }
             }
         }
@@ -238,11 +222,11 @@ internal abstract partial class Tests
 
     // One run in the interpreter: the inputs mapped between sentinels, the kernel, its output compared bit for bit with
     // the CPU's computation of the same thing; the elements compared.
-    private static int PluginRun(GcnKernel kernel, GcnKernelImage image, int argumentBytes, string processor, int n, int blocks, int width)
+    private static int PluginRun(GcnKernel kernel, GcnKernelImage image, int argumentBytes, string processor, int n, int blocks)
     {
         const float Sentinel = -98765.5f, Scale = -1.375f;
         const int Pad = 67;
-        var random = new Random(n + blocks + width);
+        var random = new Random(n + blocks);
         float Next() => random.NextSingle() * 8f - 4f;
         var memory = new GcnMemory();
         var arguments = new byte[argumentBytes];
@@ -267,50 +251,15 @@ internal abstract partial class Tests
             }
         }
 
-        float[] expected;
+        float[] x = [.. Enumerable.Range(0, n).Select(_ => Next())];
+        float[] expected = [.. x.Select(v => Scale * v)];
         ulong output;
-        switch (kernel.Entry)
-        {
-            case "my_scale":
-            {
-                float[] x = [.. Enumerable.Range(0, n).Select(_ => Next())];
-                expected = [.. x.Select(v => Scale * v)];
-                Put(0, Map("x", x));
-                Put(1, output = Map("y", new float[n], Pad));
-                Put(2, BitConverter.SingleToUInt32Bits(Scale));
-                Put(3, (uint)n);
-                break;
-            }
+        Put(0, Map("x", x));
+        Put(1, output = Map("y", new float[n], Pad));
+        Put(2, BitConverter.SingleToUInt32Bits(Scale));
+        Put(3, (uint)n);
 
-            case "outside_scale_rows":
-            {
-                int rows = (n + width - 1) / width;
-                float[] values = [.. Enumerable.Range(0, n).Select(_ => Next())], scales = [.. Enumerable.Range(0, rows).Select(_ => Next())];
-                expected = [.. values.Select((v, i) => v * scales[i / width])];
-                Put(0, Map("rows", values));
-                Put(1, Map("scales", scales));
-                Put(2, output = Map("output", new float[n], Pad));
-                Put(3, (uint)n);
-                Put(4, (uint)width);
-                break;
-            }
-
-            default:
-            {
-                float[] words = [.. Enumerable.Range(0, (n + 1) / 2).Select(_ => BitConverter.UInt32BitsToSingle((uint)random.Next() & 0x7F7F7F7Fu))];
-                expected = [.. Enumerable.Range(0, n).Select(i =>
-                {
-                    uint word = BitConverter.SingleToUInt32Bits(words[i >> 1]);
-                    return BitConverter.UInt32BitsToSingle((i & 1) == 0 ? word << 16 : word & 0xFFFF0000u);
-                })];
-                Put(0, Map("packed", words));
-                Put(1, output = Map("values", new float[n], Pad));
-                Put(2, (uint)n);
-                break;
-            }
-        }
-
-        string what = string.Create(CultureInfo.InvariantCulture, $"{kernel.Name} on {processor}, {n} elements{(width > 0 ? $" in rows of {width}" : "")} in {blocks} blocks");
+        string what = string.Create(CultureInfo.InvariantCulture, $"{kernel.Name} on {processor}, {n} elements in {blocks} blocks");
         try
         {
             GcnInterpreter.Run(image, memory, new GcnDispatch { Workgroups = (blocks, 1, 1), WorkgroupSize = (256, 1, 1), Arguments = arguments, Seed = (ulong)(n + blocks) });
@@ -385,25 +334,6 @@ internal abstract partial class Tests
             example.Launch(hip, (N + 255) / 256, 1, 1, 256, 1, 1, [dx, dy, -2f, N]);
             Check(loaded is not null && ReferenceEquals(example.LastFunction, loaded), "the function is looked up once a device");
             Same([.. x.Select(v => -2f * v)], Read(dy, N), "the example launched again");
-
-            // The outside plug-in's kernels, grid-stride over fewer blocks than elements.
-            var unpack = PluginKernels.GcnKernels[0];
-            var scale = PluginKernels.GcnKernels[1];
-            float[] words = [.. Enumerable.Range(0, (N + 1) / 2).Select(_ => BitConverter.UInt32BitsToSingle((uint)random.Next() & 0x7F7F7F7Fu))];
-            var dw = On(words);
-            var dv = On(new float[N]);
-            unpack.Launch(hip, 7, 1, 1, 256, 1, 1, [dw, dv, N]);
-            Same([.. Enumerable.Range(0, N).Select(i =>
-            {
-                uint word = BitConverter.SingleToUInt32Bits(words[i >> 1]);
-                return BitConverter.UInt32BitsToSingle((i & 1) == 0 ? word << 16 : word & 0xFFFF0000u);
-            })], Read(dv, N), "the plug-in's unpacking");
-            const int Width = 13;
-            float[] scales = [.. Enumerable.Range(0, (N + Width - 1) / Width).Select(_ => random.NextSingle() * 2f - 1f)];
-            var ds = On(scales);
-            var dout = On(new float[N]);
-            scale.Launch(hip, 9, 1, 1, 256, 1, 1, [dx, ds, dout, N, Width]);
-            Same([.. x.Select((v, i) => v * scales[i / Width])], Read(dout, N), "the plug-in's row scaling");
 
             // A profile times it under its name.
             var profiler = (IKernelProfiler)hip;

@@ -10,8 +10,8 @@ using Idrak.Tests.Gcn;
 // HIP's attention and shape kernels in GCN (GcnKernels.Attention, GcnKernels.Shapes), each run by the GCN interpreter and
 // proven against the CPU (plan 35, G4b). Every kernel is assembled for gfx90c, gfx906, gfx1030 and gfx1100 and run over shapes that are
 // multiples of nothing: head sizes of 37 and 64 (and 300, past one slot of the block), caches of 1 position to a few
-// tiles of 256, grouped heads, tables of ranges with an empty one, windows and soft-caps, one split and several merged,
-// each cache format; compared to the CPU backend within OnBoth's tolerance (the attention, which sums in another order)
+// tiles of 256, grouped heads, tables of ranges with an empty one, windows and soft-caps, one split and several merged;
+// compared to the CPU backend within OnBoth's tolerance (the attention, which sums in another order)
 // or bit for bit (the cache writes, masks, gathers, permutes and copies); run again on another grid and another wave
 // order to give the same bits; and the interpreter reports no missing wait, race or access out of range (a report fails
 // the run). With IDRAK_GCN_PRINTED naming a folder, each kernel's printed text (physical registers, LLVM's syntax) is
@@ -22,12 +22,10 @@ internal abstract partial class Tests
     [
         ("gcn kernels: attention: every attention and shape kernel assembles for gfx90c, gfx906, gfx1030 and gfx1100 with its block of 256 declared, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnAttentionAssembled),
         ("gcn kernels: attention: attention_decode_f32 equals the CPU's decoding and tiled attention over a cache (1 to 300 positions, heads of 37, 64 and 300, rows of several steps, a window, a soft-cap, the log-sum-exp; one split, and two merged by attention_merge_f32), the same bits on two grids and wave orders", GcnAttentionDecode),
-        ("gcn kernels: attention: attention_decode_bf16 and attention_decode_int8 equal the CPU's attention over bfloat16 and int8 caches (odd heads, several steps, a window, a soft-cap, two splits merged), the same bits on two grids and wave orders", GcnAttentionPacked),
         ("gcn kernels: attention: attention_tiled_r2/r4/r8_f32 (a block's rows sharing each key and value tile) equal attention_decode_f32 bit for bit without a window and the CPU's tiled attention over a cache with a window and a soft-cap (heads of 37, 64 and 256, rows of a head not a multiple of the block's, the log-sum-exp), the same bits on two grids and wave orders", GcnAttentionTiled),
         ("gcn kernels: attention: attention_spans_f32 equals the CPU's attention over key ranges (grouped heads, two tables, an empty range: zeros and a log-sum-exp of -inf; a soft-cap; two splits merged) and its strided form over packed rows (two batches), the same bits on two grids and wave orders", GcnAttentionSpans),
-        ("gcn kernels: attention: attn_scores_int8 and attn_context_int8 equal the CPU's scores and weighted values over an int8 cache (an odd head), the same bits on two grids and wave orders", GcnAttentionInt8Products),
-        ("gcn kernels: shapes: kv_write_f32, kv_write_bf16 (an odd head, a NaN kept quiet) and kv_write_int8 (an odd head, a zero row) write the CPU's cache bit for bit, decoder_mask_f32 its mask, the same bits on two grids and wave orders", GcnShapesCache),
-        ("gcn kernels: shapes: gather_f32, gather_bf16_f32 and gather_bf16_cols_f32 (int32 indices; odd widths, the last row), convert_f32_i32 and convert_i32_f32, and the 16-bit conversions convert_f32_bf16, convert_f32_f16, convert_bf16_f32 and convert_f16_f32 (ties both ways, NaN payloads, infinities, overflow, subnormal halves, an odd count) equal the CPU's gathers and conversions bit for bit, the same bits on two grids and wave orders", GcnShapesGather),
+        ("gcn kernels: shapes: kv_write_f32 writes the CPU's cache bit for bit, decoder_mask_f32 its mask, the same bits on two grids and wave orders", GcnShapesCache),
+        ("gcn kernels: shapes: gather_f32 (int32 indices; an odd width, the last row) equals the CPU's gather bit for bit, the same bits on two grids and wave orders", GcnShapesGather),
         ("gcn kernels: shapes: permute_f32 (ranks 1, 4 and 6; adding) and copy2d_f32 (pitches, adding) equal the CPU's bit for bit, the same bits on two grids and wave orders", GcnShapesPermute),
     ];
 
@@ -127,41 +125,6 @@ internal abstract partial class Tests
         }
     }
 
-    // A bfloat16 value's bits (the CPU's rounding).
-    private static ushort Half(float value) => Idrak.Abstraction.Devices.BFloat16Bits.Round(value);
-
-    // Rows of bfloat16 halves packed two a word (low half first), each row padded to whole words.
-    private static float[] PackHalves(float[] values, int rows, int dim)
-    {
-        int words = (dim + 1) / 2;
-        var packed = new uint[rows * words];
-        for (int r = 0; r < rows; r++)
-        {
-            for (int d = 0; d < dim; d++)
-            {
-                packed[r * words + d / 2] |= (uint)Half(values[r * dim + d]) << (16 * (d % 2));
-            }
-        }
-
-        return MemoryMarshal.Cast<uint, float>(packed.AsSpan()).ToArray();
-    }
-
-    // Rows of int8 values packed four a word (byte d % 4 of word d / 4), each row padded to whole words.
-    private static float[] PackBytes(Random random, int rows, int dim)
-    {
-        int words = (dim + 3) / 4;
-        var bytes = new sbyte[rows * words * 4];
-        for (int r = 0; r < rows; r++)
-        {
-            for (int d = 0; d < dim; d++)
-            {
-                bytes[r * words * 4 + d] = (sbyte)random.Next(-100, 101);
-            }
-        }
-
-        return MemoryMarshal.Cast<sbyte, float>(bytes.AsSpan()).ToArray();
-    }
-
     // The splits a test asks for: chunk 0 is one split over the whole cache.
     private static (int Splits, int Chunk) TestSplits(int positions, int chunk) =>
         chunk == 0 ? (1, Math.Max(positions, 1)) : ((positions + chunk - 1) / chunk, chunk);
@@ -170,7 +133,7 @@ internal abstract partial class Tests
     {
         _ = device;
         var names = AttentionAndShapes.Select(k => k.Name).ToArray();
-        Check(names.Length == 25 && names.Distinct().Count() == names.Length, $"25 attention and shape kernels, each once: {string.Join(", ", names)}");
+        Check(names.Length == 11 && names.Distinct().Count() == names.Length, $"11 attention and shape kernels, each once: {string.Join(", ", names)}");
         foreach (string name in names)
         {
             Check(GcnKernels.All.Count(k => k.Name == name) == 1, $"GcnKernels.All lists {name} once");
@@ -180,7 +143,7 @@ internal abstract partial class Tests
                 var (code, _) = AttentionKernel(name, isa);
                 Check(code is { RequiredWorkgroupSize: (256, 1, 1), MaxFlatWorkgroupSize: 256, WaveSize: 64 },
                     $"{name} ({isa}): declares the block of 256 (required {code.RequiredWorkgroupSize}, max flat {code.MaxFlatWorkgroupSize}, wave {code.WaveSize})");
-                bool rows = name is "attention_decode_f32" or "attention_decode_bf16" or "attention_decode_int8" or "attention_spans_f32";
+                bool rows = name is "attention_decode_f32" or "attention_spans_f32";
                 int tiled = name.StartsWith("attention_tiled_r", StringComparison.Ordinal) ? name["attention_tiled_r".Length] - '0' : 0;
                 int lds = rows ? GcnKernels.AttentionLdsBytes : tiled > 0 ? GcnKernels.AttentionTiledLdsBytes(tiled) : 0;
                 Check(code.LdsBytes == lds && name == (tiled > 0 ? GcnKernels.AttentionTiledKernel(tiled) : name),
@@ -296,71 +259,6 @@ internal abstract partial class Tests
         RowsReport(worst);
     }
 
-    internal static void GcnAttentionPacked(Device device)
-    {
-        _ = device;
-        const int Heads = 2;
-        const float Scale = 0.2f;
-        var worst = new Dictionary<string, float>();
-        var random = new Random(42);
-        (int Rph, int Steps, int Capacity, int Position, int Dim, int Window, float Softcap, int Chunk)[] cases =
-        [
-            (1, 1, 5, 4, 37, 0, 0f, 0),
-            (4, 2, 300, 295, 37, 0, 0f, 256),                                    // two splits merged
-            (3, 3, 60, 20, 30, 7, 3f, 0),                                         // a window and a soft-cap
-        ];
-        foreach (var (rph, steps, capacity, position, dim, window, softcap, chunk) in cases)
-        {
-            int rows = Heads * rph;
-            float[] q = RowsRandom(random, rows * dim, 2f);
-            var (splits, size) = TestSplits(capacity, chunk);
-            var variant = new AttentionVariant(window, softcap);
-            foreach (var isa in AttentionIsas)
-            {
-                void Run(GcnMemory m, ulong[] a, (int X, int Y) grid, ulong seed, string kernel, int pointers, int words, ulong counters = 0)
-                {
-                    ulong part = splits > 1 ? m.Map<float>("part", new float[rows * splits * (dim + 2)]) : 0UL;
-                    ulong[] values = [.. a.Take(pointers), 0UL, part, counters, (ulong)rph, (ulong)steps, (ulong)capacity, (ulong)dim, Bits(Scale), (ulong)words,
-                        (ulong)window, Bits(softcap), (ulong)size, (ulong)splits, (ulong)rows];
-                    AttentionDispatch(kernel, isa, m, (grid.X, splits), seed, values);
-                    if (splits > 1 && counters == 0)
-                    {
-                        AttentionDispatch("attention_merge_f32", isa, m, (grid.X, 1), seed, part, a[pointers - 1], 0UL, (ulong)splits, (ulong)dim, 1UL, (ulong)rows, 0UL, 0UL,
-                            (ulong)dim, (ulong)rows);
-                    }
-                }
-
-                string shape = $"{Heads} heads x {rph} rows, cache {capacity} at {position}, head {dim}, window {window}, cap {softcap}, {splits} splits";
-                float[] keys = PackHalves(RowsRandom(random, Heads * capacity * dim, 2f), Heads * capacity, dim);
-                float[] values = PackHalves(RowsRandom(random, Heads * capacity * dim, 2f), Heads * capacity, dim);
-                RowsCase($"attention_decode_bf16 ({isa}), {shape}", [q, keys, values, [position], new float[rows * dim]], rows, [4],
-                    (b, s) => b.AttentionBFloat16Kernel(s[0], s[1], s[2], s[3], s[4], Heads, rph, steps, capacity, dim, Scale, tiled: false, variant),
-                    (m, a, grid, seed) => Run(m, a, grid, seed, "attention_decode_bf16", 5, (dim + 1) / 2),
-                    worst, splits > 1 ? "attention_decode_bf16 + attention_merge_f32" : "attention_decode_bf16");
-                if (splits > 1)
-                {
-                    AttentionMergedAlike($"attention_decode_bf16 ({isa}), {shape}", [q, keys, values, [position], new float[rows * dim]], [4], rows,
-                        (m, a, grid, seed, counters) => Run(m, a, grid, seed, "attention_decode_bf16", 5, (dim + 1) / 2, counters));
-                }
-
-                float[] keys8 = PackBytes(random, Heads * capacity, dim), values8 = PackBytes(random, Heads * capacity, dim);
-                float[] keyScales = RowsRandom(random, Heads * capacity, 0.01f, 0.02f), valueScales = RowsRandom(random, Heads * capacity, 0.01f, 0.02f);
-                RowsCase($"attention_decode_int8 ({isa}), {shape}", [q, keys8, values8, keyScales, valueScales, [position], new float[rows * dim]], rows, [6],
-                    (b, s) => b.AttentionInt8Kernel(s[0], s[1], s[2], s[3], s[4], s[5], s[6], Heads, rph, steps, capacity, dim, Scale, tiled: false, variant),
-                    (m, a, grid, seed) => Run(m, a, grid, seed, "attention_decode_int8", 7, (dim + 3) / 4),
-                    worst, splits > 1 ? "attention_decode_int8 + attention_merge_f32" : "attention_decode_int8");
-                if (splits > 1)
-                {
-                    AttentionMergedAlike($"attention_decode_int8 ({isa}), {shape}", [q, keys8, values8, keyScales, valueScales, [position], new float[rows * dim]], [6], rows,
-                        (m, a, grid, seed, counters) => Run(m, a, grid, seed, "attention_decode_int8", 7, (dim + 3) / 4, counters));
-                }
-
-            }
-        }
-
-        RowsReport(worst);
-    }
-
     internal static void GcnAttentionSpans(Device device)
     {
         _ = device;
@@ -427,63 +325,18 @@ internal abstract partial class Tests
         RowsReport(worst);
     }
 
-    internal static void GcnAttentionInt8Products(Device device)
-    {
-        _ = device;
-        const int Rows = 2, Steps = 3, Capacity = 37, Dim = 37;
-        var worst = new Dictionary<string, float>();
-        var random = new Random(44);
-        int words = (Dim + 3) / 4;
-        float[] cache = PackBytes(random, Rows * Capacity, Dim), scales = RowsRandom(random, Rows * Capacity, 0.01f, 0.02f);
-        float[] q = RowsRandom(random, Rows * Steps * Dim, 2f), weights = RowsRandom(random, Rows * Steps * Capacity, 0.5f, 0.5f);
-        foreach (var isa in AttentionIsas)
-        {
-            int n = Rows * Steps * Capacity;
-            RowsCase($"attn_scores_int8 ({isa}), {Rows} x {Steps} x {Capacity}, head {Dim}", [q, cache, scales, new float[n]], ShapeGrid(n), [3],
-                (b, s) => b.AttentionScoresInt8Kernel(s[0], s[1], s[2], s[3], Rows, Steps, Capacity, Dim),
-                (m, a, grid, seed) => AttentionDispatch("attn_scores_int8", isa, m, (grid.X, 1), seed, a[0], a[1], a[2], a[3], Steps, Capacity, Dim, (ulong)words, (ulong)n),
-                worst, "attn_scores_int8");
-            int contexts = Rows * Steps * words;
-            RowsCase($"attn_context_int8 ({isa}), {Rows} x {Steps} x {Capacity}, head {Dim}", [weights, cache, scales, new float[Rows * Steps * Dim]], ShapeGrid(contexts), [3],
-                (b, s) => b.AttentionContextInt8Kernel(s[0], s[1], s[2], s[3], Rows, Steps, Capacity, Dim),
-                (m, a, grid, seed) => AttentionDispatch("attn_context_int8", isa, m, (grid.X, 1), seed, a[0], a[1], a[2], a[3], Steps, Capacity, Dim, (ulong)words,
-                    (ulong)contexts),
-                worst, "attn_context_int8");
-        }
-
-        RowsReport(worst);
-    }
-
     internal static void GcnShapesCache(Device device)
     {
         _ = device;
         const int Heads = 3, Steps = 2, Capacity = 9, Dim = 37, Position = 4;
         var random = new Random(45);
         float[] source = RowsRandom(random, Heads * Steps * Dim, 3f);
-        source[5] = float.NaN;                                                    // kept quiet in bfloat16
-        source[Dim + 7] = 1.00390625f;                                            // a tie: to even
-        for (int d = 0; d < Dim; d++)
-        {
-            source[(Heads * Steps - 1) * Dim + d] = 0f;                          // the last row all zeros: scale 0, bytes 0
-        }
-
-        int words2 = (Dim + 1) / 2, words4 = (Dim + 3) / 4;
         foreach (var isa in AttentionIsas)
         {
             int n = Heads * Steps * Dim;
             ShapesCase($"kv_write_f32 ({isa})", [source, [Position], RowsRandom(random, Heads * Capacity * Dim, 1f)], ShapeGrid(n), [2],
                 (b, s) => b.KeyValueWriteKernel(s[0], s[2], s[1], Heads, Steps, Capacity, Dim),
                 (m, a, grid, seed) => AttentionDispatch("kv_write_f32", isa, m, (grid.X, 1), seed, a[0], a[2], a[1], Steps * Dim, Capacity * Dim, Dim, (ulong)n));
-            int n2 = Heads * Steps * words2;
-            ShapesCase($"kv_write_bf16 ({isa})", [source, [Position], RowsRandom(random, Heads * Capacity * words2, 1f)], ShapeGrid(n2), [2],
-                (b, s) => b.KeyValueWriteBFloat16Kernel(s[0], s[2], s[1], Heads, Steps, Capacity, Dim),
-                (m, a, grid, seed) => AttentionDispatch("kv_write_bf16", isa, m, (grid.X, 1), seed, a[0], a[2], a[1], Steps, Capacity, Dim, (ulong)words2, (ulong)n2));
-            float[] clean = [.. source.Select(v => float.IsNaN(v) ? 0.5f : v)];
-            ShapesCase($"kv_write_int8 ({isa})", [clean, [Position], RowsRandom(random, Heads * Capacity * words4, 1f), RowsRandom(random, Heads * Capacity, 1f)],
-                ShapeGrid(Heads * Steps), [2, 3],
-                (b, s) => b.KeyValueWriteInt8Kernel(s[0], s[2], s[3], s[1], Heads, Steps, Capacity, Dim),
-                (m, a, grid, seed) => AttentionDispatch("kv_write_int8", isa, m, (grid.X, 1), seed, a[0], a[2], a[3], a[1], Steps, Capacity, Dim, (ulong)words4,
-                    Heads * Steps));
             const int MaskRows = 3, MaskCapacity = 50;
             ShapesCase($"decoder_mask_f32 ({isa})", [[6f], new float[MaskRows * MaskCapacity]], ShapeGrid(MaskRows * MaskCapacity), [1],
                 (b, s) => b.DecoderMaskKernel(s[0], s[1], MaskRows, MaskCapacity),
@@ -498,130 +351,12 @@ internal abstract partial class Tests
         var random = new Random(46);
         float[] ids = Int32Words(0, 5, 36, 2, 36);                              // int32, the device's index type (plan 37, T1b)
         float[] table = RowsRandom(random, Vocabulary * Dim, 2f);
-        float[] rowsTable = PackHalves(RowsRandom(random, Vocabulary * Dim, 2f), Vocabulary, Dim);
-        float[] columnsTable = PackHalves(RowsRandom(random, Dim * Vocabulary, 2f), Dim, Vocabulary);
         int n = Count * Dim;
         foreach (var isa in AttentionIsas)
         {
             ShapesCase($"gather_f32 ({isa})", [table, ids, new float[n]], ShapeGrid(n), [2],
                 (b, s) => b.Gather(s[0], s[1], s[2], Count, Dim, Vocabulary),
                 (m, a, grid, seed) => AttentionDispatch("gather_f32", isa, m, (grid.X, 1), seed, a[0], a[1], a[2], Dim, Vocabulary - 1, (ulong)n));
-            ShapesCase($"gather_bf16_f32 ({isa})", [rowsTable, ids, new float[n]], ShapeGrid(n), [2],
-                (b, s) => b.GatherBFloat16(s[0], s[1], s[2], Count, Dim, Vocabulary),
-                (m, a, grid, seed) => AttentionDispatch("gather_bf16_f32", isa, m, (grid.X, 1), seed, a[0], a[1], a[2], Dim, Vocabulary - 1, (Dim + 1) / 2, (ulong)n));
-            ShapesCase($"gather_bf16_cols_f32 ({isa})", [columnsTable, ids, new float[n]], ShapeGrid(n), [2],
-                (b, s) => b.GatherBFloat16Columns(s[0], s[1], s[2], Count, Dim, Vocabulary),
-                (m, a, grid, seed) => AttentionDispatch("gather_bf16_cols_f32", isa, m, (grid.X, 1), seed, a[0], a[1], a[2], Dim, Vocabulary - 1, (Vocabulary + 1) / 2,
-                    (ulong)n));
-        }
-
-        // The conversions between float32 and int32 (plan 37, T1b), against the CPU's ConvertElements: whole numbers either
-        // way, signs, zero and the largest float32 holds exactly (2^24), over more than a block.
-        const int Converted = 300;
-        int[] whole = [.. Enumerable.Range(0, Converted).Select(i => i switch { 0 => 0, 1 => -1, 2 => 1 << 24, 3 => -(1 << 24), _ => random.Next(-100_000, 100_000) })];
-        float[] floats = [.. whole.Select(v => (float)v)];
-        foreach (var isa in AttentionIsas)
-        {
-            ShapesCase($"convert_f32_i32 ({isa})", [floats, Int32Words(new int[Converted])], ShapeGrid(Converted), [1],
-                (b, s) => b.ConvertElements(s[0], s[1]),
-                (m, a, grid, seed) => AttentionDispatch("convert_f32_i32", isa, m, (grid.X, 1), seed, a[0], a[1], (ulong)Converted));
-            ShapesCase($"convert_i32_f32 ({isa})", [Int32Words(whole), new float[Converted]], ShapeGrid(Converted), [1],
-                (b, s) => b.ConvertElements(s[0], s[1]),
-                (m, a, grid, seed) => AttentionDispatch("convert_i32_f32", isa, m, (grid.X, 1), seed, a[0], a[1], (ulong)Converted));
-        }
-
-        // Float32 to and from bfloat16 and float16 (plan 37: no fixed type), against the CPU's conversions
-        // (ElementConversions) bit for bit: the float32 patterns of SixteenBitPatterns narrowed (an odd count: the last
-        // word's high half 0), and 16-bit codes widened (every exponent with mantissas at the edges, both signs, an odd count).
-        uint[] patterns = SixteenBitPatterns(random, 300);
-        int count = patterns.Length, words = (count + 1) / 2;
-        float[] floats32 = MemoryMarshal.Cast<uint, float>(patterns.AsSpan()).ToArray();
-        ushort[] codes = SixteenBitCodes(random);
-        float[] codeWords = new float[(codes.Length + 1) / 2];
-        MemoryMarshal.AsBytes(codes.AsSpan()).CopyTo(MemoryMarshal.AsBytes(codeWords.AsSpan()));
-        foreach (var (type, narrow, widen) in new[] { (ElementType.BFloat16, "convert_f32_bf16", "convert_bf16_f32"), (ElementType.Float16, "convert_f32_f16", "convert_f16_f32") })
-        {
-            var narrowed = new float[words];
-            ElementConversions.Convert(ElementType.Float32, MemoryMarshal.AsBytes(patterns.AsSpan()), type, MemoryMarshal.AsBytes(narrowed.AsSpan()), count);
-            var widened = new float[codes.Length];
-            ElementConversions.Convert(type, MemoryMarshal.AsBytes(codes.AsSpan()), ElementType.Float32, MemoryMarshal.AsBytes(widened.AsSpan()), codes.Length);
-            foreach (var isa in AttentionIsas)
-            {
-                SixteenBitCase($"{narrow} ({isa})", [floats32, new float[words]], ShapeGrid(words), narrowed, patterns,
-                    (m, a, grid, seed) => AttentionDispatch(narrow, isa, m, (grid.X, 1), seed, a[0], a[1], (ulong)count, (ulong)words));
-                SixteenBitCase($"{widen} ({isa})", [codeWords, new float[codes.Length]], ShapeGrid(codes.Length), widened, null,
-                    (m, a, grid, seed) => AttentionDispatch(widen, isa, m, (grid.X, 1), seed, a[0], a[1], (ulong)codes.Length));
-            }
-        }
-    }
-
-    /// <summary>
-    /// Float32 bit patterns the 16-bit conversions are checked on (here through the GCN interpreter, on each device by
-    /// the element type tests): zeros, ones and bfloat16 ties both ways; NaNs quiet and signalling with payloads, both
-    /// signs; infinities; the largest finite values and those rounding past them (bfloat16's and float16's 65504, 65520);
-    /// float16's smallest normal and the values rounding up to it; subnormal halves, their ties and 2^-25 (a tie to
-    /// zero); float32 subnormals; then `randoms` values, half of them in float16's range (exponents 100 to 145), half any
-    /// bits. An odd count.
-    /// </summary>
-    internal static uint[] SixteenBitPatterns(Random random, int randoms)
-    {
-        uint[] special =
-        [
-            0x00000000, 0x80000000, 0x3F800000, 0xBF800000, 0x3F808000, 0x3F818000, 0x3F807FFF, 0x3F808001, 0x7F7FFFFF, 0xFF7FFFFF,
-            0x7F800000, 0xFF800000, 0x7FC00000, 0xFFC00000, 0x7FC12345, 0x7F800001, 0x7FA00000, 0xFF812345, 0x7FFFFFFF, 0xFFFFFFFF,
-            0x477FE000, 0x477FEFFF, 0x477FF000, 0x477FF001, 0x47800000, 0xC77FF000, 0x38800000, 0x387FFFFF, 0x387FF000, 0x387FE000,
-            0x33800000, 0x33000000, 0x33000001, 0x33400000, 0x33C00000, 0x32FFFFFF, 0xB3C00000, 0x34000000, 0x37800000, 0x37FFF000,
-            0x37FFE000, 0x37FFFFFF, 0x00000001, 0x807FFFFF, 0x00800000,
-        ];
-        int total = special.Length + randoms;
-        var bits = new uint[total % 2 == 0 ? total + 1 : total];
-        special.CopyTo(bits, 0);
-        for (int i = special.Length; i < bits.Length; i++)
-        {
-            uint any = (uint)random.Next() << 1 ^ (uint)random.Next(2);
-            bits[i] = i % 2 == 0 ? any : (any & 0x807FFFFFu) | (uint)random.Next(100, 146) << 23;
-        }
-
-        return bits;
-    }
-
-    /// <summary>16-bit codes the widening conversions are checked on: every exponent with mantissas at its edges and a few others, both signs; an odd count.</summary>
-    internal static ushort[] SixteenBitCodes(Random random)
-    {
-        var codes = new List<ushort>();
-        foreach (int sign in (int[])[0, 0x8000])
-        {
-            for (int exponent = 0; exponent < 32; exponent++)
-            {
-                foreach (int mantissa in (int[])[0, 1, 2, 0x1FF, 0x200, 0x201, 0x3FE, 0x3FF, random.Next(0x400), random.Next(0x400)])
-                {
-                    codes.Add((ushort)(sign | exponent << 10 | mantissa));
-                }
-            }
-        }
-
-        if (codes.Count % 2 == 0)
-        {
-            codes.Add(0x7E01);                                                  // a float16 NaN with a payload (a bfloat16 normal)
-        }
-
-        return [.. codes];
-    }
-
-    // One 16-bit conversion kernel over inputs (storage 1 the output) against `expected` bit for bit, on two grids and wave
-    // orders; `patterns` (the narrowing's inputs) name the element in a failure.
-    private static void SixteenBitCase(string what, float[][] inputs, int blocks, float[] expected, uint[]? patterns,
-        Action<GcnMemory, ulong[], (int X, int Y), ulong> gcn)
-    {
-        float[][] first = RowsOnGcn(inputs, (m, a) => gcn(m, a, (Math.Min(blocks, 2), 1), 1));
-        float[][] second = RowsOnGcn(inputs, (m, a) => gcn(m, a, (blocks, 1), 7));
-        RowsSameBits(first, second, what);
-        var e = MemoryMarshal.Cast<float, uint>(expected.AsSpan());
-        var g = MemoryMarshal.Cast<float, uint>(first[1].AsSpan());
-        for (int i = 0; i < e.Length; i++)
-        {
-            string input = patterns is null ? $"input word {i / 2}" : $"inputs 0x{patterns[2 * i]:X8}{(2 * i + 1 < patterns.Length ? $", 0x{patterns[2 * i + 1]:X8}" : "")}";
-            Check(e[i] == g[i], $"{what}: word {i} ({input}) is 0x{g[i]:X8}, the CPU's 0x{e[i]:X8}");
         }
     }
 

@@ -7,8 +7,8 @@ using Idrak.Gpu.Abstractions;
 using Idrak.Gpu.Hip;
 using Idrak.Tests.Gcn;
 
-// HIP's convolution, pooling, resampling, CTC and recurrent kernels in GCN (GcnKernels.Convolution, .Ctc, .Recurrent) and
-// the packed gated activation's gradient, each run by the GCN interpreter and proven against the CPU (plan 35, G5c). Every
+// HIP's convolution, pooling, resampling, CTC and recurrent kernels in GCN (GcnKernels.Convolution, .Ctc, .Recurrent),
+// each run by the GCN interpreter and proven against the CPU (plan 35, G5c). Every
 // kernel is assembled for gfx90c, gfx906, gfx1030 and gfx1100 and run over small shapes that are multiples of nothing (strides, padding
 // above and below, dilation, 1-D images, upsampling and downsampling, odd hidden sizes, a hidden size past one block of
 // units), compared to the CPU backend within the device-against-CPU tolerance (OnBoth's, 1e-3 of max(1, |expected|)) or
@@ -29,12 +29,10 @@ internal abstract partial class Tests
         ("gcn kernels: convolution: ctc_loss_f32 and ctc_loss_bwd_f32 (rows in LDS) and their _global forms (rows in scratch) equal the CPU's loss and gradient within tolerance (repeated labels, an empty target, a target too long for its input, zeroinf, batch-first or not), the same bits on two grids and wave orders", GcnConvolutionCtc),
         ("gcn kernels: convolution: lstm_cell_f32, gru_cell_f32 and their gradients equal the CPU's within tolerance (with and without the saved gates, a previous step, dOutput, the candidate's bias), the same bits on two grids and wave orders", GcnConvolutionCells),
         ("gcn kernels: convolution: lstm_step_f32, gru_step_f32 and their gradients equal the CPU's product and cell within tolerance (a hidden size past one block of units, with and without a previous or later step), the same bits on two wave orders", GcnConvolutionSteps),
-        ("gcn kernels: convolution: gated_act_bwd_bf16_f32 equals the CPU's packed gated activation gradient within tolerance (every kind, added and written, an odd count), the same bits on two grids and wave orders", GcnConvolutionPackedGated),
         ("gcn kernels: convolution: implicit: conv_fwd_tile_f32 and conv_fwd_f32 (a bias, activations), conv_bwd_input_tile_f32 and conv_bwd_input_f32, conv_bwd_weight_tile_f32 and conv_bwd_weight_f32 (one split, and four added in split order by conv_split_reduce_f32), the 16 x 16 and the 64 x 64 forms, equal the CPU's convolution and its gradients within tolerance (strides, padding, dilation, groups, more than one tile), the same bits with the batch looped on one z and spread over z", GcnConvolutionImplicit),
         ("gcn kernels: convolution: maxpool_bwd_chain_u32 + maxpool_bwd_walk_f32 (the count-only maximum-pool gradient, no atomics) equal the CPU's bit for bit (repeated positions, one gradient, more than one block), the same bits on two grids and wave orders", GcnConvolutionMaxPoolChain),
         ("gcn kernels: convolution: sequences: lstm_seq_f32, gru_seq_f32 and their gradients (forward and reversed) give the bits of their step kernels run a step at a time, on two wave orders, the grid barrier left at zero arrivals and its generation moved once a step gap", GcnConvolutionSequences),
         ("gcn kernels: parity: softmax_ce_rows_f32 equals the CPU's token cross-entropy (losses and the logits' gradient) within tolerance (a vocabulary of one, under a block, past four blocks' columns; a masked row; targets anywhere), the same bits on two grids and wave orders", GcnParityCrossEntropy),
-        ("gcn kernels: parity: gated_act_bf16_f32 equals the CPU's packed gated activation (every kind; gate and up as floats or packed; y, gate and up packed, y packed) within tolerance, packed values within one bfloat16 rounding, the same bits on two grids and wave orders", GcnParityGatedPacked),
     ];
 
     private static ulong Cu(int value) => (uint)value;
@@ -47,8 +45,8 @@ internal abstract partial class Tests
     {
         _ = device;
         var names = G5cKernels.Select(k => k.Name).ToArray();
-        Check(GcnKernels.Convolution.Count == 23 && GcnKernels.Ctc.Count == 4 && GcnKernels.Recurrent.Count == 12 && GcnKernels.Parity.Count == 2 && names.Distinct().Count() == names.Length,
-            $"23 convolution (G6c's implicit products and split reduce, HIP parity's blocked products among them), 4 CTC, 12 recurrent (G6c's sequences among them) and 2 parity kernels, each once ({string.Join(", ", names)})");
+        Check(GcnKernels.Convolution.Count == 23 && GcnKernels.Ctc.Count == 4 && GcnKernels.Recurrent.Count == 12 && GcnKernels.Parity.Count == 1 && names.Distinct().Count() == names.Length,
+            $"23 convolution (G6c's implicit products and split reduce, HIP parity's blocked products among them), 4 CTC, 12 recurrent (G6c's sequences among them) and 1 parity kernel, each once ({string.Join(", ", names)})");
         foreach (string name in names)
         {
             Check(GcnKernels.All.Count(k => k.Name == name) == 1, $"GcnKernels.All lists {name} once");
@@ -67,9 +65,6 @@ internal abstract partial class Tests
                 }
             }
         }
-
-        Check(HipBackend.Cost("gated_act_bwd_bf16_f32").Bytes > 0 && GcnKernels.All.Count(k => k.Name == "gated_act_bwd_bf16_f32") == 1,
-            "gated_act_bwd_bf16_f32 is listed once with its cost");
     }
 
     // A per-output kernel (one work-item an output, grid-stride) over n outputs on both processors: one block, then enough
@@ -527,31 +522,6 @@ internal abstract partial class Tests
                     (m, a, _, seed) => TrainingDispatch("gru_step_bwd_f32", isa, m, (blocks, 1), seed, a[0], a[1], a[2], a[3], a[4], a[5], a[6], Step, Cu(Math.Max(next, 0)),
                         Cu(Math.Max(previous, 0)), Steps, H, Cu(backwardFlags)),
                     (blocks, blocks), worst, "gru_step_bwd_f32");
-            }
-        }
-
-        TrainingReport(worst);
-    }
-
-    internal static void GcnConvolutionPackedGated(Device device)
-    {
-        _ = device;
-        var worst = new Dictionary<string, float>();
-        var random = new Random(70);
-        foreach (int kind in new[] { 0, 1, 2, 3 })
-        {
-            foreach (int flags in new[] { 3, 15, 1, 2 })
-            {
-                foreach (int n in new[] { 1, 255, 1003 })
-                {
-                    int words = (n + 1) / 2;
-                    float[] Packed() => [.. Enumerable.Range(0, words).Select(_ =>
-                        BitConverter.UInt32BitsToSingle(BitConverter.SingleToUInt32Bits(random.NextSingle() * 6 - 3) >> 16 | BitConverter.SingleToUInt32Bits(random.NextSingle() * 6 - 3) & 0xffff0000u))];
-                    G5cCase($"gated_act_bwd_bf16_f32, kind {kind}, flags {flags}, {n} elements", "gated_act_bwd_bf16_f32",
-                        [Packed(), Packed(), TrainingRandom(random, n, -1, 1), TrainingRandom(random, n, -1, 1), TrainingRandom(random, n, -1, 1)], [3, 4],
-                        (b, s) => b.GatedActivationBackwardPacked(s[0], s[1], s[2], s[3], s[4], n, kind, flags),
-                        a => [a[0], a[1], a[2], a[3], a[4], Cu(kind), Cu(flags), Cu(n), Cu(words)], words, worst);
-                }
             }
         }
 

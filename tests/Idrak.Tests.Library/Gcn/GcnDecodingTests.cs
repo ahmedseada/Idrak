@@ -6,15 +6,13 @@ using System.Text;
 using Idrak.Gpu.Abstractions;
 using Idrak.Gpu.Hip;
 using Idrak.Tests.Gcn;
-using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
-using Variant = Idrak.Gpu.Hip.GcnKernels.PackedGemvVariant;
 
 // HIP's decoding kernels in GCN (GcnKernels.Decoding, and the element-wise kernels G5a added to GcnKernels.Pointwise),
 // each run by the GCN interpreter and proven against the CPU (plan 35, G5a; its rest: the sampler, the heads' norm and
 // rotation, gemv_multi_f32). Every kernel is assembled for gfx90c, gfx906, gfx1030 and gfx1100 (its printed text
 // reading back to its bytes; with IDRAK_GCN_PRINTED naming a folder, written there for the development check against
 // llvm-mc), run over shapes that are not multiples of anything (fewer rows than a kernel's,
-// k in one split and in several, widths over more than one block, special values), compared to the CPU backend within
+// positions in one split and in several, widths over more than one block, special values), compared to the CPU backend within
 // the device-against-CPU tolerance (OnBoth's, 1e-3 of max(1, |expected|); NaN and infinities where the CPU has them),
 // run a second time with another wave order and grid to give the same bits, and the interpreter reports no missing
 // wait, race or access out of range (a report fails the run). Each test prints each kernel's largest error.
@@ -23,17 +21,14 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] GcnDecodingGroup =
     [
         ("gcn kernels: decoding: every decoding kernel and every element-wise kernel G5a added assembles for gfx90c, gfx906, gfx1030 and gfx1100 with its arguments and its declared block, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnDecodingAssembled),
-        ("gcn kernels: decoding: the gated products {int8,int4,bf16}_gemv_{silu,gelu}[_rR]_f32 equal the CPU's gated activation then packed product for 1, 3 and 8 rows, in one split and in several (added by int8_gemv_finish_f32, or by each column range's last split block: the same bits in any order of the blocks, the counters left at zero); the same bits on a second run", GcnDecodingGated),
-        ("gcn kernels: decoding: the multi-output products {int8,int4,bf16}_gemv_multi[_rR]_f32 equal the CPU's products (with a bias) for one and three products of different widths, 1 and 5 rows, one split (written whole) and several, and a gate/up pair with act(gate) · up for SiLU, GELU and ReLU, finished by gemv_multi_finish_f32 or by the launch's last blocks (the same bits, the counters left at zero); the same bits on a second run", GcnDecodingMulti),
-        ("gcn kernels: decoding: a packed product finished by gemv_addnorm_f32, and {int8,int4,bf16}_gemv_addnorm[_rR]_f32 finished by its last block, equal the CPU's product, the residual addition and RMS norm, with y's own norm first (the sandwich block) and without, in one split and in several; the one launch the two launches' bit for bit in any order of the blocks; the same bits on a second run", GcnDecodingAddNorm),
-        ("gcn kernels: decoding: attention_rows_f32 and attention_rows_bf16 equal the CPU's AttentionRows (each row from its sequence's start; padding rows of zeros; a window and a soft-cap; splits merged by attention_merge_f32 or by each row's last split block, the same bits), and segment_spans_f32 then attention_spans_f32 equal the CPU's AttentionSegmented (with the log-sum-exp, a window and a soft-cap); the same bits on a second run", GcnDecodingAttention),
+        ("gcn kernels: decoding: attention_rows_f32 equals the CPU's AttentionRows (each row from its sequence's start; padding rows of zeros; a window and a soft-cap; splits merged by attention_merge_f32 or by each row's last split block, the same bits), and segment_spans_f32 then attention_spans_f32 equal the CPU's AttentionSegmented (with the log-sum-exp, a window and a soft-cap); the same bits on a second run", GcnDecodingAttention),
         ("gcn kernels: decoding: pow_f32 (every exponent kind, negative bases, zeros, infinities, NaN), clamp_f32, leaky_relu_f32, where_f32 (±0 and NaN conditions), inv_sqrt_f32, bias_gelu_f32, add_scalar_f32 and the four gated activations equal the CPU's; the same bits on two grids", GcnDecodingPointwise),
         ("gcn kernels: decoding: argmax_f32 (ties, all -inf, a NaN first), class_match_f32 (one column and many), add_rms_norm_affine_f32, rms_norm_rope_f32 (interleaved or not, dimensions past the rotated ones) and penalize_rows_f32 (repeated ids, ids out of the vocabulary, a wrapped history) equal the CPU's over rows of 1 to 2,333 columns; the same bits on two grids", GcnDecodingRows),
         ("gcn kernels: decoding: rope_f32 (interleaved or not, either sign), one_hot_f32 and history_push_f32 equal the CPU's, the same bits on two grids", GcnDecodingShapes),
-        ("gcn kernels: decoding: rms_norm_rope2_f32 (queries and keys, interleaved or not, every dimension rotated or some) and norm_rope_heads_f32 (norms or none, rotation or none, values copied; no cache, a float32 cache with padded rows and a bfloat16 cache at a position) equal the CPU's composed operations; the same bits on two grids", GcnDecodingNormRope),
+        ("gcn kernels: decoding: rms_norm_rope2_f32 (queries and keys, interleaved or not, every dimension rotated or some) and norm_rope_heads_f32 (norms or none, rotation or none, values copied; no cache and a float32 cache with padded rows at a position) equal the CPU's composed operations; the same bits on two grids", GcnDecodingNormRope),
         ("gcn kernels: decoding: gemv_multi_f32 equals the CPU's float32 products of one input (MatMulMany: biases on some) for one and three products of different widths and 1 and 5 rows; the same bits on a second run", GcnDecodingFloatMulti),
         ("gcn kernels: decoding: the sampler (sample_rows_f32; topk_candidates_f32 then sample_candidates_f32; topk_greedy_f32 then sample_candidates_greedy_f32, or topk_greedy_f32 alone, its last block of a row sampling it) draws the CPU's tokens from its seeded stream over two steps (temperature, top-k, top-p, min-p; tied scores, +∞, NaN and all -∞ rows; ties overflowing a candidate block): the same tokens and alternatives, probabilities and entropy within the tolerance; the same bits on two grids; the one launch's the two launches' bit for bit", GcnDecodingSampler),
-        ("gcn kernels: decoding: counts: the launches and the interpreter's instructions, memory instructions, waits and barriers per element of each fused decoding kernel finished by its last block against its second launch (a split product, the residual and norm, a gate/up pair, a split attention, a greedy sampler), printed as G6b's evidence", GcnDecodingCounts),
+        ("gcn kernels: decoding: counts: the launches and the interpreter's instructions, memory instructions, waits and barriers per element of each fused decoding kernel finished by its last block against its second launch (a split attention, a greedy sampler), printed as G6b's evidence", GcnDecodingCounts),
     ];
 
     private static readonly Dictionary<(string, GcnIsaVersion), (GcnKernelCode Code, GcnKernelImage Image)> decodingKernels = [];
@@ -96,23 +91,7 @@ internal abstract partial class Tests
     {
         _ = device;
         var names = GcnKernels.Decoding.Select(k => k.Name).ToArray();
-        int fused = GcnKernels.FusedGemvFormats.Count * 4 * GcnKernels.PackedGemvRowCounts.Length;
-        Check(names.Length == fused + 20 && names.Distinct().Count() == names.Length, $"{fused + 20} decoding kernels, each once: {string.Join(", ", names)}");
-        foreach (var format in GcnKernels.FusedGemvFormats)
-        {
-            foreach (var variant in (Variant[])[Variant.Silu, Variant.Gelu, Variant.Multi, Variant.AddNorm])
-            {
-                for (int m = 1; m <= GcnKernels.GemvRows; m++)
-                {
-                    string kernel = GcnKernels.FusedGemvKernel(format, variant, m);
-                    int rows = m <= 1 ? 1 : m <= 2 ? 2 : m <= 4 ? 4 : 8;
-                    string prefix = format switch { GcnWeights.Int8 => "int8", GcnWeights.Int4 => "int4", _ => "bf16" };
-                    string kind = variant.ToString().ToLowerInvariant();
-                    Check(kernel == (rows == 8 ? $"{prefix}_gemv_{kind}_f32" : $"{prefix}_gemv_{kind}_r{rows}_f32") && names.Contains(kernel), $"{format} {variant}, {m} rows: {kernel}");
-                }
-            }
-        }
-
+        Check(names.Length == 17 && names.Distinct().Count() == names.Length, $"17 decoding kernels, each once: {string.Join(", ", names)}");
         Check(GcnKernels.PowFlags(3f) == 1 && GcnKernels.PowFlags(1.5f) == 2 && GcnKernels.PowFlags(float.NaN) == 4 && GcnKernels.PowFlags(0f) == 8 && GcnKernels.PowFlags(1f) == 17
               && GcnKernels.PowFlags(2f) == 32 && GcnKernels.PowFlags(-1f) == 1 && GcnKernels.PowFlags(float.PositiveInfinity) == 0, "pow_f32's exponent flags are CUDA's");
         foreach (string name in names.Concat(DecodingPointwiseNames))
@@ -123,24 +102,16 @@ internal abstract partial class Tests
             {
                 var (code, _) = DecodingKernel(name, isa);
                 int block = code.RequiredWorkgroupSize?.X ?? 0;
-                Check(block is 256 or GcnKernels.PackedGemvWords && code.MaxFlatWorkgroupSize == block && code.WaveSize == 64,
+                Check(block == 256 && code.MaxFlatWorkgroupSize == block && code.WaveSize == 64,
                     $"{name} ({isa}): block {code.RequiredWorkgroupSize} (max flat {code.MaxFlatWorkgroupSize}), wave {code.WaveSize}");
                 Check(code.LdsBytes <= 8192, $"{name} ({isa}): {code.LdsBytes} bytes of LDS");
-                if (name.Contains("_gemv_", StringComparison.Ordinal))
-                {
-                    var (expected, bytes) = name.Contains("_multi", StringComparison.Ordinal) ? (GcnKernels.MultiGemvArguments, GcnKernels.MultiGemvArgumentBytes)
-                        : name.Contains("_addnorm", StringComparison.Ordinal) ? (GcnKernels.AddNormGemvArguments, GcnKernels.AddNormGemvArgumentBytes)
-                        : (GcnKernels.GatedGemvArguments, GcnKernels.GatedGemvArgumentBytes);
-                    Check(code.Arguments.SequenceEqual(expected) && GcnCodeObject.KernargBytes(code) >= bytes, $"{name} ({isa}): the arguments {string.Join(", ", code.Arguments)}");
-                }
-
                 Console.WriteLine($"    {name} ({isa}): {code.Code.Length} bytes of code, {code.Vgprs} VGPRs, {code.Sgprs} SGPRs, {code.LdsBytes} bytes of LDS");
             }
         }
 
         foreach (var (name, list) in new (string, IReadOnlyList<GcnArgument>)[]
                  {
-                     ("gemv_multi_finish_f32", GcnKernels.MultiFinishArguments), ("segment_spans_f32", GcnKernels.SegmentSpansArguments), ("rope_f32", GcnKernels.RopeArguments),
+                     ("segment_spans_f32", GcnKernels.SegmentSpansArguments), ("rope_f32", GcnKernels.RopeArguments),
                      ("one_hot_f32", GcnKernels.OneHotArguments), ("history_push_f32", GcnKernels.HistoryPushArguments),
                      ("rms_norm_rope_f32", GcnKernels.NormRopeArguments(GcnKernels.NormRopeForm.Single)), ("rms_norm_rope2_f32", GcnKernels.NormRopeArguments(GcnKernels.NormRopeForm.Pair)),
                      ("norm_rope_heads_f32", GcnKernels.NormRopeArguments(GcnKernels.NormRopeForm.Heads)), ("topk_candidates_f32", GcnKernels.CandidateArguments(greedy: false)),
@@ -165,31 +136,6 @@ internal abstract partial class Tests
               && float.IsNegativeInfinity(GcnKernels.SamplerSettings.Of(5, 5, 0, 1f, 1, 1f, float.NaN, 9u, 2).LogMinP),
             "the sampler's settings: the CPU's inverse temperature, a negative top-k as none, the CPU's ln(min-p) (-inf without min-p)");
     }
-
-    // The CPU's product of `format`'s weights (int8: scales per column; int4: per group; bfloat16: none).
-    private static void DecodingCpuProduct(Backend cpu, GcnWeights format, Storage x, Storage packed, Storage scales, Storage y, int m, int n, int k)
-    {
-        switch (format)
-        {
-            case GcnWeights.Int8:
-                cpu.Int8MatMulKernel(x, packed, scales, y, m, n, k);
-                break;
-            case GcnWeights.Int4:
-                cpu.Int4MatMulKernel(x, packed, scales, y, m, n, k);
-                break;
-            default:
-                cpu.BFloat16MatMulKernel(x, packed, y, m, n, k);
-                break;
-        }
-    }
-
-    // The test shapes of a format: n, k and the chunk of k the split cases take (int4's on whole groups).
-    private static (int N, int K, int Chunk) DecodingShape(GcnWeights format) => format switch
-    {
-        GcnWeights.Int8 => (133, 70, 32),
-        GcnWeights.Int4 => (135, 96, 64),
-        _ => (131, 70, 32),
-    };
 
     // Both finishes of a split sum or a fused kernel's tail (plan 35, G6b): a second launch (lastBlock false) and the
     // launch's last block (true, its completion counters at inputs[counters]), each within the tolerance of the CPU and
@@ -219,281 +165,6 @@ internal abstract partial class Tests
         }
     }
 
-    internal static void GcnDecodingGated(Device device)
-    {
-        _ = device;
-        var worst = new Dictionary<string, float>();
-        var random = new Random(51);
-        foreach (var format in GcnKernels.FusedGemvFormats)
-        {
-            var (n, k, splitChunk) = DecodingShape(format);
-            int words = (n + GcnKernels.ColumnsPerWord(format) - 1) / GcnKernels.ColumnsPerWord(format);
-            int columnBlocks = (words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords;
-            bool scaled = format != GcnWeights.BFloat16;
-            var (packed, scales) = ProductsWeights(format, random, k, n);
-            foreach (int activation in (int[])[0, 1])
-            {
-                foreach (int m in (int[])[1, 3, 8])
-                {
-                    string kernel = GcnKernels.FusedGemvKernel(format, activation == 0 ? Variant.Silu : Variant.Gelu, m);
-                    float[] gate = RowsRandom(random, m * k, 2f), up = RowsRandom(random, m * k, 1f);
-                    float[] expected = RowsOnCpu([gate, up, packed, scales, new float[m * k], new float[m * n]], (cpu, s) =>
-                    {
-                        cpu.GatedActivationKernel(s[0], s[1], s[4], m * k, activation);
-                        DecodingCpuProduct(cpu, format, s[4], s[2], s[3], s[5], m, n, k);
-                    })[5];
-                    foreach (int chunk in (int[])[k, splitChunk])
-                    {
-                        int splits = (k + chunk - 1) / chunk;
-                        foreach (var isa in ProductIsas)
-                        {
-                            // Inputs: gate, up, packed, scales, y, part, counters.
-                            void Run(GcnMemory memory, ulong[] at, bool second, ulong seed, bool lastBlock)
-                            {
-                                DecodingDispatch(kernel, isa, memory, (columnBlocks, splits, 1), seed,
-                                    at[0], at[2], scaled ? at[3] : 0UL, at[4], at[5], (ulong)m, (ulong)n, (ulong)k, (ulong)words, (ulong)chunk, (ulong)splits,
-                                    lastBlock ? at[6] : 0UL, at[1]);
-                                if (splits > 1 && !lastBlock)
-                                {
-                                    DecodingDispatch("int8_gemv_finish_f32", isa, memory, (DecodingBlocks(m * n, second), 1, 1), seed,
-                                        at[5], format == GcnWeights.Int8 ? at[3] : 0UL, at[4], (ulong)n, (ulong)(m * n), (ulong)splits, (ulong)(m * n));
-                                }
-                            }
-
-                            float[][] inputs = [gate, up, packed, scales, new float[m * n], new float[splits * m * n], new float[columnBlocks + 1]];
-                            float[][] want = [.. inputs];
-                            want[4] = expected;
-                            string what = $"{kernel}, {m} rows, {k} x {n}, {splits} split(s) ({isa})";
-                            if (splits > 1)
-                            {
-                                FinishCase(what, inputs, [4], want, Run, 6, worst, $"{kernel} + int8_gemv_finish_f32", $"{kernel} (last block)");
-                            }
-                            else
-                            {
-                                ProductsCase(what, inputs, [4], want, (mem, at, second, seed) => Run(mem, at, second, seed, false), worst, kernel);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        RowsReport(worst);
-    }
-
-    internal static void GcnDecodingMulti(Device device)
-    {
-        _ = device;
-        var worst = new Dictionary<string, float>();
-        var random = new Random(52);
-        foreach (var format in GcnKernels.FusedGemvFormats)
-        {
-            var (_, k, splitChunk) = DecodingShape(format);
-            int cpw = GcnKernels.ColumnsPerWord(format);
-            bool scaled = format != GcnWeights.BFloat16;
-            int[] widths = [130, 67, 200];
-            var weights = widths.Select(w => ProductsWeights(format, random, k, w)).ToArray();
-            float[] bias = RowsRandom(random, widths[0], 1f);
-            foreach (int m in (int[])[1, 5])
-            {
-                string kernel = GcnKernels.FusedGemvKernel(format, Variant.Multi, m);
-                float[] x = RowsRandom(random, m * k, 1f);
-                float[][] expected = new float[3][];
-                for (int j = 0; j < 3; j++)
-                {
-                    int width = widths[j];
-                    expected[j] = RowsOnCpu([x, weights[j].Packed, weights[j].Scales, new float[m * width], bias], (cpu, s) =>
-                    {
-                        DecodingCpuProduct(cpu, format, s[0], s[1], s[2], s[3], m, width, k);
-                        if (j == 0)
-                        {
-                            cpu.AddRowVectorKernel(s[3], s[4], s[3], m, width);
-                        }
-                    })[3];
-                }
-
-                foreach (int count in (int[])[3, 1])
-                {
-                    int nmax = widths.Take(count).Max(), blocks = ((nmax + cpw - 1) / cpw + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords;
-                    foreach (int chunk in (int[])[k, splitChunk])
-                    {
-                        int splits = (k + chunk - 1) / chunk;
-                        foreach (var isa in ProductIsas)
-                        {
-                            // Inputs: x, q0, s0, q1, s1, q2, s2, bias, y0, y1, y2, part, counters.
-                            void Run(GcnMemory memory, ulong[] at, bool second, ulong seed, bool lastBlock)
-                            {
-                                var values = new List<ulong> { at[0], splits > 1 ? at[11] : 0UL, (ulong)m, (ulong)k, (ulong)chunk, (ulong)splits, lastBlock ? at[12] : 0UL, (ulong)blocks, (ulong)nmax };
-                                for (int j = 0; j < 3; j++)
-                                {
-                                    values.AddRange([at[1 + 2 * j], scaled ? at[2 + 2 * j] : 0UL, at[8 + j], j == 0 ? at[7] : 0UL, j < count ? (ulong)widths[j] : 0UL]);
-                                }
-
-                                values.AddRange([0UL, 0UL]);
-                                DecodingDispatch(kernel, isa, memory, (blocks, splits, count), seed, [.. values]);
-                                if (splits > 1 && !lastBlock)
-                                {
-                                    var finish = new List<ulong> { at[11], 0UL, (ulong)splits, (ulong)m, (ulong)nmax, 0UL };
-                                    for (int j = 0; j < 3; j++)
-                                    {
-                                        finish.AddRange([format == GcnWeights.Int8 ? at[2 + 2 * j] : 0UL, at[8 + j], j == 0 ? at[7] : 0UL, j < count ? (ulong)widths[j] : 0UL]);
-                                    }
-
-                                    DecodingDispatch("gemv_multi_finish_f32", isa, memory, (DecodingBlocks(m * nmax, second), count, 1), seed, [.. finish]);
-                                }
-                            }
-
-                            float[][] inputs =
-                            [
-                                x, weights[0].Packed, weights[0].Scales, weights[1].Packed, weights[1].Scales, weights[2].Packed, weights[2].Scales, bias,
-                                new float[m * widths[0]], new float[m * widths[1]], new float[m * widths[2]], new float[count * splits * m * nmax], new float[3 * blocks],
-                            ];
-                            float[][] want = [.. inputs];
-                            for (int j = 0; j < count; j++)
-                            {
-                                want[8 + j] = expected[j];
-                            }
-
-                            string what = $"{kernel}, {count} product(s), {m} rows, k {k}, {splits} split(s) ({isa})";
-                            int[] outputs = [.. Enumerable.Range(8, count)];
-                            if (splits > 1)
-                            {
-                                FinishCase(what, inputs, outputs, want, Run, 12, worst, $"{kernel} + gemv_multi_finish_f32", $"{kernel} (last block)");
-                            }
-                            else
-                            {
-                                ProductsCase(what, inputs, outputs, want, (mem, at, second, seed) => Run(mem, at, second, seed, false), worst, kernel);
-                            }
-                        }
-                    }
-                }
-
-                // A gate/up pair of equal widths: hidden = act(gate) · up, by gemv_multi_finish_f32 or the pair's last block.
-                int pairWidth = 67, pairBlocks = ((pairWidth + cpw - 1) / cpw + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords;
-                var gateWeights = ProductsWeights(format, random, k, pairWidth);
-                foreach (int activation in (int[])[0, 1, 2])
-                {
-                    float[][] pairExpected = RowsOnCpu([x, gateWeights.Packed, gateWeights.Scales, weights[1].Packed, weights[1].Scales, new float[m * pairWidth],
-                        new float[m * pairWidth], new float[m * pairWidth]], (cpu, s) =>
-                    {
-                        DecodingCpuProduct(cpu, format, s[0], s[1], s[2], s[5], m, pairWidth, k);
-                        DecodingCpuProduct(cpu, format, s[0], s[3], s[4], s[6], m, pairWidth, k);
-                        cpu.GatedActivationKernel(s[5], s[6], s[7], m * pairWidth, activation);
-                    });
-                    foreach (int chunk in (int[])[k, splitChunk])
-                    {
-                        int splits = (k + chunk - 1) / chunk;
-                        foreach (var isa in ProductIsas)
-                        {
-                            // Inputs: x, gate q, gate s, up q, up s, gate y, up y, hidden, part, counters.
-                            void Run(GcnMemory memory, ulong[] at, bool second, ulong seed, bool lastBlock)
-                            {
-                                bool parted = splits > 1 || !lastBlock;
-                                var values = new List<ulong> { at[0], parted ? at[8] : 0UL, (ulong)m, (ulong)k, (ulong)chunk, (ulong)splits, lastBlock ? at[9] : 0UL, (ulong)pairBlocks, (ulong)pairWidth };
-                                var finish = new List<ulong> { at[8], at[7], (ulong)splits, (ulong)m, (ulong)pairWidth, (ulong)(activation + 1) };
-                                for (int j = 0; j < 3; j++)
-                                {
-                                    int p = Math.Min(j, 1);
-                                    values.AddRange([at[1 + 2 * p], scaled ? at[2 + 2 * p] : 0UL, at[5 + p], 0UL, j < 2 ? (ulong)pairWidth : 0UL]);
-                                    finish.AddRange([format == GcnWeights.Int8 ? at[2 + 2 * p] : 0UL, at[5 + p], 0UL, j < 2 ? (ulong)pairWidth : 0UL]);
-                                }
-
-                                values.AddRange([lastBlock ? (ulong)(activation + 1) : 0UL, lastBlock ? at[7] : 0UL]);
-                                DecodingDispatch(kernel, isa, memory, (pairBlocks, splits, 2), seed, [.. values]);
-                                if (!lastBlock)
-                                {
-                                    DecodingDispatch("gemv_multi_finish_f32", isa, memory, (DecodingBlocks(m * pairWidth, second), 1, 1), seed, [.. finish]);
-                                }
-                            }
-
-                            float[][] inputs =
-                            [
-                                x, gateWeights.Packed, gateWeights.Scales, weights[1].Packed, weights[1].Scales, new float[m * pairWidth], new float[m * pairWidth],
-                                new float[m * pairWidth], new float[2 * splits * m * pairWidth], new float[3 * pairBlocks],
-                            ];
-                            float[][] want = [.. inputs];
-                            (want[5], want[6], want[7]) = (pairExpected[5], pairExpected[6], pairExpected[7]);
-                            FinishCase($"{kernel}, a gate/up pair (activation {activation}), {m} rows, {splits} split(s) ({isa})", inputs, [5, 6, 7], want, Run, 9, worst,
-                                $"{kernel} + gemv_multi_finish_f32 (pair)", $"{kernel} (pair, last block)");
-                        }
-                    }
-                }
-            }
-        }
-
-        RowsReport(worst);
-    }
-
-    internal static void GcnDecodingAddNorm(Device device)
-    {
-        _ = device;
-        var worst = new Dictionary<string, float>();
-        var random = new Random(53);
-        const float Eps = 1e-5f, Offset = 1f, YEps = 1e-6f, YOffset = 0f;
-        foreach (var format in GcnKernels.FusedGemvFormats)
-        {
-            var (n, k, splitChunk) = DecodingShape(format);
-            int words = (n + GcnKernels.ColumnsPerWord(format) - 1) / GcnKernels.ColumnsPerWord(format);
-            int columnBlocks = (words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords;
-            bool scaled = format != GcnWeights.BFloat16;
-            var (packed, scales) = ProductsWeights(format, random, k, n);
-            float[] gain = RowsRandom(random, n, 0.5f), yGain = RowsRandom(random, n, 0.5f, 1f);
-            foreach (int m in (int[])[1, 4])
-            {
-                string kernel = GcnKernels.PackedGemvKernel(format, m), fused = GcnKernels.FusedGemvKernel(format, Variant.AddNorm, m);
-                float[] x = RowsRandom(random, m * k, 1f), residual = RowsRandom(random, m * n, 2f);
-                foreach (bool sandwich in (bool[])[false, true])
-                {
-                    // Inputs: x, packed, scales, residual, gain, y gain, y, sum, normalized, part, counters.
-                    float[][] Inputs(int splits) => [x, packed, scales, residual, gain, yGain, new float[m * n], new float[m * n], new float[m * n], new float[splits * m * n],
-                        new float[columnBlocks + 1]];
-                    float[][] expected = RowsOnCpu(Inputs(1), (cpu, s) =>
-                    {
-                        DecodingCpuProduct(cpu, format, s[0], s[1], s[2], s[6], m, n, k);
-                        if (sandwich)
-                        {
-                            cpu.RmsNormAffineKernel(s[6], s[5], s[6], m, n, YEps, YOffset);
-                        }
-
-                        cpu.AddRmsNormAffineKernel(s[3], s[6], s[7], s[4], s[8], m, n, Eps, Offset);
-                    });
-                    foreach (int chunk in (int[])[k, splitChunk])
-                    {
-                        int splits = (k + chunk - 1) / chunk;
-                        foreach (var isa in ProductIsas)
-                        {
-                            void Run(GcnMemory memory, ulong[] at, bool second, ulong seed, bool lastBlock)
-                            {
-                                ulong part = splits > 1 ? at[9] : at[6];
-                                if (lastBlock)
-                                {
-                                    DecodingDispatch(fused, isa, memory, (columnBlocks, splits, 1), seed,
-                                        at[0], at[1], scaled ? at[2] : 0UL, at[6], part, (ulong)m, (ulong)n, (ulong)k, (ulong)words, (ulong)chunk, (ulong)splits, at[10],
-                                        at[3], at[7], at[4], at[8], sandwich ? at[5] : 0UL, Bits(Eps), Bits(Offset), Bits(YEps), Bits(YOffset), sandwich ? 1UL : 0UL);
-                                    return;
-                                }
-
-                                DecodingDispatch(kernel, isa, memory, (columnBlocks, splits, 1), seed,
-                                    at[0], at[1], scaled ? at[2] : 0UL, at[6], part, (ulong)m, (ulong)n, (ulong)k, (ulong)words, (ulong)chunk, (ulong)splits, 0UL);
-                                DecodingDispatch("gemv_addnorm_f32", isa, memory, (second ? m : 1, 1, 1), seed,
-                                    part, splits > 1 && format == GcnWeights.Int8 ? at[2] : 0UL, at[6], at[3], at[7], at[4], at[8], sandwich ? at[5] : 0UL,
-                                    (ulong)n, (ulong)splits, (ulong)(m * n), Bits(Eps), Bits(Offset), Bits(YEps), Bits(YOffset), sandwich ? 1UL : 0UL, (ulong)m);
-                            }
-
-                            var inputs = Inputs(splits);
-                            float[][] want = [.. inputs];
-                            (want[6], want[7], want[8]) = (expected[6], expected[7], expected[8]);
-                            FinishCase($"{kernel}, the residual and norm{(sandwich ? " (y normalized first)" : "")}, {m} rows, {k} x {n}, {splits} split(s) ({isa})", inputs,
-                                [6, 7, 8], want, Run, 10, worst, $"{kernel} + gemv_addnorm_f32", fused);
-                        }
-                    }
-                }
-            }
-        }
-
-        RowsReport(worst);
-    }
-
     internal static void GcnDecodingAttention(Device device)
     {
         _ = device;
@@ -504,64 +175,44 @@ internal abstract partial class Tests
         const int Heads = 4, PerRow = 2, Rph = 3, Steps = 3, Dim = 37;
         foreach (var (capacity, position, splitChunk) in ((int, int, int)[])[(40, 30, 0), (300, 290, GcnKernels.AttentionTile)])
         {
-            int rows = Heads * Rph, words = (Dim + 1) / 2;
+            int rows = Heads * Rph;
             float[] q = RowsRandom(random, rows * Dim, 1f), keys = RowsRandom(random, Heads * capacity * Dim, 1f), values = RowsRandom(random, Heads * capacity * Dim, 1f);
             float[] starts = [0f, 5f, capacity, 2f, position + 1, position + 3];          // (heads / 2) · steps; some rows see nothing (padding)
-            float[] bf16Keys = RowsOnCpu([keys, new float[Heads * capacity * words]], (cpu, s) => cpu.KeyValueWriteBFloat16Kernel(s[0], s[1], cpu.Allocate(1, true), Heads, capacity, capacity, Dim))[1];
-            float[] bf16Values = RowsOnCpu([values, new float[Heads * capacity * words]], (cpu, s) => cpu.KeyValueWriteBFloat16Kernel(s[0], s[1], cpu.Allocate(1, true), Heads, capacity, capacity, Dim))[1];
             foreach (var variant in (AttentionVariant[])[default, new(9, 4f)])
             {
-                foreach (bool bf16 in (bool[])[false, true])
+                string kernel = "attention_rows_f32";
+                float[] expected = RowsOnCpu([q, keys, values, [position], new float[rows * Dim], starts], (cpu, s) =>
+                    cpu.AttentionRows(s[0], s[1], s[2], s[3], s[4], s[5], Heads, PerRow, Rph, Steps, capacity, Dim, 0.15f, variant))[4];
+                var (splits, chunk) = splitChunk == 0 ? (1, capacity) : ((capacity + splitChunk - 1) / splitChunk, splitChunk);
+                foreach (var isa in ProductIsas)
                 {
-                    string kernel = bf16 ? "attention_rows_bf16" : "attention_rows_f32";
-                    float[] k = bf16 ? bf16Keys : keys, v = bf16 ? bf16Values : values;
-                    float[] expected = RowsOnCpu([q, k, v, [position], new float[rows * Dim], starts], (cpu, s) =>
+                    // Inputs: q, keys, values, position, y, starts, part, counters.
+                    void Run(GcnMemory memory, ulong[] at, bool second, ulong seed, bool lastBlock)
                     {
-                        if (bf16)
+                        var list = new List<ulong>
                         {
-                            cpu.AttentionRowsBFloat16(s[0], s[1], s[2], s[3], s[4], s[5], Heads, PerRow, Rph, Steps, capacity, Dim, 0.15f, variant);
-                        }
-                        else
+                            at[0], at[1], at[2], at[3], at[4], 0UL, splits > 1 ? at[6] : 0UL, lastBlock ? at[7] : 0UL, at[5], Rph, Steps, (ulong)capacity, Dim, Bits(0.15f),
+                        };
+                        list.AddRange([(ulong)Math.Max(0, variant.Window), Bits(variant.Softcap), (ulong)chunk, (ulong)splits, PerRow, (ulong)rows]);
+                        DecodingDispatch(kernel, isa, memory, (second ? rows : 2, splits, 1), seed, [.. list]);
+                        if (splits > 1 && !lastBlock)
                         {
-                            cpu.AttentionRows(s[0], s[1], s[2], s[3], s[4], s[5], Heads, PerRow, Rph, Steps, capacity, Dim, 0.15f, variant);
+                            DecodingDispatch("attention_merge_f32", isa, memory, (second ? rows : 2, 1, 1), seed,
+                                at[6], at[4], 0UL, (ulong)splits, Dim, 1, (ulong)rows, 0, 0, Dim, (ulong)rows);
                         }
-                    })[4];
-                    var (splits, chunk) = splitChunk == 0 ? (1, capacity) : ((capacity + splitChunk - 1) / splitChunk, splitChunk);
-                    foreach (var isa in ProductIsas)
+                    }
+
+                    float[][] inputs = [q, keys, values, [position], new float[rows * Dim], starts, new float[rows * splits * (Dim + 2)], new float[rows]];
+                    float[][] want = [.. inputs];
+                    want[4] = expected;
+                    string what = $"{kernel}, {capacity} positions, window {variant.Window}, soft-cap {variant.Softcap}, {splits} split(s) ({isa})";
+                    if (splits > 1)
                     {
-                        // Inputs: q, keys, values, position, y, starts, part, counters.
-                        void Run(GcnMemory memory, ulong[] at, bool second, ulong seed, bool lastBlock)
-                        {
-                            var list = new List<ulong>
-                            {
-                                at[0], at[1], at[2], at[3], at[4], 0UL, splits > 1 ? at[6] : 0UL, lastBlock ? at[7] : 0UL, at[5], Rph, Steps, (ulong)capacity, Dim, Bits(0.15f),
-                            };
-                            if (bf16)
-                            {
-                                list.Add((ulong)words);
-                            }
-
-                            list.AddRange([(ulong)Math.Max(0, variant.Window), Bits(variant.Softcap), (ulong)chunk, (ulong)splits, PerRow, (ulong)rows]);
-                            DecodingDispatch(kernel, isa, memory, (second ? rows : 2, splits, 1), seed, [.. list]);
-                            if (splits > 1 && !lastBlock)
-                            {
-                                DecodingDispatch("attention_merge_f32", isa, memory, (second ? rows : 2, 1, 1), seed,
-                                    at[6], at[4], 0UL, (ulong)splits, Dim, 1, (ulong)rows, 0, 0, Dim, (ulong)rows);
-                            }
-                        }
-
-                        float[][] inputs = [q, k, v, [position], new float[rows * Dim], starts, new float[rows * splits * (Dim + 2)], new float[rows]];
-                        float[][] want = [.. inputs];
-                        want[4] = expected;
-                        string what = $"{kernel}, {capacity} positions, window {variant.Window}, soft-cap {variant.Softcap}, {splits} split(s) ({isa})";
-                        if (splits > 1)
-                        {
-                            FinishCase(what, inputs, [4], want, Run, 7, worst, $"{kernel} + attention_merge_f32", $"{kernel} (last block)");
-                        }
-                        else
-                        {
-                            ProductsCase(what, inputs, [4], want, (mem, at, second, seed) => Run(mem, at, second, seed, false), worst, kernel);
-                        }
+                        FinishCase(what, inputs, [4], want, Run, 7, worst, $"{kernel} + attention_merge_f32", $"{kernel} (last block)");
+                    }
+                    else
+                    {
+                        ProductsCase(what, inputs, [4], want, (mem, at, second, seed) => Run(mem, at, second, seed, false), worst, kernel);
                     }
                 }
             }
@@ -862,10 +513,10 @@ internal abstract partial class Tests
             foreach (var (norm, half, interleaved) in ((bool, int, bool)[])[(true, 16, false), (true, 20, true), (false, 16, true), (true, 0, false), (false, 0, false)])
             {
                 float[] cos = RowsRandom(random, 10 * Math.Max(1, half), 1f), sin = RowsRandom(random, 10 * Math.Max(1, half), 1f);
-                foreach (var (cache, bf16, stride) in ((bool, bool, int)[])[(false, false, Cols), (true, false, Cols + 4), (true, true, Cols)])
+                foreach (var (cache, stride) in ((bool, int)[])[(false, Cols), (true, Cols + 4)])
                 {
-                    int capacity = cache ? Capacity : Steps, cacheWords = bf16 ? stride / 2 : stride;
-                    float[] yq = RowsRandom(random, rows1 * Cols, 1f), yk = RowsRandom(random, Batch * KvHeads * capacity * cacheWords, 1f), yv = RowsRandom(random, yk.Length, 1f);
+                    int capacity = cache ? Capacity : Steps;
+                    float[] yq = RowsRandom(random, rows1 * Cols, 1f), yk = RowsRandom(random, Batch * KvHeads * capacity * stride, 1f), yv = RowsRandom(random, yk.Length, 1f);
 
                     // The CPU's steps: each tensor normalized and rotated (or one of them, or neither), then placed.
                     float[] Transformed(float[] x, float[] gain, int heads, bool normalized, bool rotated, float eps, float offset)
@@ -890,7 +541,6 @@ internal abstract partial class Tests
 
                     float[] tq = Transformed(q, gainQ, Heads, norm, half > 0, EpsQ, OffsetQ), tk = Transformed(k, gainK, KvHeads, norm, half > 0, EpsK, OffsetK);
                     float[] wantQ = (float[])yq.Clone(), wantK = (float[])yk.Clone(), wantV = (float[])yv.Clone();
-                    var halvesK = MemoryMarshal.Cast<float, ushort>(wantK.AsSpan());
                     for (int b = 0; b < Batch; b++)
                     {
                         for (int s = 0; s < Steps; s++)
@@ -905,16 +555,8 @@ internal abstract partial class Tests
                                 int from = ((b * Steps + s) * KvHeads + h) * Cols, row = (b * KvHeads + h) * capacity + (cache ? Start : 0) + s;
                                 for (int c = 0; c < Cols; c++)
                                 {
-                                    if (bf16)
-                                    {
-                                        halvesK[row * stride + c] = Idrak.Abstraction.Devices.BFloat16Bits.Round(tk[from + c]);
-                                        MemoryMarshal.Cast<float, ushort>(wantV.AsSpan())[row * stride + c] = Idrak.Abstraction.Devices.BFloat16Bits.Round(v[from + c]);
-                                    }
-                                    else
-                                    {
-                                        wantK[row * stride + c] = tk[from + c];
-                                        wantV[row * stride + c] = v[from + c];
-                                    }
+                                    wantK[row * stride + c] = tk[from + c];
+                                    wantV[row * stride + c] = v[from + c];
                                 }
                             }
                         }
@@ -922,7 +564,7 @@ internal abstract partial class Tests
 
                     // Inputs: q, gain q, k, gain k, v, cos, sin, positions, position, yq, yk, yv.
                     string what = $"norm_rope_heads_f32, {(norm ? "norms" : "no norm")}, {half} pairs{(interleaved ? " interleaved" : "")}, "
-                                  + (cache ? $"a {(bf16 ? "bfloat16" : "float32")} cache of rows of {stride} at {Start}" : "no cache");
+                                  + (cache ? $"a float32 cache of rows of {stride} at {Start}" : "no cache");
                     foreach (var isa in RowsIsas)
                     {
                         float[][] inputs = [q, gainQ, k, gainK, v, cos, sin, positions, [Start], yq, yk, yv];
@@ -930,30 +572,13 @@ internal abstract partial class Tests
                             DecodingPacked("norm_rope_heads_f32", isa, memory, (second ? rows1 + 2 * rows2 : 2, 1, 1), seed, bytes => GcnKernels.PackNormRopeHeads(bytes, at[0],
                                 norm ? at[1] : 0UL, at[2], norm ? at[3] : 0UL, at[4], half > 0 ? at[5] : 0UL, half > 0 ? at[6] : 0UL, half > 0 ? at[7] : 0UL, cache ? at[8] : 0UL,
                                 at[9], at[10], at[11], Cols, EpsQ, OffsetQ, Heads, EpsK, OffsetK, KvHeads, Steps, (uint)half, interleaved, (uint)rows1, (uint)rows2,
-                                (norm ? 1u : 0u) | (bf16 ? 2u : 0u) | (cache ? 4u : 0u), (uint)capacity, (uint)stride));
+                                (norm ? 1u : 0u) | (cache ? 4u : 0u), (uint)capacity, (uint)stride));
                         float[][] first = RowsOnGcn(inputs, (m, a) => Run(m, a, false, 1));
                         float[][] again = RowsOnGcn(inputs, (m, a) => Run(m, a, true, 7));
                         RowsSameBits(first, again, $"{what} ({isa})");
                         float error = RowsCompare(wantQ, first[9], $"{what} ({isa}): queries");
-                        if (bf16)
-                        {
-                            // bfloat16 halves as floats: a value rounded on either side of a tie may differ by one bfloat16 step.
-                            foreach (var (want, have, part) in new[] { (wantK, first[10], "keys"), (wantV, first[11], "values") })
-                            {
-                                var w = MemoryMarshal.Cast<float, ushort>(want.AsSpan());
-                                var h = MemoryMarshal.Cast<float, ushort>(have.AsSpan());
-                                for (int i = 0; i < w.Length; i++)
-                                {
-                                    float e = BitConverter.UInt32BitsToSingle((uint)w[i] << 16), g = BitConverter.UInt32BitsToSingle((uint)h[i] << 16);
-                                    Check(w[i] == h[i] || MathF.Abs(e - g) <= 1e-2f * MathF.Max(1f, MathF.Abs(e)), $"{what} ({isa}): {part}' half {i} is {g}, the CPU's {e}");
-                                }
-                            }
-                        }
-                        else
-                        {
-                            error = MathF.Max(error, RowsCompare(wantK, first[10], $"{what} ({isa}): keys"));
-                            Check(MemoryMarshal.AsBytes(wantV.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(first[11].AsSpan())), $"{what} ({isa}): the values copied as they are");
-                        }
+                        error = MathF.Max(error, RowsCompare(wantK, first[10], $"{what} ({isa}): keys"));
+                        Check(MemoryMarshal.AsBytes(wantV.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(first[11].AsSpan())), $"{what} ({isa}): the values copied as they are");
 
                         worst["norm_rope_heads_f32"] = MathF.Max(worst.GetValueOrDefault("norm_rope_heads_f32"), error);
                     }

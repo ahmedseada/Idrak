@@ -82,8 +82,8 @@ internal abstract partial class Tests
     private static ulong Bits(float value) => BitConverter.SingleToUInt32Bits(value);
 
     // Index buffers (plan 37, T1b: indices, token ids and history in the device's index type, int32): their int32 values
-    // in a float array's words, as the GCN kernels read them; the CPU's storage of such a buffer is int32 too, so its
-    // dispatcher reads them as they are, and its outputs are compared bit for bit.
+    // in a float array's words, as the GCN kernels read them; the CPU's storage holds the same words, and its outputs are
+    // compared bit for bit.
     private static readonly ConditionalWeakTable<float[], object> s_int32Buffers = new();
 
     private static float[] Int32Words(params ReadOnlySpan<int> values)
@@ -106,7 +106,7 @@ internal abstract partial class Tests
         var cpu = CpuBackend.Instance;
         var storages = inputs.Select(d =>
         {
-            var s = IsInt32(d) ? cpu.Allocate(ElementType.Int32, Math.Max(1, d.Length), false) : cpu.Allocate(Math.Max(1, d.Length), false);
+            var s = cpu.Allocate(Math.Max(1, d.Length), false);
             cpu.Upload(d, s);
             return s;
         }).ToArray();

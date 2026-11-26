@@ -5,8 +5,6 @@ using Idrak.Abstraction.Devices;
 using Idrak.Gpu.Abstractions;
 using Idrak.Gpu.Hip;
 using Idrak.Tests.Gcn;
-using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
-using Variant = Idrak.Gpu.Hip.GcnKernels.PackedGemvVariant;
 
 // The interpreter's counts of the kernels plan 35's G6b made faster (rules 80-83): the instructions the waves executed,
 // and of them the vector and scalar memory instructions, the LDS instructions, the waits and the barriers, per element of
@@ -154,68 +152,7 @@ internal abstract partial class Tests
         var isa = ProductIsas[0];
         var random = new Random(71);
 
-        // A split int8 product (1 row, 1,024 x 1,024, 8 splits), alone and with the residual and norm.
-        const int N = 1024, K = 1024, Chunk = 128;
-        int splits = K / Chunk, words = N / 4, blocks = (words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords;
-        var (packed, scales) = ProductsWeights(GcnWeights.Int8, random, K, N);
-        float[] x = RowsRandom(random, K, 1f), residual = RowsRandom(random, N, 1f), gain = RowsRandom(random, N, 0.5f);
-        float[][] Product() => [x, packed, scales, new float[N], new float[splits * N], new float[blocks + 1], residual, gain, new float[N], new float[N]];
         GcnRunResult[] two = new GcnRunResult[2], one = new GcnRunResult[1];
-        string plain = GcnKernels.PackedGemvKernel(GcnWeights.Int8, 1), fused = GcnKernels.FusedGemvKernel(GcnWeights.Int8, Variant.AddNorm, 1);
-        ulong[] ProductArgs(ulong[] a, string kernel, ulong counters) =>
-            [a[0], a[1], a[2], a[3], a[4], 1, N, K, (ulong)words, Chunk, (ulong)splits, counters];
-        _ = RowsOnGcn(Product(), (m, a) =>
-        {
-            two[0] = DecodingDispatch(plain, isa, m, (blocks, splits, 1), 1, ProductArgs(a, plain, 0));
-            two[1] = DecodingDispatch("int8_gemv_finish_f32", isa, m, (DecodingBlocks(N, true), 1, 1), 1, a[4], a[2], a[3], N, N, (ulong)splits, N);
-        });
-        _ = RowsOnGcn(Product(), (m, a) => one[0] = DecodingDispatch(plain, isa, m, (blocks, splits, 1), 1, ProductArgs(a, plain, a[5])));
-        CountsLine($"{plain} 1x{N}x{K}, {splits} splits + int8_gemv_finish_f32 ({isa}; per output)", N, two);
-        CountsLine($"{plain} 1x{N}x{K}, {splits} splits, the last blocks add them ({isa}; per output)", N, one);
-        _ = RowsOnGcn(Product(), (m, a) =>
-        {
-            two[0] = DecodingDispatch(plain, isa, m, (blocks, splits, 1), 1, ProductArgs(a, plain, 0));
-            two[1] = DecodingDispatch("gemv_addnorm_f32", isa, m, (1, 1, 1), 1, a[4], a[2], a[3], a[6], a[8], a[7], a[9], 0UL, N, (ulong)splits, N, Bits(1e-6f), 0, Bits(1e-6f), 0, 0, 1);
-        });
-        _ = RowsOnGcn(Product(), (m, a) => one[0] = DecodingDispatch(fused, isa, m, (blocks, splits, 1), 1,
-            [.. ProductArgs(a, fused, a[5]), a[6], a[8], a[7], a[9], 0UL, Bits(1e-6f), 0, Bits(1e-6f), 0, 0]));
-        CountsLine($"{plain} + gemv_addnorm_f32 1x{N}x{K}, {splits} splits ({isa}; per output)", N, two);
-        CountsLine($"{fused} 1x{N}x{K}, {splits} splits, the last block adds and normalizes ({isa}; per output)", N, one);
-
-        // A bfloat16 gate/up pair (1 row, 2 x 512 of 512, 4 splits).
-        const int Pair = 512, PairK = 512, PairChunk = 128;
-        int pairSplits = PairK / PairChunk, pairBlocks = (Pair / 2 + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords;
-        var (gateWeights, _) = ProductsWeights(GcnWeights.BFloat16, random, PairK, Pair);
-        var (upWeights, _) = ProductsWeights(GcnWeights.BFloat16, random, PairK, Pair);
-        float[] px = RowsRandom(random, PairK, 1f);
-        string multi = GcnKernels.FusedGemvKernel(GcnWeights.BFloat16, Variant.Multi, 1);
-        float[][] Pairs() => [px, gateWeights, upWeights, new float[Pair], new float[Pair], new float[Pair], new float[2 * pairSplits * Pair], new float[3 * pairBlocks]];
-        ulong[] MultiArgs(ulong[] a, bool lastBlock)
-        {
-            var values = new List<ulong> { a[0], a[6], 1, PairK, PairChunk, (ulong)pairSplits, lastBlock ? a[7] : 0UL, (ulong)pairBlocks, Pair };
-            for (int j = 0; j < 3; j++)
-            {
-                values.AddRange([a[1 + Math.Min(j, 1)], 0UL, a[3 + Math.Min(j, 1)], 0UL, j < 2 ? Pair : 0UL]);
-            }
-
-            values.AddRange([lastBlock ? 1UL : 0UL, lastBlock ? a[5] : 0UL]);
-            return [.. values];
-        }
-
-        _ = RowsOnGcn(Pairs(), (m, a) =>
-        {
-            two[0] = DecodingDispatch(multi, isa, m, (pairBlocks, pairSplits, 2), 1, MultiArgs(a, false));
-            var finish = new List<ulong> { a[6], a[5], (ulong)pairSplits, 1, Pair, 1 };
-            for (int j = 0; j < 3; j++)
-            {
-                finish.AddRange([0UL, a[3 + Math.Min(j, 1)], 0UL, j < 2 ? Pair : 0UL]);
-            }
-
-            two[1] = DecodingDispatch("gemv_multi_finish_f32", isa, m, (DecodingBlocks(Pair, true), 1, 1), 1, [.. finish]);
-        });
-        _ = RowsOnGcn(Pairs(), (m, a) => one[0] = DecodingDispatch(multi, isa, m, (pairBlocks, pairSplits, 2), 1, MultiArgs(a, true)));
-        CountsLine($"{multi} gate/up pair 1x2x{Pair}x{PairK}, {pairSplits} splits + gemv_multi_finish_f32 ({isa}; per output)", 2 * Pair, two);
-        CountsLine($"{multi} gate/up pair 1x2x{Pair}x{PairK}, {pairSplits} splits, the last blocks ({isa}; per output)", 2 * Pair, one);
 
         // Decoding attention split over a cache: 8 heads of 64, 2,048 positions in 4 splits.
         const int Heads = 8, Dim = 64, Capacity = 2048, AttentionChunk = 512;
