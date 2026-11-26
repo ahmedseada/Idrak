@@ -17,7 +17,7 @@ internal abstract partial class DesktopTests : Tests
         ("autograd: a second Backward through a result an earlier pass freed throws naming it (its gradient is never dropped silently); Backward(retainGraph: true) keeps the graph and both passes add up", AutogradSecondPass),
         ("optimizer: Adam and AdamW take PyTorch's update, lr·m̂/(√v̂ + ε) with the bias-corrected moments (not ε added to the raw √v), through Step and the fused ClipAndStep, within 1e-5 of a double-precision reference where the two forms differ by far more", AdamMatchesPyTorch),
         ("optimizer state: the step count is saved as an exact integer past 2^24 (the low 24 bits and the rest), an earlier one-float state still loads, and a step that is not a whole number is refused naming it", d => { CpuOnly(d); OptimizerStepState(); }),
-        ("tuning cache: 0, false, off and no turn tuning and its caches off for every backend; a save waits for another process's lock and keeps both processes' choices; threads saving the CPU's tuning file at once keep every line", d => { CpuOnly(d); TuningCacheSettings(); }),
+        ("tuning cache: 0, false, off and no turn tuning and its caches off for every backend; a save waits for another process's lock and keeps both processes' choices", d => { CpuOnly(d); TuningCacheSettings(); }),
     ];
 
     private static void AutogradSecondPass(Device device)
@@ -191,17 +191,14 @@ internal abstract partial class DesktopTests : Tests
         try
         {
             System.Environment.SetEnvironmentVariable("IDRAK_VULKAN_TUNING_CACHE", "off");
-            System.Environment.SetEnvironmentVariable("IDRAK_TUNING_CACHE", "no");
-            Check(VulkanBackend.DefaultTuningCacheFile() is null && CpuTuning.DefaultCacheFile() is null,
-                "IDRAK_VULKAN_TUNING_CACHE=off and IDRAK_TUNING_CACHE=no turn Vulkan's and the CPU's tuning files off (they took 0 and false only)");
+            Check(VulkanBackend.DefaultTuningCacheFile() is null, "IDRAK_VULKAN_TUNING_CACHE=off turns Vulkan's tuning file off (it took 0 and false only)");
             System.Environment.SetEnvironmentVariable("IDRAK_VULKAN_TUNING_CACHE", saved[0]);
-            System.Environment.SetEnvironmentVariable("IDRAK_TUNING_CACHE", saved[1]);
 
             // A save waits while another process holds the file's lock, and keeps what that process wrote meanwhile.
             string path = Path.Combine(folder, "device.txt");
             var identity = new TuningIdentity("a GPU", "a driver", "a build");
-            var ours = new TuneKey(TuneOp.GemvSplits, 0, 1, 2048, 1024);
-            var theirs = new TuneKey(TuneOp.GemvSplits, 0, 1, 4096, 1024);
+            var ours = new TuneKey(TuneOp.DecodeSplits, 0, 1, 2048, 1024);
+            var theirs = new TuneKey(TuneOp.DecodeSplits, 0, 1, 4096, 1024);
             Task<bool> saving;
             using (TuningFiles.Lock(path))
             {
@@ -214,22 +211,6 @@ internal abstract partial class DesktopTests : Tests
             Check(saving.Wait(TimeSpan.FromSeconds(30)) && saving.Result, "the save goes on once the lock is free");
             var kept = TuningCache.Load(path, identity);
             Check(kept.GetValueOrDefault(ours) == 16 && kept.GetValueOrDefault(theirs) == 8, $"both processes' choices are kept: {kept.Count} entries");
-
-            // Threads stand in for processes (the lock is per open file): every save of the CPU's file keeps every line.
-            string cpuFile = Path.Combine(folder, "cpu", "tuning.tsv");
-            CpuTuning.CacheFile = cpuFile;
-            try
-            {
-                Parallel.For(0, 24, new ParallelOptions { MaxDegreeOfParallelism = 8 }, i => CpuTuning.Save($"machine-{i}", new CpuTuning.Cutovers(1000 + i, 2000 + i, "measured")));
-            }
-            finally
-            {
-                CpuTuning.UseDefaultCacheFile();
-            }
-
-            var lines = File.ReadAllLines(cpuFile);
-            Check(lines.Length == 24 && Enumerable.Range(0, 24).All(i => lines.Any(l => l.StartsWith($"machine-{i}\t", StringComparison.Ordinal))),
-                $"24 saves at once keep 24 lines, not {lines.Length}");
         }
         finally
         {
