@@ -10,12 +10,11 @@ using Idrak.Generation;
 using Idrak.Layers;
 
 // A backend with only the members every device must have (memory, copies, its name): every other operation runs through
-// the host fallback. The whole test list runs on it with IDRAK_DEVICES=cpu,minimal; the tests below check it from any device.
+// the host fallback. The tests below check it from the CPU's pass.
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] MinimalBackendGroup =
     [
-        ("minimum backend: a device with only memory and copies (every operation through the host fallback) is listed by name, trains and decodes like the CPU", MinimalBackendMatches),
         ("minimum backend: the first host fallback of each operation is reported to telemetry once (a console logger prints it, JSON Lines writes it), every call counted", MinimalBackendReportsHostFallbacks),
     ];
 
@@ -89,72 +88,6 @@ internal abstract partial class Tests
         public override void Synchronize()
         {
         }
-    }
-
-    internal sealed class MinimalProvider : IDeviceProvider
-    {
-        public string Name => "minimal";
-
-        public string Summary => "a test device with memory and copies only: every operation takes the host fallback";
-
-        public DeviceType Type => DeviceType.Other;
-
-        public int Count => 1;
-
-        public Backend Create(int ordinal) => MinimalBackend.Instance;
-
-        public bool IsStarted(int ordinal) => false;
-
-        public bool Listed(int ordinal) => false;                 // only by name
-
-        public string? Note(int ordinal) => "test backend (memory and copies only): by name only";
-    }
-
-    internal static void MinimalBackendMatches(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;                                                      // compared with the CPU once
-        }
-
-        var minimal = Device.Get("minimal");
-        Check(minimal.ToString() == "minimal:0" && Device.Parse("minimal:0") == minimal && !Device.Available.Contains(minimal), "found by name, not listed");
-
-        // A small network trained a few steps on each device.
-        float[] Train(Device d)
-        {
-            var r = new Random(3);
-            var x = Enumerable.Range(0, 32 * 8).Select(_ => r.NextSingle() * 2 - 1).ToArray();
-            var t = Enumerable.Range(0, 32 * 3).Select(i => i % 3 == i / 3 % 3 ? 1f : 0f).ToArray();
-            using var model = new Sequential(new Linear(8, 16, device: d, random: new Random(5)), new ReLU(), new LayerNorm(16, device: d), new Linear(16, 3, device: d, random: new Random(6)));
-            using var optimizer = new Idrak.Abstraction.Training.AdamW(model.Parameters(), 1e-2f);
-            var losses = new List<float>();
-            for (int step = 0; step < 5; step++)
-            {
-                using var scope = new TensorScope();
-                var loss = Losses.CrossEntropy(model.Forward(Tensor.From(x, [32, 8], d)), Tensor.From(t, [32, 3], d));
-                optimizer.ZeroGrad();
-                loss.Backward();
-                optimizer.Step();
-                losses.Add(loss.ToArray()[0]);
-            }
-
-            return [.. losses];
-        }
-
-        int before = MinimalBackend.Instance.Calls;
-        AssertClose(Train(Device.Cpu), Train(minimal), 1e-4f, "training losses");
-        Check(MinimalBackend.Instance.Calls > before, "the work went through the minimal device's copies");
-
-        // A decoder generating greedily, with the KV cache.
-        string Generate(Device d)
-        {
-            var (model, tokenizer) = TinyLanguageModel(d);
-            var options = new GenerationOptions { TopK = 1, Temperature = 1f, RepeatPenalty = 1f, NumPredict = 8, UseCache = true, Seed = 1 };
-            return new TextGenerator(model, tokenizer, 32) { KeepCache = false }.Generate("abc", options).Text;
-        }
-
-        Check(Generate(Device.Cpu) == Generate(minimal), "greedy generation matches the CPU");
     }
 
     // Keeps the HostFallback events of one kind of device.

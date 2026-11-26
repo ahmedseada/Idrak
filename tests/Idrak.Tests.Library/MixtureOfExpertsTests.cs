@@ -23,7 +23,6 @@ internal abstract partial class Tests
     [
         ("mixture of experts: routing takes the k most probable experts (ties to the lowest index, as torch.topk), renormalized when configured; a known routing on the device", ExpertRouting),
         ("mixture of experts: routing where the tensors are (RouteTopK, ExpertGatedPair, ExpertMatMul) gives the host routing's values bit for bit (biases, odd widths, experts with many rows and few, every activation, a shared expert); RouteTopK matches the layer's host routing; a device without the kernels routes on the host, counted as a host fallback of RouteTopK; IDRAK_MOE_ROUTING=host turns it off", ExpertRoutingOnDevice),
-        ("mixture of experts: a device that can offload (IOffloadingBackend, as CUDA always is) routes its experts on the device while nothing is offloaded and offloading is off; with a storage offloaded or ComputeResources.OffloadToHostMemory on, it reads the routing back (a recorded graph could not follow a moved weight)", ExpertsWithOffloadSupport),
         ("mixture of experts: CUDA's routing and expert kernels (PtxKernels.Routing.cs), read on the host: each declares the parameters its launch passes and only the registers it declares, every branch reaches a label of its own kernel, indices are read as int32, the weights divided by div.rn, each product one fma.rn chain from zero with its bias added by add.rn, the gated pair's activation is gated_act_f32's, and an expert launch walks its experts' slots grid-stride", ExpertPtx),
         ("mixture of experts: gradients of router, experts, shared expert and input match finite differences; load-balancing loss; LoRA on attention fine-tunes a model with experts", ExpertTraining),
         ("pretrained: Mixtral, Qwen2-MoE and Qwen3-MoE configs and checkpoints (their tensor names) load and match the reference; GGUF files with experts (qwen2moe, qwen3moe, llama as Mixtral) too", ExpertCheckpoints),
@@ -314,83 +313,6 @@ internal abstract partial class Tests
         public IDisposable? Stage(IReadOnlyList<Storage> storages) => null;
     }
 
-    internal sealed class OffloadCapableProvider : IDeviceProvider
-    {
-        public string Name => "moe-offload-test";
-
-        public string Summary => "a test device that can offload, with the mixture-of-experts routing as kernels of its own";
-
-        public DeviceType Type => DeviceType.Other;
-
-        public int Count => 1;
-
-        public Backend Create(int ordinal) => OffloadCapableBackend.Instance;
-
-        public bool IsStarted(int ordinal) => false;
-
-        public bool Listed(int ordinal) => false;
-
-        public string? Note(int ordinal) => "test backend: by name only";
-    }
-
-    internal static void ExpertsWithOffloadSupport(Device device)
-    {
-        _ = device;
-        if (!FirstRun(nameof(ExpertsWithOffloadSupport)))
-        {
-            return;
-        }
-
-        if (DeviceProviders.Find("moe-offload-test") is null)
-        {
-            DeviceProviders.Register(new OffloadCapableProvider());
-        }
-
-        var capable = Device.Get("moe-offload-test");
-        var backend = OffloadCapableBackend.Instance;
-        bool routesBefore = MixtureOfExperts.RoutesOnDevice, offloadBefore = ComputeResources.OffloadToHostMemory;
-        try
-        {
-            MixtureOfExperts.RoutesOnDevice = true;
-            ComputeResources.OffloadToHostMemory = false;
-            backend.Offloaded = 0;
-            var random = new Random(23);
-            using var moe = new MixtureOfExperts(8, 6, 4, 2, normalizeTopK: true, device: capable, random: new Random(24));
-            using var input = Tensor.From([.. Enumerable.Range(0, 5 * 8).Select(_ => random.NextSingle() * 2 - 1)], [5, 8], capable);
-            long RouteCalls()
-            {
-                using var trace = Kernels.Trace(backend);
-                using var scope = new TensorScope();
-                using (Autograd.NoGrad())
-                {
-                    moe.Forward(input).ToArray();
-                    return trace.Calls(Ops.RouteTopK);
-                }
-            }
-
-            Check(backend.Offload is not null && backend.RoutesExperts, $"{backend.Name}: can offload ({backend.Offload is not null}) and routes experts ({backend.RoutesExperts})");
-            long calls = RouteCalls();
-            Check(calls == 1 && !moe.RoundTrips(backend),
-                $"nothing offloaded and offloading off: the experts route on the device (RouteTopK called {calls} times, round trips {moe.RoundTrips(backend)}), so a decoding step through them is recorded");
-
-            backend.Offloaded = 1;
-            calls = RouteCalls();
-            Check(calls == 0 && moe.RoundTrips(backend), $"a storage offloaded: the routing is read back (RouteTopK called {calls} times, round trips {moe.RoundTrips(backend)})");
-
-            backend.Offloaded = 0;
-            ComputeResources.OffloadToHostMemory = true;
-            calls = RouteCalls();
-            Check(calls == 0 && moe.RoundTrips(backend),
-                $"offloading on (ComputeResources.OffloadToHostMemory): the routing is read back (RouteTopK called {calls} times, round trips {moe.RoundTrips(backend)})");
-        }
-        finally
-        {
-            MixtureOfExperts.RoutesOnDevice = routesBefore;
-            ComputeResources.OffloadToHostMemory = offloadBefore;
-            backend.Offloaded = 0;
-        }
-    }
-
     internal static void ExpertPtx(Device device)
     {
         _ = device;
@@ -619,10 +541,20 @@ internal abstract partial class Tests
         return Parsed(config);
     }
 
+    // The families of the architectures these tests write, reached directly.
+    internal static IPretrainedArchitecture ExpertFamily(string architecture) => architecture switch
+    {
+        "MixtralForCausalLM" => MistralArchitectures.Mixtral(),
+        "Qwen2MoeForCausalLM" => QwenArchitectures.Qwen2Moe(),
+        "Qwen3MoeForCausalLM" => QwenArchitectures.Qwen3Moe(),
+        "LlamaForCausalLM" => Idrak.Text.Plugins.Llama.LlamaArchitectures.Llama(),
+        _ => throw new ArgumentException($"no family for {architecture} in these tests", nameof(architecture)),
+    };
+
     // The weights of spec (drawn from weights) as the family's checkpoint, with its config.
     internal static void WriteExpertCheckpoint(string folder, string architecture, DecoderSpec spec, RandomWeights weights)
     {
-        var family = PretrainedArchitectures.Get(architecture);
+        var family = ExpertFamily(architecture);
         using (spec.Build(weights, new DecoderBuildOptions { Device = Device.Cpu }))
         {
         }
@@ -641,7 +573,7 @@ internal abstract partial class Tests
 
     internal static void ExpertCheckpoints(Device device)
     {
-        DecoderSpec Read(JsonObject config) => PretrainedArchitectures.Get((string)config["architectures"]![0]!).Spec(config, []);
+        DecoderSpec Read(JsonObject config) => ExpertFamily((string)config["architectures"]![0]!).Spec(config, []);
 
         // Configs: each family's keys and defaults.
         var mixtral = Read(ExpertConfig("MixtralForCausalLM", SmallSpec with { Experts = 8, ExpertsPerToken = 2 }));

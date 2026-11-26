@@ -4,8 +4,8 @@
 using Idrak;
 using Idrak.Gpu.Vulkan;
 
-// --list-devices: every device the library can run on (the CPU, each CUDA and Vulkan GPU, test backends), whether a
-// plain test run includes it, and how to run the tests on one of them.
+// --list-devices: every device the library can run on (the CPU), whether a plain test run includes it, and how to run the
+// tests on one of them.
 internal abstract partial class Tests
 {
     internal static int ListDevices()
@@ -14,22 +14,6 @@ internal abstract partial class Tests
         {
             ("cpu", "CPU", Describe(Device.Cpu), "yes", Device.Default == Device.Cpu ? "default device" : ""),
         };
-
-        foreach (var provider in DeviceProviders.All)
-        {
-            if (provider.Count == 0)
-            {
-                rows.Add(($"{provider.Name}:-", provider.Display, $"none found: {provider.UnavailableReason}", "-", ""));
-                continue;
-            }
-
-            for (int i = 0; i < provider.Count; i++)
-            {
-                var device = Device.Get(provider.Name, i);
-                string note = device == Device.Default ? "default device" : provider.Note(i) ?? "";
-                rows.Add((device.ToString(), provider.Display, Describe(device), provider.Listed(i) ? "yes" : "by name", note));
-            }
-        }
 
         string[] header = ["Device", "Backend", "Name", "In a plain run", "Note"];
         int[] widths =

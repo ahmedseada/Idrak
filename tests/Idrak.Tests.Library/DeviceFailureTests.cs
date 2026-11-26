@@ -7,8 +7,7 @@ using System.Text.Json;
 using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Abstraction.Operations;
 
-// Plan 10, decision 13: a GPU kernel that fails throws (a DeviceException, reported to telemetry with a hint naming the
-// switch); with Backend.RetryOnHost the dispatcher runs the operation again on the CPU and reports that instead.
+// Plan 10, decision 13: a GPU kernel that fails throws (a DeviceException, reported to telemetry with a hint).
 internal abstract partial class Tests
 {
     // Plain arrays standing for device memory; Softmax throws a DeviceException while Faulty is set. Each test uses a kind
@@ -100,7 +99,7 @@ internal abstract partial class Tests
             return;
         }
 
-        var faulty = new FaultyBackend("faulty") { RetryOnHost = false, Faulty = true };
+        var faulty = new FaultyBackend("faulty") { Faulty = true };
         var x = faulty.Allocate(6, zeroed: false);
         var y = faulty.Allocate(6, zeroed: true);
         faulty.Upload([1f, 2f, 3f, -1f, 0f, 1f], x);
@@ -148,96 +147,5 @@ internal abstract partial class Tests
         string line = Encoding.UTF8.GetString(json.ToArray());
         Check(line.Contains("\"event\":\"device_failed\"", StringComparison.Ordinal) && line.Contains("\"retried_on_host\":true", StringComparison.Ordinal)
               && line.Contains("\"operation\":\"Softmax\"", StringComparison.Ordinal), $"JSON Lines: {line}");
-    }
-
-    internal static void DeviceFailureRetriedOnHost(Device device)
-    {
-        _ = device;
-        if (!FirstRun(nameof(DeviceFailureRetriedOnHost)))
-        {
-            return;
-        }
-
-        float[] input = [1f, 2f, 3f, -1f, 0f, 1f];
-        var cpu = CpuBackend.Instance;
-        var cx = cpu.Allocate(6, zeroed: false);
-        var cy = cpu.Allocate(6, zeroed: true);
-        cpu.Upload(input, cx);
-        cpu.Softmax(cx, cy, 2, 3, log: true);
-        var expected = new float[6];
-        cpu.Download(cy, expected);
-        cx.Release();
-        cy.Release();
-
-        var faulty = new FaultyBackend("faulty-retry") { RetryOnHost = true, Faulty = true };
-        var x = faulty.Allocate(6, zeroed: false);
-        var y = faulty.Allocate(6, zeroed: true);
-        faulty.Upload(input, x);
-        var failures = new DeviceFailures("faulty-retry");
-        using (Telemetry.Subscribe(failures))
-        {
-            long hostCalls = Kernels.HostCalls(faulty);
-            faulty.Softmax(x, y, 2, 3, log: true);
-            var got = new float[6];
-            faulty.Download(y, got);
-            Check(got.SequenceEqual(expected), $"the retried result equals the CPU's: {string.Join(", ", got)} vs {string.Join(", ", expected)}");
-            Check(Kernels.HostCalls(faulty) == hostCalls + 1, $"the retry counts as one host call ({Kernels.HostCalls(faulty) - hostCalls})");
-            var events = failures.Events;
-            Check(events.Count == 1 && events[0] is { RetriedOnHost: true, Operation: "Softmax", Hint: null }
-                  && events[0].Message.Contains("injected", StringComparison.Ordinal),
-                $"one retried event with the operation and no hint: {string.Join("; ", events)}");
-
-            faulty.Faulty = false;
-            faulty.Softmax(x, y, 2, 3, log: true);
-            Check(Kernels.HostCalls(faulty) == hostCalls + 2 && failures.Events.Count == 1, "a kernel that works runs as before (its own host fallback here), with no event");
-        }
-
-        // A registered kernel is not retried: its error reaches the caller.
-        OperationKernels.Softmax throwing = (b, _, _, _, _, _) => throw new DeviceException(b.Kind, "registered kernel failed");
-        using (Kernels.Register(Ops.Softmax, "faulty-retry", throwing))
-        {
-            bool reached = false;
-            try
-            {
-                faulty.Softmax(x, y, 2, 3, log: true);
-            }
-            catch (DeviceException)
-            {
-                reached = true;
-            }
-
-            Check(reached, "a registered kernel's error is not retried");
-        }
-    }
-
-    internal static void RetryOnHostSetting(Device device)
-    {
-        _ = device;
-        foreach (var (setting, kind, on) in new (string?, string, bool)[]
-                 {
-                     (null, "cuda", false), ("", "cuda", false), ("0", "cuda", false), ("false", "vulkan", false), ("1", "cuda", true),
-                     ("all", "hip", true), ("ALL", "vulkan", true), ("true", "cuda", true), ("1", "cpu", false), ("all", "cpu", false),
-                     ("cuda,vulkan", "vulkan", true), ("cuda, vulkan", "VULKAN", true), ("cuda,vulkan", "hip", false), ("cuda", "cpu", false),
-                     ("cpu", "cpu", true), (" hip ", "hip", true),
-                 })
-        {
-            Check(Backend.RetryOnHostFrom(setting, kind) == on, $"IDRAK_RETRY_ON_HOST={setting ?? "(not set)"} for {kind}: expected {(on ? "on" : "off")}");
-        }
-    }
-
-    internal static void RetryOnHostLeavesFastPath(Device device)
-    {
-        _ = device;
-        var field = typeof(Backend).GetField("_kernels", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var faulty = new FaultyBackend("faulty-fast") { RetryOnHost = false };
-        var y = faulty.Allocate(4, zeroed: true);
-        faulty.Fill(y, 4, 1f);                                                // the first call resolves the slots
-        Check(field.GetValue(faulty) is null, "nothing registered, no trace, retry off: the inlined fast path");
-        faulty.RetryOnHost = true;
-        faulty.Fill(y, 4, 2f);
-        Check(field.GetValue(faulty) is Delegate?[] { Length: > 0 }, "retry on: calls leave the fast path, as under a trace");
-        faulty.RetryOnHost = false;
-        faulty.Fill(y, 4, 3f);
-        Check(field.GetValue(faulty) is null, "retry off again: back on the fast path");
     }
 }

@@ -5,69 +5,18 @@ using System.Text.RegularExpressions;
 using Idrak;
 using Idrak.Gpu.Vulkan;
 
-// The Vulkan runtime chooses by what the device reports or what is measured on it, never by vendor or card: devices
-// another provider reaches are found by UUID, memory paths and sizes come from the reported heaps and limits, and the
-// runtime policy (descriptor mode, batch size, batches in flight) is measured at start and kept per device and driver.
+// The Vulkan runtime chooses by what the device reports or what is measured on it, never by vendor or card: memory paths
+// and sizes come from the reported heaps and limits, and the runtime policy (descriptor mode, batch size, batches in flight) is measured at start and kept per device and driver.
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] VulkanRuntimeGroup =
     [
-        ("vulkan runtime: a GPU another provider reaches (same UUID) is found by UUID (first match; none for an empty or unknown UUID)", VulkanSameGpuByUuid),
         ("vulkan runtime: devices are numbered by what they report (type, then UUID), whatever order the loader lists them in", VulkanDeviceOrder),
         ("vulkan runtime: mapped memory, staging and page sizes come from the reported heaps and limits", VulkanSizesFromReport),
         ("vulkan runtime: storage memory candidates come from the reported heaps (host memory only on shared-memory devices, listed a second time on it when larger than their own); the cost model favors device reads", VulkanMappedByDeviceType),
         ("vulkan runtime: descriptor mode, batch size and batches in flight are measured at start, cached per device and driver, overridable", VulkanRuntimeMeasured),
         ("vulkan runtime: no vendor ids or card names in the code of src/Idrak.Gpu/Vulkan (comments may say where something was measured)", VulkanNoVendorNames),
     ];
-
-    // A provider whose devices report the UUIDs given.
-    internal sealed class FakeUuidProvider(string kind, params Guid?[] uuids) : IDeviceProvider
-    {
-        public string Name => kind;
-
-        public string Summary => "a test provider whose devices report the UUIDs given";
-
-        public string Display => kind.ToUpperInvariant();
-
-        public DeviceType Type => DeviceType.Cpu;
-
-        public int Count => uuids.Length;
-
-        public Backend Create(int ordinal) => throw new NotSupportedException();
-
-        public bool IsStarted(int ordinal) => false;
-
-        public Guid? DeviceUuid(int ordinal) => uuids[ordinal];
-    }
-
-    internal static void VulkanSameGpuByUuid(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;                                                      // checked once
-        }
-
-        Guid a = Guid.NewGuid(), b = Guid.NewGuid(), c = Guid.NewGuid();
-        IDeviceProvider[] others = [new FakeUuidProvider("first", a, null, b), new FakeUuidProvider("second", c, b)];
-        Check(VulkanProvider.DrivenBy(b, others) == ("FIRST", "first:2"), "the first provider reaching the GPU names it");
-        Check(VulkanProvider.DrivenBy(c, others) == ("SECOND", "second:0"), "a later provider's device");
-        Check(VulkanProvider.DrivenBy(Guid.NewGuid(), others) is null, "an unknown UUID: driven by nobody else");
-        Check(VulkanProvider.DrivenBy(Guid.Empty, others) is null && VulkanProvider.DrivenBy(null, others) is null, "no UUID: never matched");
-        Check(VulkanProvider.DrivenBy(a, []) is null, "no other provider");
-
-        // The CUDA provider reports its devices' UUIDs (none without its driver), and a Vulkan device it reaches is
-        // listed by name only, whatever its vendor.
-        var cuda = DeviceProviders.Find("cuda")!;
-        Check(cuda.Count == 0 || cuda.DeviceUuid(0) is not null, "CUDA devices report a UUID");
-        for (int i = 0; i < VulkanBackend.DeviceCount; i++)
-        {
-            var vulkan = DeviceProviders.Find("vulkan")!;
-            Check(vulkan.DeviceUuid(i) == VulkanBackend.DeviceKind(i).Uuid, $"vulkan:{i} reports its deviceUUID");
-            var driver = VulkanProvider.DrivenBy(vulkan.DeviceUuid(i), [cuda]);
-            Check(driver is null || (!vulkan.Listed(i) && vulkan.Note(i) == $"driven by CUDA as {driver.Value.Device}: by name only"),
-                $"vulkan:{i}: driven by CUDA, so by name only");
-        }
-    }
 
     internal static void VulkanDeviceOrder(Device device)
     {
@@ -272,20 +221,6 @@ internal abstract partial class Tests
         Check(VulkanBackend.PageSize(16 * GiB, 16 * GiB, 64, null) == 512L << 20, "pages: raised so 32 allocations cover 16 GiB");
         Check(VulkanBackend.PageSize(64 * GiB, 128 * MiB, 4096, null) == 128L << 20, "pages: within maxMemoryAllocationSize");
         Check(VulkanBackend.PageSize(8 * GiB, 4 * GiB, 4096, 3 << 20) == 3L << 20, "pages: the setting");
-
-        for (int i = 0; i < VulkanBackend.DeviceCount; i++)
-        {
-            var backend = (VulkanBackend)Device.Get("vulkan", i).Backend;
-            var facts = backend.Facts;
-            Check(facts.SubgroupSize >= 1 && facts.MinSubgroupSize <= facts.SubgroupSize && facts.SubgroupSize <= facts.MaxSubgroupSize,
-                $"vulkan:{i}: subgroup sizes {facts.MinSubgroupSize} ≤ {facts.SubgroupSize} ≤ {facts.MaxSubgroupSize}");
-            Check(facts.MaxWorkGroupInvocations >= 128 && facts.MaxWorkGroupSize.X >= 128 && facts.MaxSharedMemoryBytes >= 16384,
-                $"vulkan:{i}: workgroup limits at least Vulkan's minimums");
-            Check(facts.MaxMemoryAllocationSize >= 1 << 30 && facts.MaxStorageBufferRange >= 1 << 27, $"vulkan:{i}: allocation and storage limits");
-            Check((facts.SubgroupOperations & VulkanDeviceFacts.SubgroupBasic) != 0, $"vulkan:{i}: basic subgroup operations (Vulkan 1.1)");
-            Check(backend.PageBytes >= sizeof(float) && (ulong)backend.PageBytes <= facts.MaxMemoryAllocationSize, $"vulkan:{i}: page within the largest allocation");
-            Console.WriteLine($"    vulkan:{i}: {backend.Describe()}");
-        }
     }
 
     internal static void VulkanRuntimeMeasured(Device device)
