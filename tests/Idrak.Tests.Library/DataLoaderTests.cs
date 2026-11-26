@@ -25,10 +25,9 @@ internal abstract partial class Tests
         ("data loaders: views (subset, shuffle, split, concat) read the right samples and train like the copied Dataset", LoaderViews),
         ("data loaders: the streamed CSV source reads Dataset.LoadCsv's samples, in order as a stream, and trains to the same weights", LoaderCsv),
         ("data loaders: PNG (every depth, palette, interlaced), BMP and Netpbm decode as independent encoders wrote them", LoaderCodecs),
-        ("data loaders: the image folder source with transforms trains like its in-memory Dataset; codecs register by name", LoaderImageFolder),
+        ("data loaders: the image folder source with transforms trains like its in-memory Dataset", LoaderImageFolder),
         ("data loaders: image transforms flip, shift, rotate and add noise as computed directly, seeded by epoch and sample", LoaderTransforms),
         ("data loaders: a stream is batched in order or shuffled in a buffer, counted after an epoch, and trains like a Dataset", LoaderStreams),
-        ("data loaders: SampleSources opens the built-ins by name, registers, unregisters and lists the names in errors", LoaderRegistry),
         ("data loaders: TableSamples reads JSON Lines, Parquet and CSV columns (arrays, classes) and streams them", LoaderTables),
     ];
 
@@ -434,34 +433,25 @@ internal abstract partial class Tests
         return file;
     }
 
-    internal static void CheckImage(byte[] file, string extension, int channels, int w, int h, Func<int, int, int, float> expected, string what)
+    internal static void CheckImage(byte[] file, IImageCodec codec, int channels, int w, int h, Func<int, int, int, float> expected, string what)
     {
-        string path = Path.Combine(Path.GetTempPath(), $"idrak-codec-{Guid.NewGuid():N}{extension}");
-        File.WriteAllBytes(path, file);
-        try
+        var info = codec.ReadInfo(file);
+        Check(info is { } i && i.Width == w && i.Height == h && i.Channels == channels, $"{what}: header {info}");
+        var image = codec.Decode(file);
+        Check(image.Channels == channels && image.Width == w && image.Height == h, $"{what}: decoded {image.Channels} x {image.Height} x {image.Width}");
+        var reference = new float[channels * h * w];
+        for (int c = 0; c < channels; c++)
         {
-            var info = ImageCodecs.ReadInfo(path);
-            Check(info is { } i && i.Width == w && i.Height == h && i.Channels == channels, $"{what}: header {info}");
-            var image = ImageCodecs.Decode(path);
-            Check(image.Channels == channels && image.Width == w && image.Height == h, $"{what}: decoded {image.Channels} x {image.Height} x {image.Width}");
-            var reference = new float[channels * h * w];
-            for (int c = 0; c < channels; c++)
+            for (int y = 0; y < h; y++)
             {
-                for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
                 {
-                    for (int x = 0; x < w; x++)
-                    {
-                        reference[c * h * w + y * w + x] = expected(c, y, x);
-                    }
+                    reference[c * h * w + y * w + x] = expected(c, y, x);
                 }
             }
+        }
 
-            AssertClose(reference, image.Pixels, 1e-6f, what);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
+        AssertClose(reference, image.Pixels, 1e-6f, what);
     }
 
     internal static void LoaderCodecs(Device device)
@@ -473,18 +463,18 @@ internal abstract partial class Tests
             foreach (int depth in new[] { 1, 2, 4, 8, 16 })
             {
                 int max = (1 << depth) - 1;
-                CheckImage(TestPng(W, H, 0, depth, interlace, (x, y, s) => Value(x, y, s, max)), ".png", 1, W, H,
+                CheckImage(TestPng(W, H, 0, depth, interlace, (x, y, s) => Value(x, y, s, max)), new PngCodec(), 1, W, H,
                     (c, y, x) => Value(x, y, 0, max) / (float)max, $"PNG grey {depth} bits{(interlace ? ", interlaced" : "")}");
             }
 
             foreach (int depth in new[] { 8, 16 })
             {
                 int max = (1 << depth) - 1;
-                CheckImage(TestPng(W, H, 2, depth, interlace, (x, y, s) => Value(x, y, s, max)), ".png", 3, W, H,
+                CheckImage(TestPng(W, H, 2, depth, interlace, (x, y, s) => Value(x, y, s, max)), new PngCodec(), 3, W, H,
                     (c, y, x) => Value(x, y, c, max) / (float)max, $"PNG RGB {depth} bits{(interlace ? ", interlaced" : "")}");
-                CheckImage(TestPng(W, H, 6, depth, interlace, (x, y, s) => Value(x, y, s, max)), ".png", 3, W, H,
+                CheckImage(TestPng(W, H, 6, depth, interlace, (x, y, s) => Value(x, y, s, max)), new PngCodec(), 3, W, H,
                     (c, y, x) => Value(x, y, c, max) / (float)max, $"PNG RGBA {depth} bits (alpha dropped)");
-                CheckImage(TestPng(W, H, 4, depth, interlace, (x, y, s) => Value(x, y, s, max)), ".png", 1, W, H,
+                CheckImage(TestPng(W, H, 4, depth, interlace, (x, y, s) => Value(x, y, s, max)), new PngCodec(), 1, W, H,
                     (c, y, x) => Value(x, y, 0, max) / (float)max, $"PNG grey and alpha {depth} bits");
             }
 
@@ -497,7 +487,7 @@ internal abstract partial class Tests
                     palette[i] = (byte)(i * 37 + 5);
                 }
 
-                CheckImage(TestPng(W, H, 3, depth, interlace, (x, y, s) => Value(x, y, 0, entries - 1), palette), ".png", 3, W, H,
+                CheckImage(TestPng(W, H, 3, depth, interlace, (x, y, s) => Value(x, y, 0, entries - 1), palette), new PngCodec(), 3, W, H,
                     (c, y, x) => palette[Value(x, y, 0, entries - 1) * 3 + c] / 255f, $"PNG palette {depth} bits{(interlace ? ", interlaced" : "")}");
             }
         }
@@ -506,39 +496,39 @@ internal abstract partial class Tests
         foreach (bool interlace in new[] { false, true })
         {
             const int Wide = 101, Rows = 9;
-            CheckImage(TestPng(Wide, Rows, 0, 8, interlace, (x, y, s) => Value(x, y, s, 255)), ".png", 1, Wide, Rows,
+            CheckImage(TestPng(Wide, Rows, 0, 8, interlace, (x, y, s) => Value(x, y, s, 255)), new PngCodec(), 1, Wide, Rows,
                 (c, y, x) => Value(x, y, 0, 255) / 255f, $"PNG grey 8 bits, {Wide} wide{(interlace ? ", interlaced" : "")}");
-            CheckImage(TestPng(Wide, Rows, 2, 8, interlace, (x, y, s) => Value(x, y, s, 255)), ".png", 3, Wide, Rows,
+            CheckImage(TestPng(Wide, Rows, 2, 8, interlace, (x, y, s) => Value(x, y, s, 255)), new PngCodec(), 3, Wide, Rows,
                 (c, y, x) => Value(x, y, c, 255) / 255f, $"PNG RGB 8 bits, {Wide} wide{(interlace ? ", interlaced" : "")}");
         }
 
         (int, int, int) Colour(int x, int y) => ((x * 19 + y) % 256, (y * 23 + 3) % 256, (x * y + 7) % 256);
         foreach (bool topDown in new[] { false, true })
         {
-            CheckImage(TestBmp(W, H, 24, topDown, Colour), ".bmp", 3, W, H, (c, y, x) => (c == 0 ? Colour(x, y).Item1 : c == 1 ? Colour(x, y).Item2 : Colour(x, y).Item3) / 255f,
+            CheckImage(TestBmp(W, H, 24, topDown, Colour), new BmpCodec(), 3, W, H, (c, y, x) => (c == 0 ? Colour(x, y).Item1 : c == 1 ? Colour(x, y).Item2 : Colour(x, y).Item3) / 255f,
                 $"BMP 24 bits{(topDown ? ", top-down" : "")}");
-            CheckImage(TestBmp(W, H, 32, topDown, Colour), ".bmp", 3, W, H, (c, y, x) => (c == 0 ? Colour(x, y).Item1 : c == 1 ? Colour(x, y).Item2 : Colour(x, y).Item3) / 255f,
+            CheckImage(TestBmp(W, H, 32, topDown, Colour), new BmpCodec(), 3, W, H, (c, y, x) => (c == 0 ? Colour(x, y).Item1 : c == 1 ? Colour(x, y).Item2 : Colour(x, y).Item3) / 255f,
                 "BMP 32 bits");
         }
 
         (int, int, int) Packed(int x, int y) => ((x + y) % 32, (x * 3 + y) % 64, (x * y) % 32);
-        CheckImage(TestBmp(W, H, 16, false, Packed), ".bmp", 3, W, H,
+        CheckImage(TestBmp(W, H, 16, false, Packed), new BmpCodec(), 3, W, H,
             (c, y, x) => (c == 0 ? Packed(x, y).Item1 * 255 / 31 : c == 1 ? Packed(x, y).Item2 * 255 / 63 : Packed(x, y).Item3 * 255 / 31) / 255f, "BMP 16 bits, 5-6-5 bit fields (widened to 8 bits as Pillow does)");
         var grey = Enumerable.Range(0, 256).Select(i => ((byte)i, (byte)i, (byte)i)).ToArray();
-        CheckImage(TestBmp(W, H, 8, false, (x, y) => (0, 0, 0), (x, y) => (x * 17 + y * 5) % 256, grey), ".bmp", 1, W, H,
+        CheckImage(TestBmp(W, H, 8, false, (x, y) => (0, 0, 0), (x, y) => (x * 17 + y * 5) % 256, grey), new BmpCodec(), 1, W, H,
             (c, y, x) => (x * 17 + y * 5) % 256 / 255f, "BMP 8 bits with a grey palette");
         foreach (int bits in new[] { 1, 4, 8 })
         {
             var colours = Enumerable.Range(0, 1 << bits).Select(i => ((byte)(i * 41 % 256), (byte)(i * 13 % 256), (byte)(255 - i % 256))).ToArray();
             int Index(int x, int y) => (x + 2 * y) % (1 << bits);
-            CheckImage(TestBmp(W, H, bits, true, (x, y) => (0, 0, 0), Index, colours), ".bmp", 3, W, H,
+            CheckImage(TestBmp(W, H, bits, true, (x, y) => (0, 0, 0), Index, colours), new BmpCodec(), 3, W, H,
                 (c, y, x) => (c == 0 ? colours[Index(x, y)].Item1 : c == 1 ? colours[Index(x, y)].Item2 : colours[Index(x, y)].Item3) / 255f, $"BMP {bits} bits with a colour palette");
         }
 
         // Netpbm: binary 8 and 16 bits, text with comments.
         var p5 = new List<byte>(Encoding.ASCII.GetBytes($"P5\n# made by the tests\n{W} {H}\n255\n"));
         p5.AddRange(Enumerable.Range(0, W * H).Select(i => (byte)(i * 3 % 256)));
-        CheckImage([.. p5], ".pgm", 1, W, H, (c, y, x) => (y * W + x) * 3 % 256 / 255f, "PGM binary");
+        CheckImage([.. p5], new NetpbmCodec(), 1, W, H, (c, y, x) => (y * W + x) * 3 % 256 / 255f, "PGM binary");
         var p6 = new List<byte>(Encoding.ASCII.GetBytes($"P6 {W} {H} 1000\n"));
         foreach (int i in Enumerable.Range(0, W * H * 3))
         {
@@ -546,9 +536,9 @@ internal abstract partial class Tests
             p6.Add((byte)(i * 7 % 1001));
         }
 
-        CheckImage([.. p6], ".ppm", 3, W, H, (c, y, x) => (float)(Math.Round(((y * W + x) * 3 + c) * 7 % 1001 * 255.0 / 1000) / 255), "PPM binary 16 bits (brought to 8 bits as Pillow does)");
+        CheckImage([.. p6], new NetpbmCodec(), 3, W, H, (c, y, x) => (float)(Math.Round(((y * W + x) * 3 + c) * 7 % 1001 * 255.0 / 1000) / 255), "PPM binary 16 bits (brought to 8 bits as Pillow does)");
         string p2 = $"P2\n{W} {H}\n# comment\n15\n" + string.Join(' ', Enumerable.Range(0, W * H).Select(i => i % 16));
-        CheckImage(Encoding.ASCII.GetBytes(p2), ".pgm", 1, W, H, (c, y, x) => (y * W + x) % 16 / 15f, "PGM text");
+        CheckImage(Encoding.ASCII.GetBytes(p2), new NetpbmCodec(), 1, W, H, (c, y, x) => (y * W + x) % 16 / 15f, "PGM text");
 
         // Resizing: grey repeated to colour, colour averaged, corners aligned.
         var image = new ImageData([0f, 1f, 2f, 3f], 1, 2, 2);
@@ -574,58 +564,9 @@ internal abstract partial class Tests
             float ink = new ImageData(line, 1, 280, 280).Resize(1, 28, 28).Sum();
             Check(MathF.Abs(ink - 3f * 201 / 100) < 1e-3f, $"shrink: a 3-pixel line at x = {left} keeps its ink ({ink:F3} of {3f * 201 / 100:F3})");
         }
-
-        // A damaged file names itself; an unknown format names the codecs.
-        string damaged = Path.Combine(Path.GetTempPath(), $"idrak-damaged-{Guid.NewGuid():N}.png");
-        File.WriteAllBytes(damaged, TestPng(W, H, 0, 8, false, (x, y, s) => x)[..60]);
-        string unknown = Path.ChangeExtension(damaged, ".gif");
-        File.WriteAllBytes(unknown, Encoding.ASCII.GetBytes("GIF89a......"));
-        try
-        {
-            foreach (var (file, words) in new[] { (damaged, "png"), (unknown, "netpbm") })
-            {
-                try
-                {
-                    ImageCodecs.Decode(file);
-                    Check(false, $"{file} decoded");
-                }
-                catch (InvalidDataException e)
-                {
-                    Check(e.Message.Contains(file, StringComparison.Ordinal) && e.Message.Contains(words, StringComparison.Ordinal), e.Message);
-                }
-            }
-        }
-        finally
-        {
-            File.Delete(damaged);
-            File.Delete(unknown);
-        }
     }
 
-    // A made-up format for the codec registry: "TINY", width, height, then one byte per grey pixel.
-    internal sealed class TinyCodec : IImageCodec
-    {
-        public string Name => "tiny";
-
-        public IReadOnlyCollection<string> Extensions { get; } = [".tiny"];
-
-        public ImageInfo? ReadInfo(ReadOnlySpan<byte> header) =>
-            header.Length >= 6 && header[..4].SequenceEqual("TINY"u8) ? new ImageInfo(header[4], header[5], 1, Name) : null;
-
-        public ImageData Decode(ReadOnlySpan<byte> file)
-        {
-            int w = file[4], h = file[5];
-            var pixels = new float[w * h];
-            for (int i = 0; i < pixels.Length; i++)
-            {
-                pixels[i] = file[6 + i] / 255f;
-            }
-
-            return new ImageData(pixels, 1, h, w);
-        }
-    }
-
-    // Three classes of 8x8 drawings (a bar, a column, a dot) in PGM, PNG, BMP and the registered "tiny" format, some of other sizes.
+    // Three classes of 8x8 drawings (a bar, a column, a dot) in PGM, PNG and BMP, some of other sizes.
     internal static string ImageFolder(string root, int perClass)
     {
         string[] classes = ["bar", "column", "dot"];
@@ -647,7 +588,7 @@ internal abstract partial class Tests
                 }
 
                 string name = Path.Combine(root, classes[c], n % 7 == 6 ? "more" : "", $"{n:D3}");
-                switch (n % 4)
+                switch (n % 3)
                 {
                     case 0:
                         File.WriteAllBytes(name + ".pgm", [.. Encoding.ASCII.GetBytes($"P5\n{size} {size}\n255\n"), .. pixels]);
@@ -655,11 +596,8 @@ internal abstract partial class Tests
                     case 1:
                         File.WriteAllBytes(name + ".png", GrayPng(pixels, size, size));
                         break;
-                    case 2:
-                        File.WriteAllBytes(name + ".bmp", TestBmp(size, size, 24, false, (x, y) => (pixels[y * size + x], pixels[y * size + x], pixels[y * size + x])));
-                        break;
                     default:
-                        File.WriteAllBytes(name + ".tiny", [.. "TINY"u8.ToArray(), (byte)size, (byte)size, .. pixels]);
+                        File.WriteAllBytes(name + ".bmp", TestBmp(size, size, 24, false, (x, y) => (pixels[y * size + x], pixels[y * size + x], pixels[y * size + x])));
                         break;
                 }
             }
@@ -673,15 +611,12 @@ internal abstract partial class Tests
     internal static void LoaderImageFolder(Device device)
     {
         string folder = TempFolder();
-        ImageCodecs.Register(new TinyCodec());
         try
         {
-            Check(ImageCodecs.Names.First() == "tiny" && ImageCodecs.Extensions.Contains(".tiny"), "a registered codec is asked first");
             string root = ImageFolder(Path.Combine(folder, "images"), 24);
             var images = new ImageFolderSource(root, 1, 8, 8);
             Check(images.Classes.SequenceEqual(["bar", "column", "dot"]) && images.Count == 72, $"{images.Count} images of {string.Join(", ", images.Classes)}");
             Check(images.FeatureShape.SequenceEqual([1, 8, 8]) && images.TargetShape.SequenceEqual([3]), "the shapes");
-            Check(images.Files.Select(Path.GetFileName).Count(f => f!.EndsWith(".tiny", StringComparison.Ordinal)) == 18, "the registered format's files are picked up");
 
             // The pixels of one PGM file, and its one-hot class.
             var x = new float[64];
@@ -697,12 +632,6 @@ internal abstract partial class Tests
             ISampleTransform[] transforms = [new RandomFlip(), new RandomShift(1), new RandomRotation(10), new GaussianNoise(0.02f)];
             SameTraining(images, memory, device, "image folder source with transforms", transforms);
 
-            // The colour size of the first image by default, through the registry.
-            var opened = SampleSources.Open("images", root);
-            Check(opened.FeatureShape.SequenceEqual([1, 8, 8]), $"sizes from the first image: [{string.Join(", ", opened.FeatureShape)}]");
-            var colour = (ImageFolderSource)SampleSources.Open("images", root, new Dictionary<string, string> { ["channels"] = "3", ["height"] = "4", ["width"] = "4" });
-            Check(colour.FeatureShape.SequenceEqual([3, 4, 4]), "sizes given as options");
-
             // Unlabelled images, as predict reads them.
             var unlabelled = new ImageFolderSource(images.Files.Take(5).ToList(), 1, 8, 8);
             Check(unlabelled.TargetShape.SequenceEqual([0]) && unlabelled.Labels is null && Dataset.FromSource(unlabelled).Count == 5, "unlabelled images");
@@ -710,19 +639,7 @@ internal abstract partial class Tests
         }
         finally
         {
-            ImageCodecs.Unregister("tiny");
             Directory.Delete(folder, recursive: true);
-        }
-
-        Check(!ImageCodecs.Names.Contains("tiny") && ImageCodecs.Names.SequenceEqual(["png", "jpeg", "bmp", "netpbm"]), "unregistered");
-        try
-        {
-            ImageCodecs.Get("webp");
-            Check(false, "no WebP codec is built in");
-        }
-        catch (NotSupportedException e)
-        {
-            Check(e.Message.Contains("png, jpeg, bmp, netpbm", StringComparison.Ordinal) && e.Message.Contains("ImageCodecs.Register", StringComparison.Ordinal), e.Message);
         }
     }
 
@@ -850,48 +767,6 @@ internal abstract partial class Tests
         AssertClose(fromMemory, fromStream, 1e-6f, "weights trained from a stream and from memory");
     }
 
-    internal static void LoaderRegistry(Device device)
-    {
-        Check(new[] { "csv", "images", "tokens", "npy" }.All(n => SampleSources.Contains(n)) && SampleSources.Contains("CSV"), "the built-ins, any case");
-        string folder = TempFolder();
-        try
-        {
-            string path = Path.Combine(folder, "rows.csv");
-            File.WriteAllText(path, "a;b;c\n1;2;3\n4;5;6\n");
-            using (var csv = (CsvSource)SampleSources.Open("csv", path, new Dictionary<string, string> { ["target"] = "c", ["Delimiter"] = ";", ["ignore"] = "a" }))
-            {
-                AssertClose([2, 5], csv.ToDataset().Features.ToArray(), 0, "csv by name with options");
-            }
-
-            Throws<ArgumentException>(() => SampleSources.Open("csv", path), "csv without a target");
-            Throws<ArgumentException>(() => SampleSources.Open("csv", path, new Dictionary<string, string> { ["target"] = "c", ["colour"] = "red" }), "an unknown option");
-
-            // A source of its own, by name; then removed.
-            SampleSources.Register(TestKinds.SampleSource("Squares", (p, options) =>
-            {
-                int n = int.Parse(options["count"], System.Globalization.CultureInfo.InvariantCulture);
-                float[] x = [.. Enumerable.Range(0, n).Select(i => (float)i)];
-                return Dataset.FromFlat(x, [.. x.Select(v => v * v)], n, ["x"], ["y"]);
-            }));
-            var squares = SampleSources.Open("squares", "", new Dictionary<string, string> { ["count"] = "5" });
-            Check(squares.Count == 5 && squares.ToDataset().GetTargets(4)[0] == 16 && SampleSources.Names.Contains("Squares"), "a registered source");
-            Check(SampleSources.Unregister("SQUARES") && !SampleSources.Unregister("squares") && !SampleSources.Contains("squares"), "unregistered");
-            try
-            {
-                SampleSources.Open("squares", "");
-                Check(false, "an unregistered source opened");
-            }
-            catch (NotSupportedException e)
-            {
-                Check(e.Message.Contains("csv, tokens, npy, images", StringComparison.Ordinal) && e.Message.Contains("SampleSources.Register", StringComparison.Ordinal), e.Message);
-            }
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
     internal static void LoaderTables(Device device)
     {
         // Parquet and its JSON Lines twin: the same numbers, booleans as 1 and 0.
@@ -930,19 +805,6 @@ internal abstract partial class Tests
             AssertClose([0, 1, 0], points.GetTargets(7).ToArray(), 0, "a one-hot class");
             var streamed = Epoch(new DataLoader(TableSamples.Stream(path, ["xy", "z"], ["label"], ["red", "green", "blue"]), 8, device: device));
             SameEpoch(streamed, Epoch(new DataLoader(points, 8, device: device)), "the table as a stream");
-
-            string csv = Path.Combine(folder, "rows.csv");
-            File.WriteAllText(csv, "a,b,y\n1,2,3\n4,5,6\n");
-            SampleSources.Register(TableSamples.Kind);
-            try
-            {
-                var table = SampleSources.Open("table", csv, new Dictionary<string, string> { ["target"] = "y" });
-                AssertClose([1, 2, 4, 5], table.ToDataset().Features.ToArray(), 0, "a CSV table by name, features defaulting to the other columns");
-            }
-            finally
-            {
-                SampleSources.Unregister("table");
-            }
 
             File.WriteAllText(path, "{\"x\": 1, \"y\": 2}\n{\"x\": \"high\", \"y\": 3}\n");
             try

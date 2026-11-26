@@ -18,7 +18,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] MoePlacementGroup =
     [
-        ("moe placement: ExpertPlacements registers resident, offload and auto; auto keeps every expert resident when the model fits the measured free memory and offloads when it does not, the device's experts sized by the free memory or IDRAK_MOE_DEVICE_EXPERTS_MB; IDRAK_MOE_COLD takes copy or cpu; an unknown placement is not registered", MoePlacementRegistry),
+        ("moe placement: auto keeps every expert resident when the model fits the measured free memory and offloads when it does not, the device's experts sized by the free memory or IDRAK_MOE_DEVICE_EXPERTS_MB; IDRAK_MOE_COLD takes copy or cpu", MoePlacementPlans),
         ("moe placement: a layer whose experts are placed apart (caches of 1, 2 and every expert; cold experts copied in or computed by the CPU; routed on the device and on the host) gives the resident layer's results bit for bit (a GPU's cold rows computed by the CPU within 1e-5: the CPU's activation), keeps at most its capacity on the device, keeps the most picked, and routes on the device once every expert is resident", MoePlacementLayer),
         ("moe placement: under a device memory limit below every expert's bytes, the layer with its experts placed apart runs and holds less device memory, the time per token measured cold and warm", MoePlacementLimit),
         ("moe placement: a checkpoint loaded with the experts offloaded (each layer's cache) or lazily (each expert read the first time the router picks it, those never picked never read) predicts the whole load's logits bit for bit", MoePlacementLoad),
@@ -86,69 +86,26 @@ internal abstract partial class Tests
             base.ExpertMatMulKernel(x, offsets, experts, y, rows, k, n);
     }
 
-    internal sealed class PlacementProvider : IDeviceProvider
-    {
-        public string Name => "moe-placement-test";
+    // The device the placement tests run on: a GPU itself, or the test device beside the CPU (a device of its own beside
+    // the CPU: not on the new design yet).
+    private static Device PlacementDevice(Device device) =>
+        device.Type != DeviceType.Cpu ? device : NotOnTheNewDesign.Yet<Device>("A test device beside the CPU");
 
-        public string Summary => "a test device with a memory limit and the mixture-of-experts routing as kernels of its own";
-
-        public DeviceType Type => DeviceType.Other;
-
-        public int Count => 1;
-
-        public Backend Create(int ordinal) => PlacementBackend.Instance;
-
-        public bool IsStarted(int ordinal) => false;
-
-        public bool Listed(int ordinal) => false;
-
-        public string? Note(int ordinal) => "test backend: by name only";
-    }
-
-    // The device the placement tests run on: a GPU itself, or the test device beside the CPU.
-    private static Device PlacementDevice(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return device;
-        }
-
-        if (DeviceProviders.Find("moe-placement-test") is null)
-        {
-            DeviceProviders.Register(new PlacementProvider());
-        }
-
-        return Device.Get("moe-placement-test");
-    }
-
-    internal static void MoePlacementRegistry(Device device)
+    internal static void MoePlacementPlans(Device device)
     {
         _ = device;
-        Check(ExpertPlacements.Names.SequenceEqual([ExpertPlacements.Resident, ExpertPlacements.Offload, ExpertPlacements.Auto])
-              && ExpertPlacements.Origin("auto") == Overrides.Library && ExpertPlacements.Get("OFFLOAD").Name == "offload",
-            $"the library's placements: {string.Join(", ", ExpertPlacements.Names)}");
-        try
-        {
-            ExpertPlacements.Get("everywhere");
-            Check(false, "an unknown placement should be refused");
-        }
-        catch (NotRegisteredException ex)
-        {
-            Check(ex.Message.Contains("not registered", StringComparison.Ordinal) && ex.Message.Contains("offload", StringComparison.Ordinal), ex.Message);
-        }
-
         // 2 layers of 8 experts of 1 MB beside 10 MB of the rest: 26 MB in all.
         const long Mb = 1L << 20;
         ExpertPlacementRequest Request(long? free, long? cache = null, bool cpu = false) => new(Device.Cpu, 2, 8, 2, Mb, 10 * Mb, free, cache, cpu);
-        var fits = ExpertPlacements.Get("auto").Place(Request(26 * Mb));
-        var tight = ExpertPlacements.Get("auto").Place(Request(15 * Mb));
-        var limited = ExpertPlacements.Get("auto").Place(Request(26 * Mb, cache: 4 * Mb, cpu: true));
-        var none = ExpertPlacements.Get("offload").Place(Request(5 * Mb));
+        var fits = new ExpertPlacements.AutoPlacement().Place(Request(26 * Mb));
+        var tight = new ExpertPlacements.AutoPlacement().Place(Request(15 * Mb));
+        var limited = new ExpertPlacements.AutoPlacement().Place(Request(26 * Mb, cache: 4 * Mb, cpu: true));
+        var none = new ExpertPlacements.OffloadPlacement().Place(Request(5 * Mb));
         Check(fits is { Offload: false, DeviceExperts: 8 }, $"auto, the model fits: {fits}");
         Check(tight is { Offload: true, DeviceExperts: 2, ColdOnCpu: false }, $"auto, 5 MB for 16 MB of experts: 2 of each layer's 8 on the device ({tight})");
         Check(limited is { Offload: true, DeviceExperts: 2, ColdOnCpu: true }, $"a limit of 4 MB: 2 a layer, cold ones on the CPU ({limited})");
         Check(none is { Offload: true, DeviceExperts: 1 }, $"no room: still one a layer ({none})");
-        Check(ExpertPlacements.Get("resident").Place(Request(1 * Mb)) is { Offload: false, DeviceExperts: 8 }, "resident keeps every expert on the device");
+        Check(new ExpertPlacements.ResidentPlacement().Place(Request(1 * Mb)) is { Offload: false, DeviceExperts: 8 }, "resident keeps every expert on the device");
         Check(ExpertPlacements.ParseCacheMegabytes("64", "x") == 64 * Mb && ExpertPlacements.ParseCacheMegabytes(" ", "x") is null
               && !ExpertPlacements.ParseCold(null, "x") && !ExpertPlacements.ParseCold("copy", "x") && ExpertPlacements.ParseCold("CPU", "x"), "the settings' values");
         foreach (var (bad, parse) in new (string, Action)[] { ("-3", () => ExpertPlacements.ParseCacheMegabytes("-3", "IDRAK_MOE_DEVICE_EXPERTS_MB")), ("gpu", () => ExpertPlacements.ParseCold("gpu", "IDRAK_MOE_COLD")) })
@@ -329,7 +286,7 @@ internal abstract partial class Tests
         string folder = TempFolder();
         try
         {
-            spec = PretrainedArchitectures.Get("MixtralForCausalLM").Spec(ExpertConfig("MixtralForCausalLM", spec), []);
+            spec = Idrak.Text.Plugins.Mistral.MistralArchitectures.Mixtral().Spec(ExpertConfig("MixtralForCausalLM", spec), []);
             WriteExpertCheckpoint(folder, "MixtralForCausalLM", spec, new RandomWeights(81));
             float[] Predict(PretrainedOptions options, out PretrainedModel model)
             {

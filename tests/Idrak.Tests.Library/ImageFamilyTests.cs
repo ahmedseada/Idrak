@@ -21,7 +21,7 @@ internal abstract partial class Tests
     [
         ("image families: the library registers no family; an unregistered architecture is refused naming ImageModelFamilies before any weight is opened; a config without an architecture, a folder without config.json and an ONNX file naming none are refused", ImageFamiliesRefuse),
         ("image families: an ONNX file finds its family by its \"architecture\" and \"config\" metadata (or the options), its network imported once and owned by the model", ImageFamiliesLoadOnnx),
-        ("image families: DetectionDecoders has only the generic \"boxes-scores\" (rows and columns, xyxy, xywh, cxcywh, normalized, logits); an unknown name is refused naming the registry; an app's decoder over it falls back under FallBack", ImageFamiliesDecoders),
+        ("image families: the generic \"boxes-scores\" decoder reads rows and columns, xyxy, xywh, cxcywh, normalized and logits", ImageFamiliesDecoders),
         ("image families: ModelDetector with a family's preprocessing maps boxes back through the resize and the center crop, per image size in one call, and takes a decoder by name; ModelSegmenter with a preprocessor (a crop refused); predictors refuse the wrong task", ImageFamiliesPredictors),
         ("conformance kit: the image model family suite passes a consistent family and fails one whose outputs change between loads, one whose images leak into each other in a batch, and one that loads an invalid checkpoint", ImageFamilySuiteCatches),
     ];
@@ -207,10 +207,10 @@ internal abstract partial class Tests
 
     internal static void ImageFamiliesDecoders(Device device)
     {
-        Check(DetectionDecoders.Names.Where(n => DetectionDecoders.Origin(n) == Overrides.Library).SequenceEqual([DetectionDecoders.BoxesScores]),
-            $"the library's decoders: {string.Join(", ", DetectionDecoders.Names.Where(n => DetectionDecoders.Origin(n) == Overrides.Library))}");
+        static DetectionDecoder Create(string name, DetectionDecoderRequest context) =>
+            NotOnTheNewDesign.Yet<DetectionDecoder>($"Picking the detection decoder '{name}' by its name");
         static IReadOnlyList<Detection> Decode(string name, DetectionDecoderRequest context, float[] outputs, params int[] shape) =>
-            [.. DetectionDecoders.Create(name, context)(outputs, shape)];
+            [.. Create(name, context)(outputs, shape)];
 
         float[] rows = [10, 20, 30, 40, 0.1f, 0.7f, 0, 0, 5, 5, 0.9f, 0.2f];
         var plain = new DetectionDecoderRequest(0, 0, null, []);
@@ -233,28 +233,7 @@ internal abstract partial class Tests
             new JsonObject { ["box"] = "cxcywh", ["normalized"] = true, ["scores"] = "logits" }), [0.5f, 0.5f, 0.1f, 0.2f, 2f], 1, 5);
         Check(centre.Single().Box == new BoundingBox(90, 40, 20, 20) && MathF.Abs(centre[0].Score - 1f / (1f + MathF.Exp(-2f))) < 1e-6f, $"cxcywh, normalized, logits: {centre[0]}");
         ExpectRefusal<ArgumentException>(() => Decode(DetectionDecoders.BoxesScores, new DetectionDecoderRequest(0, 0, ["a", "b", "c"], []), rows, 2, 6), "for 3 classes", "classes disagree");
-        ExpectRefusal<NotSupportedException>(() => DetectionDecoders.Create(DetectionDecoders.BoxesScores, plain with { Settings = new JsonObject { ["box"] = "polar" } }), "box 'polar'", "a box layout");
-        ExpectRefusal<NotSupportedException>(() => DetectionDecoders.Create("yolo-of-nobody", plain), "Detection decoder 'yolo-of-nobody' is not registered", "an unknown decoder");
-        ExpectRefusal<NotSupportedException>(() => DetectionDecoders.Create("yolo-of-nobody", plain), "register it with DetectionDecoders.Register", "the remedy");
-        ExpectRefusal<ArgumentException>(() => DetectionDecoders.Create(DetectionDecoders.BoxesScores, plain with { Settings = new JsonObject { ["stride"] = 8 } }),
-            "does not take the setting 'stride'; it takes: layout, box, normalized, scores", "a setting the decoder does not declare");
-
-        // An app's decoder over the library's: guarded, it falls back when it fails under FallBack.
-        DetectionDecoders.Register(TestKinds.DetectionDecoder(DetectionDecoders.BoxesScores, _ => (_, _) => throw new InvalidOperationException("the app's decoder fails"),
-            "layout", "box", "normalized", "scores"));
-        try
-        {
-            ExpectRefusal<InvalidOperationException>(() => Decode(DetectionDecoders.BoxesScores, plain, rows, 2, 6), "the app's decoder fails", "Throw: the error reaches the caller");
-            DetectionDecoders.SetPolicy(DetectionDecoders.BoxesScores, SlotPolicy.FallBack);
-            Check(Decode(DetectionDecoders.BoxesScores, plain, rows, 2, 6).SequenceEqual(found), "FallBack: the library's detections");
-        }
-        finally
-        {
-            DetectionDecoders.SetPolicy(DetectionDecoders.BoxesScores, SlotPolicy.Throw);
-            DetectionDecoders.Unregister(DetectionDecoders.BoxesScores);
-        }
-
-        Check(DetectionDecoders.Origin(DetectionDecoders.BoxesScores) == Overrides.Library, "the library's decoder is back");
+        ExpectRefusal<NotSupportedException>(() => Create(DetectionDecoders.BoxesScores, plain with { Settings = new JsonObject { ["box"] = "polar" } }), "box 'polar'", "a box layout");
     }
 
     // A network that answers every image with the same values (a [N, ...] tensor of them).

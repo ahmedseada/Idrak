@@ -47,21 +47,20 @@ internal abstract partial class Tests
             var sequences = RandomSequences(24, 71);
             var options = new FineTuningOptions { Rank = 4, Alpha = 8, LearningRate = 3e-3f, WeightDecay = 0.01f, BatchTokens = 160, Epochs = 2, Seed = 3 };
 
-            // The default is AdamW with a cosine schedule: the same run when both are given explicitly.
+            // The default is AdamW: the same run when it is given explicitly.
             var builtIn = TrainTiny(folder, device, sequences, options);
             var explicitRun = TrainTiny(folder, device, sequences, options with
             {
                 Optimizer = ps => new AdamW(ps, options.LearningRate, weightDecay: options.WeightDecay),
-                Scheduler = LearningRateSchedules.Factory(LearningRateSchedules.Cosine, new LearningRateScheduleSettings(options.WarmupFraction, options.MinLearningRate)),
             });
             Check(builtIn.Losses.Count >= 6 && builtIn.Losses.Count == explicitRun.Losses.Count, $"steps {builtIn.Losses.Count} and {explicitRun.Losses.Count}");
-            CloseByNorm([.. builtIn.Losses], [.. explicitRun.Losses], 1e-5f, "explicit AdamW and cosine: losses");
-            CloseByNorm(builtIn.Adapters, explicitRun.Adapters, 1e-5f, "explicit AdamW and cosine: adapters");
+            CloseByNorm([.. builtIn.Losses], [.. explicitRun.Losses], 1e-5f, "explicit AdamW: losses");
+            CloseByNorm(builtIn.Adapters, explicitRun.Adapters, 1e-5f, "explicit AdamW: adapters");
             bool recorded = builtIn.Trace.Contains("recorded one training step as a graph");
             Check(recorded == explicitRun.Trace.Contains("recorded one training step as a graph"), "an explicit AdamW is recorded as the default is");
 
             // An optimizer of one's own: recorded steps (where the device records them) give what ordinary steps give.
-            var sgd = options with { Optimizer = ps => new Sgd(ps, 0.05f, momentum: 0.9f), Scheduler = LearningRateSchedules.Factory(LearningRateSchedules.WarmupStableDecay, new LearningRateScheduleSettings(0.1f, 0f, 0.3f)) };
+            var sgd = options with { Optimizer = ps => new Sgd(ps, 0.05f, momentum: 0.9f) };
             var sgdGraphs = TrainTiny(folder, device, sequences, sgd);
             var sgdOrdinary = TrainTiny(folder, device, sequences, sgd with { CudaGraphs = false });
             Check(recorded == sgdGraphs.Trace.Contains("recorded one training step as a graph") && (!recorded || sgdGraphs.Trace.Contains("replayed")),
@@ -79,32 +78,6 @@ internal abstract partial class Tests
             Check(!host.Trace.Contains("recorded one training step"), $"the CPU update is not recorded:\n{host.Trace}");
             CloseByNorm([.. builtIn.Losses], [.. host.Losses], 2e-3f, "AdamW on the CPU through FineTuningOptions.Optimizer: losses");
             CloseByNorm(builtIn.Adapters, host.Adapters, 2e-3f, "AdamW on the CPU through FineTuningOptions.Optimizer: adapters");
-
-            if (device.Type != DeviceType.Cpu)
-            {
-                return;
-            }
-
-            // The built-in schedules' rates, step by step (10 steps, 2 of warm-up).
-            float[] Rates(Func<Optimizer, int, ILearningRateScheduler> schedule)
-            {
-                using var p = Tensor.Persistent([0f], [1], Device.Cpu, requiresGrad: true);
-                using var optimizer = new Sgd([p], 1f);
-                var s = schedule(optimizer, 10);
-                var rates = new float[10];
-                for (int i = 0; i < 10; i++)
-                {
-                    rates[i] = optimizer.LearningRate;
-                    s.Step();
-                }
-
-                return rates;
-            }
-
-            AssertClose([1 / 3f, 2 / 3f, 1f, 0.875f, 0.75f, 0.625f, 0.5f, 0.375f, 0.25f, 0.125f], Rates(LearningRateSchedules.Factory(LearningRateSchedules.Linear, new LearningRateScheduleSettings(0.2f))), 1e-6f, "linear schedule");
-            AssertClose([1 / 3f, 2 / 3f, 1f, 1f, 1f, 1f, 1f, 1f, 1f, 1f], Rates(LearningRateSchedules.Factory(LearningRateSchedules.Constant, new LearningRateScheduleSettings(0.2f))), 1e-6f, "constant schedule");
-            AssertClose([1 / 3f, 2 / 3f, 1f, 1f, 1f, 1f, 1f, 2 / 3f, 1 / 3f, 0f], Rates(LearningRateSchedules.Factory(LearningRateSchedules.WarmupStableDecay, new LearningRateScheduleSettings(0.2f, 0f, 0.3f))), 1e-6f, "warm-up, stable, decay");
-            Check(OptimizerKinds.Names.All(n => OptimizerKinds.Factory(n, new OptimizerSettings(1e-3f)) is not null), "every named optimizer");
         }
         finally
         {
@@ -122,7 +95,7 @@ internal abstract partial class Tests
 
             // A loss that is never finite: every step's update is skipped, so the adapters keep their starting values (those
             // of a run whose learning rate is 0) and none of them is NaN.
-            var nan = TestKinds.FineTuningLoss(input => FineTuningLosses.TokenCrossEntropy.Compute(input) * float.NaN);
+            var nan = FineTuningLosses.Of("a test's own", input => FineTuningLosses.TokenCrossEntropy.Compute(input) * float.NaN);
             var skipped = TrainTiny(folder, device, sequences, options with { Loss = nan });
             var still = TrainTiny(folder, device, sequences, options with { LearningRate = 0f, WeightDecay = 0f });
             Check(skipped.Losses.Count >= 3 && skipped.Losses.All(float.IsNaN), $"every step's loss is NaN: {string.Join(", ", skipped.Losses)}");

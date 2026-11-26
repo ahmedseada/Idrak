@@ -28,7 +28,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static readonly (string Name, Action<Device> Run)[] WeightPlacementGroup =
     [
-        ("weight placement: device, split, stream and auto plan from the request (the layers the free memory holds beside the fixed weights, the working memory and each layer's cache; the user's count; stream refused where the device cannot and the model does not fit; auto keeps a model that fits on the device); the names are registered, an unknown one is not; device layers parse", PlacementPlans),
+        ("weight placement: device, split, stream and auto plan from the request (the layers the free memory holds beside the fixed weights, the working memory and each layer's cache; the user's count; stream refused where the device cannot and the model does not fit; auto keeps a model that fits on the device); device layers parse", PlacementPlans),
         ("weight placement: layers follow the free memory at step boundaries (more on the device when it frees, fewer under pressure, a user's count kept), their weights and caches moved, the run going on with the all-CPU logits; FollowMemory off keeps them; lazy layers built where they then belong", LayersFollowMemory),
     ];
 
@@ -101,18 +101,18 @@ internal abstract partial class DesktopTests : Tests
             new(gpu, 10, LayerBytes: 100, FixedBytes: 50, LayerCacheBytes: 10, WorkingBytes: 40, free, asked, stream);
         Check(Request(50 + 40 + 3 * 110 + 109).LayersThatFit == 3 && Request(10).LayersThatFit == 0 && Request(null).LayersThatFit == 10 && Request(5000).Fits,
             "the layers that fit: room after the fixed weights and the working memory, a layer and its cache each");
-        var device_ = WeightPlacements.Get("device").Place(Request(200));
-        var split = WeightPlacements.Get("SPLIT").Place(Request(50 + 40 + 4 * 110));
-        var asked = WeightPlacements.Get("split").Place(Request(50 + 40 + 4 * 110, asked: 7));
+        var device_ = new WeightPlacements.DevicePlacement().Place(Request(200));
+        var split = new WeightPlacements.SplitPlacement().Place(Request(50 + 40 + 4 * 110));
+        var asked = new WeightPlacements.SplitPlacement().Place(Request(50 + 40 + 4 * 110, asked: 7));
         Check(device_ is { DeviceLayers: 10, Stream: false, Split: false } && split is { DeviceLayers: 4, Layers: 10, Split: true } && asked is { DeviceLayers: 7, Split: true }
               && split.ToString().StartsWith("split: 4 of 10 layers on cpu, 6 computed by the CPU", StringComparison.Ordinal),
             $"device all; split as the memory holds ({split}); split as asked ({asked})");
-        var streamed = WeightPlacements.Get("stream").Place(Request(300, stream: true));
-        Check(streamed is { Stream: true, DeviceLayers: 10 } && WeightPlacements.Get("stream").Place(Request(5000)) is { Stream: false, DeviceLayers: 10 }, $"stream: {streamed}");
+        var streamed = new WeightPlacements.StreamPlacement().Place(Request(300, stream: true));
+        Check(streamed is { Stream: true, DeviceLayers: 10 } && new WeightPlacements.StreamPlacement().Place(Request(5000)) is { Stream: false, DeviceLayers: 10 }, $"stream: {streamed}");
         bool refused = false;
         try
         {
-            WeightPlacements.Get("stream").Place(Request(300));
+            new WeightPlacements.StreamPlacement().Place(Request(300));
         }
         catch (NotSupportedException)
         {
@@ -120,21 +120,10 @@ internal abstract partial class DesktopTests : Tests
         }
 
         Check(refused, "stream where the device cannot and the model does not fit: refused");
-        Check(WeightPlacements.Get("auto").Place(Request(5000)) is { DeviceLayers: 10, Split: false, Stream: false }
-              && WeightPlacements.Get("auto").Place(Request(300)) is { DeviceLayers: 1, Split: true }
-              && WeightPlacements.Get("auto").Place(Request(5000, asked: 3)) is { DeviceLayers: 3, Split: true },
+        Check(new WeightPlacements.AutoPlacement().Place(Request(5000)) is { DeviceLayers: 10, Split: false, Stream: false }
+              && new WeightPlacements.AutoPlacement().Place(Request(300)) is { DeviceLayers: 1, Split: true }
+              && new WeightPlacements.AutoPlacement().Place(Request(5000, asked: 3)) is { DeviceLayers: 3, Split: true },
             "auto: the device when it fits, a split where the device cannot stream, the user's count when given");
-        bool unknown = false;
-        try
-        {
-            WeightPlacements.Get("nowhere");
-        }
-        catch (NotSupportedException e)
-        {
-            unknown = e.Message.Contains("not registered", StringComparison.Ordinal);
-        }
-
-        Check(unknown && WeightPlacements.Names.Order(StringComparer.Ordinal).SequenceEqual(["auto", "device", "split", "stream"]), "the names; an unknown one is not registered");
         bool bad = false;
         try
         {
@@ -158,7 +147,7 @@ internal abstract partial class DesktopTests : Tests
             Check(WeightPlacements.Follow(r, 3) == 5 && WeightPlacements.Follow(r with { AvailableBytes = 0 }, 3) == 2 && WeightPlacements.Follow(r with { AvailableBytes = 100 }, 3) == 3
                   && WeightPlacements.Follow(r with { AvailableBytes = 0 }, 0) == 0 && WeightPlacements.Follow(r with { AvailableBytes = long.MaxValue / 4 }, 3) == 10
                   && WeightPlacements.Follow(r with { DeviceLayers = 4 }, 3) == 3 && WeightPlacements.Follow(r with { AvailableBytes = null }, 3) == 3
-                  && WeightPlacements.Get("device").Adjust(r, 3) == 3 && WeightPlacements.Get("split").Adjust(r, 3) == 5 && WeightPlacements.Get("auto").Adjust(r, 3) == 5,
+                  && ((IWeightPlacement)new WeightPlacements.DevicePlacement()).Adjust(r, 3) == 3 && new WeightPlacements.SplitPlacement().Adjust(r, 3) == 5 && new WeightPlacements.AutoPlacement().Adjust(r, 3) == 5,
                 "grow by what the room holds, shrink by what the pressure asks, keep a user's count; device keeps its layers");
         }
 
@@ -298,25 +287,6 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
-    private sealed class StagingProvider : IDeviceProvider
-    {
-        public string Name => "staging-test";
-
-        public string Summary => "a test device whose storages all count as offloaded";
-
-        public DeviceType Type => DeviceType.Other;
-
-        public int Count => 1;
-
-        public Backend Create(int ordinal) => StagingBackend.Instance;
-
-        public bool IsStarted(int ordinal) => false;
-
-        public bool Listed(int ordinal) => false;
-
-        public string? Note(int ordinal) => "test backend: by name only";
-    }
-
     private static void StagingAllocatesNothing(Device device)
     {
         _ = device;
@@ -325,12 +295,7 @@ internal abstract partial class DesktopTests : Tests
             return;
         }
 
-        if (DeviceProviders.Find("staging-test") is null)
-        {
-            DeviceProviders.Register(new StagingProvider());
-        }
-
-        var staging = Device.Get("staging-test");
+        var staging = NotOnTheNewDesign.Yet<Device>("A test device beside the CPU");
         var backend = StagingBackend.Instance;
         using var first = new Linear(8, 8, device: staging, random: new Random(1));
         using var second = new Linear(8, 8, device: staging, random: new Random(2));

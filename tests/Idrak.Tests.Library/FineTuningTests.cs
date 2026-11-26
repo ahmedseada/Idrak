@@ -33,7 +33,7 @@ internal abstract partial class Tests
         ("fine-tuning: agent transcripts through the chat template, assistant-only tokens, LoRA training, PEFT adapters, merged export", AgentFineTuning),
         ("fine-tuning: a conversation too long for the maximum length keeps its whole answer (the user message is shortened, its start kept); an answer longer than the budget alone gives the end cut at once; rows encode on all cores in order", LongMessageKeepsAnswer),
         ("fine-tuning: an adapter folder's manifest round-trips, names a local base model by its full path, and loads the model with the adapter merged", ManifestRoundTrip),
-        ("fine-tuning options: AdamW and cosine given explicitly match the default; another optimizer's recorded steps match its ordinary ones; an optimizer that cannot be recorded runs ordinary steps; the built-in schedules", OptimizerAndSchedule),
+        ("fine-tuning options: AdamW given explicitly matches the default; another optimizer's recorded steps match its ordinary ones; an optimizer that cannot be recorded runs ordinary steps", OptimizerAndSchedule),
         ("fine-tuning options: the token cross-entropy as a loss delegate trains as the fused default does (with gradient accumulation)", LossHook),
         ("fine-tuning options: a step whose loss is not finite drops its gradients (the adapters keep their values); past NonFiniteSteps in a row the run stops", NonFiniteLossSkipped),
         ("fine-tuning options: DPO, conservative DPO, ORPO and SimPO match their formulas for fixed log-probabilities (and DPO its gradient)", PreferenceFormulas),

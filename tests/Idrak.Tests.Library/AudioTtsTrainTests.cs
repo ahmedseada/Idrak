@@ -194,23 +194,10 @@ internal abstract partial class Tests
     internal static IdrakAudioTtsModel CreateToneTts(string folder, IPretrainedTokenizer tokenizer, Device device, int seed = 7) =>
         (IdrakAudioTtsModel)SpeechSynthesisModels.Create(folder, ToneTtsSpec(), tokenizer, new SpeechCreateOptions { Device = device, Seed = seed });
 
-    // A vocoder of another mel layout, to be refused.
-    internal sealed class OtherMelsVocoder : IVocoder
-    {
-        public string Name => "tts-test-other-mels";
-
-        public int SampleRate => 16000;
-
-        public int Mels => 7;
-
-        public AudioData Synthesize(Tensor logMel, Device device) => new(new float[160], 1, 16000);
-    }
-
     internal static void AudioTtsTrainCreate(Device device)
     {
         string root = TempFolder("tts-create");
         IdrakAudioPlugin.Register();
-        Vocoders.Register(TestKinds.Vocoder("tts-test-other-mels", _ => new OtherMelsVocoder()));
         try
         {
             var (_, texts) = ToneSpeech(Path.Combine(root, "data"), 6, 11);
@@ -286,13 +273,11 @@ internal abstract partial class Tests
             Check(own.Length == audio.Length && !own.Samples.AsSpan().SequenceEqual(audio.Samples), "the app's vocoder (4 iterations) is used when the call names none");
             Check(model.Speak(text, new SpeechSynthesisOptions { Vocoder = "griffin-lim" }).Audio.Samples.AsSpan().SequenceEqual(audio.Samples), "a named vocoder over the app's");
             model.Vocoder = null;
-            ThrowsNaming<NotSupportedException>(() => model.Speak(text, new SpeechSynthesisOptions { Vocoder = "tts-test-other-mels" }), "a vocoder of 7 mels", "reads 7 mel bands", "makes 80");
             ThrowsNaming<NotSupportedException>(() => model.Speak(text, new SpeechSynthesisOptions { Vocoder = "no-such-vocoder" }), "an unregistered vocoder", "No vocoder 'no-such-vocoder'");
             ThrowsNaming<ArgumentException>(() => model.Speak(text, new SpeechSynthesisOptions { Voice = "0" }), "a voice", "one voice");
         }
         finally
         {
-            Vocoders.Unregister("tts-test-other-mels");
             IdrakAudioPlugin.Unregister();
             Directory.Delete(root, recursive: true);
         }
