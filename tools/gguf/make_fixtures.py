@@ -2,9 +2,7 @@
 
     python tools/gguf/make_fixtures.py tests/Idrak.Tests/data/gguf
 
-quants.gguf holds, for every supported ggml type, a tensor of random blocks ("q.<TYPE>") and the float32 values the
-gguf package's reference dequantizer gives for them ("expected.<TYPE>"). The model fixtures (tiny Llama and Qwen3
-models, each as a GGUF file and as the Hugging Face folder it corresponds to) are written by the same script.
+The model fixtures: tiny Llama and Qwen3 models, each as a GGUF file and as the Hugging Face folder it corresponds to.
 """
 import json
 import os
@@ -15,40 +13,6 @@ import numpy as np
 import gguf
 from gguf import GGMLQuantizationType as T
 from gguf import quants
-
-TYPES = ["F16", "BF16", "Q4_0", "Q4_1", "Q5_0", "Q5_1", "Q8_0", "Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K", "IQ4_NL", "IQ4_XS"]
-
-
-def random_blocks(qtype, blocks, rng):
-    """Random block bytes whose reference dequantization is finite (random half-float scales can be inf / nan)."""
-    values, size = gguf.GGML_QUANT_SIZES[qtype]
-    out = []
-    while len(out) < blocks:
-        raw = rng.integers(0, 256, size=size, dtype=np.uint8)
-        deq = quants.dequantize(raw.reshape(1, size), qtype).astype(np.float32)
-        if np.all(np.isfinite(deq)) and np.max(np.abs(deq)) < 1e6:
-            out.append(raw)
-    return np.stack(out).reshape(blocks * size)
-
-
-def quants_file(folder):
-    rng = np.random.default_rng(7)
-    writer = gguf.GGUFWriter(os.path.join(folder, "quants.gguf"), "llama")
-    for name in TYPES:
-        qtype = T[name]
-        values, size = gguf.GGML_QUANT_SIZES[qtype]
-        blocks = max(1, 1024 // values)
-        raw = random_blocks(qtype, blocks, rng)
-        expected = quants.dequantize(raw.reshape(1, blocks * size), qtype).astype(np.float32).reshape(-1)
-        writer.add_tensor(f"q.{name}", raw.reshape(1, blocks * size), raw_dtype=qtype)
-        writer.add_tensor(f"expected.{name}", expected)
-    writer.add_string("test.string", "héllo")
-    writer.add_array("test.numbers", [1, 2, 3])
-    writer.write_header_to_file()
-    writer.write_kv_data_to_file()
-    writer.write_tensors_to_file()
-    writer.close()
-
 
 # ------------------------------------------------------------------ tiny models
 
@@ -213,7 +177,6 @@ def unpermute(w, n_head):
 def main():
     folder = sys.argv[1]
     os.makedirs(folder, exist_ok=True)
-    quants_file(folder)
     model(folder, "tiny-llama", "llama", None)
     model(folder, "tiny-qwen3-q8", "qwen3", T.Q8_0)
 
