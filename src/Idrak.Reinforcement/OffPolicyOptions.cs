@@ -72,7 +72,7 @@ public sealed record OffPolicyOptions
     /// <summary>The share of the run's steps over which ε falls linearly from its start to its end (0: the end at once). <c>IDRAK_RL_DQN_EPSILON_FRACTION</c>.</summary>
     public float EpsilonFraction { get; init; } = 0.1f;
 
-    /// <summary>The optimizer, by name in <c>OptimizerKinds</c>. <c>IDRAK_RL_OPTIMIZER</c>.</summary>
+    /// <summary>The optimizer, by name. <c>IDRAK_RL_OPTIMIZER</c>.</summary>
     public string Optimizer { get; init; } = "adam";
 
     /// <summary>The optimizer's learning rate, the base of the schedule. <c>IDRAK_RL_DQN_LEARNING_RATE</c>.</summary>
@@ -84,7 +84,7 @@ public sealed record OffPolicyOptions
     /// <summary>The largest global gradient norm an update applies (0: no clip). <c>IDRAK_RL_DQN_MAX_GRAD_NORM</c>.</summary>
     public float MaxGradientNorm { get; init; } = 10f;
 
-    /// <summary>The learning-rate schedule over the run's updates, a <c>LearningRateSchedules</c> name. <c>IDRAK_RL_SCHEDULE</c>.</summary>
+    /// <summary>The learning-rate schedule over the run's updates, by name. <c>IDRAK_RL_SCHEDULE</c>.</summary>
     public string Schedule { get; init; } = LearningRateSchedules.Constant;
 
     /// <summary>The schedule's settings; no warm-up by default. <c>IDRAK_RL_WARMUP</c> sets its warm-up share.</summary>
@@ -184,7 +184,7 @@ public sealed record OffPolicyOptions
             : throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"{name}={text} is not a whole number of at least {min}."));
     }
 
-    // The settings that cannot work, refused before a run starts (the names are checked by their registries).
+    // The settings that cannot work, refused before a run starts (picking by name is not on the new design yet).
     internal void Validate()
     {
         static void Check(bool ok, string name, object value, string rule)

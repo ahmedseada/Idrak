@@ -118,12 +118,12 @@ public interface IAudioOutput : IDisposable
 }
 
 /// <summary>
-/// A way to play sound: an operating system's audio interface (registered in <see cref="AudioPlaybacks"/>). It loads what
+/// A way to play sound: an operating system's audio interface. It loads what
 /// it needs at run time and says why it cannot run where it cannot.
 /// </summary>
 public interface IAudioPlayback
 {
-    /// <summary>The name it is registered under ("winmm", "alsa", "aaudio").</summary>
+    /// <summary>Its name ("winmm", "alsa", "aaudio").</summary>
     string Name { get; }
 
     /// <summary>Whether it can play on this machine; <paramref name="reason"/> says why not (another operating system, the audio library missing).</summary>
@@ -157,8 +157,8 @@ public static class AudioPlaybacks
 
     /// <summary>The first playback that can run on this machine.</summary>
     /// <exception cref="NotSupportedException">
-    /// None can; the message gives each one's reason. Always for now: the playbacks to pick from were registered, which is
-    /// not on the new design yet.
+    /// None can; the message gives each one's reason. Always for now: picking among the playbacks is not on the new design
+    /// yet.
     /// </exception>
     public static IAudioPlayback ForThisMachine()
     {
@@ -177,8 +177,7 @@ public static class AudioPlaybacks
             + "or write the sound to a file (AudioEncoders).");
     }
 
-    // The playbacks were registered (AudioPlaybacks.Register) and the first that can run picked among them, which is not on the new
-    // design yet.
+    // Picking the first playback that can run is not on the new design yet.
     private static IEnumerable<IAudioPlayback> Registered() =>
         throw new NotSupportedException("The audio playbacks to pick from were registered, which is not on the new design yet.");
 }

@@ -97,8 +97,7 @@ internal sealed class TracedFontMaker : IFontMaker
         return options.Count == 0 ? Defaults : new Settings(options);
     }
 
-    // The outline tracers were registered (OutlineTracers) and picked by name; a font map was applied through the mapper
-    // the font maps named (FontMaps, FontMappers): not on the new design yet. The defaults are reached directly: the
+    // Picking the outline tracer by name, and the mapper the font maps name, is not on the new design yet. The defaults are reached directly: the
     // "contour" tracer (FontMakerRequest.Tracer's default) and the "opentype" mapper (FontMaps.Mapper's default); another
     // name stops.
     private static readonly ContourTracer Contour = new();

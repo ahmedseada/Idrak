@@ -16,7 +16,7 @@ public sealed record SpeechCreateOptions
     /// <summary>The seed the weights are drawn from.</summary>
     public int Seed { get; init; }
 
-    /// <summary>The architecture (a <c>SpeechFamilies</c> name); null: the spec's "architecture" (or its "architectures"[0]).</summary>
+    /// <summary>The architecture (a family's name); null: the spec's "architecture" (or its "architectures"[0]).</summary>
     public string? Architecture { get; init; }
 
     /// <summary>Write into a folder that already holds files (they are replaced); otherwise such a folder is refused.</summary>
@@ -24,34 +24,30 @@ public sealed record SpeechCreateOptions
 }
 
 /// <summary>
-/// Loads speech recognition models through their registered family (<c>SpeechFamilies</c>), as
-/// <c>ImageModels.Load</c> loads image models: a model folder (config.json and safetensors weights, or any folder a
-/// registered checkpoint format reads), its architecture from config.json's "architectures", the tensors opened one at a
-/// time as the family makes its layers.
+/// Loads speech recognition models through their family, as <c>ImageModels.Load</c> loads image models: a model folder
+/// (config.json and safetensors weights), its architecture from config.json's "architectures", the tensors opened one at a
+/// time as the family makes its layers. Finding the family by the architecture name is not on the new design yet.
 /// </summary>
 /// <remarks>
 /// <code>
-/// AudioPlugins.RegisterAll();                                         // Idrak.Audio.Plugins (or the app) brings the family
 /// using var recognizer = SpeechModels.Load("models/whisper-tiny");    // config.json, model.safetensors, tokenizer.json, preprocessor_config.json
 /// var text = recognizer.Transcribe(AudioCodecs.Decode("talk.wav")).Text;
 /// </code>
 /// </remarks>
 public static class SpeechModels
 {
-    // The speech families were registered (SpeechFamilies) and a checkpoint's found by its architecture name, which is not on
-    // the new design yet.
+    // Finding a checkpoint's speech family by its architecture name is not on the new design yet.
     private static ISpeechFamily FamilyNamed(string architecture) =>
         throw new NotSupportedException($"The speech family '{architecture}' by name is not on the new design yet.");
 
-    // The checkpoint formats were registered (CheckpointFormats) and the one of a path found among them, which is not on the
-    // new design yet.
+    // Finding the checkpoint format of a path is not on the new design yet.
     private static ICheckpointFormat FormatFor(string path) =>
         throw new NotSupportedException($"{path}: a checkpoint format found by the path is not on the new design yet.");
 
     /// <summary>
     /// Reads the speech model at <paramref name="path"/>: a model folder, or its config.json or a .safetensors file in it.
     /// </summary>
-    /// <exception cref="NotSupportedException">No family is registered under the architecture; the message names <c>SpeechFamilies</c>.</exception>
+    /// <exception cref="NotSupportedException">Picking the architecture's family by its name is not on the new design yet.</exception>
     /// <exception cref="InvalidDataException">The checkpoint names no architecture, or its family cannot read it.</exception>
     public static ISpeechRecognizer Load(string path, SpeechModelOptions? options = null)
     {
@@ -76,13 +72,13 @@ public static class SpeechModels
     }
 
     /// <summary>
-    /// A speech model that did not exist: the family registered under the spec's architecture makes it from
+    /// A speech model that did not exist: the family of the spec's architecture makes it from
     /// <paramref name="spec"/> (<see cref="ICreatableSpeechFamily.Create"/>: its tensors drawn from the seed, its config.json and
     /// other files), which is written into <paramref name="folder"/> (config.json with "architectures", model.safetensors
     /// in float32, the tokenizer as tokenizer.json when it is an <see cref="IPretrainedTokenizer"/> and the family wrote none, the
     /// family's files) and loaded from there, so it is a model like any other: it transcribes, trains and saves (plan 21, S6).
     /// </summary>
-    /// <exception cref="NotSupportedException">No family is registered under the architecture, or it makes no models from a description.</exception>
+    /// <exception cref="NotSupportedException">Picking the architecture's family by its name is not on the new design yet, or it makes no models from a description.</exception>
     /// <exception cref="InvalidDataException">The spec names no architecture.</exception>
     /// <exception cref="IOException">The folder holds files and <see cref="SpeechCreateOptions.Overwrite"/> is off.</exception>
     public static ISpeechRecognizer Create(string folder, JsonObject spec, ITokenizer tokenizer, SpeechCreateOptions? options = null)

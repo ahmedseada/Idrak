@@ -45,8 +45,8 @@ public sealed record OffPolicyResult(IReadOnlyList<OffPolicySummary> History, lo
 /// (<see cref="ReplayBuffer"/>), and every <see cref="OffPolicyOptions.TrainEvery"/> rounds makes
 /// <see cref="OffPolicyOptions.GradientSteps"/> updates on mini-batches drawn from it: the loss of
 /// <see cref="OffPolicyOptions.Algorithm"/> (<see cref="QLosses"/>: "dqn", a Huber loss against a target network, double
-/// Q-learning as an option), its gradient clipped and stepped by an optimizer made through <c>OptimizerKinds</c>, the
-/// learning rate following a <c>LearningRateSchedules</c> schedule over the run's updates. The target network takes the
+/// Q-learning as an option), its gradient clipped and stepped by an optimizer made by name, the
+/// learning rate following a schedule by name over the run's updates. The target network takes the
 /// online one's weights every <see cref="OffPolicyOptions.TargetEvery"/> steps (copied, or Polyak-averaged by
 /// <see cref="OffPolicyOptions.Tau"/>). ε falls linearly from <see cref="OffPolicyOptions.EpsilonStart"/> to
 /// <see cref="OffPolicyOptions.EpsilonEnd"/> over <see cref="OffPolicyOptions.EpsilonFraction"/> of the run.
@@ -275,16 +275,16 @@ public sealed class OffPolicyTrainer : IDisposable
     /// <exception cref="NotSupportedException">Always for now: the loss was picked by name, which is not on the new design yet.</exception>
     public OffPolicyResult Train(CancellationToken cancellationToken = default) => TrainAsync(cancellationToken).AsTask().GetAwaiter().GetResult();
 
-    // The optimizers were registered (OptimizerKinds) and picked by name, which is not on the new design yet.
+    // Picking the optimizers by name is not on the new design yet.
     private static Optimizer OptimizerNamed(string name, OptimizerSettings settings, IReadOnlyList<Tensor> parameters) =>
         throw new NotSupportedException($"The optimizer '{name}' by name is not on the new design yet.");
 
-    // The learning-rate schedules were registered (LearningRateSchedules) and picked by name, which is not on the new design yet.
+    // Picking the learning-rate schedules by name is not on the new design yet.
     private static ILearningRateScheduler ScheduleNamed(string name, LearningRateScheduleSettings settings, IOptimizer optimizer, int steps) =>
         throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");
 
-    // The Q-learning losses were registered (QLosses) and picked by the run's algorithm, made with its settings (DoubleQ,
-    // Huber, LossOptions): not on the new design yet.
+    // Picking the Q-learning losses by the run's algorithm, made with its settings (DoubleQ, Huber, LossOptions), is not
+    // on the new design yet.
     private static IQLoss LossNamed(OffPolicyOptions o) => throw new NotSupportedException($"The Q-learning loss '{o.Algorithm}' by name is not on the new design yet.");
 
     /// <summary>Runs the rounds (see the type); awaits the environments that wait.</summary>

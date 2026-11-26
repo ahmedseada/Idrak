@@ -273,8 +273,8 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     private const int PromptWidth = 110;
 
     /// <summary>
-    /// The instructions the agent gets by default with every registered coding language (<see cref="CodingLanguages.All"/>):
-    /// <see cref="SystemPrompt"/> of <c>CodingLanguages.Registered</c>.
+    /// The instructions the agent gets by default with every coding language (<see cref="CodingLanguages.All"/>):
+    /// <see cref="SystemPrompt"/> of every language (none on the new design yet).
     /// </summary>
     public static string DefaultSystemPrompt => SystemPrompt([]);
 
@@ -737,7 +737,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     }
 
     // A template that is not known: calls are read with the common "arguments" key, and the correction's example is generic.
-    // A template's tool-call format by name was detected through the registered formats (ToolCallFormats): not on the new
+    // A template's tool-call format by name was detected through the formats (ToolCallFormats): not on the new
     // design yet.
     private static string ToolCallFormatNameOf(IChatTemplate template) =>
         throw new NotSupportedException($"The tool-call format of {template.GetType().Name} by name is not on the new design yet.");

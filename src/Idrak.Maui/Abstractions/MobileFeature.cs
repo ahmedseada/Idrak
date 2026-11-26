@@ -26,12 +26,12 @@ public enum PhoneNeeds
 /// <summary>Where a feature stands: built, or placed in the menu ahead of the phase that builds it.</summary>
 public enum FeatureState
 {
-    /// <summary>Built: its page does what <c>IKind.Summary</c> says.</summary>
+    /// <summary>Built: its page does what its summary says.</summary>
     Ready = 0,
 
     /// <summary>
     /// Not built yet: it keeps its name, title and place in the menu, and its page (the library's placeholder) says what
-    /// it will do (<see cref="IMobileFeature.Coming"/>) and need. Its phase replaces the registration's page and view model
+    /// it will do (<see cref="IMobileFeature.Coming"/>) and need. Its phase replaces the placeholder's page and view model
     /// under the same name, so the menu does not change.
     /// </summary>
     Planned = 1,
@@ -54,9 +54,8 @@ public enum FeatureGroup
 }
 
 /// <summary>
-/// One feature of the app: a page and its view model, listed in the app's menu. Registered by its
-/// <c>IKind.Name</c> in <see cref="MobileFeatures"/>; the library registers its own as defaults and an app adds its
-/// own or replaces one by name. A feature says what it needs from the phone (<see cref="Needs"/>) and from the library
+/// One feature of the app: a page and its view model, listed in the app's menu by its name
+/// (<see cref="MobileFeatures"/>: listing the features is not on the new design yet). A feature says what it needs from the phone (<see cref="Needs"/>) and from the library
 /// (<see cref="Packages"/>, <see cref="ModelFamilies"/>), so the app asks for a permission or a model before it opens.
 /// </summary>
 public interface IMobileFeature
@@ -75,7 +74,7 @@ public interface IMobileFeature
 
     /// <summary>
     /// Where it stands in the menu: lower first, then by title. A feature that sets none (<see cref="MobileFeatures.Unordered"/>)
-    /// takes the place of the library's feature of its name when there is one (so a feature registered over a planned one
+    /// takes the place of the library's feature of its name when there is one (so a feature of a planned one's name
     /// keeps its place), and otherwise comes after every ordered one.
     /// </summary>
     int Order => MobileFeatures.Unordered;
@@ -89,7 +88,7 @@ public interface IMobileFeature
     /// <summary>Where it is listed among the labs (<see cref="FeatureGroup.Device"/> unless it says).</summary>
     FeatureGroup Group => FeatureGroup.Device;
 
-    /// <summary>A few words for a lab's card ("Live speech to text"); "" uses <c>IKind.Summary</c> (the default).</summary>
+    /// <summary>A few words for a lab's card ("Live speech to text"); "" uses its summary (the default).</summary>
     string Tagline => "";
 
     /// <summary>The name of its icon among Idrak's (<c>Idrak.Maui.Theme.IdrakIcons</c>: "chat", "mic"); "" draws <see cref="Glyph"/> (the default).</summary>
@@ -101,7 +100,7 @@ public interface IMobileFeature
     /// <summary>The library's packages it uses ("Idrak.Gpu"), for listings.</summary>
     IReadOnlyList<string> Packages { get; }
 
-    /// <summary>The model families it needs registered ("qwen3"); empty when none.</summary>
+    /// <summary>The model families it needs ("qwen3"); empty when none.</summary>
     IReadOnlyList<string> ModelFamilies { get; }
 
     /// <summary>A new view model for the page, its services taken from <paramref name="services"/>.</summary>
@@ -119,16 +118,15 @@ public interface IMobileFeature
 }
 
 /// <summary>
-/// The app's features, by name (ignoring case). The library's: "devices" (the devices found, the Vulkan driver loaded in
+/// The app's features. The library's: "devices" (the devices found, the Vulkan driver loaded in
 /// the app's own process with its measured width, subgroup sizes and memory budget, CPU features, memory in use) and
 /// "models" (pull a Hugging Face model into the app's storage with its progress, list the models with their sizes,
 /// remove one, the storage's free space), "chat" (a model of the store chats, its answer streamed with its tokens per
 /// second; the families are the app's to register), "transcribe" (speech into text, live), "speak" (text read aloud on the
 /// speaker, played as each sentence is made), "audio-process" (a recording through a pipeline of the library's
 /// processors, heard before and after), "ocr" (a photo read by a vision-language model of the store, streamed; the vision
-/// families are the app's) and "image" (transforms and scan profiles on a photo, cold and warm). Register
-/// another with <c>Register</c>; one under a library name shadows the library's, which <c>Unregister</c>
-/// brings back. <see cref="Enabled"/> lists them in menu order without those the settings turn off.
+/// families are the app's) and "image" (transforms and scan profiles on a photo, cold and warm). Listing
+/// the features or finding one by name is not on the new design yet. <see cref="Enabled"/> lists them in menu order without those the settings turn off.
 /// </summary>
 public static class MobileFeatures
 {
@@ -169,7 +167,7 @@ public static class MobileFeatures
     public const string Search = "search";
 
     /// <summary>
-    /// Every registered feature in menu order (<see cref="Place"/>, then the title): the ready and the planned
+    /// Every feature in menu order (<see cref="Place"/>, then the title): the ready and the planned
     /// (<see cref="IMobileFeature.State"/>) alike.
     /// </summary>
     public static IReadOnlyList<IMobileFeature> All =>
@@ -177,7 +175,7 @@ public static class MobileFeatures
 
     /// <summary>
     /// Where <paramref name="feature"/> stands in the menu: its <see cref="IMobileFeature.Order"/>, or, when it sets none,
-    /// the library's feature of its name's (a ready feature registered over a planned one keeps its place), else
+    /// the library's feature of its name's (a ready feature of a planned one's name keeps its place), else
     /// <see cref="Unordered"/>.
     /// </summary>
     public static int Place(IMobileFeature feature)
@@ -187,8 +185,7 @@ public static class MobileFeatures
         return order == Unordered && LibraryFeature(feature.Name) is { } library ? library.Order : order;
     }
 
-    // The features were registered (MobileFeatures.Register: the library's as defaults, an app's over them) and listed or
-    // found by name, which is not on the new design yet.
+    // Listing the features or finding one by name is not on the new design yet.
     private static IEnumerable<IMobileFeature> Registered() => throw new NotSupportedException("The app's registered features are not on the new design yet.");
 
     private static IMobileFeature? LibraryFeature(string name) => throw new NotSupportedException($"The library's feature '{name}' by name is not on the new design yet.");

@@ -10,7 +10,7 @@ using Idrak.Text.Retrieval.Abstractions;
 namespace Idrak.Text.Retrieval;
 
 /// <summary>
-/// Searchable chunks: keyword search (any <see cref="IKeywordIndex"/> registered in <see cref="KeywordIndexes"/>, BM25 by
+/// Searchable chunks: keyword search (any <see cref="IKeywordIndex"/>, BM25 by
 /// default), vector search (<see cref="TextEncoder"/> +
 /// <see cref="VectorIndex"/>, or any <see cref="IEmbedder"/> with any <see cref="IVectorStore"/>), or both merged with
 /// reciprocal rank fusion. Create one with <see cref="Create"/>.
@@ -21,7 +21,7 @@ public sealed class RetrievalIndex : ISearchableRetriever
 
     private readonly KeywordChoice? _keywords;                     // the keyword index asked for, as saved
 
-    // The keyword indexes were registered (KeywordIndexes) and picked by name: not on the new design yet.
+    // Picking the keyword indexes by name is not on the new design yet.
     internal static IKeywordIndex KeywordIndexNamed(string name, IEnumerable<string> texts, KeywordIndexOptions options) => throw new NotSupportedException($"The keyword index '{name}' by name is not on the new design yet.");
 
     internal RetrievalIndex(IReadOnlyList<Chunk> chunks, KeywordChoice? keywords, TextEncoder? encoder, VectorIndex? vectors, (int K, int Depth)? fusion,
@@ -159,7 +159,7 @@ public sealed class RetrievalIndex : ISearchableRetriever
         var settings = new JsonObject
         {
             ["format"] = Format,
-            // BM25 as before ("bm25": {k1, b}); another keyword index by name in "keywords", read back through KeywordIndexes.
+            // BM25 as before ("bm25": {k1, b}); another keyword index by name in "keywords" (read back by name: not on the new design yet).
             ["bm25"] = _keywords is { } bm25 && IsPlainBm25(bm25) ? new JsonObject { ["k1"] = bm25.Options.K1, ["b"] = bm25.Options.B } : null,
             ["vectors"] = Vectors is not null,
             ["store"] = Store is not null,
@@ -289,7 +289,7 @@ internal readonly record struct KeywordChoice(string Name, KeywordIndexOptions O
 
 /// <summary>
 /// Builds a <see cref="RetrievalIndex"/>: the chunks (<see cref="Add"/> or <see cref="Documents"/>), then keyword
-/// search (<see cref="Bm25"/>, or any registered index with <see cref="Keywords"/>), vector search (<see cref="Embeddings"/>), or both, which also needs <see cref="Fusion"/>.
+/// search (<see cref="Bm25"/>, or any index with <see cref="Keywords"/>), vector search (<see cref="Embeddings"/>), or both, which also needs <see cref="Fusion"/>.
 /// </summary>
 public sealed class RetrievalIndexBuilder
 {
@@ -327,7 +327,7 @@ public sealed class RetrievalIndexBuilder
     }
 
     /// <summary>
-    /// Keyword search with the index registered as <paramref name="name"/> in <see cref="KeywordIndexes"/> ("bm25", or one
+    /// Keyword search with the index named <paramref name="name"/> in <see cref="KeywordIndexes"/> ("bm25", or one
     /// of your own), built with <paramref name="options"/> (the defaults when null).
     /// </summary>
     /// <exception cref="NotSupportedException">No keyword index has that name.</exception>

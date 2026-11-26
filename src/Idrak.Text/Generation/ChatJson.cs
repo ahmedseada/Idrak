@@ -29,7 +29,7 @@ public static class ChatJson
         return json;
     }
 
-    // A message's content was written through the registered part kinds (ChatParts): not on the new design yet.
+    // A message's content was written through the part kinds (ChatParts): not on the new design yet.
     private static JsonNode ContentToJson(IReadOnlyList<ChatPart> parts) => throw new NotSupportedException("A message's content written through the chat part kinds is not on the new design yet.");
 
     /// <summary>

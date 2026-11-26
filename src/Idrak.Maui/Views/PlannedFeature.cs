@@ -24,7 +24,7 @@ public sealed class PlannedFeature : IMobileFeature
     /// <param name="coming">What it will do once built, one line.</param>
     /// <param name="needs">What it will need from the phone.</param>
     /// <param name="packages">The library's packages it will use.</param>
-    /// <param name="modelFamilies">The model families it will need registered; none when null.</param>
+    /// <param name="modelFamilies">The model families it will need; none when null.</param>
     /// <param name="group">Where All labs lists it.</param>
     /// <param name="icon">The name of its icon among Idrak's ("" draws the glyph).</param>
     /// <param name="tagline">A few words for its card ("" uses the summary).</param>

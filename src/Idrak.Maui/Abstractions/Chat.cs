@@ -9,7 +9,7 @@ namespace Idrak.Maui.Abstractions;
 /// <param name="Model">Its name as the user knows it ("Qwen/Qwen3-0.6B").</param>
 /// <param name="Path">Its folder (config.json and weights) or its .gguf file.</param>
 /// <param name="Device">The device: "auto" (<see cref="Device.Default"/>), "cpu", "vulkan:0" and the like.</param>
-/// <param name="KeyValueFormat">The key/value cache's format (a registered layout), or null for the library's (float32).</param>
+/// <param name="KeyValueFormat">The key/value cache's format (a layout), or null for the library's (float32).</param>
 /// <param name="Context">The context window in tokens (capped by the model's own).</param>
 public sealed record ChatLoadRequest(string Model, string Path, string Device, string? KeyValueFormat, int Context)
 {
@@ -112,12 +112,12 @@ public sealed class ChatLease : IDisposable
 /// The Chat lab's models: a model from the model store loaded once through the <see cref="IModelService"/> (its "chat"
 /// host: shared, kept for the keep-alive, released on memory pressure) on the device of the settings, its weights in the
 /// format they ask for, after checking that it fits the memory the device has now. The families are the app's: a model
-/// whose family is not registered fails as the library does (<c>NotRegisteredException</c>).
+/// whose family cannot be found (by its name: not on the new design yet) fails as the library does.
 /// </summary>
 public interface IChatModelService
 {
     /// <summary>What <paramref name="request"/>'s model needs against what its device has now (reads its config; loads nothing).</summary>
-    /// <exception cref="NotSupportedException">The model's family is not registered.</exception>
+    /// <exception cref="NotSupportedException">The model's family cannot be found (by its name: not on the new design yet).</exception>
     ChatMemoryEstimate Estimate(ChatLoadRequest request);
 
     /// <summary>
@@ -126,7 +126,7 @@ public interface IChatModelService
     /// loaded with its own chat template. Runs on a worker thread.
     /// </summary>
     /// <exception cref="ModelDoesNotFitException">It does not fit the memory measured (nothing was loaded).</exception>
-    /// <exception cref="NotSupportedException">Its family is not registered.</exception>
+    /// <exception cref="NotSupportedException">Its family cannot be found (by its name: not on the new design yet).</exception>
     /// <exception cref="InvalidOperationException">It has no chat template, or the device cannot start.</exception>
     Task<ChatLease> AcquireAsync(ChatLoadRequest request, CancellationToken cancellationToken = default);
 }

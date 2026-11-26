@@ -6,7 +6,7 @@ namespace Idrak.Networking.Selection;
 /// <summary>
 /// "fastest" (plan 23): for a pair of ranks, the first transport available between them in the order fastest first
 /// (in-process simulation, peer copies, host-staged copies, shared memory, RDMA, a direct cable, TCP, datagrams), then any
-/// other registered transport in registration order; the reason names the transport's own.
+/// other transport in order; the reason names the transport's own.
 /// </summary>
 internal sealed class FastestSelector : ITransportSelector
 {

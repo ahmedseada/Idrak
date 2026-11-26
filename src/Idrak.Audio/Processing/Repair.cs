@@ -11,7 +11,7 @@ namespace Idrak.Audio;
 // on made signals. The live stages allocate when opened and nothing per block, give the block back in place, report
 // their look-ahead as Latency (their output that many samples late: silence first) and give the tail when flushed, so
 // blocks of any size give Apply's samples bit for bit. No option key is a processor's name (an item after a comma that
-// names an option of the step before it joins that step; a registered name starts a step of its own).
+// names an option of the step before it joins that step; a name starts a step of its own).
 internal static class RepairProcessors
 {
     public const string DenoiseLive = "denoise-live", SpectralGate = "spectral-gate", Declick = "declick", Declip = "declip", Deess = "deess", Dereverb = "dereverb";

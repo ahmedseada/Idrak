@@ -25,8 +25,8 @@ public interface IVocoder
 
 /// <summary>
 /// The vocoders' names. Built in (Idrak.Audio): "griffin-lim" (<see cref="GriffinLimVocoder"/>: no weights, the phases
-/// recovered by iteration, made for any mel layout), reached directly; a vocoder by another name was registered and
-/// picked by it, which is not on the new design yet.
+/// recovered by iteration, made for any mel layout), reached directly; picking a vocoder by another name is not on the
+/// new design yet.
 /// </summary>
 public static class Vocoders
 {

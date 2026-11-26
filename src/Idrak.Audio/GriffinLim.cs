@@ -33,7 +33,7 @@ public sealed record GriffinLimOptions
 /// </summary>
 public sealed class GriffinLimVocoder : IVocoder
 {
-    /// <summary>The registry name, "griffin-lim".</summary>
+    /// <summary>The name, "griffin-lim".</summary>
     public const string DefaultName = "griffin-lim";
 
     private static readonly ConcurrentDictionary<(int Bins, int Mels, int Rate, float Min, float Max, string Scale, string Norm), float[]> PseudoInverses = new();

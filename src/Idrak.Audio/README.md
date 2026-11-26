@@ -7,17 +7,17 @@ Built so far (phase S1):
 
 - `AudioData`: planar float32 samples `[channels, samples]` in [-1, 1] at a sample rate; a 16-bit file's samples stay
   as bytes until the floats are read (`TryGetSamples16`), `ToMono`, `Channel`, `Pad`, `Slice`.
-- `AudioCodecs` and `AudioEncoders`: registries of sound formats by name (`Register`, `Unregister`, `Names`, `Get`,
-  `Default`, `Origin`, `SetPolicy`), `AudioCodecs.ReadInfo` / `Decode` / `Load`, `AudioEncoders.Save`.
+- The sound formats (`IAudioCodec`, `IAudioEncoder`), each reached directly; finding one by a file's extension or first
+  bytes (`AudioCodecs`, `AudioEncoders`) is not on the new design yet.
 - "wav": RIFF/WAVE, PCM 8 to 32 bits, float 32 and 64, WAVE_FORMAT_EXTENSIBLE, chunks before `data` skipped, a data
   chunk larger than the file cut to the file; RF64 and compressed variants refused by name. The encoder writes PCM 8 to
   32 bits and float 32, extensible past two channels or 16 bits.
 - "flac" (decode only): 4 to 32 bits, every subframe kind (constant, verbatim, fixed, LPC), wasted bits, the stereo
   pairs; an ID3v2 tag before the stream skipped; frames found by their sync code and decoded in parallel, every CRC
   checked (a damaged frame refused by number). `FlacOptions`: `KeepCutEnd` (a file cut inside its last frame keeps its
-  whole frames, as a WAV cut short does), `CheckCrc`, `FramesPerTask`. MP3 and MP2 decoding (`Mp3Codec`, a port of minimp3) and MP3 encoding (`Mp3Encoder`, written from the ISO specifications; `Mp3EncodeOptions`, the IDRAK_MP3_* variables) are built in too. Ogg and AAC would be plug-ins (`AudioCodecs.Register`).
+  whole frames, as a WAV cut short does), `CheckCrc`, `FramesPerTask`. MP3 and MP2 decoding (`Mp3Codec`, a port of minimp3) and MP3 encoding (`Mp3Encoder`, written from the ISO specifications; `Mp3EncodeOptions`, the IDRAK_MP3_* variables) are built in too. Ogg and AAC are not built in.
 
-Live sound (plans 30 and 34): `AudioCaptures`, a registry of `IAudioCapture`s that record from the system's input devices,
+Live sound (plans 30 and 34): `IAudioCapture`s that record from the system's input devices,
 "winmm" (Windows' waveIn), "alsa" (Linux's libasound) and "aaudio" (Android's libaaudio, API 26 and later) built in,
 each loading the system's own audio library at run time (`ForThisMachine` picks the first that can run, `Devices` lists
 the inputs); `AudioPlaybacks`, its mirror for sound out: `IAudioPlayback`s ("winmm" through waveOut, "alsa", "aaudio")
@@ -29,14 +29,14 @@ recognizer as the sound comes: the open segment read again every `StepSeconds`, 
 (`LiveCommitPolicies`, "agreement" built in), a segment ended by a pause, by `WindowSeconds` or by the end, quiet never
 transcribed. `LiveTranscriptionOptions` holds every setting.
 
-Voices (phase S9, route B): `VoiceConverters` (a registry of converter families, none in the library; OpenVoice is
+Voices (phase S9, route B): `VoiceConverters` (converter families: none in the library; OpenVoice is
 the plug-in `Idrak.Audio.Plugins.OpenVoice`), `VoiceStores` with the built-in "folder" store (`FolderVoiceStore`: one folder per
 voice under `IDRAK_VOICES`, else voices/ under `IDRAK_CACHE` or `~/.cache/idrak`, with voice.json holding the consent,
 the clips' SHA-256s, seconds and agreements, and embedding.safetensors), and `VoicedSynthesizer`, which speaks
 `SpeechSynthesisOptions.Voice` as a checkpoint's speaker first, else as an installed voice (converted, a checkpoint of
 its own, or a named speaker).
 
-Splitting (phase S7): `AudioSplitters`, a registry of `IAudioSplitter`s with "silence" (the pieces between pauses: each
+Splitting (phase S7): `IAudioSplitter`s, with "silence" (the pieces between pauses: each
 frame's energy against the loudest frame's, in one pass over each channel; pauses shorter than `MinSilenceSeconds` stay
 inside a piece, `PadSeconds` of silence kept on both sides, a piece over `MaxSeconds` cut again at its quietest frame)
 and "seconds" (pieces of a fixed length) built in; `AudioSplitOptions` holds every setting. `SpeechSynthesisOptions` and
@@ -44,13 +44,13 @@ and "seconds" (pieces of a fixed length) built in; `AudioSplitOptions` holds eve
 
 Speech text (plan 22): the front end a synthesizer's tokenizer runs before it looks symbols up, in `Idrak.Audio.Abstractions`:
 `ITextRomanizer` and `TextRomanizers` (a script's text to the Latin letters a checkpoint was trained on; none built in:
-Idrak.Audio.Plugins' VITS family registers "uroman-arabic"; `For` picks the one covering a text's script),
+Idrak.Audio.Plugins' VITS family has "uroman-arabic"; picking the one covering a text's script is not on the new design yet),
 `ITextPhonemizer` and `TextPhonemizers` (text to the phonemes a checkpoint reads; none built in, as the library starts no
 outside program: Idrak.Audio.Plugins' "espeak-ng" runs the espeak-ng program the user installs; `KeepingPunctuation`
 phonemizes between the marks). What a checkpoint's text front end needs is read before it is loaded:
 `SpeechSynthesisModels.TextNeeds` (from a family that implements `ITextFrontEndSynthesisFamily`, VITS's tokenizer_config.json)
 gives `SpeechTextNeeds` (phonemes and their language, romanised text), and `SpeechTextNeeds.Missing` says, family-neutrally,
-what of it is not registered here, so an app lists such a model with its reason. `Subtitles` writes a transcription's segments as
+what of it is not available here, so an app lists such a model with its reason. `Subtitles` writes a transcription's segments as
 SubRip or WebVTT.
 
 Layers (`Idrak.Audio.Layers`, plan 22): the generative speech layers the VITS and OpenVoice plug-ins used to carry,
@@ -62,22 +62,22 @@ and `Reverse`), `PosteriorEncoder` (a spectrogram's latents' means and log-stdde
 piece), `HifiGanDiscriminators` with `HifiGanDiscriminatorConfig` (VITS's multi-period and HiFi-GAN's multi-scale
 discriminators, created from a seed or read from `discriminator.safetensors` or a release's `D_*.pth`, saved back),
 `HifiGanVocoder` (HiFi-GAN as an `IVocoder` read from a checkpoint folder under transformers' names, SpeechT5's and
-FastSpeech 2's vocoders among them, the log-mel standardized with the checkpoint's mean and scale; an app registers one
-by name with `HifiGanVocoder.RegisterFolder`, so any synthesizer that speaks through a vocoder can use it). With
+FastSpeech 2's vocoders among them, the log-mel standardized with the checkpoint's mean and scale; picking one by name for a
+synthesizer is not on the new design yet). With
 them `AdversarialLosses` (the least-squares GAN losses and feature matching), `MonotonicAlignment` (the search and its
 durations, on the host in float as VITS adds) and `DifferentiableLogMel` (the log-mel of sound as tensor operations, so a
 mel loss reaches the generator). A padded batch goes through them with `PaddedSequences` masks; each block the trainer
 may checkpoint runs through `Checkpointing.RunBlock`, so `ActivationMemory.CheckpointBlocks()` reaches it.
 
-Cleaning: `AudioCleaners`, a registry of `IAudioCleaner` stages a recording goes through before it is used, with
+Cleaning: `IAudioCleaner` stages a recording goes through before it is used, with
 "highpass" (a second-order Butterworth high-pass: DC and rumble out), "denoise" (spectral gating: each frequency's noise
 floor read from its quietest frames and gated off through the STFT and back, at most `DenoiseFloorDecibels`), "trim"
 (the silence at both ends cut, a pad kept) and "normalize" (the speech level brought to `TargetDecibels`, the peak under
 `PeakCeiling`) built in; `AudioCleaningOptions` holds every setting, and `Settings` for a plug-in's stage (a model that
-isolates the voice registers under the same contract). The speech trainers run `SpeechTrainingOptions.Cleaning` over
+isolates the voice implements the same contract). The speech trainers run `SpeechTrainingOptions.Cleaning` over
 every utterance before its features (cached under the cleaning), and `idrak data audio --clean` writes cleaned files.
 
-Processing (plan 31): `AudioProcessors`, a registry of `IAudioProcessor`s, and `AudioPipeline`, a chain of them written
+Processing (plan 31): `IAudioProcessor`s and `AudioPipeline`, a chain of them written
 as text the way images have `ImageTransformPipeline`: `highpass=80, denoise=1.5 quantile=0.2, trim, normalize=-20 peak=0.9`
 (steps comma-separated, each a name, an optional value and space-separated `key=value` options; JSON as a string or an
 array of strings and `{"name", "value", ...}` objects). A processor declares its inputs (`AudioProcessorParameter`: kind,
@@ -94,9 +94,8 @@ on highpass, lowpass and bandpass); the dynamics "gate",
 integrated, to a target LUFS under a true-peak ceiling) and "peaknorm" (whole recording); noise and repair,
 "denoise-live" (spectral gating against a running noise floor), "declick" (least-squares AR fill), "declip" (clipped
 runs rebuilt above the clip level), "deess" (a split-band compressor on the sibilance band) and "dereverb" (late-reverb
-spectral suppression) live, "spectral-gate" (a per-bin gate over a noise profile) whole recording. After a comma a registered
-name starts a new step, so an option is best written after a space (`normalize=-20 peak=0.9`). Anyone adds one with
-`AudioProcessors.Register`:
+spectral suppression) live, "spectral-gate" (a per-bin gate over a noise profile) whole recording. After a comma a processor's
+name starts a new step, so an option is best written after a space (`normalize=-20 peak=0.9`). A processor of one's own implements `IAudioProcessor`; naming it in a pipeline is not on the new design yet:
 
 ```csharp
 sealed class Gain : ILiveAudioProcessor          // live: block by block (IRecordingAudioProcessor needs the whole recording)
@@ -118,8 +117,7 @@ sealed class Gain : ILiveAudioProcessor          // live: block by block (IRecor
     }
 }
 
-AudioProcessors.Register(new Gain());
-var clean = AudioPipeline.Parse("highpass=80, gain=6").Apply(recording);
+// AudioPipeline.Parse("highpass=80, gain=6") finds each step's processor by its name: not on the new design yet
 ```
 
 `SpeechTrainingOptions.Processing` runs a pipeline over every utterance after the cleaning stages (its text in the

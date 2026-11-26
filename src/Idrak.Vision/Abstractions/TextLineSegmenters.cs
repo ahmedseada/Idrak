@@ -63,9 +63,8 @@ public sealed record LineSegmentationOptions
 
 /// <summary>
 /// Cuts a page image into its text lines: each line's place and pixels, top to bottom, with the page's skew undone. The
-/// library's is "projection" (<see cref="ProjectionLineSegmenter"/>); register another with
-/// <c>TextLineSegmenters.Register</c> (a learned layout model, a column-aware one), and readers and apps use it by
-/// name.
+/// library's is "projection" (<see cref="ProjectionLineSegmenter"/>); another (a learned layout model, a column-aware
+/// one) is an app's. Picking one by its name is not on the new design yet.
 /// </summary>
 public interface ITextLineSegmenter
 {
@@ -77,11 +76,9 @@ public interface ITextLineSegmenter
 }
 
 /// <summary>
-/// The text line segmenters, by name (ignoring case). The library's: <see cref="Projection"/> (the page binarized, its skew
+/// The text line segmenters. The library's: <see cref="Projection"/> (the page binarized, its skew
 /// measured by the sharpest row profile and undone, rows with ink grouped into bands, marks joined to their line, each band
-/// cut out with padding). Register another with <c>Register</c>; one under the library's name takes its place, which
-/// stays behind it (see <c>SetPolicy</c>: an app's segmenter may fall back on the library's per page, or run beside
-/// it and be compared).
+/// cut out with padding). Picking one by its name is not on the new design yet.
 /// </summary>
 public static class TextLineSegmenters
 {
@@ -90,7 +87,7 @@ public static class TextLineSegmenters
 
     /// <summary>
     /// The lines of <paramref name="page"/>, cut by the library's projection segmenter (<see cref="ProjectionLineSegmenter"/>,
-    /// reached directly: the segmenters were registered and picked by name, which is not on the new design yet).
+    /// reached directly: picking the segmenters by name is not on the new design yet).
     /// </summary>
     public static PageLines Segment(ImageData page, LineSegmentationOptions? options = null) =>
         new ProjectionLineSegmenter().Find(page, options ?? new LineSegmentationOptions());

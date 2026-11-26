@@ -3,7 +3,7 @@
 
 namespace Idrak.Networking.Training;
 
-/// <summary>The "all-reduce" stop agreement (Plan 27, R7), registered in <see cref="StopAgreements"/>.</summary>
+/// <summary>The "all-reduce" stop agreement (Plan 27, R7).</summary>
 internal sealed class AllReduceStopAgreementProvider : IStopAgreementProvider
 {
     public string Name => "all-reduce";

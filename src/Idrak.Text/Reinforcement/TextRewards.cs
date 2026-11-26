@@ -345,8 +345,7 @@ internal sealed class RewardExpression
 {
     private readonly List<(IRewardFunction Reward, float Weight)> _terms = [];
 
-    // The rewards were registered (RewardFunctions) and the metrics too (TuningMetrics), and a term picked one by its name,
-    // made with the term's own options: not on the new design yet.
+    // Picking a term's reward or metric by its name, made with the term's own options, is not on the new design yet.
     private static IRewardFunction RewardNamed(string name, IReadOnlyDictionary<string, string> options) =>
         throw new NotSupportedException($"The reward or metric '{name}' by name is not on the new design yet.");
 

@@ -17,7 +17,7 @@ namespace Idrak.Maui;
 /// through the library's <see cref="ImageReader"/>, after the Chat lab's measured check (<see cref="ChatModelService"/>):
 /// the decoder's weights by their format, the vision part's (the checkpoint's tensors beyond the decoder's, in float32)
 /// and the attention cache for the context, against the memory the device reports now (within the settings' limit).
-/// Family-neutral: the architecture is the one config.json names, read by whichever vision family the app registered.
+/// Family-neutral: the architecture is the one config.json names, read by its vision family (found by that name: not on the new design yet).
 /// </summary>
 public sealed class VisionReaderService : IVisionReaderService
 {
@@ -45,7 +45,7 @@ public sealed class VisionReaderService : IVisionReaderService
     }
 
     /// <summary>
-    /// The architecture a model folder's config.json names (its first "architectures" entry), when a registered vision
+    /// The architecture a model folder's config.json names (its first "architectures" entry), when a vision
     /// family reads it; null otherwise (no config.json, a text model, or a family the app did not register).
     /// </summary>
     public static string? VisionArchitecture(string folder)

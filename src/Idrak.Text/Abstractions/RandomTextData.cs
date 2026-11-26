@@ -5,8 +5,8 @@ namespace Idrak.Text.Abstractions;
 
 /// <summary>
 /// Random text in one language, a line at a time, for drawing training pages when there is no text to draw (plan 18):
-/// the words, word shapes, numbers and punctuation a reader of that language meets, not meaningful sentences. Register
-/// one with <c>RandomTextSources.Register</c>; <see cref="PooledTextSource"/> is one made from word pools.
+/// the words, word shapes, numbers and punctuation a reader of that language meets, not meaningful sentences.
+/// <see cref="PooledTextSource"/> is one made from word pools.
 /// </summary>
 public interface IRandomTextSource
 {

@@ -1,7 +1,6 @@
 # Idrak.Network
 
-The real transports and the collective algorithms of an Idrak cluster (plan 23): every transport registered in
-`Transports` speaks the same wire format (`WireFormat`: a 36-byte header, a keyed hello first), and the collectives run
+The real transports and the collective algorithms of an Idrak cluster (plan 23): every transport speaks the same wire format (`WireFormat`: a 36-byte header, a keyed hello first), and the collectives run
 over any of them (the simulator's `sim` included), or over a group routed per pair across several.
 
 | Part | What it does |

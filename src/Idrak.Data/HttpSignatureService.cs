@@ -9,8 +9,7 @@ using System.Net.Http.Headers;
 namespace Idrak.Data;
 
 /// <summary>
-/// The library's signature service for "http" and "https" (registered in <c>SignatureServices</c>, one under each
-/// scheme): RFC 3161's and RFC 6960's HTTP bindings (a timestamp or a status request POSTed with its media type) and
+/// The library's signature service for "http" and "https": RFC 3161's and RFC 6960's HTTP bindings (a timestamp or a status request POSTed with its media type) and
 /// RFC 5280's distribution points (a revocation list fetched), through the base library's HTTP client, one for the
 /// process. The answer is read up to the request's limit and within its timeout. Asked only for what the app named or
 /// turned on.

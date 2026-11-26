@@ -206,9 +206,9 @@ public interface ICreatableAudioFamily : IAudioFamily
 }
 
 /// <summary>
-/// What the audio-language families share: whether a checkpoint has an audio part. The library has no family: a family is
-/// an application of these contracts, brought by an app or a plug-in (Idrak.Audio.Plugins' IdrakAudio family is one).
-/// The families were registered by architecture name and a checkpoint's found by its name, which is not on the new design yet.
+/// What the audio-language families share: whether a checkpoint has an audio part. The library has no family: a family is an
+/// application of these contracts, brought by an app or a plug-in (Idrak.Audio.Plugins' IdrakAudio family is one). Finding a
+/// checkpoint's family by its name is not on the new design yet.
 /// </summary>
 public static class AudioFamilies
 {

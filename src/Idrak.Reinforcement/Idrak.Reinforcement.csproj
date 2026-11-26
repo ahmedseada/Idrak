@@ -6,7 +6,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Reinforcement</PackageId>
-    <Description>Reinforcement learning for Idrak (no dependencies beyond Idrak): the general algorithms on Idrak.Abstraction's reinforcement contracts (environments, policies, rewards, advantage estimators, policy losses), registered by name, with no environment, task or model family in it.</Description>
+    <Description>Reinforcement learning for Idrak (no dependencies beyond Idrak): the general algorithms on Idrak.Abstraction's reinforcement contracts (environments, policies, rewards, advantage estimators, policy losses), with no environment, task or model family in it.</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -7,7 +7,7 @@ namespace Idrak.Imaging;
 
 /// <summary>
 /// The library's image transforms (<see cref="ImageTransforms"/>), Pillow's operations byte for byte
-/// (<see cref="PillowImageOps"/>), registered by <c>LibraryRegistrations</c> when the registry is first used.
+/// (<see cref="PillowImageOps"/>).
 /// </summary>
 internal static class LibraryImageTransforms
 {

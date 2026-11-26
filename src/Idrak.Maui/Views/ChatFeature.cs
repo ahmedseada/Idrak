@@ -10,7 +10,7 @@ namespace Idrak.Maui.Views;
 /// <summary>
 /// The library's "chat" feature: a model from the model store chats, its answer streamed with its token count and tokens
 /// per second, the first answer after a load (cold) reported apart from the warm ones. The families it reads are the app's
-/// to register (each text plug-in by its own Register call); a model whose family is not registered is refused, named. Its
+/// (finding one by its name is not on the new design yet); a model whose family cannot be found is refused, named. Its
 /// view model is the app's one (<c>UseIdrak</c> registers it once), so a conversation goes on while another page is open.
 /// </summary>
 public sealed class ChatFeature : IMobileFeature

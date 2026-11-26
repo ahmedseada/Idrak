@@ -30,7 +30,7 @@ public sealed record AudioAugmentationOptions
     /// <summary>"noise": the highest signal-to-noise ratio drawn, dB.</summary>
     public double MaxSnrDb { get; init; } = 40;
 
-    /// <summary>"noise": sound files a stretch of noise is drawn from (any format a registered codec reads); empty for white noise.</summary>
+    /// <summary>"noise": sound files a stretch of noise is drawn from (any format a codec reads); empty for white noise.</summary>
     public IReadOnlyList<string> NoiseFiles { get; init; } = [];
 
     /// <summary>"spec-mask": time masks per utterance (SpecAugment).</summary>

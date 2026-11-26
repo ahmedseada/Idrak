@@ -33,7 +33,7 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
     public IImageAttentionRule Attention { get; } = attention ?? throw new ArgumentNullException(nameof(attention));
 
     /// <summary>
-    /// How a chat image's bytes become pixels: by default the registered codecs, then the EXIF orientation
+    /// How a chat image's bytes become pixels: by default the codecs, then the EXIF orientation
     /// (<see cref="ChatImageDecoder.Decode(ChatImage)"/>, as transformers' <c>load_image</c>).
     /// </summary>
     public Func<ChatImage, ImageData> Decode { get; init; } = ChatImageDecoder.Decode;

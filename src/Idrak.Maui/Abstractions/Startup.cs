@@ -36,9 +36,8 @@ public sealed record StartupContext(IServiceProvider Services, Page? Host);
 
 /// <summary>
 /// One piece of the app's real start-up work, run once when the window first shows (<see cref="StartupRun.RunAsync"/>) and
-/// shown by the splash while it runs: its <see cref="Title"/> is the splash's line. Registered by its
-/// <c>IKind.Name</c> in <see cref="StartupSteps"/>; the library's read the CPU, start the GPU and make the tabs ahead,
-/// and an app adds its own or replaces one by name.
+/// shown by the splash while it runs: its <see cref="Title"/> is the splash's line. The library's read the CPU, start the GPU and
+/// make the tabs ahead (<see cref="StartupSteps"/>: listing them is not on the new design yet).
 /// </summary>
 public interface IStartupStep
 {
@@ -80,17 +79,16 @@ public static class StartupSteps
     /// <summary>The tabs' views made ahead, one a turn of the UI thread.</summary>
     public const string Sections = "sections";
 
-    /// <summary>Every registered step in order (<see cref="IStartupStep.Order"/>, then the name).</summary>
+    /// <summary>Every step in order (<see cref="IStartupStep.Order"/>, then the name).</summary>
     public static IReadOnlyList<IStartupStep> All => [.. Registered().OrderBy(s => s.Order).ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)];
 
-    // The steps were registered (StartupSteps.Register: the library's as defaults, an app's over them) and listed, which
-    // is not on the new design yet.
+    // Listing the steps is not on the new design yet.
     private static IEnumerable<IStartupStep> Registered() => throw new NotSupportedException("The app's registered start-up steps are not on the new design yet.");
 }
 
 /// <summary>
 /// The app's start-up as it runs, one for the app: the work done before the window (<see cref="Record"/>: the saved settings
-/// read, the options applied), then the registered steps (<see cref="RunAsync"/>, once, when the window first shows), each
+/// read, the options applied), then the steps (<see cref="RunAsync"/>, once, when the window first shows), each
 /// with its state and time. The splash reads it once a frame without a lock or an allocation: <see cref="Count"/> entries,
 /// <see cref="Started"/> of them begun (in the order they began, <see cref="StartedEntry"/>), <see cref="Finished"/> ended,
 /// and <see cref="IsDone"/> once nothing more comes. A host's own work can be reported by hand with <see cref="Begin"/> and
@@ -195,7 +193,7 @@ public sealed class StartupRun
     }
 
     /// <summary>
-    /// Runs <paramref name="steps"/> (the registered ones, <see cref="StartupSteps.All"/>, by default) that are wanted in
+    /// Runs <paramref name="steps"/> (the ones, <see cref="StartupSteps.All"/>, by default) that are wanted in
     /// <paramref name="context"/>, once: they are all planned first (so the bar knows its length), then the worker steps run
     /// one after another on a worker thread while the UI steps run one after another on the calling (UI) thread; a step that
     /// throws is marked failed and the rest still run. The run is complete (<see cref="IsDone"/>) when both have ended (and

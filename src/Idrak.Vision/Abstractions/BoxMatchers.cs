@@ -24,8 +24,7 @@ public sealed record BoxMatchOptions
 
 /// <summary>
 /// Assigns predictions (anchors, or a set predictor's outputs) to the true objects from a quality matrix
-/// [predictions, truths] (row-major, higher is better: an IoU, or a negated cost), registered in <see cref="BoxMatchers"/>
-/// under its <c>IKind.Name</c>. The result holds, for each prediction, the index of its truth,
+/// [predictions, truths] (row-major, higher is better: an IoU, or a negated cost). The result holds, for each prediction, the index of its truth,
 /// <see cref="BoxMatchers.Negative"/> or <see cref="BoxMatchers.Ignored"/>. A quality of -∞ forbids the pair.
 /// </summary>
 public interface IBoxMatcher
@@ -35,11 +34,11 @@ public interface IBoxMatcher
 }
 
 /// <summary>
-/// The box matchers, by name. The library's: "iou-threshold" (each prediction to its best truth when the quality passes
+/// The box matchers' names. The library's: "iou-threshold" (each prediction to its best truth when the quality passes
 /// <see cref="BoxMatchOptions.PositiveThreshold"/>, a negative below <see cref="BoxMatchOptions.NegativeThreshold"/>,
 /// ignored between; torchvision's <c>Matcher</c>) and "hungarian" (one to one, the largest total quality, by the
-/// Hungarian algorithm in O(n³): set prediction). Build quality matrices with <c>BoxMatching</c> (Idrak.Vision). Register
-/// another under a new name, or under a library name to replace it: the library's stays behind it until <c>Unregister</c>.
+/// Hungarian algorithm in O(n³): set prediction). Build quality matrices with <c>BoxMatching</c> (Idrak.Vision). Picking
+/// one by its name is not on the new design yet.
 /// </summary>
 public static class BoxMatchers
 {

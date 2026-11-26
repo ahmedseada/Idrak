@@ -13,8 +13,8 @@ namespace Idrak.Maui.Views;
 /// The library's "ocr" feature: a photo from the camera or the gallery, decoded by the library's own codecs; an optional
 /// preprocessing pipeline and the page shown as the model will see it; read by a vision-language model of the store, loaded
 /// once after the measured check (refused with the limit named when it does not fit), the answer streamed with its tokens
-/// per second, cold and warm apart; the text copied or shared. Any registered vision family reads: the library registers
-/// none, the app registers the families it shows (each vision plug-in by its own Register call). Its view model is the
+/// per second, cold and warm apart; the text copied or shared. Any vision family reads: the library registers
+/// none, the families are the app's (finding one by its name is not on the new design yet). Its view model is the
 /// app's one (<c>UseIdrak</c> registers it once), so a read goes on while another page is open.
 /// </summary>
 public sealed class OcrFeature : IMobileFeature

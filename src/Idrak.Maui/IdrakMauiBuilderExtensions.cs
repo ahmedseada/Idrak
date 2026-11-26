@@ -25,9 +25,9 @@ public static class IdrakMauiBuilderExtensions
     /// (<see cref="IConversationStore"/>) and its microphone's dictation (<see cref="IDictation"/>, the Transcribe lab's), Transcribe, Speak, Studio, Read text with <see cref="IVisionReaderService"/>, and
     /// Image) and the settings page; the app's navigation (<see cref="AppHostPage"/> over <see cref="AppSections"/>, its
     /// <see cref="AppLayout"/> and <see cref="IAppNavigator"/>, and <see cref="DeviceStatus"/>); the start-up's run
-    /// (<see cref="StartupRun"/>: the settings read and applied here, then the registered <see cref="StartupSteps"/> once the
-    /// window shows, under the animated splash where <see cref="IdrakMauiOptions.ShowSplash"/> asks for it). The app registers its own
-    /// features and model families after; it gives its own defaults for the OCR and Image labs' settings by registering an
+    /// (<see cref="StartupRun"/>: the settings read and applied here, then the <see cref="StartupSteps"/> once the
+    /// window shows, under the animated splash where <see cref="IdrakMauiOptions.ShowSplash"/> asks for it). The app has its own
+    /// features and model families; it gives its own defaults for the OCR and Image labs' settings by registering an
     /// <see cref="OcrLabOptions"/> or <see cref="ImageLabOptions"/> (what the user saves is applied over them).
     /// </summary>
     public static MauiAppBuilder UseIdrak(this MauiAppBuilder builder, Action<IdrakMauiOptions>? configure = null)

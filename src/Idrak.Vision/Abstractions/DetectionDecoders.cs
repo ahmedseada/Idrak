@@ -10,7 +10,7 @@ namespace Idrak.Vision.Abstractions;
 /// <param name="InputWidth">The network's input width in pixels, or 0 when it follows each image.</param>
 /// <param name="Labels">The class names in output order, or null when unknown.</param>
 /// <param name="Settings">
-/// The decoder's settings (strides, box layout, ...), each a key of the kind's <c>IConfigurableKind.Keys</c>: from
+/// The decoder's settings (strides, box layout, ...), each a key the kind reads: from
 /// the model family's config, or the app's; empty when none.
 /// </param>
 public sealed record DetectionDecoderRequest(int InputHeight, int InputWidth, IReadOnlyList<string>? Labels, JsonObject Settings)
@@ -32,12 +32,11 @@ public sealed record DetectionDecoderRequest(int InputHeight, int InputWidth, IR
 }
 
 /// <summary>
-/// The detection decoders, by name: how a detection network's outputs become boxes (Idrak.Vision's <c>ModelDetector</c>
-/// takes one by name, an image model family names its own), and, for a kind that has one (<c>IDetectionHeadKind</c>),
-/// how its detector trains (<c>CreateHead</c>). A decoder is part of a model family (its anchors or grid, its box
-/// encoding, how its scores are stored), so it is registered by the plug-in or app that brings the family; the library
-/// registers only <see cref="BoxesScores"/>, for networks whose outputs are already boxes and scores. An unregistered name
-/// is refused, naming this registry.
+/// The detection decoders: how a detection network's outputs become boxes (an image model family names its own), and,
+/// for a kind that has one (<c>IDetectionHeadKind</c>), how its detector trains. A decoder is part of a model family (its
+/// anchors or grid, its box encoding, how its scores are stored), so it comes with the plug-in or app that brings the
+/// family; the library has only <see cref="BoxesScores"/>, for networks whose outputs are already boxes and scores.
+/// Picking one by its name is not on the new design yet.
 /// </summary>
 public static class DetectionDecoders
 {

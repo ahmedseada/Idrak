@@ -113,7 +113,7 @@ public sealed class AugmentedImageLoader : IEnumerable<DetectionBatch>
         Device = device ?? Device.Default;
     }
 
-    // The image codecs were registered (ImageCodecs) and a file decoded by the one that reads it: not on the new design yet.
+    // Decoding a file through the image codecs is not on the new design yet.
     private static ImageData Decode(string path) => throw new NotSupportedException($"{path}: decoding an image through the registered image codecs is not on the new design yet.");
 
     /// <summary>

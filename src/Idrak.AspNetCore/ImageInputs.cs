@@ -500,8 +500,8 @@ internal static class ImageRequests
     /// <summary>
     /// The request with the image transforms a client sent (<c>"image_transforms"</c>: a pipeline's text such as
     /// <c>"grayscale,max_width=1024,contrast=1.5"</c>, or a JSON array of steps; in a form field, either as text): absent,
-    /// null, an empty field, an empty list or <c>"none"</c> give the request as it is. The transforms were registered and
-    /// picked by their names, which is not on the new design yet.
+    /// null, an empty field, an empty list or <c>"none"</c> give the request as it is. Picking the transforms by their
+    /// names is not on the new design yet.
     /// </summary>
     /// <exception cref="NotSupportedException">Image transforms are given.</exception>
     public static ChatRequest WithImageTransforms(ChatRequest request, JsonNode? transforms)
@@ -519,7 +519,7 @@ internal static class ImageRequests
 
     /// <summary>
     /// The request with its images checked: no more than <see cref="ImageInputOptions.MaxImages"/>, each in a format a
-    /// registered codec reads (PNG, JPEG, BMP, PPM/PGM by default); with <paramref name="grayscale"/>, each turned upright
+    /// codec reads (PNG, JPEG, BMP, PPM/PGM by default); with <paramref name="grayscale"/>, each turned upright
     /// and grey (<see cref="ChatImageDecoder.Grayscale(ChatImage)"/>). Throws <see cref="ArgumentException"/> (a 400).
     /// </summary>
     public static ChatRequest Check(ChatRequest request, ImageInputOptions options, bool grayscale)

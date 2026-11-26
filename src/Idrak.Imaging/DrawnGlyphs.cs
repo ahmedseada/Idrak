@@ -15,7 +15,7 @@ internal readonly record struct InkStats(double MinX, double MinY, double MaxX, 
 }
 
 /// <summary>
-/// Measures glyphs by drawing them with the registered outline rasterizer at a fixed resolution and reading the ink (the
+/// Measures glyphs by drawing them with the outline rasterizer at a fixed resolution and reading the ink (the
 /// coverage above a threshold), the way a person measures a printed glyph: its ink box, its strokes' typical thickness
 /// (the median of each ink pixel's shorter run, across or down) and the top and bottom of its ink within a window around
 /// its middle (where a mark is placed).

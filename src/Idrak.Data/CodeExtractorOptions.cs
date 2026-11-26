@@ -10,7 +10,7 @@ namespace Idrak.Data;
 /// The settings of a code extractor run (plan 36: <c>idrak data code</c>, which turns a repository into pretraining rows
 /// and proven task folders). Every one has an <c>IDRAK_CODE_*</c> variable (<see cref="FromEnvironment"/>), and every
 /// default is the documented rule named beside it, never the only way. Nothing here names a language, a model family or a
-/// provider: the languages come from the registered coding languages, the families from <c>TaskFamilies</c>.
+/// provider: the languages come from the coding languages, the families from the task families.
 /// </summary>
 public sealed record CodeExtractorOptions
 {
@@ -50,7 +50,7 @@ public sealed record CodeExtractorOptions
     /// <summary>The variable of <see cref="Concurrency"/>: "IDRAK_CODE_CONCURRENCY" (a count above 0, or 0 for the CPU threads).</summary>
     public const string ConcurrencyVariable = "IDRAK_CODE_CONCURRENCY";
 
-    /// <summary>The variable of <see cref="Verifier"/>: "IDRAK_CODE_VERIFIER" (a registered verifier's name, or "none").</summary>
+    /// <summary>The variable of <see cref="Verifier"/>: "IDRAK_CODE_VERIFIER" (a verifier's name, or "none").</summary>
     public const string VerifierVariable = "IDRAK_CODE_VERIFIER";
 
     /// <summary>
@@ -65,12 +65,12 @@ public sealed record CodeExtractorOptions
     /// <summary>What a split's groups are unless set: "project" (the project a file or task belongs to).</summary>
     public const string DefaultSplitBy = "project";
 
-    /// <summary>The task families to run, by name (<c>TaskFamilies</c>); null (the default): every registered one.</summary>
+    /// <summary>The task families to run, by name (picking them by name is not on the new design yet); null (the default): every one.</summary>
     public IReadOnlyList<string>? Families { get; init; }
 
     /// <summary>
     /// The folders never read, by name (ignoring case); null (the default): <see cref="ReadOptions.DefaultSkippedFolders"/>
-    /// and the build and dependency folders of the registered coding languages, which the caller adds.
+    /// and the build and dependency folders of the coding languages, which the caller adds.
     /// </summary>
     public IReadOnlyList<string>? SkippedFolders { get; init; }
 
@@ -98,7 +98,7 @@ public sealed record CodeExtractorOptions
     /// <summary>The longest a run takes before it stops and writes what it has; null (the default): no limit.</summary>
     public TimeSpan? MaxTime { get; init; }
 
-    /// <summary>The formats the rows are written in, by data format name (<c>DataFileFormats</c>): JSON Lines by default.</summary>
+    /// <summary>The formats the rows are written in, by data format name: JSON Lines by default.</summary>
     public IReadOnlyList<string> Formats { get; init; } = [nameof(DataFormat.JsonLines)];
 
     /// <summary>How many files or tasks are worked on at once; 0 (the default): <see cref="ComputeResources.MaxCpuThreads"/> when the run starts.</summary>
@@ -109,7 +109,7 @@ public sealed record CodeExtractorOptions
 
     /// <summary>
     /// The verifier that proves drafts (<see cref="TaskVerifiers"/>), by name; "none" writes every draft as unproven; null
-    /// (the default): the first registered, or none when nobody registered one. A draft becomes a task only when proven.
+    /// (the default): none (picking a verifier by name is not on the new design yet). A draft becomes a task only when proven.
     /// </summary>
     public string? Verifier { get; init; }
 

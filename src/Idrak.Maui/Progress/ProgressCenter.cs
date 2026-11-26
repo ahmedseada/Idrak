@@ -8,7 +8,7 @@ namespace Idrak.Maui;
 
 /// <summary>
 /// What is in progress in the app, for views to bind: one <see cref="ProgressItem"/> a piece of work, made by the "maui"
-/// progress reporter (<c>MauiProgressReporterKind</c>, registered in <see cref="ProgressReporters"/> by
+/// progress reporter (<c>MauiProgressReporterKind</c> by
 /// <c>UseIdrak</c>). Every change reaches <see cref="Items"/> and the items on the UI thread, at most once an
 /// <see cref="Interval"/> a piece of work: a report between showings stores its amount and nothing else.
 /// </summary>

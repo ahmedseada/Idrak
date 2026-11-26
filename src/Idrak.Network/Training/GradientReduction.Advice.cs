@@ -14,8 +14,7 @@ namespace Idrak.Networking.Training;
 /// of them): each step's time from one step's end to the next, with the wall time of its reduction replaced by the network
 /// time the step waited for (the virtual clock's on a simulated transport, so a simulated step is the cluster's), the
 /// network's time and the backward pass's. As the last of them ends, it reduces its figures so every rank gets the means
-/// over the ranks; rank 0 asks the "cluster" advisor (<see cref="ClusterSettingAdvisor"/>, reached directly: the advisors'
-/// registry is gone) and the measurement ends for the run. Nothing a run computes changes: the figures are reduced after
+/// over the ranks; rank 0 asks the "cluster" advisor (<see cref="ClusterSettingAdvisor"/>, reached directly) and the measurement ends for the run. Nothing a run computes changes: the figures are reduced after
 /// the step's own reduction. Off, the cost is one field read a step. A group that changes (a fault) ends the measurement on
 /// every member.
 /// <para>

@@ -37,12 +37,11 @@ public interface IAudioEncoder
 /// <summary>
 /// Writes sound files. The library's encoders, each reached directly: <see cref="Idrak.Audio.WavEncoder"/> (PCM 8, 16, 24
 /// and 32 bits and float 32; WAVE_FORMAT_EXTENSIBLE past two channels or 16 bits) and <see cref="Idrak.Audio.Mp3Encoder"/>.
-/// The encoders were registered and the one of a file's extension found among them, which is not on the new design yet.
+/// Finding the encoder of a file's extension is not on the new design yet.
 /// </summary>
 public static class AudioEncoders
 {
-    // The encoders were registered (AudioEncoders.Register) and the one of a path's extension found among them, which is not
-    // on the new design yet.
+    // Finding the encoder of a path's extension is not on the new design yet.
     private static IAudioEncoder EncoderFor(string path) =>
         throw new NotSupportedException($"{path}: finding the audio encoder of its extension among the registered encoders is not on the new design yet.");
 

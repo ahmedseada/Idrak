@@ -30,7 +30,7 @@ public sealed class FolderVoiceStore : ICheckpointVoiceStore
 
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
-    /// <summary>A store at <paramref name="root"/> (made when the first voice is added), registered as <paramref name="name"/>.</summary>
+    /// <summary>A store at <paramref name="root"/> (made when the first voice is added), named <paramref name="name"/>.</summary>
     public FolderVoiceStore(string root, string name = VoiceStores.FolderName)
     {
         ArgumentException.ThrowIfNullOrEmpty(root);

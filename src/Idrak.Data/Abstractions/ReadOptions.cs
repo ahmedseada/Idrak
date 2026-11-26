@@ -3,7 +3,7 @@
 
 namespace Idrak.Data.Abstractions;
 
-/// <summary>The built-in data file formats (registered in <c>DataFileFormats</c> under these names by Idrak.Data).</summary>
+/// <summary>The built-in data file formats.</summary>
 public enum DataFormat
 {
     /// <summary>One JSON object per line (.jsonl, .ndjson).</summary>
@@ -47,7 +47,7 @@ public sealed record ReadOptions
     /// <summary>
     /// The folders folder and archive reading skips by default: <c>.git</c> and the editors' state (<c>.vs</c>,
     /// <c>.idea</c>). No language's build output or dependency folders: a caller that knows them (the idrak tool's data
-    /// commands, from the registered coding languages) adds them in <see cref="SkippedFolders"/>.
+    /// commands, from the coding languages) adds them in <see cref="SkippedFolders"/>.
     /// </summary>
     public static IReadOnlyList<string> DefaultSkippedFolders { get; } = [".git", ".vs", ".idea"];
 
@@ -58,7 +58,7 @@ public sealed record ReadOptions
     public DataFormat? Format { get; init; }
 
     /// <summary>
-    /// The format as an <see cref="IDataFileFormat"/> (for example one added with <c>DataFileFormats.Register</c>),
+    /// The format as an <see cref="IDataFileFormat"/> (for example one of one's own),
     /// instead of choosing it by extension; takes precedence over <see cref="Format"/>.
     /// </summary>
     public IDataFileFormat? FileFormat { get; init; }

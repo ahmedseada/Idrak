@@ -15,7 +15,7 @@ namespace Idrak.Reinforcement;
 /// </summary>
 public sealed record ReinforcementOptions
 {
-    /// <summary>The algorithm: a <c>PolicyLosses</c> name (reinforce, ppo, grpo, or an app's). <c>IDRAK_RL_ALGORITHM</c>.</summary>
+    /// <summary>The algorithm: by name (reinforce, ppo, grpo). <c>IDRAK_RL_ALGORITHM</c>.</summary>
     public string Algorithm { get; init; } = ReinforcementNames.Ppo;
 
     /// <summary>
@@ -94,7 +94,7 @@ public sealed record ReinforcementOptions
     /// <summary>The largest global gradient norm an update applies (0: no clip), for a policy that exposes its optimizer. <c>IDRAK_RL_MAX_GRAD_NORM</c>.</summary>
     public float MaxGradientNorm { get; init; } = 1f;
 
-    /// <summary>The learning-rate schedule over the run's optimizer steps, a <c>LearningRateSchedules</c> name. <c>IDRAK_RL_SCHEDULE</c>.</summary>
+    /// <summary>The learning-rate schedule over the run's optimizer steps, by name. <c>IDRAK_RL_SCHEDULE</c>.</summary>
     public string Schedule { get; init; } = LearningRateSchedules.Constant;
 
     /// <summary>The schedule's settings; no warm-up by default. <c>IDRAK_RL_WARMUP</c> sets its warm-up share.</summary>
@@ -139,7 +139,7 @@ public sealed record ReinforcementOptions
     public float? PassReturn { get; init; } = 1f;
 
     /// <summary>
-    /// Preference training instead of a policy loss: the <c>PreferencePairSources</c> name ("group", "verdict", or an app's)
+    /// Preference training instead of a policy loss: the pair source's name ("group", "verdict")
     /// whose pairs each round's update trains on, with <see cref="PreferenceLoss"/> against <see cref="PreferenceReference"/>
     /// (iterative preference training: collect a rollout, choose its pairs, update; <see cref="Epochs"/> updates a round,
     /// 1 by default). The policy is an <c>IPreferencePolicy</c>. Null (the default): <see cref="Algorithm"/>'s policy loss.
@@ -257,7 +257,7 @@ public sealed record ReinforcementOptions
         }
     }
 
-    // The settings that cannot work, refused before a run starts (the names are checked by their registries).
+    // The settings that cannot work, refused before a run starts (picking by name is not on the new design yet).
     internal void Validate()
     {
         static void Positive(int value, string name)

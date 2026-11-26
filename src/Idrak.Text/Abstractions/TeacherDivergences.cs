@@ -5,8 +5,8 @@ namespace Idrak.Text.Abstractions;
 
 /// <summary>
 /// A divergence between a student's next-token distribution p and a teacher's q, row by row, that distillation trains
-/// on (<c>FineTuningLossInput.TeacherDivergence</c>, <c>FineTuningLosses.OnPolicyDistillation</c>), registered in
-/// <see cref="TeacherDivergences"/> under <see cref="Name"/>. It runs a chunk of trained rows at a time, without
+/// on (<c>FineTuningLossInput.TeacherDivergence</c>, <c>FineTuningLosses.OnPolicyDistillation</c>), named
+/// <see cref="Name"/>. It runs a chunk of trained rows at a time, without
 /// gradients: the trainer turns its gradient with respect to the student's softened logits into the network's with one
 /// more pass of the output head over the rows, so the [tokens, vocabulary] logits are never stored. Thread-safe: it keeps
 /// no state.
@@ -33,7 +33,7 @@ public interface ITeacherDivergence
 }
 
 /// <summary>
-/// The divergences distillation trains on, by name (ignoring case). The library's:
+/// The divergences distillation trains on. The library's:
 /// <list type="bullet">
 /// <item><see cref="Forward"/> ("forward"): KL(q ‖ p) = Σ q (log q − log p), the teacher's mass covered (Hinton et al.'s
 /// distillation, <c>FineTuningLosses.Distillation</c>); gradient p − q.</item>
@@ -59,7 +59,7 @@ public static class TeacherDivergences
     private static readonly ITeacherDivergence LibraryForward = new ForwardDivergence();
 
     // Whether `kind` is the library's forward KL itself (not an app's over it): the chunked pass's own path, as the
-    // distillation before the registry computed it.
+    // distillation computed it.
     internal static bool IsLibraryForward(ITeacherDivergence kind) => ReferenceEquals(kind, LibraryForward);
 
     // The rule the chunked passes compute `kind` with (null: their own forward KL).

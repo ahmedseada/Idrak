@@ -922,8 +922,8 @@ internal static class PdfFieldAppearances
         return lines.Count == 0 ? new SetLine(text, 0f, []) : new SetLine(lines[0].Text, lines[0].Width, lines[0].Runs);
     }
 
-    // The text setters were registered (DocumentTextSetters) and looked up by name: not on the new design yet. The
-    // default, "shaped" (Idrak.Imaging's ShapedTextSetter), is reached directly; another name stops.
+    // Looking up the text setters by name is not on the new design yet. The default, "shaped" (Idrak.Imaging's
+    // ShapedTextSetter), is reached directly; another name stops.
     private static readonly Idrak.Imaging.ShapedTextSetter Shaped = new();
 
     private static IDocumentTextSetter SetterNamed(string name) =>

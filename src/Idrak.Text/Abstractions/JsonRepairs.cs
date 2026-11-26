@@ -12,11 +12,11 @@ public sealed record JsonRepairResult(JsonNode? Json, bool Repaired);
 
 /// <summary>
 /// A way of reading the JSON of a model's answer when the model did not write it exactly (an answer cut at its token
-/// limit, a code fence around it, commas or quotes wrong). Register one with <c>JsonRepairs.Register</c>.
+/// limit, a code fence around it, commas or quotes wrong).
 /// </summary>
 public interface IJsonRepair
 {
-    /// <summary>The name it is registered under.</summary>
+    /// <summary>Its name.</summary>
     string Name { get; }
 
     /// <summary>The first JSON object or array of <paramref name="text"/>, repaired; null when the text has none.</summary>

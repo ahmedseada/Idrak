@@ -76,8 +76,8 @@ public sealed record RandomTextOptions
 public sealed record RandomTextResult(int Documents, int Lines, int Words, int Characters, string Path);
 
 /// <summary>
-/// Random text for training pages when there is no text to draw (plan 18): documents of random lines from a source
-/// (<c>RandomTextSources</c>), written as plain text that <see cref="SyntheticPages"/> reads ("text": documents
+/// Random text for training pages when there is no text to draw (plan 18): documents of random lines from a source,
+/// written as plain text that <see cref="SyntheticPages"/> reads ("text": documents
 /// separated by lines of <c>---</c>). Each document is drawn from the seed and its place, so the same options give the
 /// same file.
 /// </summary>

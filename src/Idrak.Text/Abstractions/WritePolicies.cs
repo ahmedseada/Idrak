@@ -18,8 +18,8 @@ public sealed record FileWrite(string Tool, string Path, string FullPath, bool C
 
 /// <summary>
 /// Whether a write of the coding tools may happen (<see cref="WritePolicies"/>): the library's <see cref="WritePolicies.Allow"/>
-/// lets every write inside the workspace happen; an app registers one that asks its user (<see cref="AskingWritePolicy"/>,
-/// <see cref="WritePolicies.Ask"/>), keeps a log, or refuses some files. It is asked once per write, after the tool has
+/// lets every write inside the workspace happen; an app's may ask its user (<see cref="AskingWritePolicy"/>,
+/// <see cref="WritePolicies.Ask"/>), keep a log, or refuse some files. It is asked once per write, after the tool has
 /// found what to write and before it writes; a write it refuses leaves the file as it was, and the model reads the reason.
 /// Thread-safe: the tools of several agents may ask at once.
 /// </summary>
@@ -36,9 +36,8 @@ public interface IWritePolicy
 
 /// <summary>
 /// A write policy that asks (an app's user, a reviewer, a rule of its own) through <paramref name="ask"/>: true lets the
-/// write happen, false refuses it with <see cref="Refusal"/>. Registered under <see cref="WritePolicies.Ask"/> unless
-/// another name is given; the library registers none, since only an app has someone to ask (the CLI's <c>idrak agent</c>
-/// registers one that asks on its terminal).
+/// write happen, false refuses it with <see cref="Refusal"/>. Named <see cref="WritePolicies.Ask"/> unless another name is
+/// given; the library makes none, since only an app has someone to ask.
 /// </summary>
 /// <param name="ask">The question: true to write, false to refuse.</param>
 /// <param name="name">Its name in <see cref="WritePolicies"/> (<see cref="WritePolicies.Ask"/> by default).</param>
@@ -75,7 +74,7 @@ public static class WritePolicies
     /// <summary>Every write inside the workspace happens (the library's, the default).</summary>
     public const string Allow = "allow";
 
-    /// <summary>Each write is asked about first; registered by an app (<see cref="AskingWritePolicy"/>), never by the library.</summary>
+    /// <summary>Each write is asked about first; an app's (<see cref="AskingWritePolicy"/>), never the library's.</summary>
     public const string Ask = "ask";
 
     /// <summary>The variable that names the write policy when an option does not: "IDRAK_WRITE_POLICY".</summary>

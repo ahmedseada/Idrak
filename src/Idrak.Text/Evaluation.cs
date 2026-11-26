@@ -47,7 +47,7 @@ public static class ChatEvaluation
     /// </summary>
     public const string Auto = "auto";
 
-    // The tuning metrics were registered (TuningMetrics) and picked by name: not on the new design yet.
+    // Picking the tuning metrics by name is not on the new design yet.
     private static ITuningMetric MetricNamed(string name) => throw new NotSupportedException($"The tuning metric '{name}' by name is not on the new design yet.");
 
     /// <summary>
@@ -57,7 +57,7 @@ public static class ChatEvaluation
     /// With <paramref name="batchSize"/> above 1, that many conversations are answered together
     /// (<see cref="ChatGenerator.ChatBatch"/>: the same greedy answers, generated in one pass per token).
     /// </summary>
-    /// <exception cref="NotSupportedException">The metric is not registered (before anything is generated).</exception>
+    /// <exception cref="NotSupportedException">Picking the metric by its name is not on the new design yet (said before anything is generated).</exception>
     public static EvaluationReport Run(ChatGenerator chat, IEnumerable<JsonObject> conversations, string metric = Auto,
         int maxNewTokens = 512, bool? think = null, IProgress<EvaluatedAnswer>? progress = null, int contextLength = 4096, CancellationToken cancellationToken = default,
         int batchSize = 1)
@@ -117,7 +117,7 @@ public static class ChatEvaluation
     /// The score of <paramref name="answer"/> against <paramref name="reference"/> by the metric <paramref name="metric"/> (a
     /// name in <see cref="TuningMetrics"/>, or <see cref="Auto"/>, chosen from this reference).
     /// </summary>
-    /// <exception cref="NotSupportedException">The metric is not registered.</exception>
+    /// <exception cref="NotSupportedException">Picking the metric by its name is not on the new design yet.</exception>
     public static double Score(string metric, string answer, string reference)
     {
         ArgumentNullException.ThrowIfNull(metric);

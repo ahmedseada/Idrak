@@ -16,8 +16,8 @@ namespace Idrak.Maui;
 /// The Chat lab's models (<see cref="IChatModelService"/>) in the <see cref="IModelService"/>'s "chat" host: each loaded
 /// once by <see cref="PretrainedModel.Load"/> in the weights format asked for, with its own chat template
 /// (<see cref="PretrainedModelExtensions"/>' <c>CreateChat</c>), after measuring that its weights and key/value cache fit
-/// the memory the device reports now. Family-neutral: the architecture is the one config.json names, read by whichever
-/// family the app registered.
+/// the memory the device reports now. Family-neutral: the architecture is the one config.json names, read by its family
+/// (found by that name: not on the new design yet).
 /// </summary>
 public sealed class ChatModelService : IChatModelService
 {
@@ -161,7 +161,7 @@ public sealed class ChatModelService : IChatModelService
     }
 
     // The folder the library reads (a .gguf file prepared once into the cache, as loading it does) and its spec through the
-    // family the app registered (NotRegisteredException when none is). The vision readers' service measures with it too.
+    // architecture's family (found by its name: not on the new design yet). The vision readers' service measures with it too.
     internal static (string Folder, DecoderSpec Spec) Read(string path)
     {
         string folder = Prepared(path);

@@ -4,7 +4,7 @@
 namespace Idrak.Data.Pdf;
 
 /// <summary>
-/// The library's PDF reader, registered in <c>DocumentFormats</c> as "pdf": a file whose <c>%PDF-</c> header is
+/// The library's PDF reader as "pdf": a file whose <c>%PDF-</c> header is
 /// within its first KiB. A document is opened, not loaded: the cross-reference (classic tables, cross-reference streams,
 /// object streams, hybrid files, incremental updates; rebuilt by scanning when it is damaged, which
 /// <see cref="DocumentInfo.Repaired"/> says) and the page tree are read at open, every other object when it is needed,

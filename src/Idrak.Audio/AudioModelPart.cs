@@ -13,8 +13,7 @@ namespace Idrak.Audio;
 /// </summary>
 internal sealed class AudioModelPart : IModelPart
 {
-    // The audio-language families were registered (AudioFamilies) and a checkpoint's found by its architecture name, which is
-    // not on the new design yet.
+    // Finding a checkpoint's audio-language family by its architecture name is not on the new design yet.
     private static IAudioFamily? FindFamily(string architecture) =>
         throw new NotSupportedException($"The audio family '{architecture}' by name is not on the new design yet.");
 
@@ -22,8 +21,8 @@ internal sealed class AudioModelPart : IModelPart
 
     public bool In(JsonObject config) => AudioFamilies.HasAudio(config);
 
-    // A checkpoint whose family is not registered loads as its decoder alone (a note says why); its audio tensors stay
-    // unused until the family is registered and the part is opened.
+    // A checkpoint whose family is not found loads as its decoder alone (a note says why); its audio tensors stay unused
+    // until the part is opened.
     public IReadOnlySet<string> StoredTensors(ModelPartCheckpoint checkpoint)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);

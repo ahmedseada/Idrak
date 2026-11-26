@@ -30,7 +30,7 @@ public sealed record FlacOptions
     /// <summary>
     /// Whether the samples' MD5 the stream info holds is checked once the stream is decoded (the decoded samples, interleaved,
     /// each a little-endian integer of whole bytes, as the encoder hashed them): a mismatch is refused naming both hashes
-    /// (and the file, read through <c>AudioCodecs</c>). Skipped for a stream with no MD5 (all zero), a cut one, and one of more
+    /// (and the file). Skipped for a stream with no MD5 (all zero), a cut one, and one of more
     /// than 24 bits (whose integers the float samples do not hold exactly). Null (the default): <see cref="VerifyMd5Variable"/>
     /// (IDRAK_FLAC_VERIFY_MD5), read at each decode, else off. Off by default because it was measured to cost more than the
     /// decode itself (a sequential hash after a parallel decode; the FLAC tests print both), while every frame's CRCs are

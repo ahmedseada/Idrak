@@ -881,7 +881,7 @@ public static class CompletionsTranslation
     // Content as a string, or an array of parts: {"type": "text", "text"}, {"type": "image_url", "image_url": {"url"}}
     // with a data URL (http(s) URLs are downloaded by the endpoint first, when its options allow), a binary kind's input
     // part ({"type": "input_audio", "input_audio": {"data", "format"}}, its IBinaryPartKind.RecordKeys.InputPart) and a
-    // registered kind's own part ({"type": "audio", ...}). Other parts are refused, never dropped.
+    // kind's own part ({"type": "audio", ...}). Other parts are refused, never dropped.
     private static List<ChatPart> Parts(JsonNode? content)
     {
         switch (content)
@@ -916,8 +916,8 @@ public static class CompletionsTranslation
         }
     }
 
-    // The binary kind whose requests' content parts have the type `type` (its RecordKeys.InputPart: "input_audio" for
-    // the audio kind): the binary kinds were registered and found by their part's type, which is not on the new design yet.
+    // The binary kind whose requests' content parts have the type `type` (its RecordKeys.InputPart: "input_audio" for the
+    // audio kind): finding the binary kinds by their part's type is not on the new design yet.
     private static IBinaryPartKind? InputKind(string type) =>
         throw new NotSupportedException($"Finding the binary part kind of '{type}' parts among the registered kinds is not on the new design yet.");
 

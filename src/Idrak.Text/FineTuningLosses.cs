@@ -265,7 +265,7 @@ public sealed class FineTuningLossInput
     /// <param name="temperature">Softens both distributions (1: as they are).</param>
     /// <param name="divergence">The kind, by name.</param>
     /// <param name="beta">The kind's weight when it takes one (<see cref="ITeacherDivergence.UsesBeta"/>), in (0, 1).</param>
-    /// <exception cref="NotSupportedException">No divergence of that name is registered.</exception>
+    /// <exception cref="NotSupportedException">Picking the divergence by its name is not on the new design yet.</exception>
     public Tensor TeacherDivergence(float temperature, string divergence, float beta = 0.5f)
     {
         var kind = FineTuningLosses.DivergenceNamed(divergence);
@@ -477,8 +477,8 @@ public static class FineTuningLosses
     }
 
     /// <summary>
-    /// A policy-gradient loss of <c>PolicyLosses</c> (REINFORCE, PPO, GRPO: Idrak.Reinforcement's, or one an app
-    /// registered) as a fine-tuning loss, for a language model's policy trained through a <see cref="FineTuningSession"/>:
+    /// A policy-gradient loss (REINFORCE, PPO, GRPO: Idrak.Reinforcement's, or an app's) as a fine-tuning loss, for a
+    /// language model's policy trained through a <see cref="FineTuningSession"/>:
     /// each trained token is an action unit, its sequence's tokens a sequence of the policy loss
     /// (<see cref="PolicyLossInput.Counts"/>), its advantage <see cref="FineTuningLossInput.TokenValues"/> (from
     /// <see cref="TrainingSequence.Value"/> or <see cref="TrainingSequence.TokenValues"/>), the behaviour log-probabilities
@@ -516,7 +516,7 @@ public static class FineTuningLosses
     /// <param name="divergence">The kind (<see cref="TeacherDivergences"/>): "reverse" KL(p ‖ q) by default (mode-seeking, the usual on-policy choice), "forward", "jsd".</param>
     /// <param name="temperature">Softens both distributions (1: as they are).</param>
     /// <param name="beta">The generalized Jensen-Shannon weight, for a kind that takes one, in (0, 1).</param>
-    /// <exception cref="NotSupportedException">No divergence of that name is registered.</exception>
+    /// <exception cref="NotSupportedException">Picking the divergence by its name is not on the new design yet.</exception>
     public static IFineTuningLoss OnPolicyDistillation(string divergence = TeacherDivergences.Reverse, float temperature = 1f, float beta = 0.5f)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(divergence);
@@ -641,17 +641,17 @@ public static class FineTuningLosses
     }
 
     /// <summary>
-    /// The preference loss registered as <paramref name="name"/> in <see cref="PreferenceLosses"/> ("dpo", "orpo",
+    /// The preference loss named <paramref name="name"/> in <see cref="PreferenceLosses"/> ("dpo", "orpo",
     /// "simpo", or an app's) with <paramref name="options"/>: the factories above, chosen by name.
     /// </summary>
-    /// <exception cref="NotSupportedException">Always for now: the preference losses were registered (<see cref="PreferenceLosses"/>) and picked by name, which is not on the new design yet.</exception>
+    /// <exception cref="NotSupportedException">Always for now: picking the preference losses by name is not on the new design yet.</exception>
     public static IFineTuningLoss Preference(string name, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         throw new NotSupportedException($"The preference loss '{name}' by name is not on the new design yet.");
     }
 
-    // The divergences were registered (TeacherDivergences) and picked by name: not on the new design yet.
+    // Picking the divergences by name is not on the new design yet.
     internal static ITeacherDivergence DivergenceNamed(string name) => throw new NotSupportedException($"The teacher divergence '{name}' by name is not on the new design yet.");
 
     private static void Require(FineTuningLossInput input, string name)

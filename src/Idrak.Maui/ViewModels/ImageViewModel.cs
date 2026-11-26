@@ -10,7 +10,7 @@ using Microsoft.Maui.Media;
 
 namespace Idrak.Maui.ViewModels;
 
-/// <summary>A registered image transform as a chip on the Image page: tapping it adds a step of it to the pipeline.</summary>
+/// <summary>An image transform as a chip on the Image page: tapping it adds a step of it to the pipeline.</summary>
 public sealed class TransformChip
 {
     internal TransformChip(string name, string label, string summary, IImageTransform transform, Action<TransformChip> add)
@@ -61,8 +61,7 @@ public sealed class TransformChip
         return $"{name}{(p.Optional ? "?" : "")}: {what}";
     }));
 
-    // The image transforms' pipeline went with their registry: a step is checked by parsing it, which is not on the new
-    // design yet.
+    // Checking a step of the image transforms' pipeline by parsing it is not on the new design yet.
     private static object PipelineNamed(string text) =>
         throw new NotSupportedException($"The image pipeline '{text}': image transforms by name are not on the new design yet.");
 
@@ -123,7 +122,7 @@ public sealed record StepTime(string Step, TimeSpan Time, bool Cold)
 
 /// <summary>
 /// The Image lab (plan 34, M6): a photo from the camera (its permission asked first) or the gallery, its bytes decoded once
-/// by the library's own codecs and turned upright by its EXIF orientation; the registered image transforms as chips
+/// by the library's own codecs and turned upright by its EXIF orientation; the image transforms as chips
 /// (name, summary, inputs) that add a step to the pipeline's box, and the scan profiles to draw steps from; the pipeline
 /// applied to the decoded photo on a worker thread, step by step with each step's time, the first run of a transform in
 /// the process (cold: compiling its methods) reported apart from the warm runs (rule 76); the original and the result shown
@@ -171,8 +170,7 @@ public sealed class ImageViewModel : ViewModel
             _settingsMessage = "A saved setting was not read: " + string.Join("; ", skipped);
         }
 
-        // The transforms' chips and the profiles were listed from their registries (ImageTransforms, ScanProfiles), which
-        // are not on the new design yet: none is listed.
+        // Listing the transforms' chips and the profiles is not on the new design yet: none is listed.
         foreach (var setting in ImageSettings.Definitions)
         {
             Settings.Add(new LabSettingEntry(setting, setting.Get(_options)));
@@ -197,10 +195,10 @@ public sealed class ImageViewModel : ViewModel
     /// <summary>The settings in effect.</summary>
     public ImageLabOptions Options => _options;
 
-    /// <summary>The registered image transforms, as chips.</summary>
+    /// <summary>The image transforms, as chips.</summary>
     public ObservableCollection<TransformChip> Transforms { get; } = [];
 
-    /// <summary>The registered scan profiles.</summary>
+    /// <summary>The scan profiles.</summary>
     public ObservableCollection<string> Profiles { get; } = [];
 
     /// <summary>The scan profile picked (kept in the settings), or null.</summary>
@@ -556,7 +554,7 @@ public sealed class ImageViewModel : ViewModel
 
     /// <summary>
     /// Draws the picked scan profile's steps for one page into the pipeline (from the settings' seed, else a new one, said);
-    /// false when no profile is picked or it names none registered.
+    /// false when no profile is picked or it names none known.
     /// </summary>
     public bool DrawProfile()
     {
@@ -584,7 +582,7 @@ public sealed class ImageViewModel : ViewModel
     /// <summary>
     /// Runs the pipeline on the decoded photo on a worker thread (never decoding it again), step by step with each step's
     /// time; the run is cold when a transform of it had not run in this process, else warm; the result's picture made once.
-    /// The pipeline is checked first (an unknown step names the registered ones) and kept in the settings. True when it ran.
+    /// The pipeline is checked first (an unknown step names the ones) and kept in the settings. True when it ran.
     /// </summary>
     public Task<bool> ApplyAsync()
     {
@@ -600,8 +598,7 @@ public sealed class ImageViewModel : ViewModel
             return Task.FromResult(false);
         }
 
-        // The pipeline's steps were image transforms registered by name (ImageTransforms) and run through them, which is
-        // not on the new design yet.
+        // Running the pipeline's steps as image transforms by name is not on the new design yet.
         Status = "";
         Error = "The pipeline stopped: image transforms by name are not on the new design yet.";
         return Task.FromResult(false);
@@ -693,8 +690,7 @@ public sealed class ImageViewModel : ViewModel
         return true;
     }
 
-    // The scan profiles and image transforms were registered (ScanProfiles, ImageTransforms) and found by name, which is not
-    // on the new design yet.
+    // Picking the scan profiles and image transforms by name is not on the new design yet.
     private static string ProfileDrawn(string name, int seed) =>
         throw new NotSupportedException($"The scan profile '{name}' by name is not on the new design yet.");
 

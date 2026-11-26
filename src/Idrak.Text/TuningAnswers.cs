@@ -37,7 +37,7 @@ public sealed record TuningAnswerReport(string Metric, bool LowerIsBetter, Tunin
 /// <summary>
 /// A held-out score that is not a loss: the model answers each conversation's prompt (greedy decoding, so results repeat;
 /// its images included, read and prepared as in training) and the answer is scored against the conversation's own last
-/// assistant message by a metric of <see cref="TuningMetrics"/> (character or word error rate, or one registered). Set it
+/// assistant message by a metric of <see cref="TuningMetrics"/> (character or word error rate). Set it
 /// as <see cref="FineTuningOptions.Answers"/> to score every <see cref="Every"/> steps of a fine-tune (the report comes
 /// with the step's <see cref="FineTuningProgress.Answers"/>), or call <see cref="Score"/> before and after training.
 /// <para>
@@ -60,7 +60,7 @@ public sealed class TuningAnswerScorer
 {
     private readonly ITuningMetric _metric;
 
-    // The tuning metrics were registered (TuningMetrics) and picked by name, made with their options: not on the new design yet.
+    // Picking the tuning metrics by name, made with their options, is not on the new design yet.
     private static ITuningMetric MetricNamed(string name) => throw new NotSupportedException($"The tuning metric '{name}' by name is not on the new design yet.");
 
     /// <summary>
@@ -70,7 +70,7 @@ public sealed class TuningAnswerScorer
     /// <param name="transcripts">Held-out conversations (their images as image parts).</param>
     /// <param name="metric">The metric's name in <see cref="TuningMetrics"/>.</param>
     /// <param name="samples">Score the first this many conversations only (0: all of them).</param>
-    /// <exception cref="NotSupportedException">The metric is not registered (the registry's message).</exception>
+    /// <exception cref="NotSupportedException">Picking the metric by its name is not on the new design yet.</exception>
     public TuningAnswerScorer(IEnumerable<ChatTranscript> transcripts, string metric = TuningMetrics.CharacterErrorRate, int samples = 0)
     {
         ArgumentNullException.ThrowIfNull(transcripts);
@@ -88,7 +88,7 @@ public sealed class TuningAnswerScorer
     /// <summary>Whether a lower score is better (the metric's <see cref="ITuningMetric.LowerIsBetter"/>).</summary>
     public bool LowerIsBetter => _metric.LowerIsBetter;
 
-    /// <summary>The metric's options (its <c>IConfigurableKind.Keys</c>), or null for its defaults.</summary>
+    /// <summary>The metric's options, or null for its defaults.</summary>
     public IReadOnlyDictionary<string, string>? MetricOptions { get; init; }
 
     /// <summary>
@@ -140,7 +140,7 @@ public sealed class TuningAnswerScorer
     /// <summary>Whether training scores after optimizer step <paramref name="step"/> (<see cref="Every"/>; the last step of an epoch when it is 0).</summary>
     public bool IsDue(int step, bool lastOfEpoch) => Count > 0 && (Every > 0 ? step % Every == 0 : lastOfEpoch);
 
-    // The answer texts were registered (AnswerTexts) and picked by name: not on the new design yet.
+    // Picking the answer texts by name is not on the new design yet.
     private static IAnswerText AnswerTextNamed(string name) => throw new NotSupportedException($"The answer text '{name}' by name is not on the new design yet.");
 
     /// <summary>

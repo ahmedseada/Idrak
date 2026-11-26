@@ -130,7 +130,7 @@ internal sealed class TranscriptSpeechSource : ISpeechSource
     }
 }
 
-// "audio-folder": every sound file a registered codec reads, in a folder (and its subfolders) or a zip, with its text in
+// "audio-folder": every sound file a codec reads, in a folder (and its subfolders) or a zip, with its text in
 // the .txt file of the same name beside it.
 internal sealed class FolderSpeechSource : ISpeechSource
 {

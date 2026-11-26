@@ -703,8 +703,7 @@ internal sealed class MonoProcessor : ILiveAudioProcessor
 // cores, a live block's stay on its thread.
 /// <summary>
 /// The library's "resample" processor (live): the sound at the step's rate, Hz, through <see cref="Resampler"/>'s windowed
-/// sinc (<c>width</c> zero crossings, <c>rolloff</c> of the lower rate's Nyquist). Public so its users reach it directly
-/// (the processors' registry is gone).
+/// sinc (<c>width</c> zero crossings, <c>rolloff</c> of the lower rate's Nyquist). Public so its users reach it directly.
 /// </summary>
 public sealed class ResampleProcessor : ILiveAudioProcessor
 {

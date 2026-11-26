@@ -188,8 +188,8 @@ public sealed class GlyphPainter
 
     /// <summary>The pose a page's options choose (<c>pose</c>, "none" by default) with its own keys, read once.</summary>
     /// <exception cref="ArgumentException">A bad pose setting.</exception>
-    /// <exception cref="NotSupportedException">A pose other than "none": the poses were registered (GlyphPoses) and picked
-    /// by name, each read with its own keys of the options, which is not on the new design yet.</exception>
+    /// <exception cref="NotSupportedException">A pose other than "none": picking a pose by its name, read with its own keys
+    /// of the options, is not on the new design yet.</exception>
     public static GlyphPainter Read(IReadOnlyDictionary<string, string> options, int seed)
     {
         ArgumentNullException.ThrowIfNull(options);

@@ -393,7 +393,7 @@ public static class ParquetFile
 
     // ------------------------------------------------------------------ column chunks and pages
 
-    // The codecs were registered by their Parquet id (ParquetCodecs): not on the new design yet.
+    // Picking the codecs by their Parquet id is not on the new design yet.
     private static IParquetCodec CodecOf(int id) =>
         throw new NotSupportedException($"Parquet compression codec {id}: a codec by its id is not on the new design yet.");
 

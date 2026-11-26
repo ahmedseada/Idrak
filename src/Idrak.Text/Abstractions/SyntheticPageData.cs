@@ -39,7 +39,7 @@ public sealed class SyntheticRecord : ISyntheticRecord
 
 /// <summary>
 /// A kind of file that synthetic pages are made from (plan 18): its records' answers in, records with new answers and
-/// images out, in the same shape. Register one with <c>SyntheticRecordFormats.Register</c>.
+/// images out, in the same shape.
 /// </summary>
 public interface ISyntheticRecordFormat
 {
@@ -74,8 +74,7 @@ public sealed class PagePartContext
 }
 
 /// <summary>
-/// Fills one kind of slot in a page part's text, <c>{NAME}</c> or <c>{NAME:ARGUMENT}</c> ("{digits:6}"). Register one with
-/// <c>PagePartFillers.Register</c>.
+/// Fills one kind of slot in a page part's text, <c>{NAME}</c> or <c>{NAME:ARGUMENT}</c> ("{digits:6}").
 /// </summary>
 public interface IPagePartFiller
 {

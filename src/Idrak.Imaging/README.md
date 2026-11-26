@@ -16,41 +16,33 @@ dotnet add package Idrak.Imaging
 
 | Area | What is there |
 |------|---------------|
-| Codecs | `PngCodec`, `JpegCodec` (baseline and progressive, decoded to Pillow's RGB; a file of one scan decoded a strip of MCU rows at a time, so a large image costs its pixels and a strip), `BmpCodec`, `NetpbmCodec`; `PngEncoder`, `JpegEncoder`, `NetpbmEncoder`; registered in `ImageCodecs` and `ImageEncoders` ("png", "jpeg", "netpbm"; Idrak.Abstraction) when the registry is first used, so `ImageCodecs.Decode(path)` reads them and `ImageEncoders.Save(path, image)` writes them |
+| Codecs | `PngCodec`, `JpegCodec` (baseline and progressive, decoded to Pillow's RGB; a file of one scan decoded a strip of MCU rows at a time, so a large image costs its pixels and a strip), `BmpCodec`, `NetpbmCodec`; `PngEncoder`, `JpegEncoder`, `NetpbmEncoder`; each reached directly (finding one by a file's extension or bytes is not on the new design yet) |
 | Transforms | `PillowImageOps` (resize with Pillow's filters, rank filters, blur, blends, point maps), the named transforms of `ImageTransforms` ("grayscale", "max_width", "contrast", ...), and scan degradations ("rotate", "perspective", "noise", "speckle", "fade", "tint", "stain", "lowres", "bleed"; seeded) mixed by the scan profiles of `ScanProfiles` ("clean", "office", "old", "fax", or one written as text) |
 | Preprocessing | `ImagePreprocessor`: a model family's resize, crop, rescale and normalization from its preprocessor config, on the host or the device |
 | Chat images | `ChatImageDecoder`: the images of a chat request (data URLs, files, bytes) decoded once |
-| Fonts | `OpenTypeFormat` ("opentype": .ttf, .otf and .ttc with TrueType or CFF outlines, in C#; registered in `FontFormats`), "cff" (a bare CFF program) and "type1" (PFB, PFA, and a PDF's embedded Type 1 program: eexec, subroutines, flex, accents), read by their first bytes with their glyph names and built-in encodings, `TrueTypeWriter` ("truetype" in `FontWriters`: any face as a .ttf, whole or a subset that keeps its glyph ids, with its layout tables and their closure or without them; a legacy font's mapped face is converted once into a complete TrueType font and kept by `FontCache`, `IDRAK_FONT_CACHE`; WOFF, read and written, comes from the `Idrak.Imaging.Plugins` package, a plug-in on these registries), `CoverageRasterizer` ("coverage": exact area coverage, unhinted; in `OutlineRasterizers`); text shaping in `TextShapers` ("general" for every script, "arabic" for the joining scripts: HarfBuzz's OpenType path, every GSUB and GPOS lookup kind) with the Unicode bidirectional algorithm (`Bidi`, UAX #9 complete with embeddings, isolates and paired brackets, checked against the Unicode conformance files) and `ArabicPresentationForms` (shaping to presentation forms for terminals and fonts without layout tables), glyph for glyph as HarfBuzz on real Arabic fonts (Amiri, Cairo, Reem Kufi, IBM Plex Sans Arabic, Tajawal); `OpenTypeFeatures` (a font's layout features for a script); `TextLayout` (lines: wrapping, direction, alignment, justification, fallback fonts) and `TextRenderer` |
+| Fonts | `OpenTypeFormat` ("opentype": .ttf, .otf and .ttc with TrueType or CFF outlines, in C#), "cff" (a bare CFF program) and "type1" (PFB, PFA, and a PDF's embedded Type 1 program: eexec, subroutines, flex, accents), read by their first bytes with their glyph names and built-in encodings, `TrueTypeWriter` ("truetype" in `FontWriters`: any face as a .ttf, whole or a subset that keeps its glyph ids, with its layout tables and their closure or without them; a legacy font's mapped face is converted once into a complete TrueType font and kept by `FontCache`, `IDRAK_FONT_CACHE`; WOFF, read and written, comes from the `Idrak.Imaging.Plugins` package), `CoverageRasterizer` ("coverage": exact area coverage, unhinted; in `OutlineRasterizers`); text shaping in `TextShapers` ("general" for every script, "arabic" for the joining scripts: HarfBuzz's OpenType path, every GSUB and GPOS lookup kind) with the Unicode bidirectional algorithm (`Bidi`, UAX #9 complete with embeddings, isolates and paired brackets, checked against the Unicode conformance files) and `ArabicPresentationForms` (shaping to presentation forms for terminals and fonts without layout tables), glyph for glyph as HarfBuzz on real Arabic fonts (Amiri, Cairo, Reem Kufi, IBM Plex Sans Arabic, Tajawal); `OpenTypeFeatures` (a font's layout features for a script); `TextLayout` (lines: wrapping, direction, alignment, justification, fallback fonts) and `TextRenderer` |
 | Pages | the page layouts of `PageLayouts` ("letter": an official letter with a three-place header, emblem, rule, subject, body, signature block with a pen-drawn signature, stamp and footer, the emblem, stamp and signature shape profiles drawn by pens; "plain"): a `PageContent` drawn in a `PageStyle`, every choice from the page's seed, with its text in reading order (plan 18) |
 | Documents | the page drawer "coverage" (`DocumentPageDrawers`: any `DocumentPage`, whatever format read it, drawn to pixels), the text setter "shaped" (`DocumentTextSetters`: text set into lines of placed glyphs in any script, as a form field's appearance needs), `DocumentShapes` and `DocumentShapeStyle` (a page of shapes and laid-out text written through any `IDocumentPageBuilder` as vector paths and real text); see "Documents" below |
 | Training | `ImageFolderSource` (class folders, and the "images" source of `SampleSources`), augmentations for the `DataLoader` (`RandomFlip`, `RandomShift`, `RandomRotation`, `GaussianNoise`; "flip" and "shift" in `Augmentations`) |
 
 ## Your own scan or paper effect
 
-Every effect a synthetic page gets is an `IImageTransform` in the `ImageTransforms` registry, the library's own
-included, so an effect of yours is one class and one registration. It is then usable by name wherever the library's
-are: in a scan profile's text (`ScanProfile`, `--scan "coffee=1..3@0.4"`), in `ScanProfiles` as a look of its own, and
-in any image pipeline.
-
-```csharp
-ImageTransforms.Register(new CoffeeRing());                    // Name "coffee", Keys ["seed"], Check, Apply
-ScanProfiles.Register(new ScanProfile("cafe", "coffee=1..3@0.5,blur=0.3..0.8@0.3", "rings from a cup"));
-```
-
-From the command line, put the registration in a plug-in (`IdrakPlugin`) of an assembly that declares its package
-(`[assembly: IdrakPluginPackage(typeof(MyEffects))]`, `MyEffects : IIdrakPluginPackage`) and load it with `-P`:
-`idrak -P my-effects.dll data synth text.txt -o pages.jsonl --fonts DIR --scan cafe --scan mixed`.
+Every effect a synthetic page gets is an `IImageTransform`, the library's own included, so an effect of yours is one
+class. Naming it in a scan profile's text (`ScanProfile`, `--scan "coffee=1..3@0.4"`) or an image pipeline, or adding
+a scan profile of one's own, is not on the new design yet.
 
 ## Fonts written
 
 `FontWriters` writes any face (`IFontFace`, whatever read it) as a font file; the built-in writer is "truetype"
 (`TrueTypeWriter`, `.ttf`), the format Idrak works from. WOFF, read and written, comes from the `Idrak.Imaging.Plugins`
-package, a plug-in on the same registries.
+package.
 
 ```csharp
-IFontFace face = FontFormats.Read("fonts/sans.otf")[0];                   // TrueType or CFF outlines
-FontWriters.Save(face, "out/sans.ttf");                                    // whole, with its layout tables
-FontWriters.Save(face, "out/sans-subset.ttf", new FontWriteOptions { Glyphs = [0, 36, 37, 38, 39] });
+IFontFace face = new OpenTypeFormat().Read(File.ReadAllBytes("fonts/sans.otf"), "sans")[0];   // TrueType or CFF outlines
+using (var file = File.Create("out/sans.ttf"))
+    new TrueTypeWriter().Write(face, file, new FontWriteOptions());                         // whole, with its layout tables
+using (var file = File.Create("out/sans-subset.ttf"))
+    new TrueTypeWriter().Write(face, file, new FontWriteOptions { Glyphs = [0, 36, 37, 38, 39] });
 ```
 
 - **Whole or a subset:** `FontWriteOptions.Glyphs` keeps those glyphs and the parts of composite glyphs, with
@@ -71,8 +63,8 @@ FontWriters.Save(face, "out/sans-subset.ttf", new FontWriteOptions { Glyphs = [0
 
 ## Documents
 
-**Pages drawn to pixels.** The page drawer "coverage" (registered in `DocumentPageDrawers`, used by
-`IDocument.DrawPage` and `DocumentPageDrawers.DrawPages`) draws any `DocumentPage`, a scan's image or a vector page,
+**Pages drawn to pixels.** The page drawer "coverage" (`CoverageDocumentDrawer`, which
+`IDocument.DrawPage` reaches directly) draws any `DocumentPage`, a scan's image or a vector page,
 whatever format read it: fills by their rule, strokes through `Pens` with their caps, joins and dashes, glyph runs
 through their faces' outlines (a font the document does not embed taken from `DocumentDrawOptions.Fonts`,
 `IDRAK_DOCUMENT_FONTS`, by name and then by the characters it covers, stretched to the document's widths, slanted and
@@ -118,6 +110,6 @@ page's image (`WriteText`); `idrak data synth --format pdf` and `pdf-vector` wri
 
 ## Contracts
 
-Every contract this package serves is shared, in Idrak.Abstraction (`ImageCodecs`, `ImageEncoders`, `ImageTransforms`,
-`Augmentations`, `SampleSources`, `ImageData`, `FontFormats`, `FontWriters`, `FontCache`, `OutlineRasterizers`,
-`TextShapers`, `PageLayouts`, `ScanProfiles`, `DocumentPageDrawers`, `DocumentTextSetters`), and this package registers its built-ins into them.
+Every contract this package serves is shared, in Idrak.Abstraction (`IImageCodec`, `IImageEncoder`, `IImageTransform`,
+`IAugmentation`, `ImageData`, `IFontFormat`, `IFontWriter`, `FontCache`, `IOutlineRasterizer`, `ITextShaper`,
+`IPageLayout`, `DocumentPageDrawers`, `IDocumentTextSetter`), and this package has the built-ins.

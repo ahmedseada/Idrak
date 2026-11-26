@@ -20,13 +20,12 @@ public sealed record KeywordIndexOptions
 
 /// <summary>
 /// Keyword search over a fixed list of texts: the best texts for a query by the words they share, a text's id its
-/// position in the list. The library's is BM25 (<see cref="Bm25Index"/>); register another with
-/// <c>KeywordIndexes.Register</c> (a database's full-text ranking, BM25 variants), and retrieval
-/// (<c>RetrievalIndex</c>, <c>idrak rag</c>) uses it by name.
+/// position in the list. The library's is BM25 (<see cref="Bm25Index"/>); another (a database's full-text ranking,
+/// BM25 variants) is an app's. Picking one by its name is not on the new design yet.
 /// </summary>
 public interface IKeywordIndex
 {
-    /// <summary>The name the index is registered under in <see cref="KeywordIndexes"/> ("bm25").</summary>
+    /// <summary>The index's name ("bm25").</summary>
     string Name { get; }
 
     /// <summary>The settings it was built with.</summary>

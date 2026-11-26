@@ -21,7 +21,7 @@ internal static class AnnotationFiles
             : throw new InvalidDataException($"{path}: {what} is not a number ('{text}').");
 
     // The image files under `folder` (by the image codecs' extensions), as paths relative to it with '/', in ordinal order.
-    // The image codecs were registered (ImageCodecs): their extensions and sizes are not on the new design yet.
+    // The image codecs' extensions and sizes are not on the new design yet.
     internal static List<string> Images(string folder)
     {
         var extensions = new HashSet<string>(ImageExtensions(folder), StringComparer.OrdinalIgnoreCase);
@@ -71,7 +71,7 @@ internal static class AnnotationFiles
 }
 
 /// <summary>
-/// COCO's instances format ("coco" in <c>AnnotationFormats</c>): one JSON file with <c>images</c> (id, file_name,
+/// COCO's instances format ("coco"): one JSON file with <c>images</c> (id, file_name,
 /// width, height), <c>categories</c> (id, name) and <c>annotations</c> (bbox as x, y, width, height in pixels, area,
 /// iscrowd, and segmentation as polygons or a run-length encoding, plain or compressed). Classes are the categories in
 /// file order, their ids kept (<see cref="AnnotatedDataset.ClassIds"/>). Images are relative to
@@ -331,7 +331,7 @@ public sealed class CocoFormat : IAnnotationFormat
 }
 
 /// <summary>
-/// YOLO's text format ("yolo" in <c>AnnotationFormats</c>): a folder with <c>images/</c> and <c>labels/</c> (the
+/// YOLO's text format ("yolo"): a folder with <c>images/</c> and <c>labels/</c> (the
 /// same sub-folders), or images and their .txt side by side; each image's .txt holds a line per object, <c>class cx cy w h</c>
 /// normalized to the image's size, or <c>class x1 y1 x2 y2 ...</c> for a polygon (YOLO segmentation). An image without a
 /// .txt has no objects. Class names from <c>classes.txt</c>, else <c>data.yaml</c>'s <c>names</c>, else the class numbers.
@@ -516,7 +516,7 @@ public sealed class YoloFormat : IAnnotationFormat
 }
 
 /// <summary>
-/// Pascal VOC's XML format ("voc" in <c>AnnotationFormats</c>): a folder with <c>Annotations/*.xml</c> (or the XML
+/// Pascal VOC's XML format ("voc"): a folder with <c>Annotations/*.xml</c> (or the XML
 /// files themselves), each an image's <c>filename</c>, <c>size</c> and <c>object</c>s (name, pose, truncated, difficult,
 /// bndbox xmin ymin xmax ymax), read with System.Xml. VOC's boxes count pixels from 1 with both ends inside, so a box is
 /// (xmin - 1, ymin - 1) to (xmax, ymax) in the library's pixel coordinates. Classes from <c>classes.txt</c> when there is

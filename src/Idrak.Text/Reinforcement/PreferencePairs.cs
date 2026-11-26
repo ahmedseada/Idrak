@@ -51,7 +51,7 @@ public static class PreferencePairs
         return added;
     }
 
-    // The pair sources were registered (PreferencePairSources) and picked by name, made with their options: not on the new design yet.
+    // Picking the pair sources by name, made with their options, is not on the new design yet.
     private static IPreferencePairSource PairSourceNamed(string name, IReadOnlyDictionary<string, string>? options) => throw new NotSupportedException($"The preference pair source '{name}' by name is not on the new design yet.");
 
     /// <summary>
@@ -64,7 +64,7 @@ public static class PreferencePairs
     /// <param name="source">The pair source's name.</param>
     /// <param name="encoder">Tokenizes kept texts; null when no choice holds one.</param>
     /// <param name="options">The source's options; null for its defaults.</param>
-    /// <exception cref="NotSupportedException">No source of that name is registered.</exception>
+    /// <exception cref="NotSupportedException">Picking the source by its name is not on the new design yet.</exception>
     public static List<PreferencePair> Build(IReadOnlyList<Trajectory<ChatObservation, ChatMessage>> episodes, string source, ChatTranscriptEncoder? encoder = null,
         IReadOnlyDictionary<string, string>? options = null)
     {

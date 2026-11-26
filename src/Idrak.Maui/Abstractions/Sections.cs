@@ -16,9 +16,8 @@ public enum SectionPlacement
 /// <summary>
 /// One section of the app's navigation (no Shell): a tab of the bottom bar on a narrow window, an entry of the side rail on
 /// a wide one. It shows a view the host keeps while the app runs (made on first use), and names the features it hosts, so
-/// opening one of them (from All labs, a tile, a link) switches to it. Registered by its <c>IKind.Name</c> in
-/// <see cref="AppSections"/>; the library's are Home, Chat, Voice, Vision, All labs and Settings, and an app adds its own
-/// or replaces one by name.
+/// opening one of them (from All labs, a tile, a link) switches to it. The library's are Home, Chat, Voice, Vision,
+/// All labs and Settings (<see cref="AppSections"/>: listing them is not on the new design yet).
 /// </summary>
 public interface IAppSection
 {
@@ -94,9 +93,9 @@ public interface IAppNavigator
 }
 
 /// <summary>
-/// The sections of the app's navigation, by name (ignoring case): "home", "chat", "voice" (Transcribe, Speak and Studio),
-/// "vision" (Read text and Image), "labs" (All labs) and "settings" are the library's. Register another with
-/// <c>Register</c>; one under a library name shadows the library's, which <c>Unregister</c> brings back.
+/// The sections of the app's navigation: "home", "chat", "voice" (Transcribe, Speak and Studio),
+/// "vision" (Read text and Image), "labs" (All labs) and "settings" are the library's. Listing them or
+/// finding one by name is not on the new design yet.
 /// <see cref="Visible"/> lists them in order without those whose features the settings all turn off.
 /// </summary>
 public static class AppSections
@@ -119,19 +118,17 @@ public static class AppSections
     /// <summary>The settings.</summary>
     public const string Settings = "settings";
 
-    /// <summary>Every registered section in order (<see cref="IAppSection.Order"/>, then the title).</summary>
+    /// <summary>Every section in order (<see cref="IAppSection.Order"/>, then the title).</summary>
     public static IReadOnlyList<IAppSection> All =>
         [.. Registered().OrderBy(s => s.Order).ThenBy(s => s.Title, StringComparer.CurrentCultureIgnoreCase)];
 
-    // The sections and features were registered (AppSections.Register, MobileFeatures.Register) and listed or found by
-    // name, which is not on the new design yet.
+    // Listing the sections and features or finding one by name is not on the new design yet.
     private static IEnumerable<IAppSection> Registered() => throw new NotSupportedException("The app's registered sections are not on the new design yet.");
 
     private static bool IsFeatureRegistered(string name) => throw new NotSupportedException($"The feature '{name}' by name is not on the new design yet.");
 
     /// <summary>
-    /// The sections in order, without those that host features and whose every feature <paramref name="options"/> turn off
-    /// or nobody registered.
+    /// The sections in order, without those that host features and whose every feature <paramref name="options"/> turn off.
     /// </summary>
     public static IReadOnlyList<IAppSection> Visible(IdrakMauiOptions options)
     {

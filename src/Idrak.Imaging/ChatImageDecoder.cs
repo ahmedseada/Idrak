@@ -9,14 +9,14 @@ namespace Idrak.Imaging;
 
 /// <summary>
 /// A chat message's image (<see cref="ChatImage"/>: the encoded bytes as a client sent them) read the way transformers'
-/// <c>load_image</c> reads a file: decoded by the registered codecs (<see cref="ImageCodecs"/>) and turned upright by its
+/// <c>load_image</c> reads a file: decoded by the codecs (<see cref="ImageCodecs"/>) and turned upright by its
 /// EXIF orientation (<c>ImageOps.exif_transpose</c>; an 8-bit image stays 8-bit). The codecs and <see cref="ImagePreprocessor"/> apply no orientation
 /// themselves; the command line's images and the server's uploads and data URLs come through here.
 /// </summary>
 public static class ChatImageDecoder
 {
     /// <summary>The image's pixels: decoded by the codec that reads its bytes, then turned by its EXIF orientation.</summary>
-    /// <exception cref="InvalidDataException">No registered codec reads it, or its data is damaged.</exception>
+    /// <exception cref="InvalidDataException">No codec reads it, or its data is damaged.</exception>
     public static ImageData Decode(ChatImage image)
     {
         ArgumentNullException.ThrowIfNull(image);
@@ -24,13 +24,13 @@ public static class ChatImageDecoder
     }
 
     /// <summary>An image file held in memory, decoded and turned upright (see <see cref="Decode(ChatImage)"/>).</summary>
-    /// <exception cref="InvalidDataException">No registered codec reads it, or its data is damaged.</exception>
+    /// <exception cref="InvalidDataException">No codec reads it, or its data is damaged.</exception>
     public static ImageData Decode(ReadOnlySpan<byte> file) => Orient(Codecs.Decode(file), Orientation(file));
 
     /// <summary>
     /// The width and height of an image file held in memory as <see cref="Decode(ReadOnlySpan{byte})"/> gives it (turned
     /// upright: swapped for the EXIF orientations 5 to 8), read from its header without decoding it; null when no
-    /// registered codec knows its format or its header gives no size.
+    /// codec knows its format or its header gives no size.
     /// </summary>
     public static (int Width, int Height)? Size(ReadOnlySpan<byte> file) =>
         Codecs.ReadInfo(file) is { Width: > 0, Height: > 0 } info
@@ -38,7 +38,7 @@ public static class ChatImageDecoder
             : null;
 
     /// <summary>
-    /// The name of the registered codec that reads the image's bytes (for example "png" or "jpeg"), or null when none
+    /// The name of the codec that reads the image's bytes (for example "png" or "jpeg"), or null when none
     /// does (a GIF or WebP file, or bytes that are no image): a check of the header, before anything is decoded.
     /// </summary>
     public static string? FormatOf(ChatImage image)
@@ -54,7 +54,7 @@ public static class ChatImageDecoder
     /// exactly as it reads the original with <see cref="ImagePreprocessor.Grayscale"/> on, so a server can turn one
     /// request's images grey without changing the model's preprocessing.
     /// </summary>
-    /// <exception cref="InvalidDataException">No registered codec reads it, or its data is damaged.</exception>
+    /// <exception cref="InvalidDataException">No codec reads it, or its data is damaged.</exception>
     public static ChatImage Grayscale(ChatImage image)
     {
         var pixels = Decode(image);
@@ -295,7 +295,7 @@ public static class ChatImageDecoder
     }
 }
 
-// The image codecs were registered (ImageCodecs) and an image's format found among them: not on the new design yet.
+// Finding an image's format among the image codecs is not on the new design yet.
 file static class Codecs
 {
     public static ImageData Decode(ReadOnlySpan<byte> file) => throw new NotSupportedException("Decoding an image through the registered image codecs is not on the new design yet.");

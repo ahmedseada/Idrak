@@ -11,7 +11,7 @@ namespace Idrak.Audio;
 // loudness-live) or over the whole recording (loudness, peak). Each is checked against tools/audio/make_audio_dynamics.py,
 // which writes the same equations sample by sample (and BS.1770's integrated loudness also from pyloudnorm).
 // No option key is a processor's name (a gate's threshold is not "gate", peak normalization is not "peak"): an item
-// after a comma that names an option of the step before it joins that step, and a registered name would be read as a
+// after a comma that names an option of the step before it joins that step, and a name would be read as a
 // step of its own instead.
 internal static class DynamicsProcessors
 {

@@ -13,7 +13,7 @@ using Idrak.Maui.Controls;
 
 namespace Idrak.Maui.ViewModels;
 
-/// <summary>A registered audio processor as a chip on the Audio process page: tapping it appends its step to the pipeline.</summary>
+/// <summary>An audio processor as a chip on the Audio process page: tapping it appends its step to the pipeline.</summary>
 public sealed class ProcessorChip
 {
     internal ProcessorChip(IAudioProcessor processor, Action<ProcessorChip> add)
@@ -21,7 +21,7 @@ public sealed class ProcessorChip
         AddCommand = new Command(() => add(this));
         Name = processor.Name;
         Label = processor.Label;
-        Summary = "";                                                   // the processors' summaries went with their registry
+        Summary = "";                                                   // the processors' summaries: not on the new design yet
         Live = processor.Live;
         LiveAlternative = processor.LiveAlternative;
         Parameters = [.. processor.Parameters.Select(Describe)];
@@ -102,7 +102,7 @@ public sealed class ProcessorChip
 /// The Audio process page (plan 34, M6): a recording from the microphone (the permission asked first; the capture
 /// <see cref="AudioCaptures.ForThisMachine"/> picks, aaudio on Android) or a file decoded by the library's own codecs
 /// (<see cref="AudioCodecs"/>), run through a pipeline written as the library's text (<see cref="AudioPipeline"/>, the
-/// registered processors as chips that append a step, checked as it is written), played before and after on the speaker
+/// processors as chips that append a step, checked as it is written), played before and after on the speaker
 /// (<see cref="ISoundPlayer"/>: A/B, one at a time), with the pipeline's latency (the shift a recording's apply takes off)
 /// and delay (what a live listener waits), the time it took cold (the first call of a pipeline, which compiles the code)
 /// and warm, and the level before and after; the result saved and shared. Monitoring (off by default) plays the
@@ -207,7 +207,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable, ILiveLevelSo
     /// <summary>The settings in effect (<see cref="ApplySettings"/> checks and keeps the page's).</summary>
     public AudioProcessLabOptions Options => _options;
 
-    /// <summary>The registered processors as chips, in registration order.</summary>
+    /// <summary>The processors as chips, in order.</summary>
     public ObservableCollection<ProcessorChip> Processors { get; } = [];
 
     /// <summary>The pipeline as written (<see cref="AudioPipeline"/> text: steps comma-separated, each a name, a value and options); checked as it changes.</summary>
@@ -616,7 +616,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable, ILiveLevelSo
     /// <summary>Opens or closes the settings card.</summary>
     public ICommand ToggleSettingsCommand { get; }
 
-    /// <summary>Lists the registered processors again (a plug-in may have registered one since).</summary>
+    /// <summary>Lists the processors again (listing them is not on the new design yet).</summary>
     public void RefreshProcessors()
     {
         Processors.Clear();
@@ -1251,7 +1251,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable, ILiveLevelSo
         });
     }
 
-    // The pipeline text checked against the registry as it is written.
+    // The pipeline text checked as it is written.
     private void CheckPipeline()
     {
         try

@@ -152,7 +152,7 @@ public sealed class TranscribeLabOptions
         };
     }
 
-    /// <summary>The cleaning pipeline (empty when none), checked against the registered processors and refused when a step needs the whole recording.</summary>
+    /// <summary>The cleaning pipeline (empty when none), checked against the processors and refused when a step needs the whole recording.</summary>
     /// <exception cref="ArgumentException">An unknown processor or option, or a step that is not live (the message names it and its live alternative).</exception>
     public AudioPipeline ToPipeline()
     {
@@ -210,7 +210,7 @@ public sealed class TranscribeSetting
     /// <summary>What an empty value means (the library's default), shown in an empty field.</summary>
     public string Placeholder { get; }
 
-    /// <summary>The values a <see cref="TranscribeSettingKind.Choice"/> takes, the first standing for "" (the library's default); read when asked (the registries may grow).</summary>
+    /// <summary>The values a <see cref="TranscribeSettingKind.Choice"/> takes, the first standing for "" (the library's default); read when asked.</summary>
     public IReadOnlyList<string> Choices => _choices();
 
     /// <summary>The value in <paramref name="options"/> as text ("" for the library's own).</summary>
@@ -397,7 +397,7 @@ public static class TranscribeSettings
         : text.Equals("whole", StringComparison.OrdinalIgnoreCase) ? TranscribeFileMode.Whole
         : throw new FormatException($"'{text}' is not live or whole.");
 
-    // The pipeline text, checked as the page's live path takes it: registered processors, live steps only.
+    // The pipeline text, checked as the page's live path takes it: live steps only.
     private static string? Pipeline(string text)
     {
         if (text.Length == 0 || text.Equals("none", StringComparison.OrdinalIgnoreCase))

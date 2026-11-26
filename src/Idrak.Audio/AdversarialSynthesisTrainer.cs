@@ -30,7 +30,7 @@ public static class AdversarialSynthesisTrainer
     /// <summary>The files of a checkpoint folder that only resuming reads (the run's state, both optimizers' state).</summary>
     public static IReadOnlyList<string> StateFiles { get; } = [SpeechTrainer.StateFile, SpeechTrainer.OptimizerFile, DiscriminatorOptimizerFile];
 
-    // The augmentations were registered (AudioAugmentations) and picked by name, which is not on the new design yet.
+    // Picking the augmentations by name is not on the new design yet.
     private static IAudioAugmentation AugmentationNamed(string name) =>
         throw new NotSupportedException($"The audio augmentation '{name}' by name is not on the new design yet.");
 
@@ -38,7 +38,7 @@ public static class AdversarialSynthesisTrainer
     /// Trains <paramref name="model"/> on <paramref name="train"/> for <see cref="SpeechTrainingOptions.Steps"/> steps (see
     /// <see cref="SpeechTrainer.Train"/>), or goes on from <paramref name="resume"/> (see <see cref="Resume"/>).
     /// </summary>
-    /// <exception cref="ArgumentException">An option is out of range or names nothing registered, a feature augmentation is asked for, or no utterance can be trained on.</exception>
+    /// <exception cref="ArgumentException">An option is out of range or names nothing known, a feature augmentation is asked for, or no utterance can be trained on.</exception>
     /// <exception cref="InvalidOperationException">The loss stayed not finite (<see cref="SpeechTrainingOptions.NonFiniteSteps"/>).</exception>
     /// <exception cref="OperationCanceledException">Cancelled: a checkpoint of the last finished step is written first.</exception>
     public static SpeechTrainingResult Train(IAdversarialSpeechSynthesizer model, SpeechSource train, SpeechSource? evaluation, SpeechTrainingOptions options, string outputFolder,
@@ -89,11 +89,11 @@ public static class AdversarialSynthesisTrainer
         return Train(model, state.Train, state.Evaluation, options, output, state with { Options = options }, progress, cancellationToken, trace);
     }
 
-    // The optimizers were registered (OptimizerKinds) and picked by name, which is not on the new design yet.
+    // Picking the optimizers by name is not on the new design yet.
     private static Func<IReadOnlyList<Tensor>, Optimizer> OptimizerFactoryNamed(string name, OptimizerSettings settings) =>
         throw new NotSupportedException($"The optimizer '{name}' by name is not on the new design yet.");
 
-    // The learning-rate schedules were registered (LearningRateSchedules) and picked by name, which is not on the new design yet.
+    // Picking the learning-rate schedules by name is not on the new design yet.
     private static ILearningRateScheduler ScheduleNamed(string name, LearningRateScheduleSettings settings, IOptimizer optimizer, int steps) =>
         throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");
 

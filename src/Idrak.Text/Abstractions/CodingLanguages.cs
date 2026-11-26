@@ -37,8 +37,7 @@ public sealed record CodingToolExamples
 /// A programming language the coding agent and its tools know how to work in (<see cref="CodingLanguages"/>): how to
 /// recognize a project of it, the programs its builds and tests start, what the agent is told about checking its work,
 /// the folders that are build output or dependencies, and the commands a coding task of it runs when it names none. The
-/// library registers no language; Idrak.Text.Plugins has the library's own profiles, and an
-/// app registers its own.
+/// library has no language of its own; Idrak.Text.Plugins has the library's own profiles, and an app may have its own.
 /// </summary>
 public interface ICodingLanguage
 {
@@ -148,7 +147,7 @@ public static class CodingLanguages
     /// <summary>How many folders below the workspace's top detection looks (0: the top only), unless an option says otherwise: 2.</summary>
     public const int DefaultDepth = 2;
 
-    /// <summary>The package whose plug-ins register the library's own languages, as the "not registered" messages name it.</summary>
+    /// <summary>The package that has the library's own languages, as the messages name it.</summary>
     public const string PluginPackage = "Idrak.Text.Plugins";
 
     /// <summary>The choice <see cref="EnvironmentVariable"/> names, or <see cref="All"/> when it is not set.</summary>

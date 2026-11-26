@@ -9,7 +9,7 @@ namespace Idrak.Cluster;
 
 /// <summary>
 /// The built-in link profiles (plan 23), none of which carries a figure of some hardware: a name that states its rate
-/// carries exactly that rate ("ethernet-1g": 1 Gb/s; any registered name takes a rate suffix, "direct-link-10g"); a link
+/// carries exactly that rate ("ethernet-1g": 1 Gb/s; any name takes a rate suffix, "direct-link-10g"); a link
 /// this machine can reach is measured on it at first use ("same-device": a copy inside one device's memory;
 /// "shared-memory": a copy in host memory; "pcie": a device's copies to and from the host); every other link
 /// ("infiniband", "roce", "nvlink", "thunderbolt", "usb4", "wifi", "ethernet", "direct-link") has no rate until the

@@ -9,7 +9,7 @@ namespace Idrak.Audio;
 /// <summary>
 /// The audio parts of a conversation as soft tokens (<see cref="ISoftPartSource"/> for <see cref="ChatParts.Audio"/>),
 /// over a family's audio part (<see cref="IPretrainedAudio"/>) and its encoder: each <see cref="ChatAudio"/> is decoded
-/// by the registered codecs, its blocks of soft tokens asked of the encoder once per sound (kept by the sound's hash),
+/// by the codecs, its blocks of soft tokens asked of the encoder once per sound (kept by the sound's hash),
 /// and its features encoded once per sound, options and encoder, kept in a feature cache (<see cref="IFeatureCache"/>,
 /// keyed by the sound's hash and the extractor's options) so a second turn or epoch encodes nothing (rule 75). Give it
 /// to <c>ChatGenerator.Parts</c> or <c>ChatTranscriptEncoder.Parts</c>. When the family's audio part trains
@@ -25,8 +25,8 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     private readonly IAudioTuningPart? _tuning;                  // the family's trainable side, taken once (rule 75)
     private readonly ITrainableAudioEncoder? _trainable;         // the encoder's training members, when the family trains and built it
 
-    // The feature caches were registered (FeatureCaches) and the "memory" one made by its name, which is not on the new
-    // design yet (Idrak.Text's memory cache is internal to it).
+    // Making the "memory" feature cache by its name is not on the new design yet (Idrak.Text's memory cache is internal
+    // to it).
     private static IFeatureCache MemoryCache() => throw new NotSupportedException("The \"memory\" feature cache by name is not on the new design yet.");
 
     /// <summary>

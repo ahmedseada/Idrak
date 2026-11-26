@@ -355,10 +355,10 @@ internal sealed class TuningImageSource : IDisposable
 
     /// <summary>
     /// The part <paramref name="reference"/> names (a path under the root or in the zip, or a data URL), as a part of the
-    /// binary kind <paramref name="kind"/> registered in <see cref="ChatParts"/> (Idrak.Audio's "audio"), for the record
+    /// binary kind <paramref name="kind"/> (Idrak.Audio's "audio"), for the record
     /// at <paramref name="where"/>.
     /// </summary>
-    /// <exception cref="InvalidDataException">No binary kind of that name is registered, or the reference is empty, remote or not a part of it.</exception>
+    /// <exception cref="InvalidDataException">No binary kind of that name is found, or the reference is empty, remote or not a part of it.</exception>
     public ChatPart LoadPart(string kind, string reference, string where)
     {
         if (TuningRecordImages.PartKindNamed(kind) is not IBinaryPartKind binary)
@@ -631,7 +631,7 @@ internal sealed class TranscriptsDataFormat : ITuningDataFormat
     public PendingConversations ReadPending(string path, TuningDataOptions? options = null) => TuningRecordImages.ReadPending(path, options, (r, w, _) => Pending(r, w, options));
 
     // The row's sound is a part of the "audio" kind (a speech transcript is audio's by definition), read through the
-    // binary kind registered under that name when the record is taken.
+    // binary kind of that name when the record is taken.
     private static PendingRecord Pending(JsonObject record, string where, TuningDataOptions? options)
     {
         string? sound = AudioKeys.Select(k => (string?)record[k]).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
@@ -654,7 +654,7 @@ internal sealed class TranscriptsDataFormat : ITuningDataFormat
 // a record's images only when it is taken.
 internal static class TuningRecordImages
 {
-    // Each format reads a record at `where` with the binary kinds registered when the read began (their keys: lists and
+    // Each format reads a record at `where` with the binary kinds known when the read began (their keys: lists and
     // markers), taken once per read.
     public static IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options, Func<JsonObject, string, IReadOnlyList<IBinaryPartKind>, PendingRecord> pending)
     {
@@ -834,7 +834,7 @@ internal static class TuningRecordImages
         return new PendingRecord(transcript, references, images, where) { PartReferences = lists ?? PendingRecord.NoParts, Parts = parts };
     }
 
-    // The part kinds were registered (ChatParts) and read a record's parts by their names: not on the new design yet.
+    // Reading a record's parts by their part kinds' names is not on the new design yet.
     internal static IChatPartKind? PartKindNamed(string name) => throw new NotSupportedException($"The chat part kind '{name}' by name is not on the new design yet.");
 
     internal static IReadOnlyList<IBinaryPartKind> BinaryKinds() => throw new NotSupportedException("The registered binary chat part kinds are not on the new design yet.");
@@ -977,7 +977,7 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
                     {
                         if (a["data"] is not null)
                         {
-                            parts.Add(TuningRecordImages.PartFromJson(a));                         // the registered kind reads its bytes
+                            parts.Add(TuningRecordImages.PartFromJson(a));                         // the kind reads its bytes
                         }
                         else if (Reference(a, "path", binary.Name, "url") is { } reference)
                         {

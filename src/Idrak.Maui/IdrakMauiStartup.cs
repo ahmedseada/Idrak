@@ -91,7 +91,7 @@ public static class IdrakMauiStartup
         }
     }
 
-    // The clock the live views draw on and their rate; a clock that is not registered or cannot tick here leaves the first
+    // The clock the live views draw on and their rate; a clock that cannot be found or cannot tick here leaves the first
     // that can, and says why.
     private static void ApplyFrameClock(IdrakMauiOptions options, List<string> problems)
     {

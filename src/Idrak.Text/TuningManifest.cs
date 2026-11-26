@@ -16,7 +16,7 @@ namespace Idrak.Text;
 /// <example>
 /// <code>
 /// var manifest = TuningManifest.Read(folder)!;
-/// using var model = manifest.LoadModel(folder, Device.Cuda());       // the base model with the adapter merged
+/// using var model = manifest.LoadModel(folder, Device.Default);      // the base model with the adapter merged
 /// </code>
 /// </example>
 public sealed record TuningManifest

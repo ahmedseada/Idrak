@@ -43,7 +43,7 @@ public sealed class GenerateLabOptions
     /// <summary>A parts file (<c>--parts</c>, <see cref="SyntheticPageParts.Read"/>): headers, subjects, signatures, footers; null: the text alone.</summary>
     public string? Parts { get; set; }
 
-    /// <summary>The pages' image format (<c>--image-format</c>: jpeg or a registered encoder); null: the library's (jpeg).</summary>
+    /// <summary>The pages' image format (<c>--image-format</c>: jpeg or an encoder); null: the library's (jpeg).</summary>
     public string? ImageFormat { get; set; }
 
     /// <summary>The JPEG quality (<c>--quality</c>, 1 to 100); null: the library's.</summary>

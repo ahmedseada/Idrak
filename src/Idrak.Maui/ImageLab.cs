@@ -43,7 +43,7 @@ public sealed class ImageLabOptions
 
     /// <summary>
     /// <paramref name="image"/> as a file of <see cref="Format"/>: the library's JPEG encoder at <see cref="JpegQuality"/>
-    /// (the library's quality when none), else the registered encoder of that name.
+    /// (the library's quality when none), else the encoder of that name.
     /// </summary>
     public byte[] Encode(ImageData image)
     {

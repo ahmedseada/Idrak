@@ -23,7 +23,7 @@ internal static class ChoiceSharing
 
     /// <summary>
     /// In one process, before the ranks' threads start: each rank's outcome (null: nothing shared). No backend shares its
-    /// choices on the new design yet (the providers' registry is gone), so nothing is shared.
+    /// choices on the new design yet, so nothing is shared.
     /// </summary>
     public static Following Follow(IReadOnlyList<Device> devices, ClusterOptions options)
     {

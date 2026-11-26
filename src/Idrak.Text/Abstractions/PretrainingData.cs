@@ -86,7 +86,7 @@ public interface IPretrainingReader : IDisposable
     TrainingSequence? Read(long index);
 }
 
-/// <summary>A kind of pretraining data: how its files become training sequences. Register one with <c>PretrainingSources.Register</c>.</summary>
+/// <summary>A kind of pretraining data: how its files become training sequences.</summary>
 public interface IPretrainingSource
 {
     /// <summary>The kind's name.</summary>

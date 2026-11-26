@@ -18,7 +18,7 @@ public sealed record TuningDataOptions
     /// <summary>
     /// Where the data's relative audio paths (an <c>"audios"</c> list, <c>&lt;audio&gt;</c> markers) are looked up: a
     /// folder or a <c>.zip</c> file, as <see cref="Images"/>. Null: where the images are (<see cref="Images"/>, else the
-    /// data file's folder). Audio parts are made by the "audio" kind registered in <see cref="ChatParts"/> (Idrak.Audio's);
+    /// data file's folder). Audio parts are made by the "audio" kind (Idrak.Audio's);
     /// a file with audio and no such kind is refused naming it.
     /// </summary>
     public string? Audios { get; init; }
@@ -32,8 +32,7 @@ public sealed record TuningDataOptions
 
 /// <summary>
 /// A file format of fine-tuning conversations: reads a data file into <see cref="ChatTranscript"/>s whose messages carry
-/// the data's images as image parts (<see cref="ChatImage"/>), in place and in order. Registered in
-/// <see cref="TuningDataFormats"/> under its <see cref="Name"/>; the testing kit checks one
+/// the data's images as image parts (<see cref="ChatImage"/>), in place and in order. The testing kit checks one
 /// (<c>Conformance.CheckTuningDataFormat</c>).
 /// <para>
 /// Reading is lazy: records are read as the result is enumerated, each image's encoded bytes as its record is read, and
@@ -46,7 +45,7 @@ public interface ITuningDataFormat
     /// <summary>The format's name in <see cref="TuningDataFormats"/> ("messages", "sharegpt").</summary>
     string Name { get; }
 
-    /// <summary>Whether <paramref name="record"/> (a data file's first record) is one of this format's (<c>TuningDataFormats.Detect</c>).</summary>
+    /// <summary>Whether <paramref name="record"/> (a data file's first record) is one of this format's.</summary>
     bool Recognizes(JsonObject record);
 
     /// <summary>The transcripts of the data file at <paramref name="path"/>, one per record, in the file's order.</summary>

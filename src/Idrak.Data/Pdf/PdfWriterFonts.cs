@@ -10,7 +10,7 @@ namespace Idrak.Data.Pdf;
 /// <summary>
 /// One face of a document being written: embedded once, at the end, as a composite font (<c>Type0</c> over a
 /// <c>CIDFontType2</c>, <c>Identity-H</c>: each glyph shown by its id as two bytes, <c>CIDToGIDMap Identity</c>), its
-/// program written through <c>FontWriters</c>' "truetype" (a subset of the glyphs used, their ids kept, or the
+/// program written through the "truetype" writer (a subset of the glyphs used, their ids kept, or the
 /// whole face), <c>/W</c> from the advances, and a <c>ToUnicode</c> map from the runs' text: each glyph the characters
 /// it first stood for, found by aligning a run's glyphs with its text through the face's own character map (the glyphs
 /// in the text's order or reversed, whichever matches more; between two glyphs that match, the characters between them
@@ -24,9 +24,9 @@ internal sealed class PdfWriterFont
     /// <summary>The font writer the programs are written with.</summary>
     public const string ProgramWriter = "truetype";
 
-    // The reading orders and the font writers were registered (ReadingOrders, FontWriters) and looked up by name: not on
-    // the new design yet. The ones the writer uses are reached directly: the "bidi" order (Idrak.Imaging's
-    // BidiReadingOrder) and the "truetype" font writer (Idrak.Imaging's TrueTypeWriter); another name stops.
+    // Looking up the reading orders and the font writers by name is not on the new design yet. The ones the writer uses
+    // are reached directly: the "bidi" order (Idrak.Imaging's BidiReadingOrder) and the "truetype" font writer
+    // (Idrak.Imaging's TrueTypeWriter); another name stops.
     private static readonly Idrak.Imaging.Shaping.BidiReadingOrder Bidi = new();
 
     private static readonly Idrak.Imaging.TrueTypeWriter TrueType = new();

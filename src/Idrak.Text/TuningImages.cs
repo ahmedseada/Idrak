@@ -17,7 +17,6 @@ namespace Idrak.Text;
 /// <example>
 /// <code>
 /// var images = TuningImages.Parse("max_width=1024,contrast=1.5", ["do_pan_and_scan=true"], grayscale: true);
-/// images.ThrowIfUnknown(model.Vision!.Family, model.Vision.VisionOptionKeys);
 /// images.Save(adapterFolder);                       // tuning_images.json
 /// var same = TuningImages.Read(adapterFolder);      // what run and serve apply
 /// </code>
@@ -52,8 +51,8 @@ public sealed record TuningImages
     /// <summary>Whether this changes nothing: no options, colour.</summary>
     public bool IsEmpty => VisionOptions.Count == 0 && !Grayscale;
 
-    // The image transforms were registered (ImageTransforms) and a preparation named them as steps: not on the new design
-    // yet. Null, empty or "none" is no transform.
+    // Naming image transforms as a preparation's steps is not on the new design yet. Null, empty or "none" is no
+    // transform.
     private static void NoTransforms(string? text)
     {
         if (!string.IsNullOrWhiteSpace(text) && !text.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
@@ -79,8 +78,8 @@ public sealed record TuningImages
     }
 
     /// <summary>
-    /// Throws unless every vision option is one the family <paramref name="family"/> takes (<paramref name="accepted"/>:
-    /// <c>PretrainedVision.VisionOptionKeys</c>), naming them.
+    /// Throws unless every vision option is one the family <paramref name="family"/> takes (<paramref name="accepted"/>),
+    /// naming them.
     /// </summary>
     /// <exception cref="ArgumentException">An option the family does not take.</exception>
     public void ThrowIfUnknown(string family, IReadOnlyCollection<string> accepted) => VisionOptions.ThrowIfUnknown(family, accepted);

@@ -99,16 +99,16 @@ public sealed class FineTuningSession : IDisposable
         }
     }
 
-    // The gradient syncs and compressions were registered (GradientSyncs, GradientCompressions) and picked by the cluster
-    // options, which is not on the new design yet: the library's all-reduce with the "none" compression is constructed
-    // directly, and options that pick another (sharded, local SGD, top-k) stop.
+    // Picking the gradient syncs and compressions by the cluster options is not on the new design yet: the library's
+    // all-reduce with the "none" compression is constructed directly, and options that pick another (sharded, local SGD,
+    // top-k) stop.
     private static IGradientSync GradientSyncFor(ICollectives collectives, Optimizer optimizer, ClusterOptions options) =>
         options.GradientSyncName == "all-reduce" && options.CompressionName == "none"
             ? new AllReduceSyncProvider(new PlainCompression()).Create(collectives, optimizer, options)
             : throw new NotSupportedException($"The gradient sync '{options.GradientSyncName}' with the '{options.CompressionName}' compression, picked by the cluster options, is not on the new design yet.");
 
-    // The stop agreements were registered (StopAgreements) and picked for the collectives, which is not on the new design
-    // yet: the library's all-reduce agreement (what the pick fell back on) is constructed directly.
+    // Picking the stop agreements for the collectives is not on the new design yet: the library's all-reduce agreement
+    // (what the pick fell back on) is constructed directly.
     private static IStopAgreement StopAgreementFor(ICollectives collectives, ClusterOptions? options) =>
         new AllReduceStopAgreement(collectives, options ?? collectives.Context?.Options ?? ClusterOptions.FromEnvironment());
 
@@ -125,7 +125,7 @@ public sealed class FineTuningSession : IDisposable
         Options = options;
         try
         {
-            // The image side first (its family registered, a vision part at all), before anything else runs.
+            // The image side first (its family found, a vision part at all), before anything else runs.
             var (vision, ownedVision) = FineTuner.VisionFor(model, evaluation is null ? train : train.Concat(evaluation), options.Vision);
             _ownedVision = ownedVision;
             options = options with { Vision = vision };
@@ -489,7 +489,7 @@ public sealed class FineTuningSession : IDisposable
     public ChatGenerator Generator(int? contextLength = null, KeyValueFormat cacheFormat = KeyValueFormat.Float32) =>
         Generator(KeyValueLayouts.For(cacheFormat), contextLength);
 
-    /// <summary><see cref="Generator(int?, KeyValueFormat)"/> with a cache format given by its layout (a built-in or one registered with <c>KeyValueLayouts.Register</c>).</summary>
+    /// <summary><see cref="Generator(int?, KeyValueFormat)"/> with a cache format given by its layout (a built-in or one of one's own).</summary>
     /// <param name="cacheLayout">How its key/value cache stores keys and values while a reply is generated.</param>
     /// <param name="contextLength">Its context window (the model's, by default).</param>
     /// <exception cref="InvalidOperationException">The model has no chat template.</exception>

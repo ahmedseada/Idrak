@@ -52,8 +52,8 @@ public static class GenerativeModels
     // ------------------------------------------------------------------ encoder-decoder models
 
     /// <summary>
-    /// An encoder-decoder (sequence to sequence) model read from <paramref name="folder"/> by the family its architecture
-    /// is registered under (<c>PretrainedSeq2Seq</c>, a plug-in's), with the folder's tokenizer: the engine's "seq2seq"
+    /// An encoder-decoder (sequence to sequence) model read from <paramref name="folder"/> by the family of its
+    /// architecture (a plug-in's; finding it by that name is not on the new design yet), with the folder's tokenizer: the engine's "seq2seq"
     /// kind, reached through <see cref="ITextModel"/> (<c>engine.Model&lt;ITextModel&gt;("translator")</c>). Each copy is a
     /// <see cref="Seq2SeqGenerator"/> on the builder's device; the engine disposes it on unload.
     /// </summary>

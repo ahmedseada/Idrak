@@ -73,7 +73,7 @@ public sealed record VoiceProfile(string Name, string Kind, IReadOnlyList<string
 /// </summary>
 public interface ISpeakerEncoder : IDisposable
 {
-    /// <summary>The family name it is registered under in <see cref="VoiceConverters"/> (stored in voice.json, so a voice is used with the encoder that made it).</summary>
+    /// <summary>Its name (stored in voice.json, so a voice is used with the encoder that made it).</summary>
     string Name { get; }
 
     /// <summary>The rate it reads sound at (clips at another rate are resampled).</summary>
@@ -138,7 +138,7 @@ public sealed record VoiceConverterLoadOptions
     /// <summary>The device it runs on; null: <see cref="Device.Default"/>.</summary>
     public Device? Device { get; init; }
 
-    /// <summary>The family to read the folder with; null: the one config.json names ("architectures" or "model_type"), else the first registered that recognises it.</summary>
+    /// <summary>The family to read the folder with; null: the one config.json names ("architectures" or "model_type"), else the first that recognises it.</summary>
     public string? Family { get; init; }
 }
 
@@ -158,28 +158,26 @@ public interface IVoiceConverterFamily
 
 /// <summary>
 /// Loads voice converters. The library has no converter family: a family is an application of these contracts, brought
-/// by a plug-in (Idrak.Audio.Plugins' OpenVoice family is one); the families were registered and a checkpoint's found
-/// among them, which is not on the new design yet.
+/// by a plug-in (Idrak.Audio.Plugins' OpenVoice family is one); finding a checkpoint's family is not on the new design
+/// yet.
 /// </summary>
 public static class VoiceConverters
 {
-    // The converter families were registered (VoiceConverters.Register) and a checkpoint's found by its name or by
-    // recognising its config.json, which is not on the new design yet.
+    // Finding a checkpoint's converter family is not on the new design yet.
     private static IVoiceConverterFamily ConverterFamilyFor(JsonObject config, string? name) =>
         throw new NotSupportedException($"The voice converter family {(name is null ? "that reads this config.json" : $"'{name}'")}, found among the registered ones, is not on the new design yet.");
 
-    // The checkpoint formats were registered (CheckpointFormats) and the one of a path found among them, which is not on the
-    // new design yet.
+    // Finding the checkpoint format of a path is not on the new design yet.
     private static ICheckpointFormat FormatFor(string path) =>
         throw new NotSupportedException($"{path}: a checkpoint format found by the path is not on the new design yet.");
 
     /// <summary>
-    /// Loads the converter at <paramref name="path"/> (a folder with config.json and a checkpoint a registered
-    /// <c>CheckpointFormats</c> format opens) through the options' family, the one config.json names, or the
-    /// first registered that recognises config.json.
+    /// Loads the converter at <paramref name="path"/> (a folder with config.json and a checkpoint) through the options'
+    /// family, the one config.json names, or the first that recognises config.json; finding the family is not on the new
+    /// design yet.
     /// </summary>
     /// <exception cref="FileNotFoundException">There is no config.json.</exception>
-    /// <exception cref="NotSupportedException">No registered family reads it; the message names those registered.</exception>
+    /// <exception cref="NotSupportedException">Finding the family is not on the new design yet.</exception>
     public static IVoiceConverter Load(string path, VoiceConverterLoadOptions? options = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
@@ -259,7 +257,7 @@ public sealed record VoiceCheckpointOptions
 /// </summary>
 public interface IVoiceStore
 {
-    /// <summary>The name it is registered under.</summary>
+    /// <summary>Its name.</summary>
     string Name { get; }
 
     /// <summary>Where it keeps voices (a folder for the built-in store).</summary>

@@ -164,7 +164,7 @@ public sealed class IdrakMauiOptions
     /// </summary>
     public bool? ChatEnterSends { get; set; }
 
-    /// <summary>The chat's key/value cache format (a registered one, <c>KeyValueLayouts.Names</c>); null: the library's (float32). Taken at the next load.</summary>
+    /// <summary>The chat's key/value cache format (by name: not on the new design yet); null: the library's (float32). Taken at the next load.</summary>
     public string? ChatKeyValueFormat { get; set; }
 
     /// <summary>
@@ -301,7 +301,7 @@ public sealed class IdrakMauiOptions
     public IReadOnlyList<string> ChatSuggestions { get; set; } =
         ["Explain what runs on this phone", "Summarise this in one paragraph", "Write a haiku about GPUs"];
 
-    /// <summary>The features turned off in the settings (by name); every other registered feature shows.</summary>
+    /// <summary>The features turned off in the settings (by name); every other feature shows.</summary>
     public ISet<string> DisabledFeatures { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Whether what the user saved in the settings page is applied over these values at start-up (true by default).</summary>

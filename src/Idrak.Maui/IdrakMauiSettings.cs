@@ -377,7 +377,7 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
     // The library's generation defaults, which an empty chat setting keeps (shown as the placeholders).
     private static GenerationOptions Library => field ??= new GenerationOptions();
 
-    // "default" or "float32" is the library's own (null); a registered key/value layout otherwise.
+    // "default" or "float32" is the library's own (null); a key/value layout otherwise.
     private static string? CacheFormat(string text)
     {
         string name = text.ToLowerInvariant() switch { "" or "default" or "float32" or "f32" => "", var other => other };
@@ -480,7 +480,7 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
         }
     }
 
-    // "auto" or empty is the first clock that ticks here (null); else a registered frame clock, as it is spelled there.
+    // "auto" or empty is the first clock that ticks here (null); else a frame clock, as it is spelled there.
     private static string? FrameClockName(string text)
     {
         if (text.Length == 0 || text.Equals("auto", StringComparison.OrdinalIgnoreCase))

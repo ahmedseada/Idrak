@@ -39,14 +39,14 @@ public static class DataFiles
     private static HashSet<string> Skipped(ReadOptions options) => new(options.SkippedFolders ?? ReadOptions.DefaultSkippedFolders, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// The format of <paramref name="path"/> by its extension (.gz stripped), or null for an unknown one. The formats were
-    /// looked up by extension in their registry, which is gone: not on the new design yet.
+    /// The format of <paramref name="path"/> by its extension (.gz stripped), or null for an unknown one. Looking a
+    /// format up by extension is not on the new design yet.
     /// </summary>
     /// <exception cref="NotSupportedException">Always for now.</exception>
     public static DataFormat? FormatOf(string path, bool includeCode = true) =>
         FormatByExtension(path, includeCode) is { } format && Enum.TryParse<DataFormat>(format.Name, ignoreCase: true, out var builtIn) ? builtIn : null;
 
-    // The data file formats were registered (DataFileFormats) and found by extension and by name: not on the new design yet.
+    // Finding the data file formats by extension and by name is not on the new design yet.
     private static IDataFileFormat? FormatByExtension(string path, bool includeCode = true) =>
         throw new NotSupportedException($"'{path}': a data file format by its extension{(includeCode ? "" : " (code left out)")} is not on the new design yet (set ReadOptions.FileFormat).");
 

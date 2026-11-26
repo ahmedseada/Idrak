@@ -117,12 +117,12 @@ public sealed record HifiGanVocoderConfig
 /// checkpoint's rate, long spectrograms decoded in pieces with context (<see cref="DecoderChunkSeconds"/>) so device
 /// memory follows the piece. Read from a checkpoint folder (<see cref="Load"/>: transformers' <c>conv_pre</c>,
 /// <c>upsampler.N</c>, <c>resblocks.N</c>, <c>conv_post</c>, <c>mean</c> and <c>scale</c> at the root, as SpeechT5's and
-/// FastSpeech 2's HiFi-GAN ship) or built from any <see cref="StoredLayers"/>. An app registers one in
-/// <see cref="Vocoders"/> with <c>RegisterFolder</c>, so a synthesizer picks it by name.
+/// FastSpeech 2's HiFi-GAN ship) or built from any <see cref="StoredLayers"/>. A synthesizer picking it by name is not
+/// on the new design yet.
 /// </summary>
 public sealed class HifiGanVocoder : IVocoder, IDisposable
 {
-    /// <summary>The registry name an app gives it by default, "hifigan".</summary>
+    /// <summary>The name an app gives it by default, "hifigan".</summary>
     public const string DefaultName = "hifigan";
 
     private readonly Tensor? _shift, _scaleInverse;                            // −mean / scale and 1 / scale per band: (x − mean) / scale as one affine
@@ -184,14 +184,13 @@ public sealed class HifiGanVocoder : IVocoder, IDisposable
     /// </summary>
     public double DecoderChunkSeconds { get; set; } = 10;
 
-    // The checkpoint formats were registered (CheckpointFormats) and the one of a path found among them, which is not on the
-    // new design yet.
+    // Finding the checkpoint format of a path is not on the new design yet.
     private static ICheckpointFormat FormatFor(string path) =>
         throw new NotSupportedException($"{path}: a checkpoint format found by the path is not on the new design yet.");
 
     /// <summary>
-    /// Reads a HiFi-GAN checkpoint (<paramref name="path"/>: a folder with config.json and its tensors in any format
-    /// <c>CheckpointFormats</c> opens, or a file in it) onto <paramref name="device"/> (default <see cref="Device.Default"/>).
+    /// Reads a HiFi-GAN checkpoint (<paramref name="path"/>: a folder with config.json and its tensors, or a file in it)
+    /// onto <paramref name="device"/> (default <see cref="Device.Default"/>).
     /// </summary>
     /// <exception cref="InvalidDataException">No config.json, or a tensor missing or of another shape than the config says.</exception>
     public static HifiGanVocoder Load(string path, Device? device = null)

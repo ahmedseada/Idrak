@@ -9,7 +9,7 @@ namespace Idrak.Maui.Views;
 
 /// <summary>
 /// The library's "audio-process" feature: a recording from the microphone or a sound file decoded by the library's
-/// codecs, run through a pipeline written as the library's text (the registered processors as chips), played before and
+/// codecs, run through a pipeline written as the library's text (the processors as chips), played before and
 /// after on the speaker, with the pipeline's latency and delay, the time it took cold and warm and the levels before and
 /// after; the result saved and shared; optional live monitoring through the pipeline's live steps.
 /// </summary>

@@ -38,7 +38,7 @@ public interface ILabSetting
     /// <summary>What an empty value means (the library's default), shown in an empty field.</summary>
     string Placeholder { get; }
 
-    /// <summary>The values a <see cref="LabSettingKind.Choice"/> takes, the first standing for "" (the default); read when asked (the registries may grow).</summary>
+    /// <summary>The values a <see cref="LabSettingKind.Choice"/> takes, the first standing for "" (the default); read when asked.</summary>
     IReadOnlyList<string> Choices { get; }
 }
 
@@ -92,7 +92,7 @@ public sealed class LabSetting<TOptions> : ILabSetting
 /// <summary>
 /// The labs' settings kept between runs: each definition's value under the lab's prefix and its key in the app's
 /// <see cref="ISettingsStore"/> (MAUI's Preferences); an empty value is removed (the library's own). The value parsers
-/// the labs share: a decimal point or comma, whole numbers in a range, on/off/default, a registered name, an image
+/// the labs share: a decimal point or comma, whole numbers in a range, on/off/default, a name, an image
 /// transform pipeline.
 /// </summary>
 public static class LabSettings
@@ -208,7 +208,7 @@ public static class LabSettings
         _ => throw new FormatException($"'{text}' is not on, off or default."),
     };
 
-    // A name of a registry or a list (`names`) as it is spelled there (any case typed), or null for the default; `what`
+    // A name of a list (`names`) as it is spelled there (any case typed), or null for the default; `what`
     // names them in the refusal.
     internal static string? Registered(string text, IReadOnlyCollection<string> names, string what, StringComparer? comparer = null)
     {
@@ -235,12 +235,11 @@ public static class LabSettings
         : choices.FirstOrDefault(c => c.Equals(text, StringComparison.OrdinalIgnoreCase))
           ?? throw new FormatException($"'{text}' is not one of {string.Join(", ", choices)}.");
 
-    // The image transforms were registered (ImageTransforms) and a pipeline's steps found by name, which is not on the new
-    // design yet.
+    // Finding a pipeline's steps by name is not on the new design yet.
     private static string PipelineNamed(string text) =>
         throw new NotSupportedException($"The image pipeline '{text}': image transforms by name are not on the new design yet.");
 
-    // An image transform pipeline's text, checked against the registered transforms and written as the library writes
+    // An image transform pipeline's text, checked against the transforms and written as the library writes
     // it; empty or "none": none.
     internal static string? Pipeline(string text)
     {

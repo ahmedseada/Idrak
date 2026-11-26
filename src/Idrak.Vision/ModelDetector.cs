@@ -30,7 +30,7 @@ public sealed record DetectorOptions
 /// An <see cref="IObjectDetector"/> over any detection network: each image becomes the network's input (resized to
 /// channels x height x width with values in [0, 1], normalization in the network, see <c>NetworkBuilder.Normalize</c>; or
 /// through an <see cref="ImagePreprocessor"/>, a model family's resize, crop and normalization), the network runs on its
-/// device, the <see cref="DetectionDecoder"/> (given, or registered in <see cref="DetectionDecoders"/> and named) reads its
+/// device, the <see cref="DetectionDecoder"/> (given, or and named) reads its
 /// outputs, and the boxes are mapped back to the image, clipped and filtered by non-maximum suppression.
 /// </summary>
 public sealed class ModelDetector : IObjectDetector
@@ -55,15 +55,15 @@ public sealed class ModelDetector : IObjectDetector
         _device = device ?? model.WeightsDevice ?? Device.Default;
     }
 
-    // The detection decoders were registered (DetectionDecoders) and made by name: not on the new design yet.
+    // Making the detection decoders by name is not on the new design yet.
     private static DetectionDecoder DecoderNamed(string name, DetectionDecoderRequest request) =>
         throw new NotSupportedException($"The detection decoder '{name}' by name is not on the new design yet.");
 
     /// <summary>
-    /// A detector whose decoder is the one registered as <paramref name="decoder"/> in <see cref="DetectionDecoders"/>,
+    /// A detector whose decoder is the one as <paramref name="decoder"/> in <see cref="DetectionDecoders"/>,
     /// made for this input size, <paramref name="options"/>' classes and <paramref name="settings"/>.
     /// </summary>
-    /// <exception cref="NotSupportedException">No decoder is registered under that name.</exception>
+    /// <exception cref="NotSupportedException">Picking the decoder by its name is not on the new design yet.</exception>
     public ModelDetector(Module model, int channels, int height, int width, string decoder, JsonObject? settings = null, DetectorOptions? options = null, Device? device = null)
         : this(model, channels, height, width, DecoderNamed(decoder, new DetectionDecoderRequest(height, width, options?.Classes, settings ?? [])), options, device)
     {
@@ -83,11 +83,11 @@ public sealed class ModelDetector : IObjectDetector
     }
 
     /// <summary>
-    /// A detector with <paramref name="preprocessor"/> and the decoder registered as <paramref name="decoder"/> in
+    /// A detector with <paramref name="preprocessor"/> and the decoder named <paramref name="decoder"/> in
     /// <see cref="DetectionDecoders"/> (its context's input size is the preprocessor's fixed output size, or 0 when that
     /// follows the image).
     /// </summary>
-    /// <exception cref="NotSupportedException">No decoder is registered under that name.</exception>
+    /// <exception cref="NotSupportedException">Picking the decoder by its name is not on the new design yet.</exception>
     public ModelDetector(Module model, ImagePreprocessor preprocessor, string decoder, JsonObject? settings = null, DetectorOptions? options = null, Device? device = null)
         : this(model, preprocessor, DecoderNamed(decoder, ContextFor(preprocessor, options, settings)), options, device)
     {

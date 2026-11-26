@@ -26,7 +26,7 @@ public sealed class VisionModelEntry
     /// <summary>The stored model.</summary>
     public StoredModel Model { get; }
 
-    /// <summary>The architecture its config.json names, a registered vision family's.</summary>
+    /// <summary>The architecture its config.json names, a vision family's.</summary>
     public string Architecture { get; }
 
     /// <summary>How the settings keep it: "owner/name@revision".</summary>
@@ -45,7 +45,7 @@ public sealed class VisionModelEntry
 /// <summary>
 /// The OCR lab (plan 34, M6): a photo from the camera (its permission asked first) or the gallery, decoded once by the
 /// library's own codecs and turned upright; the optional preprocessing pipeline run on it once and the page shown as the
-/// model will see it; read by a vision-language model of the store (a complete model whose architecture a registered
+/// model will see it; read by a vision-language model of the store (a complete model whose architecture a
 /// vision family reads), loaded once through the <see cref="IVisionReaderService"/> after the same measured check as Chat
 /// (refused with the limit named when it does not fit); the page handed to the reader as prepared (decoded and
 /// transformed once, rule 75); the answer streamed with its tokens per second, the text shown at most once a progress
@@ -144,7 +144,7 @@ public sealed class OcrViewModel : ViewModel
     /// <summary>The settings in effect.</summary>
     public OcrLabOptions Options => _options;
 
-    /// <summary>The store's complete models a registered vision family reads.</summary>
+    /// <summary>The store's complete models a vision family reads.</summary>
     public ObservableCollection<VisionModelEntry> VisionModels { get; } = [];
 
     /// <summary>Whether there is a reader to pick.</summary>
@@ -452,7 +452,7 @@ public sealed class OcrViewModel : ViewModel
 
     /// <summary>
     /// Reads the store's models on a worker thread and lists the complete ones whose config.json names an architecture a
-    /// registered vision family reads; the one kept in the settings is picked again (else the first).
+    /// vision family reads; the one kept in the settings is picked again (else the first).
     /// </summary>
     public async Task RefreshAsync()
     {
@@ -497,7 +497,7 @@ public sealed class OcrViewModel : ViewModel
 
     /// <summary>
     /// Loads the picked reader through the service on the settings' device (once: a later call with the same model and
-    /// settings gives the same load), measured first; a model that does not fit, or whose family is not registered, is
+    /// settings gives the same load), measured first; a model that does not fit, or whose family cannot be found, is
     /// refused and named. True when it is loaded.
     /// </summary>
     public Task<bool> LoadModelAsync()
@@ -599,8 +599,7 @@ public sealed class OcrViewModel : ViewModel
             return false;
         }
 
-        // The preprocessing's steps were image transforms registered by name (ImageTransforms), which is not on the new
-        // design yet: a pipeline given stops; with none, the page is the photo as decoded.
+        // The preprocessing's steps as image transforms by name are not on the new design yet: a pipeline given stops; with none, the page is the photo as decoded.
         if (Pipeline.Trim() is { Length: > 0 } given && !given.Equals("none", StringComparison.OrdinalIgnoreCase))
         {
             Error = "The preprocessing stopped: image transforms by name are not on the new design yet.";
@@ -801,7 +800,7 @@ public sealed class OcrViewModel : ViewModel
         return true;
     }
 
-    // The store's complete models a registered vision family reads, and how many others there are.
+    // The store's complete models a vision family reads, and how many others there are.
     internal static (List<VisionModelEntry> Vision, int Others) ListVisionModels(IModelStore store)
     {
         var vision = new List<VisionModelEntry>();

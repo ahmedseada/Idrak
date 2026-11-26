@@ -7,7 +7,7 @@ namespace Idrak.Maui.ViewModels;
 
 /// <summary>
 /// The placeholder page of a feature not built yet (<see cref="FeatureState.Planned"/>), or of any feature by its
-/// registration alone: its title, glyph and summary, what it will do (<see cref="IMobileFeature.Coming"/>), what it will
+/// feature alone: its title, glyph and summary, what it will do (<see cref="IMobileFeature.Coming"/>), what it will
 /// need from the phone (<see cref="IMobileFeature.Needs"/>, one line each) and the library's packages and model families
 /// it will use. Everything is read from the feature, so one page serves them all.
 /// </summary>
@@ -59,7 +59,7 @@ public sealed class PlaceholderViewModel : ViewModel
     /// <summary>Whether <see cref="Packages"/> has something to show.</summary>
     public bool HasPackages => Feature.Packages.Count > 0;
 
-    /// <summary>The model families it needs registered, joined; "" when none.</summary>
+    /// <summary>The model families it needs, joined; "" when none.</summary>
     public string ModelFamilies => string.Join(", ", Feature.ModelFamilies);
 
     /// <summary>Whether <see cref="ModelFamilies"/> has something to show.</summary>

@@ -257,7 +257,7 @@ public sealed class JinjaChatTemplate : ChatTemplate
     }
 
     /// <summary>
-    /// The kinds of message parts the template renders: text, and each registered kind ("image", "audio", an app's) the
+    /// The kinds of message parts the template renders: text, and each kind ("image", "audio", an app's) the
     /// template writes something for. A
     /// message with an image is given to the template as Hugging Face gives it, its content a list of parts
     /// (<c>{"type": "image"}</c>, <c>{"type": "text", "text": ...}</c>); a text-only message keeps a string. Found by

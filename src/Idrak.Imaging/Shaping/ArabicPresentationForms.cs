@@ -34,7 +34,7 @@ public enum JoiningType : byte
 /// by whether it joins the letters around it (the joining types of ArabicShaping.txt, marks being transparent, a zero width
 /// non-joiner breaking a join and a zero width joiner causing one), and lam followed by alef becomes the lam-alef ligature
 /// (isolated or final). Text in logical order in, logical order out: the bidirectional reordering (<see cref="Bidi"/>) comes
-/// after. Fonts with OpenType tables are shaped through their own features instead (the shapers registered by script).
+/// after. Fonts with OpenType tables are shaped through their own features instead (the shapers by script).
 /// </summary>
 public static class ArabicPresentationForms
 {

@@ -10,7 +10,7 @@ namespace Idrak.Maui.Views;
 
 /// <summary>
 /// The library's "image" feature: a photo from the camera or the gallery, decoded by the library's own codecs and turned
-/// upright; the registered image transforms as chips that build a pipeline, the scan profiles to draw steps from; the
+/// upright; the image transforms as chips that build a pipeline, the scan profiles to draw steps from; the
 /// pipeline applied with each step's time, cold and warm apart; the original and the result shown; the result saved and
 /// shared as PNG or JPEG. Needs the library's Idrak.Imaging only (no model).
 /// </summary>

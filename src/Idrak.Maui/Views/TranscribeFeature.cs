@@ -12,8 +12,8 @@ namespace Idrak.Maui.Views;
 /// The library's "transcribe" feature: live transcription from the microphone (the library's <c>LiveTranscriber</c> over
 /// the capture this phone has, aaudio on Android) with an optional cleaning pipeline, or an audio file decoded by the
 /// library's codecs, read live or whole; the committed words and the tentative ones as they arrive, the level, the time and
-/// how far behind the model runs; the text copied or shared. Any registered speech family reads: the library registers
-/// none, the app registers the families it shows (<c>SpeechFamilies</c>, a plug-in's own Register call).
+/// how far behind the model runs; the text copied or shared. Any speech family reads: the library registers
+/// none, the families are the app's (finding one by its name is not on the new design yet).
 /// </summary>
 public sealed class TranscribeFeature : IMobileFeature
 {

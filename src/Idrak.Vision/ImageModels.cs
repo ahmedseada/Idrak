@@ -9,34 +9,31 @@ using Idrak.Vision.Abstractions;
 namespace Idrak.Vision;
 
 /// <summary>
-/// Loads image models (classifiers, detectors, segmenters, backbones, line recognizers) through their registered family
-/// (<c>ImageModelFamilies</c>). Idrak.Vision turns the result into a predictor ready for images
+/// Loads image models (classifiers, detectors, segmenters, backbones, line recognizers) through their family (finding it
+/// by its architecture name is not on the new design yet). Idrak.Vision turns the result into a predictor ready for images
 /// (<c>model.Classifier()</c>, <c>model.Detector()</c>, <c>model.Segmenter()</c>, <c>model.LineReader()</c>).
 /// </summary>
 /// <remarks>
 /// <code>
-/// ImageModelFamilies.Register(new MyResNetFamily());                // a plug-in or the app brings the family
 /// using var model = ImageModels.Load("models/resnet-tiny");         // config.json + model.safetensors (+ preprocessor_config.json)
 /// var classifier = model.Classifier();                              // Idrak.Vision: images in, classes out
 /// </code>
 /// </remarks>
 public static class ImageModels
 {
-    // The image model families were registered (ImageModelFamilies) and the checkpoint formats found by the path
-    // (CheckpointFormats): not on the new design yet.
+    // Finding the image model family by its name and the checkpoint format by the path is not on the new design yet.
     private static IImageModelFamily FamilyNamed(string architecture) =>
         throw new NotSupportedException($"The image model family '{architecture}' by name is not on the new design yet.");
 
     private static ICheckpointFormat FormatFor(string path) => throw new NotSupportedException($"{path}: a checkpoint format found by the path is not on the new design yet.");
 
     /// <summary>
-    /// Reads the image model at <paramref name="path"/>: a model folder (config.json and safetensors weights, or any folder a
-    /// registered checkpoint format reads), a .safetensors file in such a folder, an .onnx
+    /// Reads the image model at <paramref name="path"/>: a model folder (config.json and safetensors weights), a .safetensors file in such a folder, an .onnx
     /// file, or a folder holding one .onnx file and no safetensors. The architecture is config.json's ("architectures") or,
-    /// for an ONNX file without one, its "architecture" metadata; the family registered under that name reads the rest.
+    /// for an ONNX file without one, its "architecture" metadata; the family of that name reads the rest.
     /// Tensors are read one at a time as the family makes its layers, so the checkpoint is never held whole in memory.
     /// </summary>
-    /// <exception cref="NotSupportedException">No family is registered under the architecture; the message names <c>ImageModelFamilies</c>.</exception>
+    /// <exception cref="NotSupportedException">Picking the architecture's family by its name is not on the new design yet.</exception>
     /// <exception cref="InvalidDataException">The checkpoint names no architecture, or its family cannot read it.</exception>
     public static ImageModel Load(string path, ImageModelOptions? options = null)
     {

@@ -5,7 +5,7 @@ using Idrak.Maui.ViewModels;
 
 namespace Idrak.Maui.Views;
 
-/// <summary>A planned lab's view, from its registration alone.</summary>
+/// <summary>A planned lab's view, from its feature alone.</summary>
 public partial class PlaceholderView : ContentView
 {
     /// <summary>A view bound to <paramref name="viewModel"/>.</summary>

@@ -16,7 +16,7 @@ internal readonly record struct PdfImageMeasures(int Levels, double SmallSteps, 
 /// An image page's image as an image XObject: its values in [0, 1] as 8-bit levels (rounded), grey or RGB, stored
 /// <see cref="DocumentImageEncoding.Flate"/> (exact: the PNG predictor, each row's filter chosen by the smallest sum of
 /// its residuals as libpng chooses, kept where it lowers the rows' residuals by a fifth, then Flate at the options' level)
-/// or <see cref="DocumentImageEncoding.Jpeg"/> (<c>DCTDecode</c>, written by <c>ImageEncoders</c>' "jpeg" at
+/// or <see cref="DocumentImageEncoding.Jpeg"/> (<c>DCTDecode</c>, written by the "jpeg" encoder at
 /// <see cref="DocumentWriteOptions.JpegQuality"/>); <see cref="DocumentImageEncoding.Auto"/> measures the image
 /// (<see cref="DocumentWriteOptions.LineArtLevels"/>, then <see cref="DocumentWriteOptions.SmoothSteps"/>). The image is
 /// measured a band of rows at a time (its levels made for the band, never copied whole), and a Flate image holds one copy
@@ -29,8 +29,8 @@ internal static class PdfWriterImages
     /// <summary>The name of the image encoder JPEG images are written with.</summary>
     public const string JpegEncoder = "jpeg";
 
-    // The image encoders were registered (ImageEncoders) and looked up by name: not on the new design yet. The one JPEG
-    // images are written with, "jpeg" (Idrak.Imaging's JpegImageEncoder), is reached directly; another name stops.
+    // Looking up the image encoders by name is not on the new design yet. The one JPEG images are written with, "jpeg"
+    // (Idrak.Imaging's JpegImageEncoder), is reached directly; another name stops.
     private static readonly Idrak.Imaging.JpegImageEncoder Jpeg = new();
 
     private static IImageEncoder EncoderNamed(string name) =>

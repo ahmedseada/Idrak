@@ -8,15 +8,15 @@ annotations, bookmarks and redaction (below). Office formats (Word, Excel, Power
 
 ## Documents
 
-A document format is registered by name in `DocumentFormats` and found from a file's first bytes; a writer in
-`DocumentWriters`. This package registers `pdf` for both. A file is opened, not loaded:
+This package has the `pdf` document format (`PdfDocument`, which decides from a file's first bytes) and writer; picking a
+format or a writer by its name or a file's bytes is not on the new design yet. A file is opened, not loaded:
 its objects are read when a page or part asks for them, a page at a time. Every type below is in
 `Idrak.Abstraction.Data` (a global using when implicit usings are on).
 
 ### Open and read
 
 ```csharp
-using var document = DocumentFormats.Open("quarterly-report.pdf");
+using var document = new PdfFormat().Open(File.OpenRead("quarterly-report.pdf"), "quarterly-report.pdf", new DocumentOptions());
 Console.WriteLine($"{document.PageCount} pages, PDF {document.Info.Version}, \"{document.Info.Title}\"");
 
 var page = document.ReadPage(0, DocumentParts.Text | DocumentParts.Images);
@@ -57,7 +57,7 @@ foreach (var issue in page.Issues)
   `InvalidDataException` naming the limit, never a hang. One damaged page or stream fails that page or stream alone.
 
 ```csharp
-using var document = DocumentFormats.Open("manual.pdf", new DocumentOptions { Layout = DocumentTextLayouts.Tagged });
+using var document = new PdfFormat().Open(File.OpenRead("manual.pdf"), "manual.pdf", new DocumentOptions { Layout = DocumentTextLayouts.Tagged });
 foreach (var bookmark in document.Outline)
     Console.WriteLine($"{bookmark.Title}: page {bookmark.Destination?.Page + 1}");
 foreach (var attachment in document.Attachments)
@@ -126,8 +126,8 @@ changes appended: earlier signatures stay valid) or as a **rewrite** (one clean 
 renumbered, object streams, duplicate streams and fonts written once).
 
 ```csharp
-using var source = DocumentFormats.Open("newsletter.pdf");
-using var appendix = DocumentFormats.Open("appendix.pdf");
+using var source = new PdfFormat().Open(File.OpenRead("newsletter.pdf"), "newsletter.pdf", new DocumentOptions());
+using var appendix = new PdfFormat().Open(File.OpenRead("appendix.pdf"), "appendix.pdf", new DocumentOptions());
 using var output = File.Create("newsletter-complete.pdf");
 using (var editor = DocumentWriters.Get("pdf").Edit(source, output, new DocumentWriteOptions()))
 {
@@ -371,22 +371,19 @@ settings above recorded, `--save` and `--compare` as `idrak bench`'s (the `idrak
 ## Contracts
 
 The plug-in points only this package uses are in `Idrak.Data.Abstractions` (add the `using` line to name them):
-`DataFileFormats` and `IDataFileFormat` (file formats), `DatasetSources` and `IDatasetSource` (with `DatasetSpec`,
-`ReadOptions`, `IDatasetRows`), `ParquetCodecs` and `IParquetCodec`, `ITextNormalizer`. The registries register the
-built-ins themselves, as the library defaults of their slots: an app's registration under a built-in name overrides it
-and `Unregister` brings it back. A Parquet codec or a dataset source an app overrides throws to the caller when it fails,
-reported with a hint (`SetPolicy` opts it into `FallBack` to the library's, or `Shadow`); a file format is used as registered (its rows are read lazily). Shared
-contracts (sample sources, `IDownloader`, model sources, and the documents' `DocumentFormats`, `DocumentWriters`,
-`DocumentTextLayouts` and `SignatureServices`) are in Idrak.Abstraction; this package registers its `pdf` format and
-writer and the "http" and "https" signature services into them.
+`IDataFileFormat` (file formats), `IDatasetSource` (with `DatasetSpec`, `ReadOptions`, `IDatasetRows`), `IParquetCodec`,
+`ITextNormalizer`. Picking one by its name or a file's extension is not on the new design yet; a file format's rows are
+read lazily. Shared contracts (sample sources, `IDownloader`, model sources, and the documents' formats, writers, text
+layouts and signature services) are in Idrak.Abstraction; this package has its `pdf` format and writer and the "http"
+and "https" signature services.
 
 ## Folders skipped
 
 Reading a folder or an archive skips the folders `ReadOptions.SkippedFolders` names: by default
 (`ReadOptions.DefaultSkippedFolders`) only `.git` and the editors' state (`.vs`, `.idea`). No language's build output or
 dependency folders are skipped unless named (`bin`, `obj`, `node_modules`, `dist`, `__pycache__`, …): a caller that knows
-them adds them. The `idrak` tool's data commands add every registered coding language's (Idrak.Text's `CodingLanguages`;
-the tool registers Idrak.Text.Plugins' at startup), so they read code folders as before. A recipe takes them as
+them adds them. The `idrak` tool's data commands add every coding language's (Idrak.Text's coding languages; none on
+the new design yet). A recipe takes them as
 `"skip_folders": [...]`, `DatasetSpec.Open` and `GitHub.Repository` as an argument. The table from file extensions to
 language names that labels the `code` format's rows (`DataFiles.LanguageOf`) is data only.
 

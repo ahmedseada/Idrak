@@ -5,7 +5,7 @@
 namespace Idrak.Imaging;
 
 /// <summary>
-/// Images as samples, decoded when read (with the registered <see cref="ImageCodecs"/>) and resized to one
+/// Images as samples, decoded when read (with the <see cref="ImageCodecs"/>) and resized to one
 /// [channels, height, width] shape with values in [0, 1]. The targets are one-hot rows over <see cref="Classes"/>
 /// (none for unlabelled images, to predict). The usual layout is a folder per class, read by the folder constructor:
 /// <c>folder/cat/*.png</c>, <c>folder/dog/*.png</c>.
@@ -25,7 +25,7 @@ public sealed class ImageFolderSource : ISampleSource
 
     /// <summary>
     /// Every sub-folder of <paramref name="folder"/> is a class, in ordinal name order, and its images (sub-folders
-    /// included, ordinal path order) are its samples; files without a registered codec's extension are skipped.
+    /// included, ordinal path order) are its samples; files without a codec's extension are skipped.
     /// </summary>
     /// <exception cref="DirectoryNotFoundException">The folder does not exist.</exception>
     public ImageFolderSource(string folder, int channels, int height, int width)
@@ -113,7 +113,7 @@ public sealed class ImageFolderSource : ISampleSource
     public IReadOnlyList<int> TargetShape => _targetShape;
 
     /// <summary>Decodes and resizes image <paramref name="index"/>, and writes its one-hot class.</summary>
-    /// <exception cref="InvalidDataException">The file is not an image a registered codec reads; the message names it.</exception>
+    /// <exception cref="InvalidDataException">The file is not an image a codec reads; the message names it.</exception>
     public void Read(int index, Span<float> features, Span<float> targets)
     {
         Codecs.Decode(_files[index]).Resize(_featureShape[0], _featureShape[1], _featureShape[2], features);
@@ -139,7 +139,7 @@ public sealed class ImageFolderSource : ISampleSource
     }
 }
 
-// The image codecs were registered (ImageCodecs) and a file decoded by the one that reads it: not on the new design yet.
+// Decoding a file through the image codecs is not on the new design yet.
 file static class Codecs
 {
     public static ImageData Decode(string path) => throw new NotSupportedException($"{path}: decoding an image through the registered image codecs is not on the new design yet.");

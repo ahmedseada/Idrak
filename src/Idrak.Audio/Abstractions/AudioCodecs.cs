@@ -41,10 +41,10 @@ public interface IAudioCodec
 }
 
 /// <summary>
-/// Reads sound files with the codec that knows their format. The library's codecs, each reached directly:
-/// <see cref="Idrak.Audio.WavCodec"/> (RIFF/WAVE: PCM 8, 16, 24 and 32 bits, float 32 and 64, WAVE_FORMAT_EXTENSIBLE; not
-/// compressed variants or RF64), <see cref="Idrak.Audio.FlacCodec"/> and <see cref="Idrak.Audio.Mp3Codec"/>. The codecs
-/// were registered and the one that knows a file found among them, which is not on the new design yet: finding it stops.
+/// Reads sound files with the codec that knows their format. The library's codecs, each reached directly: <see
+/// cref="Idrak.Audio.WavCodec"/> (RIFF/WAVE: PCM 8, 16, 24 and 32 bits, float 32 and 64, WAVE_FORMAT_EXTENSIBLE; not
+/// compressed variants or RF64), <see cref="Idrak.Audio.FlacCodec"/> and <see cref="Idrak.Audio.Mp3Codec"/>. Finding the
+/// codec that knows a file is not on the new design yet: finding it stops.
 /// </summary>
 public static class AudioCodecs
 {
@@ -52,13 +52,13 @@ public static class AudioCodecs
     public const int HeaderBytes = 64 * 1024;
 
     // The codecs in the order a file is offered to them: those that list the path's extension first (a .wav file is the
-    // WAV codec's before a codec that finds a frame sync inside its samples is asked), then the rest. They were registered
-    // and found by the path's extension and the file's first bytes, which is not on the new design yet.
+    // WAV codec's before a codec that finds a frame sync inside its samples is asked), then the rest. Finding them by the
+    // path's extension and the file's first bytes is not on the new design yet.
     private static IEnumerable<IAudioCodec> CodecsFor(string path) =>
         throw new NotSupportedException($"{path}: finding the audio codec that reads it among the registered codecs is not on the new design yet.");
 
     /// <summary>Whether a codec lists the extension of <paramref name="path"/>.</summary>
-    /// <exception cref="NotSupportedException">Always for now: the codecs to ask were registered, which is not on the new design yet.</exception>
+    /// <exception cref="NotSupportedException">Always for now: picking among the codecs is not on the new design yet.</exception>
     public static bool CanDecode(string path)
     {
         string extension = Path.GetExtension(path);

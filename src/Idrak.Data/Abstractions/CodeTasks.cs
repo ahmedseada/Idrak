@@ -8,13 +8,13 @@ namespace Idrak.Data.Abstractions;
 
 /// <summary>
 /// A repository or project a code extractor reads (plan 36): its root folder, the coding languages it is read in, its
-/// history when it has one, and how its files are read. The languages are the names of coding languages registered with
-/// Idrak.Text's <c>CodingLanguages</c> (this package cannot name them): nothing here assumes one.
+/// history when it has one, and how its files are read. The languages are the names of Idrak.Text's coding languages
+/// (this package cannot name them): nothing here assumes one.
 /// </summary>
 /// <param name="Root">The repository's or project's root folder.</param>
 public sealed record CodeSource(string Root)
 {
-    /// <summary>The coding languages it is read in, by their registered names; empty: those that detect it.</summary>
+    /// <summary>The coding languages it is read in, by their names; empty: those that detect it.</summary>
     public IReadOnlyList<string> Languages { get; init; } = [];
 
     /// <summary>Its history (<c>RepositoryHistories</c>), or null when it has none or none is read.</summary>
@@ -71,11 +71,11 @@ public sealed record TaskProvenance
 /// it came from. A verifier keeps it only when the check fails on the workspace and passes with the solution.
 /// </summary>
 /// <param name="Id">A stable id (the same source gives the same id).</param>
-/// <param name="Family">The family that made it (<c>IKind.Name</c>).</param>
+/// <param name="Family">The family that made it (its name).</param>
 /// <param name="Prompt">What the task asks, in words.</param>
 public sealed record TaskDraft(string Id, string Family, string Prompt)
 {
-    /// <summary>The coding language it is in (a registered name), or null for the source's.</summary>
+    /// <summary>The coding language it is in (a name), or null for the source's.</summary>
     public string? Language { get; init; }
 
     /// <summary>The files written over a copy of the source to make the workspace (a method removed, a commit reverted).</summary>
@@ -176,7 +176,7 @@ public interface ITaskFamily
     /// <summary>The family's name.</summary>
     string Name { get; }
 
-    /// <summary>The coding languages it works in (registered names); empty: any.</summary>
+    /// <summary>The coding languages it works in (their names); empty: any.</summary>
     IReadOnlyList<string> Languages => [];
 
     /// <summary>Whether it needs the source's history (<see cref="CodeSource.History"/>); a source without one gets no drafts from it.</summary>

@@ -116,12 +116,12 @@ public sealed record SpeechSynthesisLoadOptions
 }
 
 /// <summary>
-/// A text-to-speech family: how its checkpoints are read into an <see cref="ISpeechSynthesizer"/>. Registered in
-/// <c>SpeechSynthesisFamilies</c> under the architecture name its checkpoints give (config.json's "architectures").
+/// A text-to-speech family: how its checkpoints are read into an <see cref="ISpeechSynthesizer"/>, for the architecture
+/// name its checkpoints give (config.json's "architectures").
 /// </summary>
 public interface ISpeechSynthesisFamily
 {
-    /// <summary>The architecture name it is registered under.</summary>
+    /// <summary>Its architecture name.</summary>
     string Name { get; }
 
     /// <summary>Reads the checkpoint (configuration, tokenizer, tensors) into a synthesizer on the options' device, to speak.</summary>
@@ -159,7 +159,7 @@ public interface ITrainableSpeechSynthesisFamily : ISpeechSynthesisFamily
 /// What a synthesis checkpoint's text front end needs before its model can read text (<see cref="SpeechSynthesisModels.TextNeeds"/>):
 /// phonemes from a <see cref="TextPhonemizers"/> entry (a VITS checkpoint that sets <c>phonemize</c>), romanised text from a
 /// <see cref="TextRomanizers"/> entry (one that sets <c>is_uroman</c>), or neither. Read from the checkpoint's files
-/// without loading its weights; <see cref="Missing"/> says, family-neutrally, what of it is not registered here.
+/// without loading its weights; <see cref="Missing"/> says, family-neutrally, what of it is not available here.
 /// </summary>
 public sealed record SpeechTextNeeds
 {
@@ -172,7 +172,7 @@ public sealed record SpeechTextNeeds
     /// <summary>The language the phonemizer is asked for ("en-us"), or null when the checkpoint reads no phonemes.</summary>
     public string? PhonemeLanguage { get; init; }
 
-    /// <summary>The phonemizer the checkpoint names (a <see cref="TextPhonemizers"/> name), or null for the most recently registered.</summary>
+    /// <summary>The phonemizer the checkpoint names, or null for the default.</summary>
     public string? Phonemizer { get; init; }
 
     /// <summary>The checkpoint reads romanised text: text of another script is romanised first (by the <see cref="TextRomanizers"/> entry that covers it).</summary>
@@ -180,7 +180,7 @@ public sealed record SpeechTextNeeds
 
     /// <summary>
     /// What is missing for the checkpoint to read <paramref name="text"/> here, or null when nothing is: for a phonemes
-    /// checkpoint, a phonemizer registered in <see cref="TextPhonemizers"/> (the one it names, or any); for a romanised one
+    /// checkpoint, a phonemizer (the one it names, or any); for a romanised one
     /// and a <paramref name="text"/> holding letters of another script, a romanizer that covers them. Without a text, a
     /// romanizer is not asked for (Latin text needs none).
     /// </summary>
@@ -214,8 +214,7 @@ public sealed record SpeechTextNeeds
 
     private string Language() => PhonemeLanguage is { Length: > 0 } language ? $" ({language})" : "";
 
-    // The phonemizers and romanizers were registered (TextPhonemizers, TextRomanizers) and looked up here, which is not on
-    // the new design yet.
+    // Looking up the phonemizers and romanizers is not on the new design yet.
     private static IReadOnlyList<string> PhonemizerNames() => throw new NotSupportedException("The registered phonemizers are not on the new design yet.");
 
     private static IReadOnlyList<string> RomanizerNames() => throw new NotSupportedException("The registered romanizers are not on the new design yet.");
@@ -252,24 +251,22 @@ public interface ITextFrontEndSynthesisFamily : ISpeechSynthesisFamily
 /// <summary>Loads a text-to-speech model from a folder: its config.json names the family, the checkpoint format reads its tensors.</summary>
 public static class SpeechSynthesisModels
 {
-    // The text-to-speech families were registered (SpeechSynthesisFamilies) and a checkpoint's found by its architecture
-    // name, which is not on the new design yet.
+    // Finding a checkpoint's text-to-speech family by its architecture name is not on the new design yet.
     private static ISpeechSynthesisFamily FamilyNamed(string architecture) =>
         throw new NotSupportedException($"The speech synthesis family '{architecture}' by name is not on the new design yet.");
 
-    // The checkpoint formats were registered (CheckpointFormats) and the one of a path found among them, which is not on the
-    // new design yet.
+    // Finding the checkpoint format of a path is not on the new design yet.
     private static ICheckpointFormat FormatFor(string path) =>
         throw new NotSupportedException($"{path}: a checkpoint format found by the path is not on the new design yet.");
 
     /// <summary>
-    /// Loads the model at <paramref name="path"/> (a folder with config.json and a checkpoint any registered
-    /// <c>CheckpointFormats</c> format opens) through the family config.json's "architectures" names.
+    /// Loads the model at <paramref name="path"/> (a folder with config.json and a checkpoint) through the family
+    /// config.json's "architectures" names; finding it by that name is not on the new design yet.
     /// </summary>
     /// <exception cref="FileNotFoundException">There is no config.json.</exception>
     /// <exception cref="InvalidDataException">config.json names no architecture.</exception>
-    /// <exception cref="NotSupportedException">The architecture has no registered family.</exception>
-    /// <exception cref="NotSupportedException">The architecture has no registered family, or the options ask to train and its family does not train.</exception>
+    /// <exception cref="NotSupportedException">The architecture has no family.</exception>
+    /// <exception cref="NotSupportedException">The architecture has no family, or the options ask to train and its family does not train.</exception>
     public static ISpeechSynthesizer Load(string path, SpeechSynthesisLoadOptions? options = null)
     {
         options ??= new SpeechSynthesisLoadOptions();
@@ -282,7 +279,7 @@ public static class SpeechSynthesisModels
     /// </summary>
     /// <exception cref="FileNotFoundException">There is no config.json.</exception>
     /// <exception cref="InvalidDataException">config.json names no architecture.</exception>
-    /// <exception cref="NotSupportedException">The architecture has no registered family, or its family does not train (it is no <see cref="ITrainableSpeechSynthesisFamily"/>).</exception>
+    /// <exception cref="NotSupportedException">The architecture has no family, or its family does not train (it is no <see cref="ITrainableSpeechSynthesisFamily"/>).</exception>
     public static IAdversarialSpeechSynthesizer LoadForTraining(string path, SpeechSynthesisLoadOptions? options = null)
     {
         var training = (options ?? new SpeechSynthesisLoadOptions()) with { Training = true };
@@ -295,11 +292,11 @@ public static class SpeechSynthesisModels
     /// What the model at <paramref name="path"/> needs to read text (a phonemizer, a romanizer), from its files alone: its
     /// weights are not loaded. The family config.json names answers when it is an <see cref="ITextFrontEndSynthesisFamily"/>;
     /// another reads text as it is (<see cref="SpeechTextNeeds.None"/>). <see cref="SpeechTextNeeds.Missing"/> then says
-    /// what of it is not registered here, so a model that cannot speak is listed with its reason before it is loaded.
+    /// what of it is not available here, so a model that cannot speak is listed with its reason before it is loaded.
     /// </summary>
     /// <exception cref="FileNotFoundException">There is no config.json.</exception>
     /// <exception cref="InvalidDataException">config.json names no architecture, or a file the family reads is not what it should be.</exception>
-    /// <exception cref="NotSupportedException">The architecture has no registered family.</exception>
+    /// <exception cref="NotSupportedException">The architecture has no family.</exception>
     public static SpeechTextNeeds TextNeeds(string path)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
@@ -337,13 +334,13 @@ public static class SpeechSynthesisModels
     }
 
     /// <summary>
-    /// A text-to-speech model that did not exist: the family registered under the spec's architecture makes it from
+    /// A text-to-speech model that did not exist: the family of the spec's architecture makes it from
     /// <paramref name="spec"/> (<see cref="ICreatableSynthesisFamily.Create"/>: its tensors drawn from the seed, its config.json
     /// and other files), which is written into <paramref name="folder"/> (config.json with "architectures",
     /// model.safetensors in float32, the tokenizer as tokenizer.json when it is an <c>IPretrainedTokenizer</c> and the family wrote
     /// none, the family's files) and loaded from there, so it is a model like any other: it speaks, trains and saves (plan 21, S6).
     /// </summary>
-    /// <exception cref="NotSupportedException">No family is registered under the architecture, or it makes no models from a description.</exception>
+    /// <exception cref="NotSupportedException">Picking the architecture's family by its name is not on the new design yet, or it makes no models from a description.</exception>
     /// <exception cref="InvalidDataException">The spec names no architecture.</exception>
     /// <exception cref="IOException">The folder holds files and <see cref="SpeechCreateOptions.Overwrite"/> is off.</exception>
     public static ISpeechSynthesizer Create(string folder, JsonObject spec, ITokenizer tokenizer, SpeechCreateOptions? options = null)

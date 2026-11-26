@@ -7,11 +7,10 @@ over any network (`ModelDetector` with the application's `DetectionDecoder`, `Mo
 they build on (foreground extraction, connected components, non-maximum suppression, segmentation metrics).
 
 Training detectors and segmenters: box losses (IoU, GIoU, DIoU, CIoU as one fused operation each way; L1 and smooth L1),
-the sigmoid focal loss and soft dice (`DetectionLosses`, `SegmentationLosses`, by name in `VisionLosses`); matching
+the sigmoid focal loss and soft dice (`DetectionLosses`, `SegmentationLosses`); matching
 predictions to objects by IoU thresholds or one to one by the Hungarian algorithm (`BoxMatching`, `BoxMatchers`); COCO and
-Pascal VOC mean average precision and mean IoU (`CocoAveragePrecision`, `VocAveragePrecision`, `SegmentationMetrics`, by
-name in `VisionMetrics`); augmentations that move boxes and masks with the pixels (resized crop, rotation, affine, colour
-jitter, cutout, mosaic, mixup, resize; Idrak.Imaging's flip and shift; by name in `Augmentations`), and `AugmentedImageLoader`,
+Pascal VOC mean average precision and mean IoU (`CocoAveragePrecision`, `VocAveragePrecision`, `SegmentationMetrics`); augmentations that move boxes and masks with the pixels (resized crop, rotation, affine, colour
+jitter, cutout, mosaic, mixup, resize; Idrak.Imaging's flip and shift), and `AugmentedImageLoader`,
 which batches augmented samples on worker threads while the model trains.
 
 ## Layers
@@ -31,24 +30,21 @@ In `Idrak.Vision.Abstractions` (add the `using` line to name them): `IObjectDete
 (`AnnotatedDataset`, `ObjectAnnotation`, `ObjectMask`) and augmentations (`IAugmentation`, `Augmentations`) are in
 `Idrak.Abstraction.Data`, which Idrak.Imaging and Idrak.Data use too.
 
-`DetectionDecoders` (also in `Idrak.Vision.Abstractions`) holds the detection decoders by name: `ModelDetector` takes one
-by name, and an image model family names its own. The library registers only the generic "boxes-scores" (a network that
-already outputs boxes and class scores); a family's decoder (anchors, grids, box encodings) is registered by the plug-in
-or app that brings the family.
+`DetectionDecoders` (also in `Idrak.Vision.Abstractions`) names the detection decoders; an image model family names its
+own. The library has only the generic "boxes-scores" (a network that already outputs boxes and class scores); a family's
+decoder (anchors, grids, box encodings) comes with the plug-in or app that brings the family. Picking a decoder, a loss,
+a metric or an augmentation by its name is not on the new design yet.
 
 ## Image models from their families
 
-Image model families (classifiers, detectors, segmenters, backbones) are plug-ins: the `ImageModelFamilies` registry,
-filled by whoever brings a family (the library registers none). `ImageModels.Load` reads a checkpoint (a safetensors
-folder with config.json, or an ONNX file) through its family, and this package makes it ready for images with the
+Image model families (classifiers, detectors, segmenters, backbones) are plug-ins (the library has none).
+`ImageModels.Load` reads a checkpoint (a safetensors folder with config.json, or an ONNX file) through its family
+(finding it by its architecture name is not on the new design yet, so loading stops there), and this package makes it ready for images with the
 family's preprocessing:
 
 ```csharp
 using Idrak.Vision;
-using Idrak.Vision.Abstractions;   // ImageModelFamilies
 
-ImageModelFamilies.Register(new MyDetectorFamily());          // a plug-in's family
-DetectionDecoders.Register("my-grid", MyGridDecoder.Create);  // and its decoder
 using var model = ImageModels.Load("models/my-detector");
 var detections = model.Detector(new DetectorOptions { MinScore = 0.4f }).Detect(ImageCodecs.Decode("street.jpg"));
 // model.Classifier().Build(), model.Segmenter(), model.Outputs().Build(), RegionClassifier.For(model)

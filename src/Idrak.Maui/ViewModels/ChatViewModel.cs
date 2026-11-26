@@ -1363,7 +1363,7 @@ public sealed class ChatViewModel : ViewModel
 
     /// <summary>
     /// Loads <paramref name="model"/> (once: one loaded already is shared) on a worker thread and shows its device, formats,
-    /// context and load time; a model that does not fit, or whose family is not registered, is refused and named
+    /// context and load time; a model that does not fit, or whose family cannot be found, is refused and named
     /// (<see cref="Error"/>). True when it is loaded.
     /// </summary>
     public async Task<bool> LoadAsync(ChatModelChoice model)
@@ -1503,7 +1503,7 @@ public sealed class ChatViewModel : ViewModel
 
     /// <summary>
     /// What a failed load or answer of <paramref name="model"/> tells the user, with its cause: a model that does not fit
-    /// (the limit named), a family that is not registered (the registry and what it holds), files that are gone, or the
+    /// (the limit named), a family that cannot be found, files that are gone, or the
     /// error's own message.
     /// </summary>
     public static string Explain(Exception error, string model)

@@ -61,7 +61,7 @@ public sealed record SpeechTrainingOptions
     /// <summary>The rate over the steps: a <see cref="LearningRateSchedules"/> name ("cosine", "linear", "constant", "wsd").</summary>
     public string Schedule { get; init; } = "cosine";
 
-    /// <summary>The optimizer: an <c>OptimizerKinds</c> name ("adamw", "adam", "sgd").</summary>
+    /// <summary>The optimizer, by name ("adamw", "adam", "sgd").</summary>
     public string Optimizer { get; init; } = "adamw";
 
     /// <summary>Weight decay (decoupled for AdamW).</summary>
@@ -331,16 +331,15 @@ public static class SpeechTrainer
     internal const string OptimizerFile = "optimizer.safetensors";
     private const string FeatureStage = "audio-features";
 
-    // What the run's options name was registered and picked by name, which is not on the new design yet: the training
-    // objective (SpeechTrainingObjectives), the feature cache (FeatureCaches), the augmentations (AudioAugmentations), the
-    // evaluation's metric (TuningMetrics), the cleaning stages (AudioCleaners), the optimizer and the schedule (below).
+    // Picking by name what the run's options name is not on the new design yet: the training objective, the feature
+    // cache, the augmentations, the evaluation's metric, the cleaning stages, the optimizer and the schedule (below).
     private static ISpeechTrainingObjective ObjectiveNamed(string name) =>
         throw new NotSupportedException($"The speech training objective '{name}' by name is not on the new design yet.");
 
     private static IFeatureCache FeatureCacheNamed(string name, FeatureCacheOptions options) =>
         throw new NotSupportedException($"The feature cache '{name}' by name is not on the new design yet.");
 
-    // The augmentations were registered (AudioAugmentations) and picked by name, which is not on the new design yet.
+    // Picking the augmentations by name is not on the new design yet.
     private static IAudioAugmentation AugmentationNamed(string name) =>
         throw new NotSupportedException($"The audio augmentation '{name}' by name is not on the new design yet.");
 
@@ -349,11 +348,11 @@ public static class SpeechTrainer
     private static IAudioCleaner CleanerNamed(string name) =>
         throw new NotSupportedException($"The audio cleaning stage '{name}' by name is not on the new design yet.");
 
-    // The optimizers were registered (OptimizerKinds) and picked by name, which is not on the new design yet.
+    // Picking the optimizers by name is not on the new design yet.
     private static Func<IReadOnlyList<Tensor>, Optimizer> OptimizerFactoryNamed(string name, OptimizerSettings settings) =>
         throw new NotSupportedException($"The optimizer '{name}' by name is not on the new design yet.");
 
-    // The learning-rate schedules were registered (LearningRateSchedules) and picked by name, which is not on the new design yet.
+    // Picking the learning-rate schedules by name is not on the new design yet.
     private static ILearningRateScheduler ScheduleNamed(string name, LearningRateScheduleSettings settings, IOptimizer optimizer, int steps) =>
         throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");
 
@@ -362,7 +361,7 @@ public static class SpeechTrainer
     /// checkpoints into <paramref name="outputFolder"/>, scoring <paramref name="evaluation"/> when given; or goes on from
     /// <paramref name="resume"/> (the model then read from its folder, see <see cref="Resume"/>).
     /// </summary>
-    /// <exception cref="ArgumentException">An option is out of range or names nothing registered, or the source holds no utterance CTC can read.</exception>
+    /// <exception cref="ArgumentException">An option is out of range or names nothing known, or the source holds no utterance CTC can read.</exception>
     /// <exception cref="InvalidOperationException">The loss stayed not finite (<see cref="SpeechTrainingOptions.NonFiniteSteps"/>).</exception>
     /// <exception cref="OperationCanceledException">Cancelled: a checkpoint of the last finished step is written first.</exception>
     public static SpeechTrainingResult Train(ITrainableSpeechModel model, SpeechSource train, SpeechSource? evaluation, SpeechTrainingOptions options, string outputFolder,

@@ -12,12 +12,12 @@ using Idrak.Reinforcement.Abstractions;
 namespace Idrak.Reinforcement;
 
 /// <summary>
-/// The settings of a <see cref="ModulePolicy{TAction}"/>: its optimizer, made by name through <c>OptimizerKinds</c>, and the
+/// The settings of a <see cref="ModulePolicy{TAction}"/>: its optimizer, made by name (not on the new design yet), and the
 /// networks <see cref="PolicyNetworks"/> builds for it (hidden widths, activation, a value head).
 /// </summary>
 public sealed record ModulePolicyOptions
 {
-    /// <summary>The optimizer, by name in <c>OptimizerKinds</c> (adam, adamw, sgd, or an app's). <c>IDRAK_RL_OPTIMIZER</c>.</summary>
+    /// <summary>The optimizer, by name (adam, adamw, sgd). <c>IDRAK_RL_OPTIMIZER</c>.</summary>
     public string Optimizer { get; init; } = "adam";
 
     /// <summary>The optimizer's learning rate, the base of a trainer's schedule. <c>IDRAK_RL_LEARNING_RATE</c>.</summary>
@@ -229,7 +229,7 @@ public static class ModulePolicy
 /// A policy over a <see cref="Module"/> (<see cref="ModulePolicy.Categorical"/>, <see cref="ModulePolicy.Gaussian"/>):
 /// observations are float arrays, a batch of them a [batch, size] input of the actor; an action is one unit (a choice, or a
 /// whole box of floats) with its log-probability under the policy that drew it; the critic's value of the observation is
-/// recorded when there is one. <see cref="Update"/> is autograd plus an optimizer made through <c>OptimizerKinds</c>: the
+/// recorded when there is one. <see cref="Update"/> is autograd plus an optimizer made by name: the
 /// mini-batch's log-probabilities, entropies and values under the current weights (the reference's too when there is one)
 /// go to the policy loss, its gradient is clipped to <see cref="MaxGradientNorm"/> and stepped. The same observations, seed
 /// and weights give the same actions; every draw comes from the call's seed, row by row in order.
@@ -303,7 +303,7 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
         MaxGradientNorm = options.MaxGradientNorm;
     }
 
-    // The optimizers were registered (OptimizerKinds) and picked by name, which is not on the new design yet.
+    // Picking the optimizers by name is not on the new design yet.
     private static Optimizer OptimizerNamed(string name, OptimizerSettings settings, IReadOnlyList<Tensor> parameters) =>
         throw new NotSupportedException($"The optimizer '{name}' by name is not on the new design yet.");
 

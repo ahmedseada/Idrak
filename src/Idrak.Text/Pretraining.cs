@@ -103,7 +103,7 @@ public sealed record PretrainingOptions
     /// <summary>Weight decay (decoupled, for the AdamW kinds).</summary>
     public float WeightDecay { get; init; } = 0.1f;
 
-    /// <summary>The optimizer: an <c>OptimizerKinds</c> name ("adamw", "adam", "sgd"), made with <see cref="Beta1"/> and <see cref="Beta2"/>.</summary>
+    /// <summary>The optimizer, by name ("adamw", "adam", "sgd"), made with <see cref="Beta1"/> and <see cref="Beta2"/>.</summary>
     public string Optimizer { get; init; } = "adamw";
 
     /// <summary>The optimizer's first moment decay (AdamW kinds).</summary>
@@ -332,26 +332,26 @@ public static partial class Pretrainer
     private const string StateFile = "pretrain-state.json";
     private const string OptimizerFile = "optimizer.safetensors";
 
-    // The stop agreements were registered (StopAgreements) and picked for the collectives, which is not on the new design
-    // yet: the library's all-reduce agreement (what the pick fell back on) is constructed directly.
+    // Picking the stop agreements for the collectives is not on the new design yet: the library's all-reduce agreement
+    // (what the pick fell back on) is constructed directly.
     private static IStopAgreement StopAgreementFor(ICollectives collectives, ClusterOptions? options) =>
         new AllReduceStopAgreement(collectives, options ?? collectives.Context?.Options ?? ClusterOptions.FromEnvironment());
 
-    // The pretraining sources were registered (PretrainingSources) and picked by name: not on the new design yet.
+    // Picking the pretraining sources by name is not on the new design yet.
     private static IPretrainingSource SourceNamed(string name) => throw new NotSupportedException($"The pretraining source '{name}' by name is not on the new design yet.");
 
-    // The gradient syncs and compressions were registered (GradientSyncs, GradientCompressions) and picked by the cluster
-    // options, which is not on the new design yet: the library's all-reduce with the "none" compression is constructed
-    // directly, and options that pick another (sharded, local SGD, top-k) stop.
+    // Picking the gradient syncs and compressions by the cluster options is not on the new design yet: the library's
+    // all-reduce with the "none" compression is constructed directly, and options that pick another (sharded, local SGD,
+    // top-k) stop.
     private static IGradientSync GradientSyncFor(ICollectives collectives, Optimizer optimizer, ClusterOptions options) =>
         options.GradientSyncName == "all-reduce" && options.CompressionName == "none"
             ? new AllReduceSyncProvider(new PlainCompression()).Create(collectives, optimizer, options)
             : throw new NotSupportedException($"The gradient sync '{options.GradientSyncName}' with the '{options.CompressionName}' compression, picked by the cluster options, is not on the new design yet.");
 
-    // The learning-rate schedules were registered (LearningRateSchedules) and picked by name: not on the new design yet.
+    // Picking the learning-rate schedules by name is not on the new design yet.
     private static ILearningRateScheduler ScheduleNamed(string name, LearningRateScheduleSettings settings, IOptimizer optimizer, int steps) => throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");
 
-    // The feature caches were registered (FeatureCaches) and picked by name: not on the new design yet.
+    // Picking the feature caches by name is not on the new design yet.
     private static IFeatureCache FeatureCacheNamed(string name) => throw new NotSupportedException($"The feature cache '{name}' by name is not on the new design yet.");
 
     /// <summary>
@@ -911,7 +911,7 @@ public static partial class Pretrainer
         return chosen.Count > 0 ? chosen : throw new ArgumentException($"Stage {stage.Name} trains nothing of this model ({string.Join(", ", stage.Trained)}).");
     }
 
-    // The optimizers were registered (OptimizerKinds) and picked by name: not on the new design yet.
+    // Picking the optimizers by name is not on the new design yet.
     private static Func<IReadOnlyList<Tensor>, Optimizer> OptimizerFactoryNamed(string name, OptimizerSettings settings) =>
         throw new NotSupportedException($"The optimizer '{name}' by name is not on the new design yet.");
 
@@ -1311,7 +1311,7 @@ internal sealed class RecordPretrainingSource : IPretrainingSource
 {
     public string Name => PretrainingSources.Records;
 
-    // The tuning data formats were registered (TuningDataFormats), picked by name or found by what a file holds: not on the new design yet.
+    // Picking the tuning data format by name or by what a file holds is not on the new design yet.
     private static ITuningDataFormat DataFormatFor(string? name, string file) => throw new NotSupportedException($"The tuning data format of {file} ({name ?? "auto"}) by name or detection is not on the new design yet.");
 
     public IPretrainingReader Open(PretrainingSource source, PretrainingContext context)

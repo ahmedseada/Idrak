@@ -133,7 +133,7 @@ public sealed record ConversationTuningResult(string Folder, bool Stopped, TimeS
 /// </summary>
 /// <example>
 /// <code>
-/// using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = Device.Cuda() });
+/// using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = Device.Default });
 /// using var tuning = ConversationTuning.Prepare(model, ["train.json"], new ConversationTuningOptions
 /// {
 ///     Evaluation = "val.json", Images = "images.zip", Preparation = TuningImages.Parse("max_width=1024"), Metric = TuningMetrics.CharacterErrorRate,
@@ -190,7 +190,7 @@ public sealed class ConversationTuning : IDisposable
     /// <summary>The settings <see cref="Train"/> uses (the options' tuning with the image side, the scorer and a length within the model's context).</summary>
     public FineTuningOptions Tuning { get; set; } = new();
 
-    // The feature caches were registered (FeatureCaches) and picked by name: not on the new design yet.
+    // Picking the feature caches by name is not on the new design yet.
     private static IFeatureCache FeatureCacheNamed(string name, FeatureCacheOptions options) => throw new NotSupportedException($"The feature cache '{name}' by name is not on the new design yet.");
 
     /// <summary>
@@ -379,7 +379,7 @@ public sealed class ConversationTuning : IDisposable
         _cache?.Dispose();
     }
 
-    // The answer texts were registered (AnswerTexts) and picked by name: not on the new design yet.
+    // Picking the answer texts by name is not on the new design yet.
     private static IAnswerText AnswerTextNamed(string name) => throw new NotSupportedException($"The answer text '{name}' by name is not on the new design yet.");
 
     // The conversations read, the held-out share taken, the sequences tokenized, the scorer made.
@@ -434,7 +434,7 @@ public sealed class ConversationTuning : IDisposable
 
             if (Options.MetricText is { } text)
             {
-                _ = AnswerTextNamed(text);                                    // not registered: said now, not after an epoch
+                _ = AnswerTextNamed(text);                                    // a name not known: said now, not after an epoch
             }
 
             Scorer = new TuningAnswerScorer(evaluation, metric, Options.MetricSamples)
@@ -448,7 +448,7 @@ public sealed class ConversationTuning : IDisposable
         Tuning = tuning with { Vision = Vision, Answers = Scorer, Parts = Parts };
     }
 
-    // The tuning data formats were registered (TuningDataFormats), picked by name or found by what a file holds: not on the new design yet.
+    // Picking the tuning data format by name or by what a file holds is not on the new design yet.
     private static ITuningDataFormat DataFormatFor(string? name, string file) => throw new NotSupportedException($"The tuning data format of {file} ({name ?? "auto"}) by name or detection is not on the new design yet.");
 
     // Conversations from data files through their format, their images not read yet (ITuningDataFormat.ReadPending);

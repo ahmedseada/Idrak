@@ -34,8 +34,8 @@ public sealed record TextMatchOptions
 /// <summary>
 /// Approximate matching of a draft inside a longer text: the span of the text nearest the draft (a recognizer's reading of
 /// one line inside its page's known text, a quotation inside its source). The library's is "semi-global"
-/// (<see cref="SemiGlobalMatcher"/>: Sellers' edit distance, the span's ends free); register another with
-/// <c>TextMatchers.Register</c> (weighted edits, a confusion table of a script's letters).
+/// (<see cref="SemiGlobalMatcher"/>: Sellers' edit distance, the span's ends free); another (weighted edits,
+/// a confusion table of a script's letters) is an app's. Picking one by its name is not on the new design yet.
 /// </summary>
 public interface ITextMatcher
 {

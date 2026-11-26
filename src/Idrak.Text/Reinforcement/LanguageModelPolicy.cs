@@ -61,11 +61,9 @@ public sealed record LanguageModelPolicyOptions
     public GenerationOptions? Generation { get; init; }
 
     /// <summary>
-    /// The key/value cache format replies are generated with: a <see cref="KeyValueLayouts"/> name (float32, bfloat16,
-    /// int8 or one registered), <see cref="CacheFormatVariable"/> when set; null or "auto": the model's element type
-    /// (<c>KeyValueLayouts.Choose</c>, after <c>KeyValueLayouts.EnvironmentVariable</c>). bfloat16 takes half
-    /// the memory of float32 and still decodes conversations of different lengths together (<see cref="IRowStartsLayout"/>);
-    /// a format that cannot decodes them in float32. The trained log-probabilities are the training forward's either way
+    /// The key/value cache format replies are generated with, by name, <see cref="CacheFormatVariable"/> when set (picking
+    /// a layout by its name is not on the new design yet); null: the library's float32 layout
+    /// (<see cref="KeyValueLayouts.For"/>). The trained log-probabilities are the training forward's either way
     /// (<see cref="Behavior"/>).
     /// </summary>
     public string? CacheFormat { get; init; } = Setting(CacheFormatVariable);
@@ -159,8 +157,8 @@ public sealed class LanguageModelPolicy : IPreferencePolicy<ChatObservation, Cha
     private (string Name, IReadOnlyDictionary<string, string>? Options, IFineTuningLoss Loss)? _preference;
     private bool _disposed;
 
-    // The key/value layouts were registered (KeyValueLayouts) and picked by name, the option's or its variable's: not on the new design yet;
-    // with neither, the built-in float32 layout.
+    // Picking the key/value layout by name, the option's or its variable's, is not on the new design yet; with neither,
+    // the built-in float32 layout.
     private static IKeyValueLayout CacheLayout(string? name) =>
         (name ?? System.Environment.GetEnvironmentVariable(LanguageModelPolicyOptions.CacheFormatVariable)) is { Length: > 0 } named
             ? throw new NotSupportedException($"The key/value cache layout '{named}' by name is not on the new design yet.")

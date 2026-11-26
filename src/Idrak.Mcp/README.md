@@ -12,8 +12,8 @@ contracts) and the MCP SDK only.
   with a `model` argument; `McpTools.ModelTools(models)` gives the same as `Tool`s, to combine with other tools.
 
 - **Server, hosted:** `McpHost.StartAsync(transport, registry, options)` runs the server in any process (a console
-  tool, a GUI app that is already running) over a transport registered in `McpServerTransports`
-  (`Idrak.Mcp.Abstractions`; `IMcpServerTransport`, an unknown name fails with "not registered"):
+  tool, a GUI app that is already running) over a transport (`Idrak.Mcp.Abstractions`'
+  `IMcpServerTransport`; picking one by its name is not on the new design yet):
   - `stdio`: the process's standard input and output (or `McpHostOptions.Input`/`Output`): the one client that
     started the process.
   - `http`: MCP streamable HTTP on its own socket (no web framework): `127.0.0.1` on a port the system picks unless
@@ -28,8 +28,7 @@ contracts) and the MCP SDK only.
     it is answered 503 with `Retry-After` (the seconds until an idle session closes), unless `ReplaceIdleSessions`
     (`IDRAK_MCP_REPLACE_IDLE=1`) closes the idle session unused the longest for it. Sessionless requests do not count.
   `host.Address` is what a client's configuration takes ("stdio", `http://127.0.0.1:PORT/mcp`), `host.Token` the token
-  it sends; dispose the host (or cancel its token) to stop it. A host registers another transport (an ASP.NET Core one)
-  with `McpServerTransports.Register`.
+  it sends; dispose the host (or cancel its token) to stop it. Another transport (an ASP.NET Core one) is a host's own.
 
 ```csharp
 await using var engine = await InferenceEngine.Create().ChatModel("my-gpt", "models/chat.ikm", "chars").BuildAsync();

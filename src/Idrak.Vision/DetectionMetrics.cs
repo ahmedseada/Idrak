@@ -7,7 +7,7 @@ using Idrak.Vision.Abstractions;
 namespace Idrak.Vision;
 
 /// <summary>
-/// COCO's mean average precision for boxes ("coco" in <c>VisionMetrics</c>), as pycocotools' <c>COCOeval</c>
+/// COCO's mean average precision for boxes ("coco"), as pycocotools' <c>COCOeval</c>
 /// computes it: per image and class the detections (at most <see cref="VisionMetricOptions.MaxDetections"/> an image, the
 /// best first) are matched greedily to the unmatched truths of highest IoU at each threshold 0.5, 0.55, ..., 0.95; crowd
 /// and difficult truths are matched last and make their detections count neither way (a crowd's IoU is the share of the
@@ -316,7 +316,7 @@ public sealed class CocoAveragePrecision : IDetectionMetric
 }
 
 /// <summary>
-/// Pascal VOC's average precision at IoU above 0.5 ("voc" and "voc07" in <c>VisionMetrics</c>), as the devkit's
+/// Pascal VOC's average precision at IoU above 0.5 ("voc" and "voc07"), as the devkit's
 /// <c>voc_eval</c>: per class every detection, most confident first, is matched to the truth of its image it overlaps most;
 /// a match above 0.5 is right when that truth is not yet taken, wrong when it is, and counts neither way when the truth is
 /// difficult (or a crowd). AP over every recall point (VOC 2010 to 2012), or 11 points (VOC 2007).

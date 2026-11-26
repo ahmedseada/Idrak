@@ -39,15 +39,14 @@ public static class FrameClocks
     /// <summary>A dispatcher timer at the display's refresh rate.</summary>
     public const string Timer = "timer";
 
-    // The library's timer clock: what picking the first registered clock that can tick here fell back on, reached
-    // directly (the display clocks were registered and picked among, which is not on the new design yet).
+    // The library's timer clock, reached directly (picking among display clocks is not on the new design yet).
     private static readonly IFrameClock TimerClock = new Idrak.Maui.Controls.TimerFrameClock();
     private static IFrameClock? _current;
 
     /// <summary>The clock live views tick on unless one is chosen: the library's timer clock.</summary>
     public static IFrameClock ForThisApp() => TimerClock;
 
-    // The clocks were registered (FrameClocks.Register) and picked by name, which is not on the new design yet.
+    // Picking the clocks by name is not on the new design yet.
     private static IFrameClock ClockNamed(string name) =>
         throw new NotSupportedException($"The frame clock '{name}' by name is not on the new design yet.");
 

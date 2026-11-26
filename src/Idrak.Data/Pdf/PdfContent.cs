@@ -1421,9 +1421,9 @@ internal sealed partial class PdfContentReader : IDisposable
         xy[7] = g.Y + x0 * s.B + y1 * s.D;
     }
 
-    // The text layouts were registered (DocumentTextLayouts) and picked by the options' name: not on the new design yet.
-    // The default, "lines" with the bidirectional reading order (Idrak.Imaging's BidiReadingOrder, the reading order's
-    // default), is reached directly; another layout by name ("content", "tagged", one of an app's) stops.
+    // Picking the text layouts by the options' name is not on the new design yet. The default, "lines" with the
+    // bidirectional reading order (Idrak.Imaging's BidiReadingOrder, the reading order's default), is reached directly;
+    // another layout by name ("content", "tagged", one of an app's) stops.
     private static readonly LinesLayout Lines = new(new Idrak.Imaging.Shaping.BidiReadingOrder());
 
     private static DocumentText Arrange(IReadOnlyList<DocumentTextRun> runs, float width, float height, DocumentOptions options) =>

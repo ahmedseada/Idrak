@@ -19,7 +19,7 @@ public sealed record CodingToolOptions
 
     /// <summary>
     /// The coding languages (<see cref="CodingLanguages"/>) the tools work with, whose programs, folders, examples and
-    /// variables compose the defaults: <see cref="CodingLanguages.All"/> (every registered one), <see cref="CodingLanguages.Detected"/>
+    /// variables compose the defaults: <see cref="CodingLanguages.All"/> (every one), <see cref="CodingLanguages.Detected"/>
     /// (those that detect the workspace), <see cref="CodingLanguages.None"/>, or names separated by commas; by default
     /// <see cref="CodingLanguages.EnvironmentVariable"/> (IDRAK_CODING_LANGUAGES), else all.
     /// </summary>
@@ -204,16 +204,16 @@ public sealed partial class CodingTools
     private readonly HashSet<string> _ignored;
     private readonly Lazy<string?> _notice;
 
-    // The write policies were registered (WritePolicies) and picked by name: not on the new design yet.
+    // Picking the write policies by name is not on the new design yet.
     private static IWritePolicy WritePolicyNamed(string name) => throw new NotSupportedException($"The write policy '{name}' by name is not on the new design yet.");
 
-    // The coding languages were registered (CodingLanguages) and picked by name or by what the workspace holds: not on the new design yet.
+    // Picking the coding languages by name or by what the workspace holds is not on the new design yet.
     private static IReadOnlyList<ICodingLanguage> LanguagesNamed(string? choice) => throw new NotSupportedException($"The coding languages '{choice ?? CodingLanguages.DefaultChoice}' by name are not on the new design yet.");
 
-    // The notice named the registered languages' folders (CodingLanguages): not on the new design yet.
+    // The notice named the languages' folders (CodingLanguages): not on the new design yet.
     private static string? LanguagesNotice(string workspace) => throw new NotSupportedException("The coding languages' notice for a workspace is not on the new design yet.");
 
-    // The command sandboxes were registered (CommandSandboxes) and picked by name: not on the new design yet.
+    // Picking the command sandboxes by name is not on the new design yet.
     private static ICommandSandbox SandboxNamed(string name) => throw new NotSupportedException($"The command sandbox '{name}' by name is not on the new design yet.");
 
     /// <summary>Tools over <paramref name="workspace"/>.</summary>
@@ -222,7 +222,7 @@ public sealed partial class CodingTools
     /// <param name="sandbox">The sandbox commands run in; null for the one <see cref="CodingToolOptions.Sandbox"/> names in <c>CommandSandboxes</c>.</param>
     /// <exception cref="DirectoryNotFoundException">The workspace does not exist.</exception>
     /// <exception cref="NotSupportedException">
-    /// The sandbox or the write policy is not registered, or the sandbox cannot enforce the options' limits (the message
+    /// Picking the sandbox or the write policy by its name is not on the new design yet, or the sandbox cannot enforce the options' limits (the message
     /// names one that can).
     /// </exception>
     public CodingTools(string workspace, CodingToolOptions? options = null, ICommandSandbox? sandbox = null)

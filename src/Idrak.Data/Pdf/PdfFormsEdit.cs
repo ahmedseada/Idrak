@@ -17,7 +17,7 @@ internal sealed class PdfFieldFonts(DocumentFormOptions options)
 {
     private IReadOnlyList<IFontFace>? _folder;
 
-    // The font formats were registered (FontFormats) and a folder read through them: not on the new design yet.
+    // Reading a folder through the font formats is not on the new design yet.
     private static IReadOnlyList<IFontFace> ReadFolder(string folder) =>
         throw new NotSupportedException($"{folder}: reading fonts through the registered font formats is not on the new design yet.");
 

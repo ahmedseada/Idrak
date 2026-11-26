@@ -5,7 +5,7 @@ using System.Diagnostics;
 
 namespace Idrak.Networking.Training;
 
-/// <summary>The "control-file" run steering (Plan 27, R11), registered in <see cref="RunSteerings"/>.</summary>
+/// <summary>The "control-file" run steering (Plan 27, R11).</summary>
 internal sealed class ControlFileSteeringProvider : IRunSteeringProvider
 {
     public string Name => "control-file";

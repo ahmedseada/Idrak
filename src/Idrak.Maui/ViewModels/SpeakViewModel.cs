@@ -27,13 +27,13 @@ public sealed class SynthesisModelEntry
     /// <summary>The stored model.</summary>
     public StoredModel Model { get; }
 
-    /// <summary>The architecture its config.json names, a registered <c>SpeechSynthesisFamilies</c> name.</summary>
+    /// <summary>The architecture its config.json names, a synthesis family's name.</summary>
     public string Architecture { get; }
 
     /// <summary>What its text front end needs (<see cref="SpeechSynthesisModels.TextNeeds"/>), or null when its files could not be read.</summary>
     public SpeechTextNeeds? TextNeeds { get; }
 
-    /// <summary>Why it cannot speak here (a phonemizer it reads that is not registered: espeak-ng is an outside program), or null.</summary>
+    /// <summary>Why it cannot speak here (a phonemizer it reads that is not available: espeak-ng is an outside program), or null.</summary>
     public string? Reason { get; }
 
     /// <summary>Whether it can speak here.</summary>
@@ -74,7 +74,7 @@ public sealed class VoiceEntry
     /// <summary>What it is (a speaker of the model, an installed voice of a kind).</summary>
     public string Details { get; }
 
-    /// <summary>Why it cannot speak here (a converter or phonemizer not registered), or null.</summary>
+    /// <summary>Why it cannot speak here (a converter or phonemizer not available), or null.</summary>
     public string? Reason { get; }
 
     /// <summary>Whether it can speak here.</summary>
@@ -86,8 +86,8 @@ public sealed class VoiceEntry
 
 /// <summary>
 /// The Speak page (plan 34, M6): text read aloud on the speaker. A synthesis model is picked from the model store's complete
-/// models whose architecture a registered <c>SpeechSynthesisFamilies</c> family reads; one whose text front end needs
-/// what is not registered here (a phonemizer: espeak-ng is an outside program an app does not run) is listed with that
+/// models whose architecture a synthesis family reads; one whose text front end needs
+/// what is not available here (a phonemizer: espeak-ng is an outside program an app does not run) is listed with that
 /// reason (<see cref="SpeechSynthesisModels.TextNeeds"/>, <see cref="SpeechTextNeeds.Missing"/>), not hidden. The model is
 /// loaded once through the <see cref="IModelService"/> (host <see cref="ModelHostName"/>) on the settings' device, wrapped
 /// in a <see cref="VoicedSynthesizer"/> so the installed voices of the voice store speak too (each listed with why not,
@@ -185,7 +185,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
     /// <summary>The settings in effect (<see cref="ApplySettings"/> checks and keeps the page's).</summary>
     public SpeakLabOptions Options => _options;
 
-    /// <summary>The synthesis models the store holds complete, whose architecture a registered family reads (those that cannot speak here with their reason).</summary>
+    /// <summary>The synthesis models the store holds complete, whose architecture a family reads (those that cannot speak here with their reason).</summary>
     public ObservableCollection<SynthesisModelEntry> SynthesisModels { get; } = [];
 
     /// <summary>Whether there is a synthesis model to pick.</summary>
@@ -546,7 +546,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
 
     /// <summary>
     /// Reads the synthesis models on a worker thread: the store's complete models whose config.json names an architecture a
-    /// registered family reads, each with what its text needs and why it cannot speak here. The model kept in the settings
+    /// family reads, each with what its text needs and why it cannot speak here. The model kept in the settings
     /// is picked again (else the first that can speak).
     /// </summary>
     public async Task RefreshAsync()
@@ -877,7 +877,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
     }
 
     /// <summary>
-    /// The store's complete models whose config.json names a registered synthesis architecture, each with what its text
+    /// The store's complete models whose config.json names a synthesis architecture, each with what its text
     /// needs and why it cannot speak here (none hidden); and how many other models the store holds. Reads files: call it
     /// off the UI thread.
     /// </summary>

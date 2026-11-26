@@ -211,8 +211,8 @@ internal sealed partial class PdfDocument : IDocument
         }
     }
 
-    // The page drawers were registered (DocumentPageDrawers) and picked by the options' name: not on the new design yet.
-    // The default, "coverage" (Idrak.Imaging's CoverageDocumentDrawer), is reached directly; another name stops.
+    // Picking the page drawers by the options' name is not on the new design yet. The default, "coverage"
+    // (Idrak.Imaging's CoverageDocumentDrawer), is reached directly; another name stops.
     private static readonly Idrak.Imaging.CoverageDocumentDrawer Coverage = new();
 
     public DocumentDrawing DrawPage(int index, DocumentDrawOptions options)

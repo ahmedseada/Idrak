@@ -445,7 +445,7 @@ public sealed class SettingsViewModel : ViewModel
     /// <summary>Every setting, in order.</summary>
     public ObservableCollection<SettingEntry> Entries { get; } = [];
 
-    /// <summary>Every registered feature, with whether it shows.</summary>
+    /// <summary>Every feature, with whether it shows.</summary>
     public ObservableCollection<FeatureToggle> Features { get; } = [];
 
     /// <summary>The settings by group, in the page's order (General first, the limits last).</summary>

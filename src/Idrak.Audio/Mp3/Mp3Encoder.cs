@@ -8,7 +8,7 @@ using System.Runtime.CompilerServices;
 namespace Idrak.Audio;
 
 /// <summary>
-/// Writes MP3 files (an <see cref="IAudioEncoder"/> "mp3", the library's, registered in <see cref="AudioEncoders"/>): MPEG-1
+/// Writes MP3 files (an <see cref="IAudioEncoder"/> "mp3", the library's): MPEG-1
 /// Layer III at 32, 44.1 and 48 kHz and MPEG-2 Layer III at 16, 22.05 and 24 kHz, one or two channels (left/right or
 /// mid/side joint stereo), constant bit rate with the bit reservoir, long blocks. Written from ISO/IEC 11172-3 and
 /// 13818-3: the polyphase analysis filterbank and MDCT, a masking model, the rate and distortion loops, the standard's

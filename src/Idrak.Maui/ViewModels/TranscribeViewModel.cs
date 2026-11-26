@@ -27,7 +27,7 @@ public sealed class SpeechModelEntry
     /// <summary>The stored model.</summary>
     public StoredModel Model { get; }
 
-    /// <summary>The architecture its config.json names, a registered <c>SpeechFamilies</c> name.</summary>
+    /// <summary>The architecture its config.json names, a speech family's name.</summary>
     public string Architecture { get; }
 
     /// <summary>How the settings keep it: "owner/name@revision".</summary>
@@ -120,8 +120,8 @@ public sealed class TranscribeSettingEntry : ViewModel
 /// <summary>
 /// The Transcribe page (plan 34, M5): live transcription from the microphone through the library's
 /// <see cref="LiveTranscriber"/>, or a file decoded by the library's own codecs (<see cref="AudioCodecs"/>) through the same
-/// live path or whole. A speech model is picked from the model store's complete models whose architecture a registered
-/// <c>SpeechFamilies</c> family reads, and loaded once through the <see cref="IModelService"/> (the host
+/// live path or whole. A speech model is picked from the model store's complete models whose architecture a
+/// speech family reads, and loaded once through the <see cref="IModelService"/> (the host
 /// <see cref="ModelHostName"/>) on the settings' device. The microphone permission is asked first
 /// (<see cref="IPermissionService"/>; a refusal is shown with how to allow it); the sound is captured through
 /// <see cref="AudioCaptures"/> (<see cref="AudioCaptures.ForThisMachine"/> by default: aaudio on Android), cleaned by the
@@ -240,7 +240,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable, ILiveLevelSour
     /// <summary>The settings in effect (a value changed here applies from the next run; <see cref="ApplySettings"/> checks and keeps the page's).</summary>
     public TranscribeLabOptions Options => _options;
 
-    /// <summary>The speech models the store holds complete, whose architecture a registered family reads.</summary>
+    /// <summary>The speech models the store holds complete, whose architecture a family reads.</summary>
     public ObservableCollection<SpeechModelEntry> SpeechModels { get; } = [];
 
     /// <summary>Whether there is a speech model to pick.</summary>
@@ -690,7 +690,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable, ILiveLevelSour
 
     /// <summary>
     /// Reads the speech models on a worker thread: the store's complete models whose config.json names an architecture a
-    /// registered <c>SpeechFamilies</c> family reads. The model kept in the settings is picked again (else the first).
+    /// speech family reads. The model kept in the settings is picked again (else the first).
     /// </summary>
     public async Task RefreshAsync()
     {
@@ -1278,7 +1278,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable, ILiveLevelSour
         }
     }
 
-    // The store's complete models whose config.json names a registered speech architecture, and how many others there are.
+    // The store's complete models whose config.json names a speech architecture, and how many others there are.
     internal static (List<SpeechModelEntry> Speech, int Others) ListSpeechModels(IModelStore store)
     {
         var speech = new List<SpeechModelEntry>();

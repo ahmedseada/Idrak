@@ -57,7 +57,7 @@ public sealed record AudioFeatureOptions
 
     /// <summary>
     /// Which computation: "auto" (the host on the CPU, the composed device operations elsewhere), "host" or "composed";
-    /// <c>IDRAK_STFT_PATH</c> overrides. "kernel" names the fused device kernel, once one is registered.
+    /// <c>IDRAK_STFT_PATH</c> overrides. "kernel" names a fused device kernel (none on the new design yet).
     /// </summary>
     public string Path { get; init; } = "auto";
 
@@ -119,7 +119,7 @@ public sealed record AudioFeatureOptions
     }
 }
 
-/// <summary>Turns sound into a model's features; register one with <c>AudioFeatureExtractors.Register</c>.</summary>
+/// <summary>Turns sound into a model's features.</summary>
 public interface IAudioFeatureExtractor
 {
     /// <summary>The extractor's name, e.g. "log-mel".</summary>

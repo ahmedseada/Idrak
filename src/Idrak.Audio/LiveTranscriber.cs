@@ -21,7 +21,7 @@ public static class LiveTranscriber
 {
     private const int FramesPerSecond = 50;                                  // the quiet is measured per 20 ms
 
-    // The commit policies were registered (LiveCommitPolicies) and picked by name, which is not on the new design yet.
+    // Picking the commit policies by name is not on the new design yet.
     private static ILiveCommitPolicy PolicyNamed(string name) =>
         throw new NotSupportedException($"The live commit policy '{name}' by name is not on the new design yet.");
 

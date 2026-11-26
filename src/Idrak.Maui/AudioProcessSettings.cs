@@ -69,7 +69,7 @@ public sealed class AudioProcessLabOptions
     /// <summary>A copy.</summary>
     public AudioProcessLabOptions Clone() => (AudioProcessLabOptions)MemberwiseClone();
 
-    /// <summary>The pipeline, checked against the registered processors (empty when none).</summary>
+    /// <summary>The pipeline, checked against the processors (empty when none).</summary>
     /// <exception cref="ArgumentException">An unknown processor or option, or a value out of range (the message names what is taken).</exception>
     public AudioPipeline ToPipeline() => AudioPipeline.Parse(Pipeline);
 

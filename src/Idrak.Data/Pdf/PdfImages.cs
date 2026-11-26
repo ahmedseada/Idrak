@@ -770,7 +770,7 @@ internal sealed class PdfImage
 
     // A DCTDecode image is JPEG by PDF's own definition (ISO 32000-2, 7.4.8): the library's one JPEG decoder (Idrak.Imaging's
     // JpegCodec) decodes it, reached directly. The library has no decoder for JPXDecode, CCITTFaxDecode or JBIG2Decode;
-    // they were decoded by a codec registered under the encoding's name (ImageCodecs): not on the new design yet.
+    // picking a codec by the encoding's name is not on the new design yet.
     private static readonly Idrak.Imaging.JpegCodec Jpeg = new();
 
     private IImageCodec CodecFor(string encoding) =>
@@ -1326,7 +1326,7 @@ internal sealed class PdfPixelConverter
 /// The images of one page as its content draws them (<c>Do</c> of an image XObject, at any depth of forms, and inline
 /// images), each placed by the CTM in the content's order; an XObject drawn again is read once. What cannot be read is
 /// counted in the page's issues: an image whose size is not given (left out), a colour space read later or damaged, an
-/// encoding no registered codec reads.
+/// encoding no codec reads.
 /// </summary>
 internal sealed class PdfPageImages(PdfFile file, int page, PdfIssues issues)
 {

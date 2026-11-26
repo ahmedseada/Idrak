@@ -44,7 +44,7 @@ internal sealed class PageCanvas : IDisposable
         }
     }
 
-    // The default rasterizer, reached directly (it was the registry's default).
+    // The default rasterizer, reached directly.
     private static readonly CoverageRasterizer CoverageRasterizer = new();
 
     /// <summary>A filled rectangle of ink (a rule).</summary>
@@ -541,9 +541,9 @@ public sealed class LetterLayout : IPageLayout
     // A profile's name in a description ("written" for one written as text).
     private static string Named(string profile) => profile == "custom" ? "written" : profile;
 
-    // A shape profile's steps for a seed: the profiles were registered (ShapeProfiles) and sampled by name, which is not on the
-    // new design yet. The default signature, "scribble" (one step, drawn with the scribble shape: Scribble), is reached
-    // directly; any other profile (every emblem and stamp: no one of them is the default) stops.
+    // A shape profile's steps for a seed: sampling the profiles by name is not on the new design yet. The default signature,
+    // "scribble" (one step, drawn with the scribble shape: Scribble), is reached directly; any other profile (every emblem and
+    // stamp: no one of them is the default) stops.
     private static readonly IReadOnlyList<ShapeStep> ScribbleSteps = [new ShapeStep(Ornaments.Signature)];
 
     private static readonly ScribbleShape Scribble = new();
@@ -618,8 +618,8 @@ public sealed class LetterOrnaments
     // The signature's default pen, the ballpoint, reached directly with its own keys of the page's options.
     private static readonly BallpointPen Ballpoint = new();
 
-    // The shape profiles between '|' (a name given twice is drawn twice as often). Each was checked by name in their
-    // registry (ShapeProfiles), which is not on the new design yet: a profile is looked up when the letter draws it
+    // The shape profiles between '|' (a name given twice is drawn twice as often). Checking each by its name is not on
+    // the new design yet: a profile is looked up when the letter draws it
     // (LetterLayout's Sample: the default signature reached directly, any other stopping there).
     private static IReadOnlyList<string> Choices(string list)
     {

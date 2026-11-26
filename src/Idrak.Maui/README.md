@@ -17,8 +17,8 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   Preferences; the token in SecureStorage) and a change that needs a restart says so.
 - **Features** (`IMobileFeature` in `MobileFeatures`): a page and its view model, with what it needs from the phone, its
   group among the labs (Language, Voice, Vision, the device's), a tagline and an icon, and its content as a view a section
-  hosts (`CreateView`; the page wraps the same view). The library registers its own (Devices, Models, Chat, Transcribe,
-  Speak, Studio, Read text, Image); an app adds its own or replaces one by name.
+  hosts (`CreateView`; the page wraps the same view). The library has its own (Devices, Models, Chat, Transcribe,
+  Speak, Studio, Read text, Image); listing the features or finding one by name is not on the new design yet.
 - **Navigation** (no Shell, no Blazor; the approved design in `apps/Idrak.Mobile/Design`): `AppHostPage` shows one
   section of `AppSections` at a time (Home, Chat, Voice with Transcribe, Speak and Studio, Vision with Read text and
   Image; All labs and Settings at the rail's foot), with a floating bottom bar on a narrow window and a side rail on a
@@ -27,8 +27,8 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   one (grouped, searchable, filtered by state and needs). Views open places through `IAppNavigator`; an app adds a
   section or replaces one by name. `AppHostPage.CreateWindow(services)` is the app's window.
 - **Splash and start-up** (plan 34, phase S): `StartupRun` is the app's start-up as it runs: the settings read and
-  applied in `UseIdrak` (before any window), then the registered `StartupSteps` (the CPU read, every GPU backend started
-  with Home's device summary, the tabs made ahead; an app adds its own) once the window first shows, the worker steps one
+  applied in `UseIdrak` (before any window), then the `StartupSteps` (the CPU read, every GPU backend started
+  with Home's device summary, the tabs made ahead; listing them is not on the new design yet) once the window first shows, the worker steps one
   after another alongside the UI ones. Where the app asks (`ShowSplash`, off by default: it is Idrak's own mark and name;
   Idrak's app turns it on), `SplashView` lies over the host page while the page is made underneath: the mark, drawn from
   the icon's geometry, comes alive from the system splash's size and place, then the name, then the run's steps one line
@@ -52,34 +52,33 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   answer after a load (cold) apart from the warm ones. The composer's microphone dictates into the message through
   `IDictation` (the library's is the Transcribe lab's: its speech model, language, cleaning and live settings), live,
   until tapped again; with no speech model ready it says so and offers Models. The system prompt, temperature, top-p, top-k, max new tokens,
-  context and seed are settings over the library's `GenerationOptions`. Idrak.Maui registers no model family: the app
-  registers the ones it shows (`QwenPlugin.Register()` and so on), and a model of another family fails as not registered.
+  context and seed are settings over the library's `GenerationOptions`. Idrak.Maui has no model family: the families are the
+  app's, and finding one by its name is not on the new design yet.
 - **Transcribe** page: live transcription from the microphone through the library's `LiveTranscriber` (the
   microphone permission asked first; the capture `AudioCaptures.ForThisMachine()` picks, aaudio on Android), with an
   optional live cleaning pipeline (`AudioPipeline` text, live steps only); or an audio file picked and decoded by the
   library's own codecs, read through the same live path or whole. A speech model is picked from the store's complete
-  models whose architecture a registered speech family reads, loaded once through the model service (host `speech`)
+  models whose architecture a speech family reads, loaded once through the model service (host `speech`)
   on the settings' device. The committed words and the tentative ones (lighter) as they arrive, the level, the time
   and how far behind the model runs, updated at most once a progress interval; stop commits the last segment; copy
   and share the text. Every `LiveTranscriptionOptions` value is a setting on the page (empty: the library's
-  default), kept in the settings store under `idrak.transcribe.`. The library registers no family: the app does
-  (Idrak.Mobile: `WhisperPlugin.Register()`).
-- **Speak** page: text read aloud on the speaker by a synthesis model of the store whose architecture a registered
+  default), kept in the settings store under `idrak.transcribe.`. The library has no family: the families are the app's
+  (finding one by its name is not on the new design yet).
+- **Speak** page: text read aloud on the speaker by a synthesis model of the store whose architecture a
   synthesis family reads, loaded once through the model service (host `synthesis`) and wrapped in a `VoicedSynthesizer`,
   so the model's speakers and the voice store's installed voices speak. The text is spoken piece by piece
   (`SpeakStream`, sentences up to `SpeakSettings.DefaultMaxCharacters`, a setting) and played through `ISoundPlayer` as
   the first piece is made, the next made while one plays; Stop cuts it. The time to the first sound and the real-time
   factor (the synthesis' own time over the sound's), the first speech after a load (cold) apart from the later ones
   (warm); the speech played again, saved as WAV or MP3 (the library's encoders) and shared. A model or a voice that needs
-  what is not registered here is listed with its reason, not hidden: a checkpoint that reads phonemes when no phonemizer
-  is registered (the library's `SpeechSynthesisModels.TextNeeds` and `SpeechTextNeeds.Missing`; espeak-ng is an outside
-  program an app does not run), an embedding voice whose converter is not registered. Every `SpeechSynthesisOptions` value,
+  what is not available here is listed with its reason, not hidden: a checkpoint that reads phonemes when no phonemizer
+  is available (the library's `SpeechSynthesisModels.TextNeeds` and `SpeechTextNeeds.Missing`; espeak-ng is an outside
+  program an app does not run), an embedding voice whose converter is not available. Every `SpeechSynthesisOptions` value,
   the speaker and the saved format are settings (empty: the library's default), kept under `idrak.speak.`. The library
-  registers no family: Idrak.Mobile calls `VitsPlugin.RegisterFamily()` (VITS without espeak-ng) and
-  `IdrakAudioPlugin.Register()`.
+  has no family: the families are the app's (finding one by its name is not on the new design yet).
 - **Studio** (the audio process) page, its pipeline also as a flow of steps: a recording from the microphone (the permission asked first; kept in pooled buffers up to the
   longest recording, a setting) or a file decoded by the library's codecs, run through a pipeline written as the
-  library's text (`AudioPipeline`, checked as it is written), the registered processors listed as chips (name, summary,
+  library's text (`AudioPipeline`, checked as it is written), the processors listed as chips (name, summary,
   parameters, live or whole recording) that append a step; applied whole or in blocks as live sound goes, timed cold
   (the pipeline's first apply) and warm; its latency and delay; the level (RMS and peak) before and after; the original
   and the processed played on the speaker (A/B, one at a time); the result saved and shared. Monitoring, off by default
@@ -127,26 +126,25 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   orientation (HEIC is refused, naming the formats the library reads); an optional preprocessing pipeline
   (`ImageTransformPipeline` text, such as `grayscale,max_width=1024,contrast=1.5`) run on it once, and the page shown as
   the model will see it (shrunk for the screen, PNG made once). A vision-language model is picked from the store's
-  complete models whose architecture a registered vision family reads, loaded once through `IVisionReaderService`
+  complete models whose architecture a vision family reads, loaded once through `IVisionReaderService`
   (host `vision`) after the same measured check as Chat (the decoder's weights by format, the vision part's, the
   attention cache for the context; refused with the limit named), and reads through the library's `ImageReader`: the
   page is handed over as prepared (`ImageReader.Keep`), so a read decodes and transforms nothing; the answer streams
   with its tokens per second, shown at most once a progress interval; Stop keeps what came; cold and warm apart; copy and
   share. The instruction (the library's reading pages' own by default), the system text, the pipeline, the answer's
   length, the repetition stop, the formats and the context are settings under `idrak.ocr.` (an app gives its own
-  defaults by registering an `OcrLabOptions`). The library registers no family: the app does (Idrak.Mobile: Gemma 3
-  vision, Qwen-VL, LLaVA).
-- **Image** page: a photo as above; the registered image transforms as chips (name, summary, inputs) that add a step to
+  defaults by registering an `OcrLabOptions`). The library has no family: the families are the app's (finding one by its name is not on the new design yet).
+- **Image** page: a photo as above; the image transforms as chips (name, summary, inputs) that add a step to
   the pipeline's box, the scan profiles to draw steps from (a seed setting repeats a draw); the pipeline run on the
   decoded photo step by step with each step's time, the first run of a transform in the process (cold) apart from the
   warm runs; the original and the result shown; the result saved (in the cache folder's `images`) and shared as PNG or
-  JPEG (its quality a setting), or another registered encoder. Settings under `idrak.image.`.
+  JPEG (its quality a setting), or another encoder. Settings under `idrak.image.`.
 - **Services**: models kept loaded through `ModelHost` and released on the phone's memory pressure, the model store
   (pull with progress, list, sizes, remove), device information (the Vulkan driver in the app's process, its measured
   width and subgroup sizes, the memory budget, CPU features), permissions and sharing a file out.
-- **Planned features**: a feature not built yet is registered with its real name, title and place in the menu
+- **Planned features**: a feature not built yet has its real name, title and place in the menu
   (`Order`) as `FeatureState.Planned`, with a line on what is coming (`Coming`); the library's placeholder page shows
-  that and what it will need, and the menu marks it "planned". The library's still planned one is Search (`PlannedFeature`); its phase registers the built feature under the same name, so the menu does
+  that and what it will need, and the menu marks it "planned". The library's still planned one is Search (`PlannedFeature`); its phase makes the built feature under the same name, so the menu does
   not change. A feature that sets no order or state is ready and takes the library's place of its name, else comes last.
 - **`maui`** progress reporter: the library's progress (downloads, loads, runs) as a bindable model, updated on the UI
   thread at most once a progress interval.

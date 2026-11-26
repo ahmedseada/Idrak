@@ -65,12 +65,12 @@ public interface IAudioInput : IDisposable
 }
 
 /// <summary>
-/// A way to record live sound: an operating system's audio interface (registered in <see cref="AudioCaptures"/>). It
+/// A way to record live sound: an operating system's audio interface. It
 /// loads what it needs at run time and says why it cannot run where it cannot.
 /// </summary>
 public interface IAudioCapture
 {
-    /// <summary>The name it is registered under ("winmm", "alsa", "aaudio").</summary>
+    /// <summary>Its name ("winmm", "alsa", "aaudio").</summary>
     string Name { get; }
 
     /// <summary>Whether it can record on this machine; <paramref name="reason"/> says why not (another operating system, the audio library missing).</summary>
@@ -104,8 +104,8 @@ public static class AudioCaptures
 
     /// <summary>The first capture that can run on this machine.</summary>
     /// <exception cref="NotSupportedException">
-    /// None can; the message gives each one's reason. Always for now: the captures to pick from were registered, which is
-    /// not on the new design yet.
+    /// None can; the message gives each one's reason. Always for now: picking among the captures is not on the new design
+    /// yet.
     /// </exception>
     public static IAudioCapture ForThisMachine()
     {
@@ -124,8 +124,7 @@ public static class AudioCaptures
             + "or pipe the sound in from a recorder.");
     }
 
-    // The captures were registered (AudioCaptures.Register) and the first that can run picked among them, which is not on the new
-    // design yet.
+    // Picking the first capture that can run is not on the new design yet.
     private static IEnumerable<IAudioCapture> Registered() =>
         throw new NotSupportedException("The audio captures to pick from were registered, which is not on the new design yet.");
 }

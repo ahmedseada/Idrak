@@ -8,7 +8,7 @@ namespace Idrak.Audio.Abstractions;
 
 /// <summary>
 /// One step done to sound (filter it, take the noise off, set its level): sound in, sound out, as images have
-/// <c>IImageTransform</c>. Register one with <c>AudioProcessors.Register</c>; a pipeline
+/// <c>IImageTransform</c>. A pipeline
 /// (<see cref="AudioPipeline"/>) names processors in the order they run, as text such as
 /// <c>highpass=80, denoise=1.5 quantile=0.2, normalize=-20</c>.
 /// <para>
@@ -423,16 +423,15 @@ public sealed class AudioProcessorStep
 }
 
 /// <summary>
-/// The audio processors a pipeline (<see cref="AudioPipeline"/>) can name, by name (ignoring case). The library's:
+/// The audio processors a pipeline (<see cref="AudioPipeline"/>) can name. The library's:
 /// cleaning, <c>highpass</c> (live), <c>denoise</c>, <c>trim</c> and <c>normalize</c> (whole recording), the stages
 /// <see cref="AudioCleaners"/> runs; filters (live), <c>gain</c>, <c>dc</c>, <c>lowpass</c>, <c>bandpass</c>, <c>notch</c>,
 /// <c>dehum</c>, <c>eq</c>, <c>lowshelf</c>, <c>highshelf</c>, <c>presence</c> (the clarity of speech), <c>preemphasis</c>,
 /// <c>mono</c> and <c>resample</c>, and <c>highpass</c>'s <c>order</c>; dynamics, <c>gate</c>, <c>compress</c>, <c>limit</c> (a look-ahead limiter),
 /// <c>agc</c> and <c>loudness-live</c> (live), <c>loudness</c> (ITU-R BS.1770 / EBU R128 integrated) and <c>peaknorm</c>
 /// (whole recording); noise and repair, <c>denoise-live</c> (a running noise floor), <c>declick</c>, <c>declip</c>,
-/// <c>deess</c> and <c>dereverb</c> (live), <c>spectral-gate</c> (whole recording). <c>Describe</c> lists them with
-/// their summaries. No processor's option is named as a processor: after a comma a registered name starts a step. Register another with <c>Register</c>; one of a library name shadows the
-/// library's, which <c>Unregister</c> brings back.
+/// <c>deess</c> and <c>dereverb</c> (live), <c>spectral-gate</c> (whole recording). No processor's option is named as a
+/// processor: after a comma a name starts a step. Picking a processor by its name is not on the new design yet.
 /// </summary>
 public static class AudioProcessors
 {

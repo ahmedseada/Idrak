@@ -14,17 +14,15 @@ updating) and `IRolloutRanks<TObservation, TAction>` (a policy on every rank of 
 (advantages and returns in a fixed summation order), `IPolicyLoss` and `PolicyLosses` (the algorithms' losses), and the
 data passed between them: `Trajectory`, `ActionRecord`, `RolloutBatch` (pooled arrays, returned on `Dispose`).
 
-This package registers its estimators and losses into those registries as library defaults when it ships with the
-application: an app's registration under one of their names overrides it, `Unregister` brings it back, and `SetPolicy`
-opts the slot into `FallBack` to the library's or `Shadow`. Environments live in plug-ins
-([Idrak.Reinforcement.Plugins](../Idrak.Reinforcement.Plugins/README.md)) and apps; a kind that is not registered is
-refused with "not registered". The contract suites (an environment's reset and step rules and seeded replay, a reward's
+This package has the estimators and losses; picking one by its name is not on the new design yet. Environments live in
+plug-ins ([Idrak.Reinforcement.Plugins](../Idrak.Reinforcement.Plugins/README.md)) and apps; picking a kind by its name
+is not on the new design yet. The contract suites (an environment's reset and step rules and seeded replay, a reward's
 batch against its single form, an estimator's fixed order, a loss's gradient) are in `Idrak.Abstraction.Testing`
 (`Conformance.CheckEnvironmentKind`, `CheckRewardFunction`, `CheckAdvantageEstimator`, `CheckPolicyLoss`).
 
 ## What it holds
 
-- **Advantage estimators** (`AdvantageEstimators`, registered as library defaults): `gae` (generalized advantage
+- **Advantage estimators** (`AdvantageEstimators`, named library defaults): `gae` (generalized advantage
   estimation, Schulman et al. 2015, arXiv:1506.02438: γ, λ, a critic's values), `group` (GRPO's group-relative
   advantages, Shao et al. 2024, arXiv:2402.03300: an episode's return less its group's mean, over the group's deviation
   or not), `leave-one-out` (RLOO, Ahmadian et al. 2024, arXiv:2402.14740) and `returns` (REINFORCE's discounted returns,

@@ -44,8 +44,8 @@ public static class DatasetSpecExtensions
             ? new ChatMapping { User = user, Assistant = spec.Get("assistant") ?? throw new ArgumentException($"{spec.Source}: user= needs assistant= too."), System = spec.Get("system") }
             : null;
 
-        // The dataset sources were registered (DatasetSources: hf:, github:, kaggle:, zenodo:, http(s)://, folders, files) and
-        // tried in order: not on the new design yet.
+        // Trying the dataset sources (hf:, github:, kaggle:, zenodo:, http(s)://, folders, files) in order is not on the new
+        // design yet.
         private static IDatasetSource? SourceFor(string source) =>
             throw new NotSupportedException($"'{source}': a dataset source picked by its name or prefix is not on the new design yet.");
 
@@ -68,7 +68,7 @@ public static class DatasetSpecExtensions
                     var other => throw new ArgumentException($"{spec.Source}: text={other}: use lines, paragraphs or document."),
                 },
 
-                // A built-in format by its DataFormat name, or any registered one by its name.
+                // A built-in format by its DataFormat name, or any one by its name.
                 Format = spec.Get("format") is { } format && Enum.TryParse<DataFormat>(format, ignoreCase: true, out var builtIn) ? builtIn : null,
                 FileFormat = spec.Get("format") is { } named && !Enum.TryParse<DataFormat>(named, ignoreCase: true, out _)
                     ? throw new NotSupportedException($"{spec.Source}: the data file format '{named}' by name is not on the new design yet.")

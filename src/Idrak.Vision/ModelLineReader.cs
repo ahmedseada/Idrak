@@ -38,8 +38,7 @@ public sealed class ModelLineReader
     private readonly Dictionary<string, int> _index;
     private readonly IReadingOrder? _order;
 
-    // The CTC decoders and the reading orders were registered (CtcDecoders, ReadingOrders) and picked by name: not on the
-    // new design yet.
+    // Picking the CTC decoders and the reading orders by name is not on the new design yet.
     private static object CtcDecoderNamed(string name) => throw new NotSupportedException($"The CTC decoder '{name}' by name is not on the new design yet.");
 
     private static IReadingOrder OrderNamed(string name) => throw new NotSupportedException($"The reading order '{name}' by name is not on the new design yet.");
@@ -56,7 +55,7 @@ public sealed class ModelLineReader
     /// <param name="options">The decoder's settings (its blank is the settings').</param>
     /// <param name="device">Where the network runs (its weights' device unless given).</param>
     /// <exception cref="ArgumentException">The settings do not fit the labels.</exception>
-    /// <exception cref="NotSupportedException">The decoder or the reading order is not registered.</exception>
+    /// <exception cref="NotSupportedException">Picking the decoder or the reading order by its name is not on the new design yet.</exception>
     public ModelLineReader(Module network, IReadOnlyList<string> labels, LineRecognitionSettings settings, int channels = 1, string decoder = "greedy",
         CtcDecodeOptions? options = null, Device? device = null)
     {

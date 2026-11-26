@@ -11,7 +11,7 @@ namespace Idrak.Audio.Abstractions;
 /// <see cref="AudioCodecs"/>'s, see <see cref="Decode"/>), its media type when known, and the SHA-256 of the bytes
 /// (<see cref="Hash"/>), which identifies it: two sounds are equal when their bytes are, so a model encodes a sound once
 /// per conversation. Make one with <see cref="FromFile"/>, <see cref="FromBytes"/>, <see cref="FromStream"/> or
-/// <see cref="FromDataUrl"/>. Its kind is <see cref="ChatParts.Audio"/>, registered in <see cref="ChatParts"/> by this
+/// <see cref="FromDataUrl"/>. Its kind is <see cref="ChatParts.Audio"/> by this
 /// package as a library default (<c>{"type": "audio", "media_type": "audio/wav", "data": "&lt;base64&gt;"}</c>).
 /// </summary>
 public sealed record ChatAudio : ChatPart
@@ -121,7 +121,7 @@ public sealed record ChatAudio : ChatPart
     public string ToDataUrl() => $"data:{MediaType ?? "application/octet-stream"};base64,{Convert.ToBase64String(_data)}";
 
     /// <summary>The sound decoded by the codec that knows its format (<see cref="AudioCodecs.Decode(ReadOnlySpan{byte})"/>).</summary>
-    /// <exception cref="InvalidDataException">No registered codec reads the bytes, or they are damaged.</exception>
+    /// <exception cref="InvalidDataException">No codec reads the bytes, or they are damaged.</exception>
     public AudioData Decode() => AudioCodecs.Decode(_data);
 
     /// <summary>Two sounds are equal when their bytes are (their <see cref="Hash"/>es match), whatever media type they were given.</summary>

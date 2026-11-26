@@ -170,7 +170,7 @@ public static class ChatApiTranslation
         return parts;
     }
 
-    // A content given as a list of parts: they were read by their kinds' names (the registered chat part kinds), which is
+    // A content given as a list of parts: they were read by their kinds' names (the chat part kinds), which is
     // not on the new design yet.
     private static IReadOnlyList<ChatPart> ContentPartsByKind() =>
         throw new NotSupportedException("Reading a message's content parts by their kinds' names is not on the new design yet.");

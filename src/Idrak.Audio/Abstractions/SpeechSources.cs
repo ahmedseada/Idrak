@@ -133,7 +133,7 @@ public static class SpeechSources
         return KindNamed(source.Kind).Open(source);
     }
 
-    // The kinds were registered (SpeechSources.Register) and picked by name, which is not on the new design yet.
+    // Picking the kinds by name is not on the new design yet.
     private static ISpeechSource KindNamed(string name) =>
         throw new NotSupportedException($"The speech source kind '{name}' by name is not on the new design yet.");
 

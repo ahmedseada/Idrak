@@ -17,12 +17,11 @@ namespace Idrak.Audio;
 /// </summary>
 public static class SpeechSynthesisTrainer
 {
-    // The augmentations were registered (AudioAugmentations) and picked by name, which is not on the new design yet.
+    // Picking the augmentations by name is not on the new design yet.
     private static IAudioAugmentation AugmentationNamed(string name) =>
         throw new NotSupportedException($"The audio augmentation '{name}' by name is not on the new design yet.");
 
-    // The synthesis objectives were registered (SpeechSynthesisObjectives) and a model's picked by its name, which is not on
-    // the new design yet.
+    // Picking a model's synthesis objective by its name is not on the new design yet.
     private static ISpeechSynthesisObjective ObjectiveNamed(string name) =>
         throw new NotSupportedException($"The speech synthesis objective '{name}' by name is not on the new design yet.");
 
@@ -31,7 +30,7 @@ public static class SpeechSynthesisTrainer
     /// <see cref="SpeechTrainer.Train"/>), its durations from <see cref="SpeechTrainingOptions.Durations"/>; or goes on from
     /// <paramref name="resume"/> (see <see cref="Resume"/>).
     /// </summary>
-    /// <exception cref="ArgumentException">An option is out of range or names nothing registered, the options name no alignments file, or no utterance can be trained on.</exception>
+    /// <exception cref="ArgumentException">An option is out of range or names nothing known, the options name no alignments file, or no utterance can be trained on.</exception>
     /// <exception cref="FileNotFoundException">The alignments file does not exist.</exception>
     /// <exception cref="InvalidOperationException">The loss stayed not finite (<see cref="SpeechTrainingOptions.NonFiniteSteps"/>).</exception>
     /// <exception cref="OperationCanceledException">Cancelled: a checkpoint of the last finished step is written first.</exception>

@@ -53,7 +53,7 @@ public static class ReinforcementTrainer
         IProgressReporter? progress = null, CancellationToken cancellationToken = default) =>
         new ReinforcementTrainer<TObservation, TAction>(environmentKind, policy, options) { Progress = progress }.Train(cancellationToken);
 
-    /// <summary>Trains <paramref name="policy"/> in environments of the kind <paramref name="environmentKind"/> names in <c>EnvironmentKinds</c>.</summary>
+    /// <summary>Trains <paramref name="policy"/> in environments of the kind <paramref name="environmentKind"/> names (picking it by its name is not on the new design yet).</summary>
     /// <typeparam name="TObservation">The environment's observations.</typeparam>
     /// <typeparam name="TAction">Its actions.</typeparam>
     /// <param name="environmentKind">The kind's name.</param>
@@ -61,12 +61,12 @@ public static class ReinforcementTrainer
     /// <param name="options">The run's settings; null for <see cref="ReinforcementOptions.FromEnvironment"/>.</param>
     /// <param name="progress">Where the run's progress is shown; null for nowhere.</param>
     /// <param name="cancellationToken">Stops the run between iterations.</param>
-    /// <exception cref="NotSupportedException">Always for now: the kinds were registered (<c>EnvironmentKinds</c>) and picked by name, which is not on the new design yet.</exception>
+    /// <exception cref="NotSupportedException">Always for now: picking the kinds by name is not on the new design yet.</exception>
     public static ReinforcementResult Train<TObservation, TAction>(string environmentKind, IPolicy<TObservation, TAction> policy, ReinforcementOptions? options = null,
         IProgressReporter? progress = null, CancellationToken cancellationToken = default) =>
         Train(EnvironmentKindNamed(environmentKind), policy, options, progress, cancellationToken);
 
-    // The environment kinds were registered (EnvironmentKinds) and picked by name, which is not on the new design yet.
+    // Picking the environment kinds by name is not on the new design yet.
     private static IEnvironmentKind EnvironmentKindNamed(string name) => throw new NotSupportedException($"The environment kind '{name}' by name is not on the new design yet.");
 }
 
@@ -75,15 +75,15 @@ public static class ReinforcementTrainer
 /// policy (<see cref="RolloutCollector{TObservation, TAction}"/>), estimates their advantages and returns
 /// (<c>AdvantageEstimators</c>), then makes <see cref="ReinforcementOptions.Epochs"/> passes over them in mini-batches of
 /// <see cref="ReinforcementOptions.MiniBatch"/> episodes, each an update of the policy with the algorithm's loss
-/// (<c>PolicyLosses</c>). A policy that exposes its optimizer (<see cref="IScheduledPolicy"/>) gets the run's gradient
-/// clip and a learning-rate schedule over the run's updates (<c>LearningRateSchedules</c>).
+///. A policy that exposes its optimizer (<see cref="IScheduledPolicy"/>) gets the run's gradient
+/// clip and a learning-rate schedule over the run's updates.
 /// <list type="bullet">
 /// <item><b>Reproducible:</b> every draw derives from the run's seed and where the run is (iteration, group, round,
 /// pass): episodes of a group share their environment's seed, the policy's draws come from a seed per round, mini-batches
 /// from a shuffle per pass; so the same seed gives the same episodes, advantages and weights whatever the threads, and a
 /// run's random state is its seed and its iteration.</item>
 /// <item><b>Preference rounds</b> (<see cref="ReinforcementOptions.Pairs"/>, Craft's plan R0): each iteration's episodes become
-/// pairs by a <c>PreferencePairSources</c> source ("group": the best and the worst of each group by return; "verdict": a
+/// pairs by a pair source ("group": the best and the worst of each group by return; "verdict": a
 /// rejected answer against the text kept), and the policy (an <see cref="IPreferencePolicy{TObservation, TAction}"/>) makes
 /// <see cref="ReinforcementOptions.Epochs"/> updates on them with <see cref="ReinforcementOptions.PreferenceLoss"/> against
 /// <see cref="ReinforcementOptions.PreferenceReference"/> (the previous round's policy by default): iterative preference
@@ -166,20 +166,19 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
     /// <exception cref="NotSupportedException">Always for now: the policy loss, the pair source and the advantage estimator were picked by name, which is not on the new design yet.</exception>
     public ReinforcementResult Train(CancellationToken cancellationToken = default) => TrainAsync(cancellationToken).AsTask().GetAwaiter().GetResult();
 
-    // The learning-rate schedules were registered (LearningRateSchedules) and picked by name, which is not on the new design yet.
+    // Picking the learning-rate schedules by name is not on the new design yet.
     private static ILearningRateScheduler ScheduleNamed(string name, LearningRateScheduleSettings settings, IOptimizer optimizer, int steps) =>
         throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");
 
-    // The pair sources were registered (PreferencePairSources) and picked by name, made with the run's PairOptions: not on
-    // the new design yet.
+    // Picking the pair sources by name, made with the run's PairOptions, is not on the new design yet.
     private static IPreferencePairSource PairSourceNamed(string name) => throw new NotSupportedException($"The preference pair source '{name}' by name is not on the new design yet.");
 
-    // The policy losses were registered (PolicyLosses) and picked by the run's algorithm, made with its settings (Clip,
-    // KlWeight, KlEstimator, EntropyWeight, ValueWeight, Normalization, LossOptions): not on the new design yet.
+    // Picking the policy losses by the run's algorithm, made with its settings (Clip, KlWeight, KlEstimator,
+    // EntropyWeight, ValueWeight, Normalization, LossOptions), is not on the new design yet.
     private static IPolicyLoss LossNamed(ReinforcementOptions o) => throw new NotSupportedException($"The policy loss '{o.Algorithm}' by name is not on the new design yet.");
 
-    // The advantage estimators were registered (AdvantageEstimators) and picked by name, made with the run's settings
-    // (Gamma, Lambda, GroupScale, NormalizeAdvantages, EstimatorOptions): not on the new design yet.
+    // Picking the advantage estimators by name, made with the run's settings (Gamma, Lambda, GroupScale,
+    // NormalizeAdvantages, EstimatorOptions), is not on the new design yet.
     private static IAdvantageEstimator EstimatorNamed(string name) => throw new NotSupportedException($"The advantage estimator '{name}' by name is not on the new design yet.");
 
     /// <summary>Runs the iterations (see the type); awaits the environments that wait.</summary>

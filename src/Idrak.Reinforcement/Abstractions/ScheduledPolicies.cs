@@ -5,7 +5,7 @@ namespace Idrak.Reinforcement.Abstractions;
 
 /// <summary>
 /// A policy whose optimizer a trainer may reach (<see cref="ReinforcementTrainer{TObservation, TAction}"/>): the trainer
-/// sets its learning rate by a schedule from <c>LearningRateSchedules</c>, once per optimizer step, and the gradient-norm
+/// sets its learning rate by a schedule, once per optimizer step, and the gradient-norm
 /// clip its updates apply. <see cref="ModulePolicy{TAction}"/> implements it. A policy that does not keeps its own rate and
 /// clip (a language-model policy schedules through its fine-tuning session), and the trainer leaves them alone.
 /// </summary>

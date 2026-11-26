@@ -55,7 +55,7 @@ public sealed class CtcObjective : ISpeechTrainingObjective
         return [.. readings.Select(r => r[0].Labels)];
     }
 
-    // The CTC decoders were registered (CtcDecoders) and picked by name, which is not on the new design yet.
+    // Picking the CTC decoders by name is not on the new design yet.
     private static IReadOnlyList<IReadOnlyList<CtcHypothesis>> DecodedBy(string decoder, Tensor logProbs, int[] steps, CtcDecodeOptions options) =>
         throw new NotSupportedException($"The CTC decoder '{decoder}' by name is not on the new design yet.");
 

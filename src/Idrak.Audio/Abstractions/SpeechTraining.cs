@@ -18,7 +18,7 @@ public sealed record SpeechForwardOptions
 /// </summary>
 public interface ITrainableSpeechModel : ISpeechRecognizer
 {
-    /// <summary>The architecture name its folder's config.json gives (its <c>SpeechFamilies</c> registration).</summary>
+    /// <summary>The architecture name its folder's config.json gives.</summary>
     string Architecture { get; }
 
     /// <summary>The <see cref="SpeechTrainingObjectives"/> name it trains with ("ctc", "seq2seq").</summary>
@@ -45,12 +45,12 @@ public interface ITrainableSpeechModel : ISpeechRecognizer
 
 /// <summary>
 /// What a speech training objective does for the trainer: which utterances it can train on, the loss of a batch, and the
-/// labels it reads for evaluation. Registered in <see cref="SpeechTrainingObjectives"/>; a model names its own
+/// labels it reads for evaluation. A model names its own
 /// (<see cref="ITrainableSpeechModel.Objective"/>).
 /// </summary>
 public interface ISpeechTrainingObjective
 {
-    /// <summary>The name it is registered under.</summary>
+    /// <summary>Its name.</summary>
     string Name { get; }
 
     /// <summary>Whether <paramref name="model"/> is one it trains (CTC: an <see cref="ICtcSpeechModel"/>).</summary>
@@ -73,11 +73,11 @@ public interface ISpeechTrainingObjective
 }
 
 /// <summary>
-/// The speech training objectives, by name (ordinal). Built in (Idrak.Audio): "ctc" (<see cref="Idrak.Audio.CtcObjective"/>:
+/// The speech training objectives. The library's (Idrak.Audio): "ctc" (<see cref="Idrak.Audio.CtcObjective"/>:
 /// PyTorch's CTC loss over an <see cref="ICtcSpeechModel"/>'s head, CtcDecoders for evaluation) and "seq2seq"
 /// (<see cref="Idrak.Audio.Seq2SeqObjective"/>: an <see cref="ISequenceSpeechModel"/>'s decoder read with teacher forcing,
-/// each utterance's mean token cross-entropy; greedy or beam generation for evaluation). Register another with
-/// <c>Register</c> (one under a built-in name takes its place until <c>Unregister</c>).
+/// each utterance's mean token cross-entropy; greedy or beam generation for evaluation). Picking one by its name is not
+/// on the new design yet.
 /// </summary>
 public static class SpeechTrainingObjectives
 {

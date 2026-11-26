@@ -38,14 +38,14 @@ public sealed record CodeExtraction(string Output, string ManifestPath, JsonObje
 
 /// <summary>
 /// Turns a repository or project into data (plan 36, <c>idrak data code</c>): it walks the source once (rule 72; files are
-/// told apart by their bytes, rule 74), runs the chosen task families (<c>TaskFamilies</c>) whose languages match the
-/// files', writes their rows through the row filters (<c>RowFilters</c>) and their drafts as task folders, and writes
+/// told apart by their bytes, rule 74), runs the chosen task families whose languages match the
+/// files', writes their rows through the row filters and their drafts as task folders, and writes
 /// <c>manifest.json</c>: the families, the counts asked, kept and rejected with the reasons, and the time.
 /// </summary>
 /// <remarks>
 /// Under the output folder: <c>rows/{family}.jsonl</c>; <c>tasks/{family}/{id}/</c> for the drafts the verifier proved
 /// (<see cref="TaskVerifiers"/>: the check fails on the workspace and passes with the solution); <c>drafts/{family}/{id}/</c>,
-/// marked <c>"proven": false</c>, when no verifier is chosen or registered (never under <c>tasks</c>); the proof's output of each
+/// marked <c>"proven": false</c>, when no verifier is chosen (never under <c>tasks</c>); the proof's output of each
 /// rejected draft under <c>rejected/{family}/{id}.txt</c>. A task folder is the coding tasks' layout: <c>task.json</c>
 /// (prompt, language, the source as its base, setup, verify, environment, tags), <c>workspace/</c>, <c>verify/</c>,
 /// <c>solution/</c> (the source's own files when the draft names none).
@@ -53,7 +53,7 @@ public sealed record CodeExtraction(string Output, string ManifestPath, JsonObje
 /// <param name="options">The run's settings; null for the defaults.</param>
 public sealed class CodeExtractor(CodeExtractorOptions? options = null)
 {
-    // The task families were registered (TaskFamilies) and looked up by name: not on the new design yet.
+    // Looking up the task families by name is not on the new design yet.
     private static ITaskFamily FamilyNamed(string name) => throw new NotSupportedException($"The task family '{name}' by name is not on the new design yet.");
 
     /// <summary>The run's settings.</summary>
@@ -172,7 +172,7 @@ public sealed class CodeExtractor(CodeExtractorOptions? options = null)
     /// Runs the extraction of <paramref name="source"/> into <paramref name="output"/> (created; files of an earlier run there
     /// are replaced as they are written) and writes its manifest.
     /// </summary>
-    /// <exception cref="NotSupportedException">A family or verifier nobody registered ("not registered"), or a row format that cannot be written.</exception>
+    /// <exception cref="NotSupportedException">A family or verifier by name (not on the new design yet), or a row format that cannot be written.</exception>
     public async Task<CodeExtraction> RunAsync(CodeSource source, string output, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -181,8 +181,8 @@ public sealed class CodeExtractor(CodeExtractorOptions? options = null)
         output = Path.GetFullPath(output);
         string root = Path.GetFullPath(source.Root);
 
-        // Everything named is checked before any work: the families, the verifier, the formats. The task families, the
-        // verifiers, the data file formats and the row filters were registered and looked up by name: not on the new design yet.
+        // Everything named is checked before any work: the families, the verifier, the formats. Looking up the task
+        // families, the verifiers, the data file formats and the row filters by name is not on the new design yet.
         var families = (options.Families ?? throw new NotSupportedException("A code extraction runs every registered task family: a task family by name is not on the new design yet."))
             .Distinct(StringComparer.OrdinalIgnoreCase).Select(FamilyNamed).ToList();
         ITaskVerifier? verifier = options.Verifier is null || options.Verifier.Equals(TaskVerifiers.None, StringComparison.OrdinalIgnoreCase) ? null
@@ -213,7 +213,7 @@ public sealed class CodeExtractor(CodeExtractorOptions? options = null)
         var files = Walk(source, options.SkippedFolders, options.MaxFileBytes, inside, skippedFiles);
         progress?.Report(files.Count);
 
-        var filters = new List<IRowFilter>();                  // the registered row filters: none on the new design yet
+        var filters = new List<IRowFilter>();                  // the row filters: none on the new design yet
         var state = new RunState(options.MaxTasks);
         var reports = new JsonArray();
         var byLanguages = new Dictionary<string, IReadOnlyList<CodeSourceFile>>(StringComparer.OrdinalIgnoreCase);   // one list per language set

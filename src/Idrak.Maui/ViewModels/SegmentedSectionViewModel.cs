@@ -32,7 +32,7 @@ public sealed class SegmentItem(string name, string title, string icon, ICommand
     public ICommand SelectCommand { get; } = select;
 }
 
-/// <summary>A section of several features (Voice, Vision): its heading and the segments of its enabled, registered features.</summary>
+/// <summary>A section of several features (Voice, Vision): its heading and the segments of its enabled features.</summary>
 public sealed class SegmentedSectionViewModel : ViewModel
 {
     /// <summary>The segments of <paramref name="section"/>'s features that <paramref name="options"/> show.</summary>

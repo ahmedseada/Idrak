@@ -16,7 +16,7 @@ namespace Idrak.Data.Code;
 /// </summary>
 public sealed class FileTextFamily : ITaskFamily
 {
-    /// <summary>Its name in <c>TaskFamilies</c>: "file-text".</summary>
+    /// <summary>Its name: "file-text".</summary>
     public const string FamilyName = "file-text";
 
     /// <inheritdoc/>

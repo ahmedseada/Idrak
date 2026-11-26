@@ -13,7 +13,7 @@ namespace Idrak.Audio.Abstractions;
 /// </summary>
 public interface ITrainableSpeechSynthesizer : ISpeechSynthesizer
 {
-    /// <summary>The architecture name its folder's config.json gives (its <c>SpeechSynthesisFamilies</c> registration).</summary>
+    /// <summary>The architecture name its folder's config.json gives.</summary>
     string Architecture { get; }
 
     /// <summary>The <see cref="SpeechSynthesisObjectives"/> name it trains with ("durations").</summary>
@@ -57,12 +57,12 @@ public interface ITrainableSpeechSynthesizer : ISpeechSynthesizer
 
 /// <summary>
 /// What a speech synthesis training objective does for the trainer: which utterances it can train on and the loss of a
-/// batch. Registered in <see cref="SpeechSynthesisObjectives"/>; a model names its own
+/// batch. A model names its own
 /// (<see cref="ITrainableSpeechSynthesizer.Objective"/>).
 /// </summary>
 public interface ISpeechSynthesisObjective
 {
-    /// <summary>The name it is registered under.</summary>
+    /// <summary>Its name.</summary>
     string Name { get; }
 
     /// <summary>Whether <paramref name="model"/> is one it trains.</summary>
@@ -84,10 +84,10 @@ public interface ISpeechSynthesisObjective
 }
 
 /// <summary>
-/// The speech synthesis training objectives, by name (ordinal). Built in (Idrak.Audio): "durations"
+/// The speech synthesis training objectives. The library's (Idrak.Audio): "durations"
 /// (<see cref="Idrak.Audio.DurationSynthesisObjective"/>: the mean absolute log-mel error with the given durations, plus
-/// the mean squared log-duration error weighted by <see cref="SpeechTrainingOptions.DurationLossWeight"/>). Register
-/// another with <c>Register</c> (one under a built-in name takes its place until <c>Unregister</c>).
+/// the mean squared log-duration error weighted by <see cref="SpeechTrainingOptions.DurationLossWeight"/>). Picking one
+/// by its name is not on the new design yet.
 /// </summary>
 public static class SpeechSynthesisObjectives
 {

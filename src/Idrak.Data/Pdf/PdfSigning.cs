@@ -474,7 +474,7 @@ internal static class PdfSigning
         }
     }
 
-    // The signature services were registered by their scheme (SignatureServices) and asked through it: not on the new design yet.
+    // Picking the signature services by their scheme is not on the new design yet.
     private static byte[] Send(SignatureServiceRequest request) =>
         throw new NotSupportedException("A timestamp or revocation request through the signature services by scheme is not on the new design yet.");
 

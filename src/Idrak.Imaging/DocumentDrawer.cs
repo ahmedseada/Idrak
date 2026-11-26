@@ -207,8 +207,8 @@ internal sealed class DrawContext(DocumentDrawOptions options)
 
     public DocumentDrawOptions Options { get; } = options;
 
-    // The rasterizers and pens were registered (OutlineRasterizers, Pens) and picked by name: not on the new design yet.
-    // The defaults, the "coverage" rasterizer and the "ideal" pen, are reached directly; another name stops.
+    // Picking the rasterizers and pens by name is not on the new design yet. The defaults, the "coverage" rasterizer and
+    // the "ideal" pen, are reached directly; another name stops.
     private static readonly CoverageRasterizer Coverage = new();
 
     private static readonly IdealPen Ideal = new();
@@ -284,7 +284,7 @@ internal static class FontFolder
 {
     private static readonly ConcurrentDictionary<string, Lazy<IReadOnlyList<IFontFace>>> Folders = new(StringComparer.Ordinal);
 
-    // A fonts folder was read through the registered font formats (FontFormats): not on the new design yet.
+    // A fonts folder was read through the font formats (FontFormats): not on the new design yet.
     private static IReadOnlyList<IFontFace> FontsIn(string folder) =>
         throw new NotSupportedException($"{folder}: reading fonts through the registered font formats is not on the new design yet.");
 

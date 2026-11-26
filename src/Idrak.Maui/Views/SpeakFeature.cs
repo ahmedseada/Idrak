@@ -8,10 +8,10 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Idrak.Maui.Views;
 
 /// <summary>
-/// The library's "speak" feature: text read aloud on the speaker by a synthesis model of the store (any registered
-/// synthesis family; the library registers none, the app registers the ones it shows), played as the first sentence is
+/// The library's "speak" feature: text read aloud on the speaker by a synthesis model of the store (a
+/// synthesis family: the library has none, the families are the app's), played as the first sentence is
 /// ready, with the time to the first sound and the real-time factor, cold and warm apart; the voices of the model and the
-/// voice store; models and voices that need what is not registered here (the espeak-ng phonemizer, an outside program)
+/// voice store; models and voices that need what is not available here (the espeak-ng phonemizer, an outside program)
 /// listed with that reason; the speech saved as WAV or MP3 and shared.
 /// </summary>
 public sealed class SpeakFeature : IMobileFeature

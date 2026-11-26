@@ -31,7 +31,7 @@ public sealed record PromptTask(IReadOnlyList<ChatMessage> Prompt, string? Refer
 }
 
 /// <summary>
-/// The <c>prompts</c> environment kind (Plan 27, R3; <c>EnvironmentKinds</c>, registered by Idrak.Text): chat
+/// The <c>prompts</c> environment kind (Plan 27, R3): chat
 /// prompts with references and optional tools, each episode one prompt drawn from its seed. The agent's reply ends the
 /// episode, rewarded by a reward expression (option <c>reward</c>: a <c>RewardFunctions</c> or
 /// <see cref="TuningMetrics"/> name, "exact" by default, or weighted terms "exact:1,length:0.1"; each term's options as
@@ -57,7 +57,7 @@ public sealed class PromptsEnvironmentKind : IPromptDataEnvironmentKind, IReward
     /// <summary>A kind of <paramref name="tasks"/> (the option <c>data</c> is then refused), with <paramref name="tools"/> to run the calls of replies.</summary>
     /// <param name="tasks">The tasks, at least one.</param>
     /// <param name="tools">The tools the agent's calls run on; null: a reply's calls end the episode as any reply does.</param>
-    /// <param name="name">The kind's name (to register it beside the library's).</param>
+    /// <param name="name">The kind's name.</param>
     public PromptsEnvironmentKind(IReadOnlyList<PromptTask> tasks, IToolRegistry? tools = null, string name = KindName)
     {
         ArgumentNullException.ThrowIfNull(tasks);

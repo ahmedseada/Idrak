@@ -238,7 +238,7 @@ public sealed class ImagePreprocessor
     /// <summary>The pixel values of <paramref name="image"/> as [channels, height, width] floats (channels is 3 unless a grey image is kept grey).</summary>
     public float[] Pixels(ImageData image) => Pixels(image, out _, out _, out _);
 
-    /// <summary>The pixel values of an image file (any registered codec), as <see cref="Pixels(ImageData)"/>.</summary>
+    /// <summary>The pixel values of an image file (any codec), as <see cref="Pixels(ImageData)"/>.</summary>
     public float[] Pixels(string path) => Pixels(Codecs.Decode(path));
 
     /// <summary>The pixel values of <paramref name="image"/> as a [channels, height, width] tensor on <paramref name="device"/>.</summary>
@@ -499,7 +499,7 @@ public sealed class ImagePreprocessor
         return table;
     }
 
-    /// <summary>The pixel values of an image file (any registered codec) as a tensor, as <see cref="Process(ImageData, Device?)"/>.</summary>
+    /// <summary>The pixel values of an image file (any codec) as a tensor, as <see cref="Process(ImageData, Device?)"/>.</summary>
     public Tensor Process(string path, Device? device = null) => Process(Codecs.Decode(path), device);
 
     /// <summary>
@@ -1180,7 +1180,7 @@ public sealed class ImagePreprocessor
     }
 }
 
-// The image codecs were registered (ImageCodecs) and a file decoded by the one that reads it: not on the new design yet.
+// Decoding a file through the image codecs is not on the new design yet.
 file static class Codecs
 {
     public static ImageData Decode(string path) => throw new NotSupportedException($"{path}: decoding an image through the registered image codecs is not on the new design yet.");

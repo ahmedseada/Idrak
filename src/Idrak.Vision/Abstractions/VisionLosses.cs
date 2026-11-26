@@ -4,7 +4,7 @@
 namespace Idrak.Vision.Abstractions;
 
 /// <summary>
-/// The settings of a detection or segmentation loss (<c>VisionLosses</c>); each loss reads those it has and
+/// The settings of a detection or segmentation loss; each loss reads those it has and
 /// ignores the rest.
 /// </summary>
 public sealed record VisionLossOptions
@@ -45,7 +45,7 @@ public enum VisionLossTarget
 }
 
 /// <summary>
-/// A detection or segmentation loss, registered in <c>VisionLosses</c> under its <c>IKind.Name</c>:
+/// A detection or segmentation loss:
 /// predictions against targets, with gradients to the predictions. What the tensors hold is its <see cref="Target"/>:
 /// corner boxes [..., 4] for the box losses, logits and 0/1 targets of one shape for the focal loss, probabilities and
 /// one-hot targets [N, classes, ...] for dice.

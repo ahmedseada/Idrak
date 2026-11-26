@@ -6,9 +6,8 @@ using Idrak.Models;
 namespace Idrak.Data;
 
 /// <summary>
-/// Hugging Face models by id ("Qwen/Qwen3-0.6B"), the model source this package registers with
-/// <c>ModelSources</c> (as "huggingface"), so <c>ModelSource.Resolve</c> and <c>PretrainedModel.Load</c> take
-/// an id. An id is looked up in Hugging Face's own cache (models fetched with transformers or huggingface-cli), then in
+/// Hugging Face models by id ("Qwen/Qwen3-0.6B"), this package's model source ("huggingface"; picking it among the
+/// sources is not on the new design yet). An id is looked up in Hugging Face's own cache (models fetched with transformers or huggingface-cli), then in
 /// Idrak's download cache, and downloaded otherwise: only the files the library reads (config, tokenizer, chat template,
 /// generation config and the safetensors weights, else one PyTorch checkpoint read without running it), into
 /// downloads/huggingface/models/&lt;owner&gt;/&lt;name&gt;/&lt;commit&gt;/ (a subfolder's model below it, <see cref="DownloadFolderAsync(string, string, string, string?, IDownloader?, CancellationToken)"/>).
@@ -29,7 +28,7 @@ public static class HuggingFaceModels
     /// </summary>
     public const string PullMarker = ".idrak-pull";
 
-    // Registered after Idrak's own sources, so asked before them: it leaves them the names they own (a .gguf file, "store:…").
+    // It leaves Idrak's own sources the names they own (a .gguf file, "store:…").
     internal static IModelSource Source { get; } = new HubSource();
 
     /// <summary>Downloads the files the library reads of a Hugging Face model (once) and returns their folder.</summary>

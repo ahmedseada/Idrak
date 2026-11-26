@@ -418,8 +418,8 @@ public static class TextLayout
 /// <summary>Draws laid-out text as ink coverage (0 none, 1 full) with an outline rasterizer.</summary>
 public static class TextRenderer
 {
-    // The rasterizers were registered (OutlineRasterizers) and picked by name: not on the new design yet. The default,
-    // "coverage", is reached directly; another name stops.
+    // Picking the rasterizers by name is not on the new design yet. The default, "coverage", is reached directly;
+    // another name stops.
     private static readonly CoverageRasterizer Coverage = new();
 
     private static IOutlineRasterizer RasterizerNamed(string name) =>

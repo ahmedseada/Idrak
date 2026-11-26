@@ -14,12 +14,11 @@ namespace Idrak.Data.Abstractions;
 /// data files instead; release=latest|tag with asset=*.csv reads release assets)</item>
 /// <item><c>kaggle:owner/dataset</c> (files), <c>zenodo:123456</c> (files)</item>
 /// <item><c>https://host/data.jsonl.gz</c>, or a local file or folder (files)</item>
-/// <item>any source added with <c>DatasetSources.Register</c></item>
 /// </list>
 /// Options for any source: take, skip, weight, text (lines | paragraphs | document), documents (every file one row),
-/// columns (a,b,…), format (a <c>DataFileFormats</c> name), json_property, and the chat
+/// columns (a,b,…), format (a data file format's name), json_property, and the chat
 /// mapping system, user, assistant (templates over columns such as <c>user={question}</c>). Idrak.Data opens it
-/// (<c>spec.Open()</c>, through the registered <c>DatasetSources</c>).
+/// (<c>spec.Open()</c>; picking the source is not on the new design yet).
 /// </summary>
 public sealed class DatasetSpec
 {

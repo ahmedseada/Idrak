@@ -67,17 +67,17 @@ public sealed class TuningVision : IDisposable
     }
 
     /// <summary>
-    /// The image side of fine-tuning <paramref name="model"/>: its family checked first (registered, the vision options
+    /// The image side of fine-tuning <paramref name="model"/>: its family checked first (found, the vision options
     /// it takes, the parts it offers), then its encoder built on the model's device (with the model's trained vision
     /// tensors, <see cref="PretrainedModel.CreateVisionEncoder"/>), every encoder parameter frozen but the trained parts', which are marked to receive gradients.
     /// </summary>
-    /// <param name="model">A vision-language model (its family registered).</param>
+    /// <param name="model">A vision-language model.</param>
     /// <param name="images">How every image is prepared (<see cref="TuningImages.None"/> when null).</param>
     /// <param name="parts">The vision parts that train beside the language model's adapters (<see cref="VisionTuningParts.Projector"/>, <see cref="VisionTuningParts.Tower"/>); none when null.</param>
     /// <param name="cache">Where image features are kept (<see cref="FeatureCaches"/>; not disposed by this); a new "memory" one when null (disposed with this).</param>
     /// <exception cref="InvalidOperationException">The model has no vision part.</exception>
     /// <exception cref="NotSupportedException">
-    /// The model's vision family is not registered (the registry's message), or it does not offer a part asked for.
+    /// Finding the model's vision family is not on the new design yet, or it does not offer a part asked for.
     /// </exception>
     /// <exception cref="ArgumentException">A vision option the family does not take.</exception>
     public static TuningVision Create(PretrainedModel model, TuningImages? images = null, IEnumerable<string>? parts = null, IFeatureCache? cache = null)
@@ -88,7 +88,7 @@ public sealed class TuningVision : IDisposable
         images ??= TuningImages.None;
         var asked = (parts ?? []).Select(p => p?.Trim().ToLowerInvariant() ?? "").Where(p => p.Length > 0).Distinct(StringComparer.Ordinal).ToList();
 
-        // The encoder first: a family no longer registered fails here, with the registry's message.
+        // The encoder first: a family that cannot be found fails here.
         var encoder = model.CreateVisionEncoder(new VisionEncoderOptions { Device = model.Device, TrainedParts = asked });
         try
         {
@@ -133,7 +133,7 @@ public sealed class TuningVision : IDisposable
     /// <summary>The model.</summary>
     public PretrainedModel Model { get; }
 
-    /// <summary>The model's vision part (its family's registration).</summary>
+    /// <summary>The model's vision part (its family's).</summary>
     public IPretrainedVision Vision { get; }
 
     /// <summary>The family's encoder, on the model's device (owned: disposed with this).</summary>

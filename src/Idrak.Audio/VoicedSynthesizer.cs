@@ -51,8 +51,8 @@ public sealed class VoicedSynthesizer : ISpeechSynthesizer
     /// <inheritdoc />
     public int SampleRate => _synthesizer.SampleRate;
 
-    // The voice stores were registered (VoiceStores) and picked by name, which is not on the new design yet; without a name,
-    // the built-in folder store, reached directly.
+    // Picking the voice stores by name is not on the new design yet; without a name, the built-in folder store, reached
+    // directly.
     private static IVoiceStore StoreNamed(string? name) => name is null
         ? new FolderVoiceStore(FolderVoiceStore.DefaultRoot, VoiceStores.FolderName)
         : throw new NotSupportedException($"The voice store '{name}' by name is not on the new design yet.");

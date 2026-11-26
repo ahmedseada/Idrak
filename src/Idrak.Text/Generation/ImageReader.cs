@@ -213,8 +213,7 @@ public sealed class ImageReader : IDisposable
     }
 
     /// <summary>
-    /// Settings worth changing for this reader: none for now (the advisors were registered, <c>SettingAdvisors</c>, which
-    /// is not on the new design yet).
+    /// Settings worth changing for this reader: none for now (the setting advisors are not on the new design yet).
     /// </summary>
     public IReadOnlyList<SettingSuggestion> Suggestions() => [];
 

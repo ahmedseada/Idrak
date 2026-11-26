@@ -222,8 +222,8 @@ public sealed class ShapesLayout : IPageLayout
 
     private static string? Option(IReadOnlyDictionary<string, string> options, string key) => options.TryGetValue(key, out var value) && value.Length > 0 ? value : null;
 
-    // The shape profiles, pens, text bindings and shapes were registered (ShapeProfiles, Pens, TextBindings, Shapes) and
-    // picked by name, each read with its own keys of the page's options: not on the new design yet. The layout's defaults
+    // Picking the shape profiles, pens, text bindings and shapes by name, each read with its own keys of the page's
+    // options, is not on the new design yet. The layout's defaults
     // are reached directly: the profile "grid" (grid=auto x auto, a grid fitted to the text) and its shape, the "ideal"
     // pen and the "sequence" binding (with its own keys of the page's options). Any other name, or a profile written as
     // text, stops.

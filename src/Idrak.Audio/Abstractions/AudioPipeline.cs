@@ -18,13 +18,13 @@ namespace Idrak.Audio.Abstractions;
 /// <para>
 /// <see cref="Apply"/> runs a recording; <see cref="Open"/> gives one stage for blocks (a file read in pieces, a
 /// stream); <see cref="Wrap"/> cleans live sound (an <see cref="IAudioInput"/>) before it is used, and refuses a
-/// pipeline with a whole-recording step. A step's processor was found by its name among the registered ones, which is
+/// pipeline with a whole-recording step. A step's processor was found by its name among the ones, which is
 /// not on the new design yet: making a pipeline with steps stops.
 /// </para>
 /// </summary>
 public sealed class AudioPipeline : IEquatable<AudioPipeline>
 {
-    // The processors were registered (AudioProcessors) and a step's found by its name, which is not on the new design yet.
+    // Finding a step's processor by its name is not on the new design yet.
     private static IAudioProcessor? FindProcessor(ReadOnlySpan<char> name) =>
         throw new NotSupportedException($"The audio processor '{name}' by name is not on the new design yet.");
 

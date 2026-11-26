@@ -127,7 +127,7 @@ public static partial class Chunker
 /// <summary>
 /// Okapi BM25 keyword search: scores a text by the query words it contains, weighting rare words more, damping
 /// repeated words and penalizing long texts slightly. Words are split like <see cref="WordTokenizer.Split"/>. The library's
-/// keyword index, registered as <see cref="KeywordIndexes.Bm25"/>.
+/// keyword index, named <see cref="KeywordIndexes.Bm25"/>.
 /// </summary>
 public sealed class Bm25Index : IKeywordIndex
 {

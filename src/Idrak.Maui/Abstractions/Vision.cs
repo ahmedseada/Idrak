@@ -20,7 +20,7 @@ public sealed record VisionLoadRequest(string Model, string Path, string Device,
 
 /// <summary>A loaded vision-language reader as the OCR page shows it.</summary>
 /// <param name="Model">Its name.</param>
-/// <param name="Architecture">The architecture its config.json names (a registered vision family's).</param>
+/// <param name="Architecture">The architecture its config.json names (a vision family's).</param>
 /// <param name="Device">The device it is on ("cpu", "vulkan:0").</param>
 /// <param name="CacheFormat">Its attention cache's format.</param>
 /// <param name="Context">Its context in tokens.</param>
@@ -87,13 +87,13 @@ public sealed class VisionReaderLease : IDisposable
 /// (its vision host: shared, kept for the keep-alive, released on memory pressure) on the device of the settings, after
 /// the same measured check as the Chat lab's (<see cref="IChatModelService"/>): its decoder's weights in the format asked
 /// for, its vision part's and the attention cache for the context, against what the device has now. The families are the
-/// app's: a model whose vision family or text decoder is not registered fails as the library does.
+/// app's: a model whose vision family or text decoder cannot be found (by its name: not on the new design yet) fails as the library does.
 /// </summary>
 public interface IVisionReaderService
 {
     /// <summary>What <paramref name="request"/>'s model needs against what its device has now (reads its config and its weights' shapes; loads nothing).</summary>
-    /// <exception cref="NotSupportedException">The model's text decoder is not registered.</exception>
-    /// <exception cref="NotSupportedException">The model's vision family is not registered.</exception>
+    /// <exception cref="NotSupportedException">The model's text decoder cannot be found (by its name: not on the new design yet).</exception>
+    /// <exception cref="NotSupportedException">The model's vision family cannot be found (by its name: not on the new design yet).</exception>
     ChatMemoryEstimate Estimate(VisionLoadRequest request);
 
     /// <summary>
@@ -102,8 +102,8 @@ public interface IVisionReaderService
     /// loaded with its vision part. Runs on a worker thread.
     /// </summary>
     /// <exception cref="ModelDoesNotFitException">It does not fit the memory measured (nothing was loaded).</exception>
-    /// <exception cref="NotSupportedException">Its text decoder is not registered.</exception>
-    /// <exception cref="NotSupportedException">Its vision family is not registered.</exception>
+    /// <exception cref="NotSupportedException">Its text decoder cannot be found (by its name: not on the new design yet).</exception>
+    /// <exception cref="NotSupportedException">Its vision family cannot be found (by its name: not on the new design yet).</exception>
     /// <exception cref="InvalidOperationException">It reads text only, or the device cannot start.</exception>
     Task<VisionReaderLease> AcquireAsync(VisionLoadRequest request, CancellationToken cancellationToken = default);
 }

@@ -24,7 +24,7 @@ namespace Idrak.Mcp;
 /// <see cref="ConnectHttpAsync(Uri, CancellationToken)"/>) so their tools can be added to a <see cref="ToolRegistry"/>, and serves tools to MCP
 /// clients: a registry's (<see cref="ServerTools(IToolRegistry)"/>) and the models of an inference engine
 /// (<see cref="ServerTools(IModelCatalog)"/>, <see cref="ModelTools(IModelCatalog)"/>); <see cref="McpHost"/> serves them
-/// over a registered transport (stdio, http).
+/// over a transport (stdio, http).
 /// </summary>
 public static partial class McpTools
 {

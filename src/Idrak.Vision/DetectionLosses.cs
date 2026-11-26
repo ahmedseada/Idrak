@@ -4,8 +4,7 @@
 namespace Idrak.Vision;
 
 /// <summary>
-/// The losses detection trains with, on tensors with gradients to the predictions; registered by name in
-/// <c>Abstractions.VisionLosses</c>. Boxes are corners (x1, y1, x2, y2), [..., 4], as torchvision's losses take them.
+/// The losses detection trains with, on tensors with gradients to the predictions. Boxes are corners (x1, y1, x2, y2), [..., 4], as torchvision's losses take them.
 /// </summary>
 public static class DetectionLosses
 {
@@ -62,7 +61,7 @@ public static class DetectionLosses
     };
 }
 
-/// <summary>The losses segmentation trains with besides <c>Losses.PixelCrossEntropy</c>; registered by name in <c>Abstractions.VisionLosses</c>.</summary>
+/// <summary>The losses segmentation trains with besides <c>Losses.PixelCrossEntropy</c>;.</summary>
 public static class SegmentationLosses
 {
     /// <summary>

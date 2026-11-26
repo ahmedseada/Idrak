@@ -9,7 +9,7 @@ namespace Idrak.Vision.Abstractions;
 /// </summary>
 public interface IVisionMetric
 {
-    /// <summary>The name it is registered under (<c>coco</c>).</summary>
+    /// <summary>Its name (<c>coco</c>).</summary>
     string Name { get; }
 
     /// <summary>Forgets every image added.</summary>
@@ -39,7 +39,7 @@ public interface ISegmentationMetric : IVisionMetric
     void Add(SegmentationMask predicted, SegmentationMask expected);
 }
 
-/// <summary>What a metric is created with (<c>IVisionMetricKind</c>, <c>VisionMetrics.Create</c>); each reads what it needs.</summary>
+/// <summary>What a metric is created with (<c>IVisionMetricKind</c>); each reads what it needs.</summary>
 public sealed record VisionMetricOptions
 {
     /// <summary>The number of classes (segmentation: required; detection: 0 to take the classes from the images).</summary>

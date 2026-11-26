@@ -7,7 +7,7 @@ namespace Idrak.Text;
 
 /// <summary>
 /// Synthetic pages written as documents (<see cref="SyntheticPageOptions.Output"/>) through the options' document writer
-/// (<see cref="DocumentWriters"/>, any registered one): a page alone as a whole document (<see cref="One"/>, made where the
+/// (<see cref="DocumentWriters"/>, any one): a page alone as a whole document (<see cref="One"/>, made where the
 /// page is made, beside the others), or several in the order they are given, <see cref="SyntheticPageOptions.PagesPerDocument"/>
 /// pages a file: each page added to the open document as it comes (the writer writes a page when the next starts) and the
 /// file finished once it holds its pages, so one page's buffers are held at a time and memory does not grow with the
@@ -27,8 +27,8 @@ internal sealed class SyntheticDocuments : IDisposable
     private string _name = "";
     private int _pages;
 
-    // The document writers were registered (DocumentWriters) and picked by name: not on the new design yet. The default,
-    // "pdf" (Idrak.Data's PdfWriter), is reached directly; another name stops.
+    // Picking the document writers by name is not on the new design yet. The default, "pdf" (Idrak.Data's PdfWriter), is
+    // reached directly; another name stops.
     private static readonly Idrak.Data.Pdf.PdfWriter Pdf = new();
 
     internal static IDocumentWriter WriterNamed(string name) =>

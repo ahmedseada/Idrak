@@ -128,7 +128,7 @@ public static class AudioCleaners
     /// <summary>The speech level set.</summary>
     public const string Normalize = "normalize";
 
-    // The cleaning stages were registered (AudioCleaners.Register) and picked by name, which is not on the new design yet.
+    // Picking the cleaning stages by name is not on the new design yet.
     private static IAudioCleaner CleanerNamed(string name) =>
         throw new NotSupportedException($"The audio cleaning stage '{name}' by name is not on the new design yet.");
 

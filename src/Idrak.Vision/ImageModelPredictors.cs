@@ -53,12 +53,12 @@ public static class ImageModelPredictors
     }
 
     /// <summary>
-    /// A detector over the model: the family's preprocessing, the decoder it names (registered in
-    /// <see cref="Abstractions.DetectionDecoders"/>) made with its settings, boxes mapped back to each image and filtered by
+    /// A detector over the model: the family's preprocessing, the decoder it names (by name: not on the new design yet)
+    /// made with its settings, boxes mapped back to each image and filtered by
     /// <paramref name="options"/> (labelled with the model's labels unless the options give classes).
     /// </summary>
     /// <exception cref="InvalidOperationException">The model is not a detector.</exception>
-    /// <exception cref="NotSupportedException">Its decoder is not registered.</exception>
+    /// <exception cref="NotSupportedException">Picking its decoder by its name is not on the new design yet.</exception>
     public static ModelDetector Detector(this ImageModel model, DetectorOptions? options = null, Device? device = null)
     {
         Require(model, ImageTask.Detection);
@@ -80,7 +80,7 @@ public static class ImageModelPredictors
     /// CTC decoder <paramref name="decoder"/> (<c>CtcDecoders</c>) with <paramref name="options"/>.
     /// </summary>
     /// <exception cref="InvalidOperationException">The model is not a line recognizer.</exception>
-    /// <exception cref="NotSupportedException">The decoder or the model's reading order is not registered.</exception>
+    /// <exception cref="NotSupportedException">Picking the decoder or the model's reading order by its name is not on the new design yet.</exception>
     public static ModelLineReader LineReader(this ImageModel model, string decoder = "greedy", CtcDecodeOptions? options = null, Device? device = null)
     {
         Require(model, ImageTask.LineRecognition);

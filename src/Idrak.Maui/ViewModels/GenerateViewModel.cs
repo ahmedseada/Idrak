@@ -274,10 +274,10 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
         }
     }
 
-    /// <summary>The registered scan effects as chips.</summary>
+    /// <summary>The scan effects as chips.</summary>
     public ObservableCollection<EffectChip> Effects { get; } = [];
 
-    /// <summary>The registered page layouts as chips.</summary>
+    /// <summary>The page layouts as chips.</summary>
     public ObservableCollection<LayoutChip> Layouts { get; } = [];
 
     /// <summary>The fonts found (the user's first), filtered by <see cref="FontQuery"/>; listed by <see cref="ListFontsAsync"/>.</summary>

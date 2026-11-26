@@ -5,7 +5,7 @@ using Idrak.Vision.Abstractions;
 
 namespace Idrak.Vision;
 
-/// <summary>How <see cref="DetectionObjective"/> matches and scores a detector's candidates; every name is a registry's.</summary>
+/// <summary>How <see cref="DetectionObjective"/> matches and scores a detector's candidates; picking each by its name is not on the new design yet.</summary>
 public sealed record DetectionObjectiveOptions
 {
     /// <summary>
@@ -17,10 +17,10 @@ public sealed record DetectionObjectiveOptions
     /// <summary>The matcher's settings (default: thresholds 0.5 and 0.4, every truth keeping its best candidates).</summary>
     public BoxMatchOptions Match { get; init; } = new() { AllowLowQuality = true };
 
-    /// <summary>The <c>VisionLosses</c> entry for the matched candidates' boxes against their truths' (default "giou").</summary>
+    /// <summary>The loss, by name, for the matched candidates' boxes against their truths' (default "giou").</summary>
     public string BoxLoss { get; init; } = "giou";
 
-    /// <summary>The <c>VisionLosses</c> entry for the class logits against one-hot targets (default "focal").</summary>
+    /// <summary>The loss, by name, for the class logits against one-hot targets (default "focal").</summary>
     public string ClassLoss { get; init; } = "focal";
 
     /// <summary>The losses' settings (their reduction is ignored: each candidate's loss is weighted and summed here).</summary>
@@ -41,17 +41,16 @@ public sealed record DetectionObjectiveOptions
 
 /// <summary>
 /// The training loss of a detector: its candidates (<see cref="DetectionCandidates"/>, from the head of
-/// its decoder, <c>IDetectionHeadKind</c>) matched to each image's true boxes by a registered <see cref="BoxMatchers">matcher</see>, then the
-/// matched candidates' boxes scored by a registered box loss and the class logits by a
-/// registered class loss (one-hot targets: the matched truth's class, nothing for background), each summed over the
+/// its decoder, <c>IDetectionHeadKind</c>) matched to each image's true boxes by a <see cref="BoxMatchers">matcher</see>, then the
+/// matched candidates' boxes scored by a box loss and the class logits by a
+/// class loss (one-hot targets: the matched truth's class, nothing for background), each summed over the
 /// candidates and divided by the matched count (at least 1). With an objectness logit the class loss reads the matched
 /// candidates only, and a binary cross-entropy teaches the objectness (matched 1, background 0, averaged over both);
 /// without one, every candidate not ignored learns its class scores. Candidates the matcher ignores count nowhere.
 /// </summary>
 public static class DetectionObjective
 {
-    // The box matchers and vision losses were registered (BoxMatchers, VisionLosses) and picked by name: not on the new
-    // design yet.
+    // Picking the box matchers and vision losses by name is not on the new design yet.
     private static IBoxMatcher MatcherNamed(string name) => throw new NotSupportedException($"The box matcher '{name}' by name is not on the new design yet.");
 
     private static IVisionLoss LossNamed(string name) => throw new NotSupportedException($"The vision loss '{name}' by name is not on the new design yet.");

@@ -7,7 +7,7 @@ using Idrak.Maui.ViewModels;
 namespace Idrak.Maui.Views;
 
 /// <summary>
-/// Studio's view (the audio process lab): lists the registered processors each time it is shown and stops a recording,
+/// Studio's view (the audio process lab): lists the processors each time it is shown and stops a recording,
 /// a playback or monitoring when it is hidden. Wide: the result beside the sound and the pipeline.
 /// </summary>
 public partial class StudioView : AdaptiveView, ITunable

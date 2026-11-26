@@ -116,7 +116,7 @@ public sealed record ImageModelOptions
 
 /// <summary>
 /// What an image model family reads a checkpoint from (<see cref="IImageModelFamily.Read"/>): a safetensors folder (or any
-/// folder a registered checkpoint format reads) with its config.json, or an ONNX file.
+/// folder a checkpoint format reads) with its config.json, or an ONNX file.
 /// </summary>
 /// <param name="Architecture">The architecture name the checkpoint was matched by.</param>
 /// <param name="Config">The model's config.json (an empty object for an ONNX file that came without one).</param>
@@ -218,8 +218,8 @@ public sealed record ImageModel : IDisposable
     public LineRecognitionSettings? Lines { get; init; }
 
     /// <summary>
-    /// For <see cref="ImageTask.Detection"/>: the name of the decoder that reads the network's outputs (registered in
-    /// Idrak.Vision's <c>DetectionDecoders</c>, by the family's plug-in or the app).
+    /// For <see cref="ImageTask.Detection"/>: the name of the decoder that reads the network's outputs (the family's
+    /// plug-in's or the app's).
     /// </summary>
     public string? Decoder { get; init; }
 
@@ -246,12 +246,11 @@ public sealed record ImageModel : IDisposable
 
 /// <summary>
 /// An image model family: how its checkpoints become an <see cref="ImageModel"/> (the network built from layers or imported
-/// from ONNX, its task, preprocessing, labels and decoder). Registered in <c>ImageModelFamilies</c> under the
-/// architecture name its checkpoints give.
+/// from ONNX, its task, preprocessing, labels and decoder), for the architecture name its checkpoints give.
 /// </summary>
 public interface IImageModelFamily
 {
-    /// <summary>The architecture name it is registered under.</summary>
+    /// <summary>Its architecture name.</summary>
     string Name { get; }
 
     /// <summary>The model the checkpoint holds, its network on <see cref="ImageCheckpoint.Device"/>.</summary>

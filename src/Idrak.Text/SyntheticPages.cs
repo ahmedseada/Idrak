@@ -144,7 +144,7 @@ public sealed record SyntheticPageParts
             Chances = chances, Digits = digits, NativeDigits = native, Language = (string?)json["language"], Folder = folder,
         };
 
-        // Every slot names a registered filler, found now rather than on the thousandth page.
+        // Every slot names a filler, found now rather than on the thousandth page.
         foreach (string line in parts.AllLines())
         {
             foreach (var (name, _) in PagePartTemplate.Slots(line, where))
@@ -198,7 +198,7 @@ public sealed record SyntheticPageOptions
     /// <summary>The share of pages drawn in grey (else as the style says).</summary>
     public double Grey { get; init; } = 0.3;
 
-    /// <summary>The record format (<c>SyntheticRecordFormats</c>); null to find it from the input.</summary>
+    /// <summary>The record format, by name; null to find it from the input.</summary>
     public string? Format { get; init; }
 
     /// <summary>The answer's JSON key holding the page's text; null for the first key starting with "full_text", else the longest text.</summary>
@@ -210,7 +210,7 @@ public sealed record SyntheticPageOptions
     /// <summary>The JSON key a plain text's answer is written under; null for the text itself.</summary>
     public string? AnswerKey { get; init; }
 
-    /// <summary>The pages' image format: "jpeg" (at <see cref="Quality"/>) or a registered encoder (<see cref="ImageEncoders"/>, "png").</summary>
+    /// <summary>The pages' image format: "jpeg" (at <see cref="Quality"/>) or an encoder (<see cref="ImageEncoders"/>, "png").</summary>
     public string ImageFormat { get; init; } = "jpeg";
 
     /// <summary>The JPEG quality (1 to 100).</summary>
@@ -408,8 +408,7 @@ public sealed record SyntheticPagesResult(int Records, int Pages, IReadOnlyList<
 /// </summary>
 public static class SyntheticPages
 {
-    // Each of these was a registry (Idrak.Abstraction's, Idrak.Text's) a page's settings picked from by name: not on the
-    // new design yet. The defaults are reached directly: the layouts SyntheticPageOptions.Layouts names by default
+    // Picking these by the page settings' names is not on the new design yet. The defaults are reached directly: the layouts SyntheticPageOptions.Layouts names by default
     // ("letter": LetterLayout, "plain": PlainLayout), the shape profile "none" (no shapes), and the layouts' own defaults
     // through the layouts (the "ideal" pen, the "sequence" binding, the "none" pose; a letter's ornaments as
     // LetterOrnaments reads them). Another name stops.
@@ -440,7 +439,7 @@ public static class SyntheticPages
     internal static ISyntheticRecordFormat RecordFormatFor(string? name, string input) =>
         throw new NotSupportedException($"The synthetic record format of {input} ({name ?? "detected"}) by name or detection is not on the new design yet.");
     /// <summary>Checks the scan profile <paramref name="nameOrText"/>: "none" (no look) is the only one for now.</summary>
-    /// <exception cref="NotSupportedException">Another: the scan profiles were registered (<c>ScanProfiles</c>) and their looks are image transforms by name, which is not on the new design yet.</exception>
+    /// <exception cref="NotSupportedException">Another: a scan profile's looks are image transforms by name, which is not on the new design yet.</exception>
     public static void CheckProfile(string nameOrText)
     {
         if (!nameOrText.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
@@ -467,8 +466,8 @@ public static class SyntheticPages
     /// <summary>
     /// The keys of the default pens, text binding and glyph pose, which <see cref="Style"/> also reads, each once: the
     /// "sequence" binding's (<see cref="SequenceBinding.OwnKeys"/>) and the "ballpoint" pen's, a letter's signature pen
-    /// (<see cref="BallpointPen.OwnKeys"/>); the "ideal" pen and the "none" pose take none. (Another kind's keys came with
-    /// its registry, picked by name, which is not on the new design yet.)
+    /// (<see cref="BallpointPen.OwnKeys"/>); the "ideal" pen and the "none" pose take none. (Another kind's keys, picked by
+    /// its name, are not on the new design yet.)
     /// </summary>
     public static IReadOnlyList<string> KindStyleKeys() =>
         [.. SequenceBinding.OwnKeys.Concat(BallpointPen.OwnKeys).Distinct(StringComparer.OrdinalIgnoreCase)];
@@ -479,14 +478,14 @@ public static class SyntheticPages
     /// multiples), margin (a share of the width), ink (darkness, 0 to 1) and crop-padding (pixels) as ranges
     /// <c>MIN..MAX</c> or one value; justify, rule, emblem, stamp, blue-signature, header-font and crop (a page cut to
     /// its drawn parts, <see cref="PageStyle.Crop"/>) as chances (0 to 1); color as true or false. The "shapes" layout's
-    /// settings go into the style's options (<see cref="PageStyle.Options"/>): pen and bind (a registered pen and text
+    /// settings go into the style's options (<see cref="PageStyle.Options"/>): pen and bind (a pen and text
     /// binding), blue-pen (a chance), cell-align (start, center, end or mixed), stroke (the stroke's width, a share of the
     /// text size, a range), least-size (the smallest a region's text is set, a share of the body's size), sections (none, or
     /// blank: the text's empty lines split it into sections, one a step that takes text; off by default); the "letter"
     /// layout's emblem-shapes, stamp-shapes and signature-shapes (shape profiles between '|', one drawn per page; given
-    /// again, each adds to its list), emblem-pen, stamp-pen and signature-pen (registered pens), stamp-turn (degrees, a
+    /// again, each adds to its list), emblem-pen, stamp-pen and signature-pen (pens by name), stamp-turn (degrees, a
     /// range), stamp-ink (how uneven a stamp's ink is, 0 to 1, a range), stamp-black and signature (chances); for every layout,
-    /// pose (a registered glyph pose: each glyph drawn a little differently); and every key a registered pen, text binding
+    /// pose (a glyph pose: each glyph drawn a little differently); and every key a pen, text binding
     /// or glyph pose takes (<see cref="KindStyleKeys"/>, each value
     /// checked by the kinds that take it); habits (none, the
     /// default; a <c>Idrak.Abstraction.Text.TextHabits</c> name or a rules file), habit-chance (every habit's
@@ -608,8 +607,8 @@ public static class SyntheticPages
         }
 
         // A default kind's own key, its value checked by the kind that takes it, as the layouts read it: the "sequence"
-        // binding's (ShapesLayout), the "ballpoint" signature pen's (LetterOrnaments). Another kind's keys went with its
-        // registry.
+        // binding's (ShapesLayout), the "ballpoint" signature pen's (LetterOrnaments). Another kind's keys are not on the
+        // new design yet.
         var one = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [key] = value };
         if (SequenceBinding.OwnKeys.Contains(key))
         {
@@ -642,13 +641,13 @@ public static class SyntheticPages
         _ = PoseNamed(options.TryGetValue("pose", out var poseName) ? poseName : GlyphPoses.None);
     }
 
-    // The habits a page setting names: none, or a rules file (a registered set by name is not on the new design yet).
+    // The habits a page setting names: none, or a rules file (a set by name is not on the new design yet).
     private static Idrak.Abstraction.Text.ITextHabits? Habits(string value) =>
         value.Equals("none", StringComparison.OrdinalIgnoreCase) ? null
         : File.Exists(value) ? Idrak.Abstraction.Text.RuleTextHabits.Read(value) : HabitsNamed(value);
 
     /// <summary>The fonts in <paramref name="folder"/> (.ttf, .otf, .ttc; every face of a collection).</summary>
-    /// <exception cref="NotSupportedException">Always for now: a folder's fonts were read through the registered font formats (<c>FontFormats</c>), which is not on the new design yet.</exception>
+    /// <exception cref="NotSupportedException">Always for now: reading a folder's fonts through the font formats is not on the new design yet.</exception>
     public static IReadOnlyList<IFontFace> Fonts(string folder) => throw new NotSupportedException($"The fonts of {folder} read through the font formats are not on the new design yet.");
 
     /// <summary>The page a record's answer makes as variant <paramref name="variant"/> of record <paramref name="record"/>.</summary>

@@ -115,7 +115,7 @@ public static class Photos
     /// <paramref name="file"/> decoded once by the library's codecs and turned upright by its EXIF orientation. A format no
     /// codec reads is refused naming the formats it reads; HEIC (and HEIF, AVIF), which phones often save, is named as such.
     /// </summary>
-    /// <exception cref="InvalidDataException">No registered codec reads it (the message names the formats the library reads), or it is damaged.</exception>
+    /// <exception cref="InvalidDataException">No codec reads it (the message names the formats the library reads), or it is damaged.</exception>
     /// <exception cref="NotSupportedException">A variant of a format the codec does not read (a 12-bit JPEG, say).</exception>
     public static Photo Decode(ChatImage file, string name)
     {
