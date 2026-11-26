@@ -8,7 +8,7 @@ namespace Idrak.Cli.Shared;
 
 /// <summary>
 /// The folders the data commands skip in code folders and archives: Idrak.Data's own (<see cref="ReadOptions.DefaultSkippedFolders"/>:
-/// .git and the editors'). The coding languages' build output and dependency folders came from the registered languages
+/// .git and the editors'). The coding languages' build output and dependency folders came from the languages
 /// (<see cref="CodingLanguages"/>): listing them is not on the new design yet.
 /// </summary>
 internal static class CodeFolders

@@ -13,7 +13,7 @@ namespace Idrak.Cli.Commands.Data;
 /// <see cref="SyntheticPages"/>): each record's answer text set as pages in the fonts given, around it the parts of a
 /// parts file, made to look scanned, written back as records in the input's shape; as images, or as PDFs (plan 28's
 /// follow-up: <c>--format pdf</c>, a scan-like document, or <c>pdf-vector</c>, a document as software makes it) through
-/// any registered document writer.
+/// any document writer.
 /// </summary>
 internal sealed class DataSynthCommand : Command
 {

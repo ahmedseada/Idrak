@@ -54,9 +54,9 @@ internal static class AudioFiles
     }
 
     /// <summary>
-    /// Whether <paramref name="text"/> is a comma list of bare cleaning stage names (<see cref="AudioCleaners"/>, with no
-    /// '=' and no space): the stages --clean took before pipelines. A bare name was a stage when a cleaner was registered
-    /// under it; finding one by its name is not on the new design yet, so none is (the value is a pipeline).
+    /// Whether <paramref name="text"/> is a comma list of bare cleaning stage names (with no '=' and no
+    /// space): the stages --clean took before pipelines. Finding a cleaner by its name is not on the new design yet, so none
+    /// is (the value is a pipeline).
     /// </summary>
     public static bool IsStageList(string text) => false;
 
@@ -191,8 +191,8 @@ internal static class AudioFiles
     }
 
     /// <summary>
-    /// The encoder that writes <paramref name="path"/> (by its extension), checked before any work is done. The encoders
-    /// were registered and the one of an extension found among them, which is not on the new design yet.
+    /// The encoder that writes <paramref name="path"/> (by its extension), checked before any work is done. Finding the
+    /// encoder of an extension is not on the new design yet.
     /// </summary>
     /// <exception cref="NotSupportedException">Always for now: picking the encoder of the extension is not on the new design yet.</exception>
     public static IAudioEncoder EncoderFor(string path) => NotOnTheNewDesign.Yet<IAudioEncoder>($"Picking the audio encoder of {path}'s extension");

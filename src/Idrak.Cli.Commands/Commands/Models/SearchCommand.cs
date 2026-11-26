@@ -9,7 +9,7 @@ namespace Idrak.Cli.Commands;
 
 /// <summary>
 /// <c>idrak search QUERY</c>: searches the Hugging Face hub and keeps the models Idrak can load: transformers models with
-/// safetensors weights of a registered family, and GGUF files of a registered GGUF architecture.
+/// safetensors weights of a family, and GGUF files of a GGUF architecture.
 /// </summary>
 internal sealed class SearchCommand : Command
 {
@@ -69,7 +69,7 @@ internal sealed class SearchCommand : Command
         bool all = context.Flag("--all");
         var found = Shared.Hub.SearchAsync(query, Math.Min(1000, all ? limit : Math.Max(50, limit * 5)), Shared.Hub.Token(context), ModelCache.Downloader(context))
             .GetAwaiter().GetResult();
-        // The registered families and GGUF architectures: listing them is not on the new design yet, so none is known.
+        // The families and GGUF architectures: listing them is not on the new design yet, so none is known.
         var families = new HashSet<string>(StringComparer.Ordinal);
         var ggufArchitectures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var rows = new List<Result>();

@@ -315,7 +315,7 @@ internal sealed class TuneInitCommand : Command
         string model = context.Option("--base") ?? "owner/model";
 
         // A vision family: the example tunes on images (LlamaFactory's ShareGPT train.json and val.json).
-        List<string> families = [];                                     // the registered vision families: listing them is not on the new design yet
+        List<string> families = [];                                     // the vision families: listing them is not on the new design yet
         bool images = families.Count > 0 && loss == "sft";
         var data = context.Options("--data").Count > 0 ? context.Options("--data") : [images ? "train.json" : loss == "sft" ? "chats.jsonl" : "preferences.jsonl"];
         string name = Path.GetFileName(Path.TrimEndingDirectorySeparator(model.Replace(':', '-'))).ToLowerInvariant();

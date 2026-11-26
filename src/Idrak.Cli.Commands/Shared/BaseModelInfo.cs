@@ -37,7 +37,7 @@ internal sealed record BaseModelInfo(string Name, string? Folder, long? Paramete
             return unknown;
         }
 
-        // The decoder's sizes when the family is registered, else the config's own fields.
+        // The decoder's sizes when the family is found, else the config's own fields.
         var text = facts.Config["text_config"] as JsonObject ?? facts.Config;
         var spec = facts.Spec;
         return new BaseModelInfo(name, local.Folder, facts.Parameters > 0 ? facts.Parameters : null,

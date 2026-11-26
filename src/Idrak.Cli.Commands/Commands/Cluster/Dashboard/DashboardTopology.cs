@@ -19,7 +19,7 @@ internal static class DashboardTopology
     /// <summary>The all-reduce whose time is predicted when the page asks for no size (cluster inspect's default).</summary>
     public const string DefaultPredictBytes = "100MB";
 
-    /// <summary>This machine's facts, the registered names the page offers, and the page's settings.</summary>
+    /// <summary>This machine's facts, the names the page offers, and the page's settings.</summary>
     public static JsonObject Machine(MachineFacts facts, DashboardSettings settings) => new()
     {
         ["host"] = facts.HostName,
@@ -30,7 +30,7 @@ internal static class DashboardTopology
         {
             ["device"] = d.Device, ["type"] = d.Type.ToString(), ["memory"] = d.MemoryBytes, ["name"] = d.Name, ["card"] = d.CardKey,
         })]),
-        // The registered link profiles, failure models and collectives: listing them is not on the new design yet.
+        // The link profiles, failure models and collectives: listing them is not on the new design yet.
         ["links"] = new JsonArray(),
         ["failure_models"] = new JsonArray(),
         ["collectives"] = new JsonArray(),

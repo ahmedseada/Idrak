@@ -28,7 +28,7 @@ internal sealed class DocumentBenchSet(string name, string root, IReadOnlyList<s
     /// <summary>The files the folder's manifest marks hostile (made to fail), left out.</summary>
     public int LeftOut { get; } = leftOut;
 
-    /// <summary>The files no registered format opens (a password, a file damaged beyond repair), with why: found by the first case that opens them, then left out of every run.</summary>
+    /// <summary>The files no format opens (a password, a file damaged beyond repair), with why: found by the first case that opens them, then left out of every run.</summary>
     public Dictionary<string, string> Refused { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Each file's page count, once a case has opened it.</summary>
@@ -335,7 +335,7 @@ internal sealed class DocumentBenchWork
 }
 
 /// <summary>
-/// The cases of <c>idrak bench documents</c>, through the library's public document API only (any registered format,
+/// The cases of <c>idrak bench documents</c>, through the library's public document API only (any format,
 /// writer and drawer): opening, text through the <c>lines</c> layout and with none, the same text read over the cores,
 /// images decoded, pages drawn at chosen resolutions, an image PDF and a vector PDF written from each file's pages,
 /// incremental and rewritten saves, forms filled, signing and checking. Each case runs once cold (its first run on the

@@ -7,7 +7,7 @@ namespace Idrak.Cli.Shared;
 
 /// <summary>
 /// Concept pages for <c>idrak help topics</c> and <c>idrak help TOPIC</c>: devices, formats, models, plugins,
-/// config, env and exit codes. Listing what is registered is not on the new design yet.
+/// config, env and exit codes. Listing the choices by name is not on the new design yet.
 /// </summary>
 internal static class HelpTopics
 {

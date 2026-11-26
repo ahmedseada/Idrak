@@ -21,7 +21,7 @@ namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
 /// What <c>idrak train</c> keeps of an image run besides <see cref="RunSettings"/> (run.json's "image"): the model it
-/// fine-tunes (or none: the builder network), the task, how the data is read, and the registry names of its
+/// fine-tunes (or none: the builder network), the task, how the data is read, and the names of its
 /// augmentations, loss, matcher, metric and decoder.
 /// </summary>
 internal sealed record ImageRunOptions

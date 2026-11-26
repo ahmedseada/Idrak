@@ -1490,7 +1490,7 @@ internal sealed class TuneTool(ToolConsole console)
             MaxCharacters = maxChars,
             MaxRows = maxRows,
             EvaluationFraction = evalFraction,
-            SkippedFolders = CodeFolders.Skipped,           // code folders skip the registered languages' build output, as the data commands do
+            SkippedFolders = CodeFolders.Skipped,           // code folders skip the languages' build output, as the data commands do
         };
     }
 

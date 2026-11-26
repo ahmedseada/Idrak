@@ -188,7 +188,7 @@ internal sealed class DataCodeCommand : Command
 
     // The folders skipped unless named: the reader's own and the plain folder names the repository's .gitignore lists
     // (test-output/, bin/ …: what the repository keeps out of itself). The coding languages' build and dependency folders
-    // came from the registered languages: listing them is not on the new design yet.
+    // came from the languages: listing them is not on the new design yet.
     internal static IReadOnlyList<string> DefaultSkipped(string root)
     {
         var folders = new List<string>(ReadOptions.DefaultSkippedFolders);

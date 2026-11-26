@@ -32,7 +32,7 @@ internal static class ImageInputs
     }
 
     /// <summary>A chat image's pixels: decoded by the codec that reads its bytes, then turned by its EXIF orientation.</summary>
-    /// <exception cref="InvalidDataException">No registered codec reads it.</exception>
+    /// <exception cref="InvalidDataException">No codec reads it.</exception>
     public static ImageData Decode(ChatImage image) => ChatImageDecoder.Decode(image);
 
     /// <summary>

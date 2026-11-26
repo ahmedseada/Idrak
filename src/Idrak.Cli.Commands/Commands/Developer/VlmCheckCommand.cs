@@ -16,7 +16,7 @@ using Idrak.Text.Generation;
 namespace Idrak.Cli.Commands.Developer;
 
 /// <summary>
-/// <c>idrak vlm check MODEL --reference DIR</c>: compares a vision-language model (any registered vision family whose
+/// <c>idrak vlm check MODEL --reference DIR</c>: compares a vision-language model (any vision family whose
 /// encoder shows its stages, <see cref="IVisionEncoderStages"/>; Gemma 3's with its plug-in) on the device with what
 /// transformers saved for one image and prompt (tools/vlm/compare_real.py): the pixels, the vision encoder's output and
 /// the projected image features, the logits of every prompt position and of transformers' greedy answer fed back

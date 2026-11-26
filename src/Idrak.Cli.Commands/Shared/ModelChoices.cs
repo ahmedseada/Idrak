@@ -40,7 +40,7 @@ internal static class ModelChoices
         """;
 
     /// <summary>
-    /// The option naming where a mixture-of-experts model's experts live (resident, offload, auto or a registered expert
+    /// The option naming where a mixture-of-experts model's experts live (resident, offload, auto or an expert
     /// placement, plan 37's R1); over IDRAK_MOE_EXPERTS (<see cref="Idrak.Models.Abstractions.ExpertPlacements"/>).
     /// </summary>
     public const string MoeExpertsOption = "--moe-experts";
@@ -168,8 +168,8 @@ internal static class ModelChoices
     }
 
     /// <summary>
-    /// Throws when image transforms are given (<paramref name="text"/>: not empty, "none" or an empty list): the image
-    /// transforms were registered and picked by their names, which is not on the new design yet.
+    /// Throws when image transforms are given (<paramref name="text"/>: not empty, "none" or an empty list): picking
+    /// the image transforms by their names is not on the new design yet.
     /// </summary>
     /// <exception cref="UsageException">Image transforms are given.</exception>
     public static void NoImageTransforms(string? text, string where)

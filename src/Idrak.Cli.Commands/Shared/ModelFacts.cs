@@ -12,7 +12,7 @@ namespace Idrak.Cli.Shared;
 
 /// <summary>
 /// What a model is, from its folder without loading it: the config, the architecture's <see cref="DecoderSpec"/> (when
-/// the family is registered), the tensors' shapes, the chat template and the license. Used by show and memory.
+/// the family is found), the tensors' shapes, the chat template and the license. Used by show and memory.
 /// </summary>
 internal sealed class ModelFacts
 {

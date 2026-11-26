@@ -497,8 +497,8 @@ hidden layer on the lines as drawn, so a PDF reader finds and selects it where i
 the page as software makes it, before any look: its text as glyphs in its fonts (embedded as subsets) with the text they
 stand for, its shapes, rules, emblems and stamps as paths and their words as real text. A page of W x H pixels is
 W x H x 72 / `--dpi` points (`IDRAK_DOCUMENT_DPI`, 150). `--pdf-pages N` puts N pages in a file, named after its first
-page; each record names its file as its image and the page's index in it, from 0, in `"pages"`. `--writer` picks any
-registered document writer, `--pdf-images` and `--pdf-fonts` the image encoding and font embedding
+page; each record names its file as its image and the page's index in it, from 0, in `"pages"`. `--writer` picks a
+document writer by name (not on the new design yet), `--pdf-images` and `--pdf-fonts` the image encoding and font embedding
 (`IDRAK_DOCUMENT_IMAGE_ENCODING`, `IDRAK_DOCUMENT_EMBED_FONTS`) and `--quality` the JPEG quality
 (`IDRAK_DOCUMENT_JPEG_QUALITY`).
 

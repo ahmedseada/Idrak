@@ -280,8 +280,7 @@ internal static class SpeechPretraining
     private static LoadedSpeechModel Load(CommandContext context, string folder)
     {
         string architecture = (string?)(JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))?["architectures"]?[0]) ?? "";
-        // The speech families were registered and the architecture's found by its name, which is not on the new design
-        // yet.
+        // Finding the architecture's speech family by its name is not on the new design yet.
         bool recognizerFamily = NotOnTheNewDesign.Yet<bool>($"Finding the speech recognizer family '{architecture}' by its name");
         bool synthesizerFamily = NotOnTheNewDesign.Yet<bool>($"Finding the speech synthesizer family '{architecture}' by its name");
         Exception? refused = null;

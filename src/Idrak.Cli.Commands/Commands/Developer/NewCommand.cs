@@ -144,7 +144,7 @@ internal sealed partial class NewCommand : Command
     internal static string Namespace(string name) =>
         string.Join('.', name.Replace('-', '_').Split('.', StringSplitOptions.RemoveEmptyEntries).Select(s => char.IsDigit(s[0]) ? "_" + s : s));
 
-    // The registered name of the plug-in's format: lower case, words joined by dashes.
+    // The name of the plug-in's format: lower case, words joined by dashes.
     internal static string FormatName(string name) => NonWord().Replace(name.ToLowerInvariant(), "-").Trim('-');
 
     private static string Fill(string text, Dictionary<string, string> values) =>

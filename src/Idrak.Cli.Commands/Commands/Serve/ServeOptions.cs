@@ -25,7 +25,7 @@ namespace Idrak.Cli.Commands.Serve;
 
 /// <summary>
 /// One model of a server: the name clients use, what was asked for, and what is read at startup (the template, and
-/// whether it reads images: a vision-language model whose vision family is registered and whose template renders images).
+/// whether it reads images: a vision-language model whose vision family is found and whose template renders images).
 /// </summary>
 internal sealed record ServedModel(string Name, string Source, ModelChoices.ModelChoice Choice, string Path, string Folder, IChatTemplate? Template, JsonObject? Config)
 {

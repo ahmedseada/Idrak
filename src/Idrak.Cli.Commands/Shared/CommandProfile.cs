@@ -11,7 +11,7 @@ namespace Idrak.Cli.Shared;
 /// <c>--profile</c> (or <c>IDRAK_PROFILE=1</c>), common to every command: the command runs as it would without it while the
 /// library's watch (<see cref="Profiler.Watch"/>) measures it from outside with the probes that do not change it (time on
 /// the processor, the managed heap, device memory, kernel choices measured, host fallbacks, the stages of reading answers,
-/// and any a package registered). When the command ends, normally, by an error or by Ctrl+C, one report is written with
+/// and the rest of the fixed list). When the command ends, normally, by an error or by Ctrl+C, one report is written with
 /// the <c>IDRAK_PROFILE_FORMAT</c> writer to the file <c>IDRAK_PROFILE_OUT</c> names (appended), else to the error stream,
 /// so the main output (and <c>--json</c>) stays as it is. <c>IDRAK_PROFILE_PROBES</c> chooses the probes.
 /// </summary>
@@ -55,7 +55,7 @@ internal sealed partial class CommandProfile
     /// Starts watching the command <paramref name="args"/> name on its device (<c>--device</c>, the config, else the
     /// default; the CPU, with a note, when that cannot start) when <see cref="Requested"/>; null otherwise.
     /// </summary>
-    /// <exception cref="UsageException">An <c>IDRAK_PROFILE_*</c> value that does not parse, or a probe or writer that is not registered.</exception>
+    /// <exception cref="UsageException">An <c>IDRAK_PROFILE_*</c> value that does not parse, or a probe or writer not in their fixed lists.</exception>
     internal static CommandProfile? Start(CommandContext context, IReadOnlyList<string> args)
     {
         if (!Requested(context))

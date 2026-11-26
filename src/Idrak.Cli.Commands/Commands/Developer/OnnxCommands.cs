@@ -299,7 +299,7 @@ internal sealed class OnnxCheckCommand : Command
     }
 
     /// <summary>
-    /// The ONNX runtime the check compares with: none, since finding the registered runtime loaders is not on the new
+    /// The ONNX runtime the check compares with: none, since finding the runtime loaders is not on the new
     /// design yet.
     /// </summary>
     internal static IOnnxRuntimeLoader? RuntimeLoader() => null;

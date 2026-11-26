@@ -396,8 +396,8 @@ internal sealed class CommandContext : IDisposable
     }
 
     /// <summary>
-    /// The assemblies given with <c>--plugin</c> (and in the config's "plugins" list): loading them, which registered
-    /// what each declared, is not on the new design yet.
+    /// The assemblies given with <c>--plugin</c> (and in the config's "plugins" list): loading them is not on the new design
+    /// yet.
     /// </summary>
     /// <exception cref="UsageException">A plug-in is given.</exception>
     internal void LoadPlugins()
