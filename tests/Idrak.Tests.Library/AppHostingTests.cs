@@ -18,9 +18,9 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] AppHostingGroup =
     [
-        ("in an app: one cache folder (ComputeResources.CacheFolder, else IDRAK_CACHE) is read when each cache first needs a path (downloads, gguf, CPU, Vulkan, CUDA, HIP, cluster, features, rnnoise), never relative, and each cache's own variable still wins", AppCacheFolder),
+        ("in an app: one cache folder (ComputeResources.CacheFolder, else IDRAK_CACHE) is read when each cache first needs a path (downloads, gguf, Vulkan, CUDA, HIP, cluster, features, rnnoise), never relative, and each cache's own variable still wins", AppCacheFolder),
         ("in an app: the progress line draws without a console window (PlatformNotSupportedException) and asks it once; an I/O error is asked again", AppProgressWithoutConsole),
-        ("in an app: Vulkan's available memory is the heap's bound, byte for byte, without a memory budget, and at most the budget less the usage plus the cached blocks with one; a lost device names its batch, the host retry and IDRAK_VULKAN_WIDTH", AppVulkanBudgetAndLostDevice),
+        ("in an app: Vulkan's available memory is the heap's bound, byte for byte, without a memory budget, and at most the budget less the usage plus the cached blocks with one; a lost device names its batch and IDRAK_VULKAN_WIDTH", AppVulkanBudgetAndLostDevice),
     ];
 
     internal static void AppCacheFolder(Device device)
@@ -30,7 +30,7 @@ internal abstract partial class Tests
             return;                                                              // settings, not devices: once
         }
 
-        string[] variables = ["IDRAK_CACHE", "IDRAK_TUNING_CACHE", "IDRAK_CPU_TUNING_FILE", "IDRAK_VULKAN_TUNING_CACHE", "IDRAK_HIP_KERNEL_CACHE"];
+        string[] variables = ["IDRAK_CACHE", "IDRAK_TUNING_CACHE", "IDRAK_VULKAN_TUNING_CACHE", "IDRAK_HIP_KERNEL_CACHE"];
         var saved = variables.Select(v => (v, Environment.GetEnvironmentVariable(v))).ToArray();
         string root = Path.Combine(Path.GetTempPath(), $"idrak-app-cache-{Environment.ProcessId}");
         string fromVariable = Path.Combine(root, "variable"), set = Path.Combine(root, "set");
@@ -42,7 +42,6 @@ internal abstract partial class Tests
             }
 
             ComputeResources.CacheFolder = null;
-            CpuTuning.UseDefaultCacheFile();
             VulkanBackend.UseDefaultTuningCacheFile();
 
             // The default: as before where the profile folder is absolute; never relative where it is not.
@@ -73,7 +72,6 @@ internal abstract partial class Tests
             ComputeResources.CacheFolder = set;
             Check(ComputeResources.CacheFolder == set, $"the setting wins over IDRAK_CACHE: {ComputeResources.CacheFolder}");
             Check(Downloader.DefaultCacheRoot == set && new Downloader().CacheFolder == Path.Combine(set, "downloads"), $"downloads under the setting: {new Downloader().CacheFolder}");
-            Check(CpuTuning.CacheFile == Path.Combine(set, "cpu", "tuning.tsv"), $"the CPU's measured cut-overs under the setting, read lazily: {CpuTuning.CacheFile}");
             Check(VulkanBackend.TuningCacheFile == Path.Combine(set, "vulkan", "tuning.tsv"), $"Vulkan's measured choices under the setting, read lazily: {VulkanBackend.TuningCacheFile}");
             Check(TuningCache.Folder() == Path.Combine(set, "tuning", "cuda"), $"CUDA's measured choices under the setting: {TuningCache.Folder()}");
             Check(HipKernelCache.DefaultFolder() == Path.Combine(set, "hip", "kernels"), $"HIP's compiled kernels under the setting: {HipKernelCache.DefaultFolder()}");
@@ -92,8 +90,6 @@ internal abstract partial class Tests
 
             // Each cache's own variable still wins.
             string own = Path.Combine(root, "own");
-            Environment.SetEnvironmentVariable("IDRAK_CPU_TUNING_FILE", Path.Combine(own, "cpu.tsv"));
-            Check(CpuTuning.CacheFile == Path.Combine(own, "cpu.tsv"), $"IDRAK_CPU_TUNING_FILE wins: {CpuTuning.CacheFile}");
             Environment.SetEnvironmentVariable("IDRAK_VULKAN_TUNING_CACHE", Path.Combine(own, "vulkan.tsv"));
             Check(VulkanBackend.TuningCacheFile == Path.Combine(own, "vulkan.tsv"), $"IDRAK_VULKAN_TUNING_CACHE wins: {VulkanBackend.TuningCacheFile}");
             Environment.SetEnvironmentVariable("IDRAK_VULKAN_TUNING_CACHE", "0");
@@ -103,8 +99,8 @@ internal abstract partial class Tests
             Environment.SetEnvironmentVariable("IDRAK_TUNING_CACHE", Path.Combine(own, "cuda"));
             Check(TuningCache.Folder() == Path.Combine(own, "cuda"), $"IDRAK_TUNING_CACHE=<folder> wins for CUDA: {TuningCache.Folder()}");
             Environment.SetEnvironmentVariable("IDRAK_TUNING_CACHE", "0");
-            Check(TuningCache.Folder() is null && ClusterCache.Folder is null && CpuTuning.DefaultCacheFile() is null,
-                "IDRAK_TUNING_CACHE=0 keeps no CUDA, cluster or CPU measurements whatever the cache folder");
+            Check(TuningCache.Folder() is null && ClusterCache.Folder is null,
+                "IDRAK_TUNING_CACHE=0 keeps no CUDA or cluster measurements whatever the cache folder");
 
             // Null brings back the variable.
             ComputeResources.CacheFolder = null;
@@ -118,7 +114,6 @@ internal abstract partial class Tests
                 Environment.SetEnvironmentVariable(name, value);
             }
 
-            CpuTuning.UseDefaultCacheFile();
             VulkanBackend.UseDefaultTuningCacheFile();
             if (Directory.Exists(root))
             {
@@ -191,19 +186,17 @@ internal abstract partial class Tests
             Check(VulkanBackend.AvailableBytes(8192 * MiB, 1000 * MiB, 50 * MiB, 512 * MiB, (1400 * MiB, 1500 * MiB)) == 0, "far over budget: 0, never negative");
 
             // A lost device names its work and the ways around it.
-            string message = VulkanDriver.DeviceLostMessage("vkWaitForFences", "vulkan:0 (a test device)", 3, "matmul_tiled", retryOnHost: false);
+            string message = VulkanDriver.DeviceLostMessage("vkWaitForFences", "vulkan:0 (a test device)", 3, "matmul_tiled");
             foreach (string part in new[] { "vkWaitForFences", "VK_ERROR_DEVICE_LOST", "vulkan:0 (a test device)", "a batch of 3 commands", "'matmul_tiled'",
-                         "IDRAK_RETRY_ON_HOST=vulkan", "IDRAK_VULKAN_WIDTH", "cpu" })
+                         "IDRAK_VULKAN_WIDTH", "cpu" })
             {
                 Check(message.Contains(part, StringComparison.Ordinal), $"the lost device's message names {part}: {message}");
             }
 
-            Check(VulkanDriver.DeviceLostMessage("vkQueueSubmit", "d", 1, "", retryOnHost: true).Contains("The host retry is on", StringComparison.Ordinal),
-                "with the host retry on, the message says so");
             using (DeviceException.Handled())
             {
                 var lost = Failure<VulkanException>(() => VulkanDriver.Check(VulkanDriver.ErrorDeviceLost, "vkAllocateMemory"));
-                Check(lost.Message.Contains("vkAllocateMemory", StringComparison.Ordinal) && lost.Message.Contains("IDRAK_RETRY_ON_HOST", StringComparison.Ordinal),
+                Check(lost.Message.Contains("vkAllocateMemory", StringComparison.Ordinal),
                     $"any call that finds the device lost says how to go on: {lost.Message}");
                 var other = Failure<VulkanException>(() => VulkanDriver.Check(VulkanDriver.ErrorOutOfDeviceMemory, "vkAllocateMemory"));
                 Check(other.Message == "vkAllocateMemory failed: VK_ERROR_OUT_OF_DEVICE_MEMORY (-2)", $"another failure's message as before: {other.Message}");
