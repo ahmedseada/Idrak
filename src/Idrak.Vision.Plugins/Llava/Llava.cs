@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Plugins;
 using Idrak.Imaging;
 using Idrak.Layers;
 using Idrak.Models;
@@ -15,43 +14,14 @@ namespace Idrak.Vision.Plugins.Llava;
 /// contracts": the second family, proving the contracts general): a CLIP vision tower with a class token and quick-GELU
 /// layers, the hidden states of <c>vision_feature_layer</c> (one layer or several, concatenated) with
 /// <c>vision_feature_select_strategy</c> ("default" drops the class token), a two-layer MLP projector, a Llama-style text
-/// decoder read with Idrak.Text.Plugins' text family (registered when missing), image tokens attending causally (the library's causal rule), and
+/// decoder read with Idrak.Text.Plugins' text family, image tokens attending causally (the library's causal rule), and
 /// LlavaImageProcessor's preprocessing (resize by the shortest edge, bicubic, center crop, CLIP's mean and std).
-/// <see cref="VisionPlugins.RegisterAll"/> registers it with the package's other families (the idrak tool does at
-/// startup); an app may call <see cref="Register"/> alone.
+/// Registering it is not on the new design yet.
 /// </summary>
 public static class LlavaPlugin
 {
     /// <summary>The architecture name.</summary>
     public const string Architecture = "LlavaForConditionalGeneration";
-
-    /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("llava"; listed in <see cref="VisionPlugins.All"/>).</summary>
-    public static IIdrakPlugin Plugin { get; } = new LlavaRegistration();
-
-    /// <summary>Whether the family is registered.</summary>
-    public static bool IsRegistered => Plugin.IsRegistered;
-
-    /// <summary>
-    /// Registers LLaVA's text decoder (<see cref="PretrainedArchitectures"/>) and its vision family
-    /// (<see cref="VisionFamilies"/>) through <see cref="IdrakPlugins"/>; once: calling it again changes nothing.
-    /// </summary>
-    public static void Register() => IdrakPlugins.Register(Plugin);
-
-    /// <summary>Removes both registrations, leaving the registries as <see cref="Register"/> found them.</summary>
-    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
-
-    // The text families its text_config names (Idrak.Text.Plugins', each when missing), the text decoder, then the vision part.
-    private sealed class LlavaRegistration() : IdrakPlugin("llava")
-    {
-        protected override void RegisterParts()
-        {
-            Requires(Idrak.Text.Plugins.Llama.LlamaPlugin.Plugin);
-            Requires(Idrak.Text.Plugins.Mistral.MistralPlugin.Plugin);
-            Requires(Idrak.Text.Plugins.Qwen.QwenPlugin.Plugin);
-            Part(() => PretrainedArchitectures.Register(Architecture, LlavaText.Architecture(LlavaText.Layouts[0])), () => PretrainedArchitectures.Unregister(Architecture));
-            Part(() => VisionFamilies.Register(new LlavaVisionFamily()), () => VisionFamilies.Unregister(Architecture));
-        }
-    }
 }
 
 // LLaVA's text decoder: text_config read by Idrak.Text.Plugins' text family of its model_type, under the checkpoint's naming.
@@ -77,8 +47,8 @@ internal static class LlavaText
     {
         public override DecoderSpec Spec(JsonObject config, List<string> notes)
         {
-            var (family, text) = TextConfig(config);
-            return PretrainedArchitectures.Get(family).Spec(text, notes);
+            var (family, _) = TextConfig(config);
+            throw new NotSupportedException($"LLaVA's text decoder, the family '{family}' picked by its name, is not on the new design yet.");
         }
 
         public override string? TensorName(string name) => PretrainedFamilies.CommonTensorName(name) switch
@@ -237,7 +207,7 @@ public sealed class LlavaVisionFamily : IVisionFamily
             throw new NotSupportedException($"vision_feature_select_strategy '{strategy}' is not read here.");
         }
 
-        int textDim = PretrainedArchitectures.Get(checkpoint.Architecture).Spec(config, []).Dim;
+        int textDim = LlavaText.Architecture(LlavaText.Layouts[0]).Spec(config, []).Dim;
         int d = clip.Dim, f = clip.FfDim, input = d * hidden.Length;
         bool bias = (bool?)config["multimodal_projector_bias"] ?? true;
         var expected = new List<(string Name, int[] Shape)>
@@ -337,7 +307,7 @@ public sealed class LlavaVision : PretrainedVision, IVisionTuningPart
     public override IImagePromptFormat PromptFormat { get; }
 
     /// <summary>LLaVA's image tokens attend as text does.</summary>
-    public override IImageAttentionRule Attention => ImageAttentionRules.Get(ImageAttentionRules.Causal);
+    public override IImageAttentionRule Attention => new CausalRule();
 
     /// <inheritdoc />
     public override IReadOnlyCollection<string> StoredTensors { get; }

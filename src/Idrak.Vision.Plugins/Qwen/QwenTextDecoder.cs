@@ -8,8 +8,7 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Vision.Plugins.Qwen;
 
 /// <summary>
-/// The text decoder of a Qwen-VL checkpoint, registered under the family's architecture name
-/// (<see cref="PretrainedArchitectures"/>, by <see cref="QwenVisionPlugin"/>): Qwen2's decoder (q, k and v biases) whose rotary embedding has three axes
+/// The text decoder of a Qwen-VL checkpoint (beside <see cref="QwenVisionFamily"/>): Qwen2's decoder (q, k and v biases) whose rotary embedding has three axes
 /// (<see cref="RopeSettings.Sections"/> from <c>mrope_section</c>: time, height, width pairs), read from
 /// <c>text_config</c> and its <c>rope_parameters</c> (transformers 5) or the top-level keys with
 /// <c>rope_scaling {"type": "mrope"}</c> and <c>rope_theta</c> (the hub's 4.x checkpoints), the tensors under
@@ -21,8 +20,8 @@ public static class QwenTextDecoder
     private const string Nested = "model.language_model.";
 
     /// <summary>
-    /// The decoder as <see cref="PretrainedArchitectures"/> takes it (registered under each variant's architecture name by
-    /// <see cref="QwenVisionPlugin"/>): the hub's tensor naming, or transformers 5's nested one when the checkpoint has it.
+    /// The decoder as an <see cref="IPretrainedArchitecture"/>: the hub's tensor naming, or transformers 5's nested one when
+    /// the checkpoint has it.
     /// </summary>
     public static IPretrainedArchitecture Architecture() => new Decoder(nested: false);
 

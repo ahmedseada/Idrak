@@ -16,19 +16,19 @@ namespace Idrak.Text.Plugins.Llama;
 /// </summary>
 public static class LlamaArchitectures
 {
-    /// <summary>llama.cpp's split pattern for the llama3 family (llama-vocab.cpp), the names in <see cref="LlamaPlugin.PreTokenizers"/>.</summary>
+    /// <summary>llama.cpp's split pattern for the llama3 family (llama-vocab.cpp: "llama3", "llama-bpe", "llama-v3", "smaug-bpe", "falcon3", "pixtral").</summary>
     public const string SplitPattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
 
     /// <summary>
     /// Llama 3's chat turns (<c>&lt;|start_header_id|&gt;role&lt;|end_header_id|&gt;</c> … <c>&lt;|eot_id|&gt;</c>, after the
     /// begin token), the template a GGUF file without one gets when its vocabulary holds <c>&lt;|start_header_id|&gt;</c>
-    /// (<see cref="ChatTemplateFallback"/>, registered in <see cref="GgufChatTemplates"/> as "llama3").
+    /// (<see cref="ChatTemplateFallback"/>).
     /// </summary>
     public const string ChatTemplateText = "{{- bos_token }}{%- for message in messages %}{{ '<|start_header_id|>' + message['role'] + '<|end_header_id|>\\n\\n' + message['content'] | trim + '<|eot_id|>' }}{%- endfor %}"
                                            + "{%- if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\\n\\n' }}{%- endif %}";
 
     /// <summary>
-    /// The fallback chat template of a GGUF file without one (<see cref="GgufChatTemplates"/>): <see cref="ChatTemplateText"/>,
+    /// The fallback chat template of a GGUF file without one: <see cref="ChatTemplateText"/>,
     /// for a file whose vocabulary holds <c>&lt;|start_header_id|&gt;</c>.
     /// </summary>
     public static GgufChatTemplate ChatTemplateFallback() => new() { Matches = (_, tokens) => tokens.Contains("<|start_header_id|>"), Template = ChatTemplateText };

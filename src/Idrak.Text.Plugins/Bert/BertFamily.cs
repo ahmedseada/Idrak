@@ -16,7 +16,7 @@ namespace Idrak.Text.Plugins.Bert;
 /// The BERT family under one architecture name: its checkpoint's tensors (Hugging Face's names, with or without the
 /// "bert." prefix of the task models, LayerNorm's "weight"/"bias" or the older "gamma"/"beta") become the library's
 /// <see cref="SequenceEncoder"/> of post-norm <see cref="TransformerEncoderLayer"/>s, and its heads the library's
-/// <see cref="EncoderHeads"/> kinds. Public API only.
+/// heads (<see cref="EncoderHead.Pooler"/>, <see cref="EncoderHead.Classification"/>, <see cref="EncoderHead.MaskedLanguageModel"/>). Public API only.
 /// </summary>
 internal sealed class BertFamily(string architecture) : IPretrainedEncoderFamily
 {
@@ -80,7 +80,7 @@ internal sealed class BertFamily(string architecture) : IPretrainedEncoderFamily
         {
             if (hasPooler)
             {
-                heads.Add(EncoderHeads.Create(EncoderHeads.Pooler, new EncoderHeadRequest(sizes.Width, sizes.Width, new JsonObject { ["activation"] = "tanh" }, device, 0,
+                heads.Add(EncoderHead.Pooler(new EncoderHeadRequest(sizes.Width, sizes.Width, new JsonObject { ["activation"] = "tanh" }, device, 0,
                     Reader(store, ("dense", pooler)))));
             }
 
@@ -92,7 +92,7 @@ internal sealed class BertFamily(string architecture) : IPretrainedEncoderFamily
                 }
 
                 int labels = Shape(store, "classifier.weight", 2)[0];
-                heads.Add(EncoderHeads.Create(EncoderHeads.SequenceClassification, new EncoderHeadRequest(sizes.Width, labels,
+                heads.Add(EncoderHead.Classification(new EncoderHeadRequest(sizes.Width, labels,
                     new JsonObject { ["dense"] = true, ["activation"] = "tanh" }, device, 0, Reader(store, ("dense", pooler), ("out", "classifier")))));
             }
             else if (Name == BertPlugin.BertForSequenceClassification)
@@ -137,7 +137,7 @@ internal sealed class BertFamily(string architecture) : IPretrainedEncoderFamily
         string decoder = tied && words is null ? $"{Prefix(store)}embeddings.word_embeddings" : "cls.predictions.decoder";
         var settings = new JsonObject { ["transform"] = true, ["activation"] = HeadActivation(sizes.Activation), ["norm_epsilon"] = sizes.Epsilon };
         var weights = Reader(store, ("dense", "cls.predictions.transform.dense"), ("norm", "cls.predictions.transform.LayerNorm"));
-        return EncoderHeads.Create(EncoderHeads.MaskedLanguageModel, new EncoderHeadRequest(sizes.Width, sizes.Vocabulary, settings, checkpoint.Device, 0,
+        return EncoderHead.MaskedLanguageModel(new EncoderHeadRequest(sizes.Width, sizes.Vocabulary, settings, checkpoint.Device, 0,
             (name, shape) => name switch
             {
                 "out.bias" => store.Contains(bias) ? Checked(store, bias, [.. shape], transposed: false) : null,

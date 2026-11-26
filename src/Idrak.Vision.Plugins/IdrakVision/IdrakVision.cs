@@ -40,7 +40,7 @@ public sealed class IdrakVisionFamily : IVisionFamily
         }
 
         var vision = IdrakVisionConfig.FromJson(config["vision_config"] as JsonObject, config["projector_config"] as JsonObject);
-        int textDim = PretrainedArchitectures.Get(checkpoint.Architecture).Spec(config, []).Dim;
+        int textDim = IdrakVisionPlugin.TextDecoder().Spec(config, []).Dim;
         var tokens = new IdrakVisionTokens(
             (int?)config["image_token_index"] ?? throw new InvalidDataException("config.json has no image_token_index."),
             (int?)config["boi_token_index"], (int?)config["eoi_token_index"], vision.TokensPerImage);
@@ -192,8 +192,8 @@ public sealed class IdrakVisionPart : PretrainedVision, IVisionTuningPart
     // "image-blocks": an image's tokens see each other (the plug-in's rule); "causal": the library's.
     internal static IImageAttentionRule AttentionRule(string name) => name switch
     {
-        "image-blocks" => ImageAttentionRules.Get(IdrakVisionPlugin.ImageBlocks),
-        "causal" => ImageAttentionRules.Get(ImageAttentionRules.Causal),
+        "image-blocks" => new ImageBlocksRule(),
+        "causal" => new CausalRule(),
         _ => throw new InvalidDataException($"image_attention '{name}' is not image-blocks or causal."),
     };
 

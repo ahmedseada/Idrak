@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Plugins;
 using Idrak.Imaging;
 using Idrak.Models.Abstractions;
 using Idrak.Text.Plugins.Gemma;
@@ -11,13 +10,10 @@ using Idrak.Vision;
 namespace Idrak.Vision.Plugins.Gemma;
 
 /// <summary>
-/// The Gemma 3 vision family as a registration of Idrak's vision contracts (plan 11, "Vision contracts"): the library
-/// knows no family; this package brings one. <see cref="Register"/> adds Gemma 3's vision part
-/// (<see cref="Gemma3VisionFamily"/>, under <c>Gemma3ForConditionalGeneration</c> in <see cref="VisionFamilies"/>) and,
-/// when it is missing, the text decoder of <c>Gemma3ForConditionalGeneration</c> through Idrak.Text.Plugins'
-/// <see cref="GemmaPlugin"/> (taken back with this family only then); its image tokens attend by the library's rule
-/// <see cref="ImageBlocks"/> (<see cref="ImageAttentionRules.ImageBlocks"/>). The idrak tool registers it at startup
-/// (<see cref="VisionPlugins.RegisterAll"/>); an app calls <see cref="Register"/>.
+/// The Gemma 3 vision family (plan 11, "Vision contracts"): the library knows no family; this package brings one, Gemma
+/// 3's vision part (<see cref="Gemma3VisionFamily"/>, for <c>Gemma3ForConditionalGeneration</c>, beside Idrak.Text.Plugins'
+/// text decoder, <see cref="GemmaArchitectures.Gemma3VisionLanguage()"/>); its image tokens attend by the library's rule
+/// <see cref="ImageBlocks"/> (<see cref="ImageBlocksRule"/>). Registering it is not on the new design yet.
 /// </summary>
 public static class Gemma3VisionPlugin
 {
@@ -26,28 +22,6 @@ public static class Gemma3VisionPlugin
     /// elsewhere, within the window on sliding-window layers (transformers' <c>token_type_ids</c> mask).
     /// </summary>
     public const string ImageBlocks = ImageAttentionRules.ImageBlocks;
-
-    /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("gemma3-vision"; listed in <see cref="VisionPlugins.All"/>).</summary>
-    public static IIdrakPlugin Plugin { get; } = new Gemma3VisionRegistration();
-
-    /// <summary>Whether the family is registered.</summary>
-    public static bool IsRegistered => Plugin.IsRegistered;
-
-    /// <summary>Registers the Gemma 3 vision family and the text decoder it needs (through <see cref="IdrakPlugins"/>); once: calling it again changes nothing.</summary>
-    public static void Register() => IdrakPlugins.Register(Plugin);
-
-    /// <summary>Unregisters the family (and the text decoder, when <see cref="Register"/> added it), leaving the registries as <see cref="Register"/> found them.</summary>
-    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
-
-    // The text decoder it needs, then the vision family.
-    private sealed class Gemma3VisionRegistration() : IdrakPlugin("gemma3-vision")
-    {
-        protected override void RegisterParts()
-        {
-            Requires(GemmaPlugin.Plugin);
-            Part(() => VisionFamilies.Register(new Gemma3VisionFamily()), () => VisionFamilies.Unregister(Gemma3VisionFamily.Architecture));
-        }
-    }
 }
 
 /// <summary>
@@ -99,8 +73,8 @@ public sealed class Gemma3VisionFamily : IVisionFamily
             checkpoint.Notes.Add("The vision encoder's pooling head (vision_use_head) is not used: Gemma 3 projects every patch.");
         }
 
-        // The text decoder's width, as the text family registered under the same name reads it.
-        int textDim = PretrainedArchitectures.Get(checkpoint.Architecture).Spec(config, []).Dim, d = encoder.Dim, f = encoder.FfDim;
+        // The text decoder's width, as the family's text decoder reads it.
+        int textDim = GemmaArchitectures.Gemma3VisionLanguage().Spec(config, []).Dim, d = encoder.Dim, f = encoder.FfDim;
         var expected = new List<(string Name, int[] Shape)>
         {
             ("vision.embeddings.patch_embedding.weight", [d, encoder.Channels, encoder.PatchSize, encoder.PatchSize]),
@@ -201,17 +175,11 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     /// <inheritdoc />
     public override IImagePromptFormat PromptFormat { get; }
 
-    /// <summary>Gemma 3's image tokens attend by <see cref="Gemma3VisionPlugin.ImageBlocks"/> (as registered: an app may take that name's place).</summary>
-    public override IImageAttentionRule Attention => ImageAttentionRules.Get(Gemma3VisionPlugin.ImageBlocks);
+    /// <summary>Gemma 3's image tokens attend by <see cref="Gemma3VisionPlugin.ImageBlocks"/>.</summary>
+    public override IImageAttentionRule Attention => new ImageBlocksRule();
 
     /// <inheritdoc />
     public override IReadOnlyCollection<string> StoredTensors => [.. Tensors.Values.Select(t => t.Stored)];
-
-    /// <summary>Gemma 3's vision options: pan and scan's (<see cref="Gemma3PanAndScan.Keys"/>).</summary>
-    public override IReadOnlySet<string> VisionOptionKeys => PanAndScanKeys;
-
-    // The pan-and-scan keys as a set made once.
-    private static readonly OptionKeys PanAndScanKeys = new(Gemma3PanAndScan.Keys);
 
     /// <summary>
     /// Pan and scan as the model folder's <c>preprocessor_config.json</c> sets it (its null or absent keys:

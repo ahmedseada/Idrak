@@ -8,7 +8,7 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Text.Plugins.Gemma;
 
 /// <summary>
-/// How llama.cpp's Gemma files are read (what <see cref="GemmaPlugin"/> registers in <see cref="GgufArchitectures"/>):
+/// How llama.cpp's Gemma files are read (as <see cref="IGgufArchitecture"/>s):
 /// "gemma", "gemma2" and "gemma3" as <c>GemmaForCausalLM</c>, <c>Gemma2ForCausalLM</c> and <c>Gemma3ForCausalLM</c>,
 /// read by <see cref="GemmaArchitectures"/>. llama.cpp's converter (convert_hf_to_gguf.py) writes every norm gain with
 /// Gemma's 1 added (its graph multiplies by the stored gain), so the 1 is taken back off as the gains are read

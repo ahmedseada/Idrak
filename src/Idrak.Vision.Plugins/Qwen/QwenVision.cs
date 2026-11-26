@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Plugins;
 using Idrak.Imaging;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
@@ -12,11 +11,8 @@ namespace Idrak.Vision.Plugins.Qwen;
 /// <summary>
 /// The Qwen-VL vision-language families as a plug-in of Idrak's contracts (plan 16): the library knows no family; this
 /// plug-in brings Qwen2.5-VL (<c>Qwen2_5_VLForConditionalGeneration</c>) and Qwen2-VL
-/// (<c>Qwen2VLForConditionalGeneration</c>). <see cref="Register"/> adds, for each, its vision part
-/// (<see cref="QwenVisionFamily"/> in <see cref="VisionFamilies"/>) and its text decoder
-/// (<see cref="QwenTextDecoder"/> in <see cref="PretrainedArchitectures"/>): one registration per family, nothing of
-/// Qwen in the library. <see cref="VisionPlugins.RegisterAll"/> registers it with the package's other families (the
-/// idrak tool does at startup); an app may call <see cref="Register"/> alone.
+/// (<c>Qwen2VLForConditionalGeneration</c>): for each, its vision part (<see cref="QwenVisionFamily"/>) and its text
+/// decoder (<see cref="QwenTextDecoder"/>), nothing of Qwen in the library. Registering them is not on the new design yet.
 /// </summary>
 /// <remarks>
 /// What the library gives it: the image tokens placed on three rotary axes by the library's
@@ -28,34 +24,8 @@ namespace Idrak.Vision.Plugins.Qwen;
 /// </remarks>
 public static class QwenVisionPlugin
 {
-    /// <summary>Both variants, in the order they are registered.</summary>
+    /// <summary>Both variants.</summary>
     public static IReadOnlyList<QwenVlVariant> Variants { get; } = [QwenVlVariant.Qwen25Vl, QwenVlVariant.Qwen2Vl];
-
-    /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("qwen-vl"; listed in <see cref="VisionPlugins.All"/>).</summary>
-    public static IIdrakPlugin Plugin { get; } = new QwenRegistration();
-
-    /// <summary>Whether the families are registered.</summary>
-    public static bool IsRegistered => Plugin.IsRegistered;
-
-    /// <summary>Registers both families: the vision part and the text decoder of each (through <see cref="IdrakPlugins"/>); once: calling it again changes nothing.</summary>
-    public static void Register() => IdrakPlugins.Register(Plugin);
-
-    /// <summary>Unregisters both families, leaving <see cref="VisionFamilies"/> and <see cref="PretrainedArchitectures"/> as <see cref="Register"/> found them.</summary>
-    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
-
-    // Each variant's vision part and text decoder, one part each.
-    private sealed class QwenRegistration() : IdrakPlugin("qwen-vl")
-    {
-        protected override void RegisterParts()
-        {
-            foreach (var variant in Variants)
-            {
-                string architecture = QwenVisionFamily.ArchitectureOf(variant);
-                Part(() => VisionFamilies.Register(new QwenVisionFamily(variant)), () => VisionFamilies.Unregister(architecture));
-                Part(() => PretrainedArchitectures.Register(architecture, QwenTextDecoder.Architecture()), () => PretrainedArchitectures.Unregister(architecture));
-            }
-        }
-    }
 }
 
 /// <summary>Which Qwen-VL family: the two differ in the vision tower (window attention, norms, activation) and in configuration keys.</summary>
@@ -109,7 +79,7 @@ public sealed class QwenVisionFamily : IVisionFamily
         }
 
         var config = QwenVisionConfig.FromJson(checkpoint.Config["vision_config"] as JsonObject, Variant);
-        int textDim = PretrainedArchitectures.Get(checkpoint.Architecture).Spec(checkpoint.Config, []).Dim;
+        int textDim = QwenTextDecoder.Architecture().Spec(checkpoint.Config, []).Dim;
         if (config.OutDim != textDim)
         {
             throw new InvalidDataException($"vision_config: the merger's output width {config.OutDim} is not the text decoder's {textDim}.");
@@ -165,9 +135,6 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
         PromptFormat = new ImageTokenFormat("qwen-vl", tokens.ImagePad, tokens.ImagePad);
     }
 
-    /// <summary>The vision option keys Qwen-VL takes: the smart resize's pixel budget.</summary>
-    public static OptionKeys Keys { get; } = new(QwenImageProcessor.MinPixelsKey, QwenImageProcessor.MaxPixelsKey);
-
     /// <summary>Which family.</summary>
     public QwenVlVariant Variant { get; }
 
@@ -196,13 +163,10 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
     public override IImagePromptFormat PromptFormat { get; }
 
     /// <summary>Qwen-VL's image tokens attend causally, like text: <see cref="ImageAttentionRules.Causal"/>.</summary>
-    public override IImageAttentionRule Attention => ImageAttentionRules.Get(ImageAttentionRules.Causal);
+    public override IImageAttentionRule Attention => new CausalRule();
 
     /// <inheritdoc />
     public override IReadOnlyCollection<string> StoredTensors => [.. Tensors.Values.Select(t => t.Stored)];
-
-    /// <inheritdoc />
-    public override IReadOnlySet<string> VisionOptionKeys => Keys;
 
     /// <inheritdoc />
     public override string Describe() => $"{Family}: {Config}, {TextDim}-wide image tokens";

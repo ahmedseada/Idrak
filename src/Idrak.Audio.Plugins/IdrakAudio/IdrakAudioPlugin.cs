@@ -11,7 +11,7 @@ namespace Idrak.Audio.Plugins.IdrakAudio;
 /// family in <see cref="SpeechFamilies"/> under <see cref="IdrakAudioFamily.Architecture"/> (the "ctc" and "seq2seq"
 /// recognizers), the synthesis family in <see cref="SpeechSynthesisFamilies"/> under the same name (the "tts"
 /// synthesizers), and the audio-language family under <see cref="IdrakAudioLanguageFamily.Architecture"/> (its text
-/// decoder in <c>PretrainedArchitectures</c>, its audio part in <see cref="AudioFamilies"/>).
+/// decoder, <see cref="IdrakAudioLanguageFamily.TextDecoder"/>, beside its audio part in <see cref="AudioFamilies"/>).
 /// </summary>
 public static class IdrakAudioPlugin
 {
@@ -34,8 +34,6 @@ public static class IdrakAudioPlugin
         {
             Part(() => SpeechFamilies.Register(new IdrakAudioFamily()), () => SpeechFamilies.Unregister(IdrakAudioFamily.Architecture));
             Part(() => SpeechSynthesisFamilies.Register(new IdrakAudioSynthesisFamily()), () => SpeechSynthesisFamilies.Unregister(IdrakAudioFamily.Architecture));
-            Part(() => PretrainedArchitectures.Register(IdrakAudioLanguageFamily.Architecture, IdrakAudioLanguageFamily.TextDecoder()),
-                () => PretrainedArchitectures.Unregister(IdrakAudioLanguageFamily.Architecture));
             Part(() => AudioFamilies.Register(new IdrakAudioLanguageFamily()), () => AudioFamilies.Unregister(IdrakAudioLanguageFamily.Architecture));
         }
     }

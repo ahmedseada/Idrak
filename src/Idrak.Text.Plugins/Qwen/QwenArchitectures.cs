@@ -15,7 +15,7 @@ namespace Idrak.Text.Plugins.Qwen;
 /// </summary>
 public static class QwenArchitectures
 {
-    /// <summary>llama.cpp's split pattern for the qwen2 family (llama-vocab.cpp), the names in <see cref="QwenPlugin.PreTokenizers"/>.</summary>
+    /// <summary>llama.cpp's split pattern for the qwen2 family (llama-vocab.cpp: "qwen2", "qwen35", "megrez", "hunyuan").</summary>
     public const string SplitPattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
 
     /// <summary>Qwen2ForCausalLM: the common keys with query, key and value biases, written back as config.json with model_type "qwen2".</summary>

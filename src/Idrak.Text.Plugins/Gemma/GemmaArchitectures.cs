@@ -8,13 +8,12 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Text.Plugins.Gemma;
 
 /// <summary>
-/// The Gemma families as <see cref="IPretrainedArchitecture"/>s (what <see cref="GemmaPlugin"/> registers): Gemma
+/// The Gemma families as <see cref="IPretrainedArchitecture"/>s (under the names of <see cref="GemmaPlugin"/>): Gemma
 /// (<see cref="Gemma"/>, the Llama naming with (1 + w) gains, scaled and tied embeddings, written from a spec too), Gemma 2
 /// and Gemma 3 text (<see cref="Gemma2"/>, <see cref="Gemma3"/>, on the common keys read by
 /// <see cref="PretrainedFamilies.CommonSpec"/>), and the text decoder of Gemma 3 with images (<see cref="Gemma3VisionLanguage()"/>,
-/// read from text_config in whichever of its namings the checkpoint uses; its vision part is a <see cref="VisionFamilies"/>
-/// registration of Idrak.Vision.Plugins). Each call returns a new architecture; register them with
-/// <see cref="GemmaPlugin.Register"/>, or under names of your own with <see cref="PretrainedArchitectures.Register"/>.
+/// read from text_config in whichever of its namings the checkpoint uses; its vision part is an <see cref="IVisionFamily"/>
+/// of Idrak.Vision.Plugins). Each call returns a new architecture.
 /// </summary>
 public static class GemmaArchitectures
 {
@@ -124,7 +123,7 @@ public static class GemmaArchitectures
 
     // The namings of a Gemma3ForConditionalGeneration checkpoint's text decoder (plan 11): where its model and its lm_head
     // (never saved: tied) are. transformers 4.52 to 4.57 rename the modules in memory but save under the old names. The
-    // vision part's namings are its vision family's (VisionFamilies), which Idrak.Vision.Plugins registers.
+    // vision part's namings are its vision family's, which Idrak.Vision.Plugins brings.
     private sealed record Gemma3Layout(string Name, string Text, string Head);
 
     private static readonly Gemma3Layout[] Gemma3Layouts =
