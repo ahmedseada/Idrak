@@ -23,7 +23,10 @@ public static class QwenTextDecoder
     /// The decoder as an <see cref="IPretrainedArchitecture"/>: the hub's tensor naming, or transformers 5's nested one when
     /// the checkpoint has it.
     /// </summary>
-    public static IPretrainedArchitecture Architecture() => new Decoder(nested: false);
+    public static IPretrainedArchitecture Architecture() => new Decoder(nested: false) { Names = Names };
+
+    // The names Qwen-VL checkpoints call the family by (config.json's "architectures"): Qwen2.5-VL's and Qwen2-VL's.
+    private static readonly string[] Names = [QwenVisionFamily.Qwen25VlArchitecture, QwenVisionFamily.Qwen2VlArchitecture];
 
     // The architecture in one tensor naming; the checkpoint's names choose the other when it has them.
     private sealed class Decoder(bool nested) : PretrainedArchitecture, ICheckpointFittedArchitecture
@@ -36,7 +39,7 @@ public static class QwenTextDecoder
             var stored => stored,
         };
 
-        public IPretrainedArchitecture ForCheckpoint(IReadOnlySet<string> names) => new Decoder(nested: names.Contains(Nested + "embed_tokens.weight"));
+        public IPretrainedArchitecture ForCheckpoint(IReadOnlySet<string> names) => new Decoder(nested: names.Contains(Nested + "embed_tokens.weight")) { Names = Names };
     }
 
     /// <summary>The decoder's spec from a Qwen-VL config.json (either layout).</summary>

@@ -69,7 +69,7 @@ internal sealed class ModelFacts
         try
         {
             // The family that states the checkpoint's own name: the built-in families walked, each one's names compared.
-            var family = Idrak.Text.Plugins.BuiltInFamilies.All.Families.FirstOrDefault(f => f.Names.Contains(architecture, StringComparer.Ordinal))
+            var family = Idrak.Vision.Plugins.BuiltInVisionFamilies.All.Families.FirstOrDefault(f => f.Names.Contains(architecture, StringComparer.Ordinal))
                 ?? throw new NotSupportedException($"No built-in family states the name '{architecture}'.");
             spec = family.Spec(config, notes);
         }

@@ -28,6 +28,8 @@ using Idrak.Text.Plugins.T5;
 internal abstract partial class DesktopTests : Tests
 {
 
+    private const float T5Tolerance = 1e-4f;
+
     // The owner's real models: six or eight layers of width 512 (t5-small) and larger activations, so more rounding.
     private const float T5RealTolerance = 2e-3f;
 
@@ -36,6 +38,7 @@ internal abstract partial class DesktopTests : Tests
         ("engine: bucketed position bias: BucketedPositionBias's buckets equal transformers' _relative_position_bucket over -700..700 for 32 buckets with max distances 20 and 128, both ways; its bias is the table's rows by bucket, passes the position bias suite both ways; num_buckets and max_distance that do not fit are refused naming the setting", T5BucketedBias),
         ("engine: rms-norm block: TransformerEncoderLayer from RMS norms and a feed-forward block (gated GELU and plain ReLU, pre- and post-norm) equals its sublayers composed, in inference and with the gradient recorded (every parameter gets a gradient); cached causal steps equal the whole sequence; Normalization = RmsNorm on a new block and the network builder carry it both ways; LayerNorm stays the default; mixed, mis-sized or foreign norms and an undefined Normalization are refused naming the setting", T5RmsNormBlock),
         ("engine: position bias steps: a decoding step's bias of the \"bucketed\" and \"relative\" kinds (one way and both ways) equals the row of the whole sequence's bias bit for bit, past the max distance and across the widening of the values by distance", PositionBiasSteps),
+        ("plugins: t5: the tiny T5 v1.0 (ReLU, tied head scaled by d_model^-0.5) and v1.1 (gated GELU, its own head) read as T5ForConditionalGeneration (by its own name, through the families handed over) give transformers' encoder states and decoder logits within 1e-4 for three texts and a padded batch, in inference and with the gradient recorded; the layers are the library's (RMS-norm blocks, one bucketed bias per stack shared, the shared embedding read in place); the folder's Unigram tokenizer gives transformers' ids", T5MatchesTransformers),
         ("t5 real: (the owner's: make_tiny_t5.py --real first) google-t5/t5-small and google/mt5-small from the cache give transformers' ids, encoder states and logits within 2e-3 and its greedy generation token for token", T5Real),
     ];
 
@@ -43,8 +46,31 @@ internal abstract partial class DesktopTests : Tests
 
     private static JsonObject T5Record() => JsonNode.Parse(File.ReadAllText(T5Data("reference.json")))!.AsObject();
 
+    private static readonly string[] T5Models = ["tiny-t5", "tiny-t5-gated"];
+
+    private static readonly string[] T5Cases = ["single0", "single1", "single2", "batch"];
+
+    // The encoder-decoder families a checkpoint's own name is matched against (Idrak.Text.Plugins').
     private static PretrainedSeq2SeqModel LoadT5(string folder, Device device, string? architecture = null) =>
-        PretrainedSeq2SeqModel.Load(folder, new PretrainedEncoderOptions { Device = device, Architecture = architecture });
+        PretrainedSeq2SeqModel.Load(folder, new PretrainedEncoderOptions { Device = device, Architecture = architecture, Families = Idrak.Text.Plugins.BuiltInFamilies.All });
+
+    // A tiny model in a folder of its own, with the committed Unigram tokenizer beside it.
+    private static string T5Folder(string model)
+    {
+        string folder = TempFolder();
+        File.Copy(T5Data($"{model}/model.safetensors"), Path.Combine(folder, "model.safetensors"));
+        File.Copy(T5Data($"{model}/config.json"), Path.Combine(folder, "config.json"));
+        File.Copy(TestData("tokenizers/unigram/tokenizer_config.json"), Path.Combine(folder, "tokenizer_config.json"));
+        File.Copy(TestData("tokenizers/unigram/tokenizer.json"), Path.Combine(folder, "tokenizer.json"));
+        return folder;
+    }
+
+    private static T5Case ReadT5Case(SafeTensorsReader references, string model, string name)
+    {
+        int[] source = references.Tensors[$"{model}.{name}.ids"].Shape, target = references.Tensors[$"{model}.{name}.target"].Shape;
+        return new T5Case(name, references.Read($"{model}.{name}.ids"), [.. references.Read($"{model}.{name}.lengths").Select(l => (int)l)], source[1],
+            references.Read($"{model}.{name}.target"), target[1]);
+    }
 
     // A case of reference.safetensors: its padded source ids, lengths, the target and the shapes.
     private sealed record T5Case(string Name, float[] Ids, int[] Lengths, int Time, float[] Target, int Steps);
@@ -60,7 +86,81 @@ internal abstract partial class DesktopTests : Tests
 
     private static GenerationOptions T5Greedy(int tokens) => new() { TopK = 1, RepeatPenalty = 1f, NumPredict = tokens };
 
-    // ---------------------------------------------------------------- the bucketed position bias (library)
+    private static void T5MatchesTransformers(Device device)
+    {
+        using var references = SafeTensorsReader.Open(T5Data("reference.safetensors"));
+        var record = T5Record();
+        foreach (string name in T5Models)
+        {
+            string folder = T5Folder(name);
+            try
+            {
+                using var loaded = LoadT5(folder, device);
+                var model = loaded.Model;
+                bool tied = name == "tiny-t5";
+                Check(loaded.Architecture == T5Plugin.T5ForConditionalGeneration && loaded.EndsSource, $"{name}: read as T5ForConditionalGeneration, its sources ending with </s>");
+                var encoder = model.Encoder as SequenceEncoder ?? throw new InvalidOperationException($"{name}: not the library's encoder: {model.Encoder}");
+                var network = model as Seq2SeqNetwork ?? throw new InvalidOperationException($"{name}: not the library's encoder-decoder: {model}");
+                Check(encoder.Blocks.Count == 3 && encoder.Blocks.All(b => b is TransformerEncoderLayer { Normalization: BlockNormalization.RmsNorm, Placement: NormPlacement.Before })
+                    && encoder.FinalNorm is RMSNorm && encoder.Positions is null && encoder.TypeVocabulary == 0, $"{name}: three pre-norm RMS blocks and a final RMS norm: {encoder}");
+                var encoderAttention = encoder.Descendants().OfType<MultiHeadAttention>().ToList();
+                Check(encoderAttention.All(a => a.ScoreScale == 1f && ReferenceEquals(a.PositionBias, encoderAttention[0].PositionBias))
+                    && encoderAttention[0].PositionBias is BucketedPositionBias { Bidirectional: true, Buckets: 32, MaxDistance: 20 }
+                    && encoderAttention.Skip(1).All(a => a.SharesPositionBias) && encoderAttention[0].Inner == 24,
+                    $"{name}: unscaled encoder attention of inner width 24, the first block's bidirectional bucketed bias shared by the others");
+                var selfAttention = network.Decoder.Descendants().OfType<CausalSelfAttention>().ToList();
+                Check(selfAttention.Count == 2 && selfAttention.All(a => a.ScoreScale == 1f && ReferenceEquals(a.PositionBias, selfAttention[0].PositionBias))
+                    && selfAttention[0].PositionBias is BucketedPositionBias { Bidirectional: false } && network.Decoder.Descendants().OfType<CrossAttention>().All(c => c.ScoreScale == 1f),
+                    $"{name}: unscaled decoder attention, the first block's one-way bias shared");
+                var head = (Linear)network.Decoder.Last();
+                Check(tied ? head.TiedTo == encoder.Words && network.Decoder.OfType<Scale>().Single().Factor == 1f / MathF.Sqrt(32)
+                        : head.TiedTo is null && !network.Decoder.OfType<Scale>().Any(),
+                    $"{name}: the head {(tied ? "reads the shared embedding, the output scaled by 32^-0.5" : "has its own weights, nothing scaled")}");
+                Check(model.Network.Parameters().Count(p => ReferenceEquals(p, encoder.Words.Weight)) == 1, $"{name}: the shared embedding is one parameter");
+                Check(model.DecoderStartToken == 0 && model.EndToken == 1 && model.Vocabulary == 1002 && model.MaxTargetPositions == 512, $"{name}: tokens and limits from config.json");
+
+                var tokenizer = loaded.Tokenizer ?? throw new InvalidOperationException($"{name}: the folder's tokenizer was not read");
+                var cases = record["models"]![name]!["cases"]!.AsObject();
+                float worstStates = 0f, worstLogits = 0f;
+                foreach (string caseName in T5Cases)
+                {
+                    var c = ReadT5Case(references, name, caseName);
+                    string[] texts = cases[caseName]!["texts"] is JsonArray batch ? [.. batch.Select(v => (string)v!)] : [(string)cases[caseName]!["text"]!];
+                    for (int b = 0; b < texts.Length; b++)
+                    {
+                        var encoding = tokenizer.Encode(texts[b], null, new TokenizerEncodeOptions());
+                        Check(encoding.Ids.SequenceEqual(c.Ids.AsSpan(b * c.Time, c.Lengths[b]).ToArray().Select(v => (int)v)),
+                            $"{name} {caseName}[{b}]: the tokenizer's ids {string.Join(" ", encoding.Ids)}");
+                    }
+
+                    float[] states = RealPositions(references.Read($"{name}.{caseName}.encoder"), c.Lengths, c.Time, 32);
+                    float[] logits = references.Read($"{name}.{caseName}.logits");
+                    using (new TensorScope())
+                    using (Autograd.NoGrad())
+                    {
+                        model.Network.Eval();
+                        var (mine, myLogits) = T5Outputs(model, c, device);
+                        worstStates = MathF.Max(worstStates, Compared(states, RealPositions(mine, c.Lengths, c.Time, 32), T5Tolerance, $"{name} {caseName}: encoder states"));
+                        worstLogits = MathF.Max(worstLogits, Compared(logits, myLogits, T5Tolerance, $"{name} {caseName}: decoder logits"));
+                    }
+
+                    using (new TensorScope())
+                    {
+                        var (mine, myLogits) = T5Outputs(model, c, device);
+                        Compared(states, RealPositions(mine, c.Lengths, c.Time, 32), T5Tolerance, $"{name} {caseName}: encoder states, gradient recorded");
+                        Compared(logits, myLogits, T5Tolerance, $"{name} {caseName}: decoder logits, gradient recorded");
+                    }
+                }
+
+                Console.WriteLine($"    {name}: largest difference from transformers: encoder states {worstStates:E1}, logits {worstLogits:E1}");
+            }
+            finally
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
+    }
+
 
     private static void T5BucketedBias(Device device)
     {

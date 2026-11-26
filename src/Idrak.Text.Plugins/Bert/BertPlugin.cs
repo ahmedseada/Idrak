@@ -12,7 +12,7 @@ namespace Idrak.Text.Plugins.Bert;
 /// (<c>TransformerEncoderLayer</c> with <c>NormPlacement.After</c>) of the configuration's activation, and the heads the
 /// checkpoint holds (<c>EncoderHead.Pooler</c>: dense + tanh of the first token; <c>EncoderHead.MaskedLanguageModel</c>:
 /// the transform, its LayerNorm and the decoder tied to the word embeddings; <c>EncoderHead.Classification</c>: the
-/// pooler, then the classifier). Registering the family is not on the new design yet. The tokenizer is the folder's
+/// pooler, then the classifier). The package's list (<see cref="BuiltInFamilies.EncoderFamilies"/>) holds one a name. The tokenizer is the folder's
 /// WordPiece (<c>tokenizer.json</c> or <c>vocab.txt</c>).
 /// </summary>
 public static class BertPlugin

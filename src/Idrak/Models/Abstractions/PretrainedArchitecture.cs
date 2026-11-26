@@ -58,6 +58,18 @@ public interface IFamilyProvider
 
     /// <summary>Their GGUF pre-tokenizers (each stating its names), for a .gguf file's <c>tokenizer.ggml.pre</c>.</summary>
     IReadOnlyList<IGgufPreTokenizer> GgufPreTokenizers => [];
+
+    /// <summary>
+    /// The vision parts of its vision-language families (each stating its names, <see cref="IVisionFamily.Names"/>), for a
+    /// checkpoint with a vision_config: read beside the text decoder of the family of the same name.
+    /// </summary>
+    IReadOnlyList<IVisionFamily> VisionFamilies => [];
+
+    /// <summary>Its encoder families (each stating its names), for <c>PretrainedEncoderModel.Load</c>.</summary>
+    IReadOnlyList<IPretrainedEncoderFamily> EncoderFamilies => [];
+
+    /// <summary>Its encoder-decoder families (each stating its names), for <c>PretrainedSeq2SeqModel.Load</c>.</summary>
+    IReadOnlyList<IPretrainedSeq2SeqFamily> Seq2SeqFamilies => [];
 }
 
 /// <summary>

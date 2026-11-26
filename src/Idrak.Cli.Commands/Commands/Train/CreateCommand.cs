@@ -149,6 +149,7 @@ internal sealed class CreateCommand : Command
             model = PretrainedModel.Create(output, spec, architecture, files, new CreateOptions
             {
                 Device = Idrak.Abstraction.Device.Cpu, Seed = seed, InitStd = initStd > 0 ? initStd : null, Overwrite = context.Flag("--overwrite"),
+                Families = Idrak.Vision.Plugins.BuiltInVisionFamilies.All, ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader,
                 Vision = (JsonObject?)vision?.DeepClone(),
                 Parts = audio is null ? null : new Dictionary<string, JsonObject> { [Idrak.Abstraction.Generation.ChatParts.Audio] = (JsonObject)audio.DeepClone() },
                 Decoder = PathOf("--decoder", "decoder"),

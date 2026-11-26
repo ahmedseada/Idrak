@@ -10,8 +10,8 @@ namespace Idrak.Text.Plugins.T5;
 /// <c>MT5ForConditionalGeneration</c>, config.json's "architectures"), read by a <see cref="T5Seq2SeqFamily"/> of that
 /// name, so <c>Seq2SeqGenerator</c> generates with them (greedy, sampled or beam search), and its encoder checkpoints
 /// (<c>T5EncoderModel</c>, <c>MT5EncoderModel</c>, or the encoder of either encoder-decoder read as one), read by a
-/// <see cref="T5EncoderFamily"/> (sentence vectors by the mean of the states). Registering the family is not on the new
-/// design yet. The layers are the library's: the shared token embedding (the encoder's, the decoder's and, tied, the
+/// <see cref="T5EncoderFamily"/> (sentence vectors by the mean of the states). The package's list holds one a name
+/// (<see cref="BuiltInFamilies.Seq2SeqFamilies"/>, <see cref="BuiltInFamilies.EncoderFamilies"/>). The layers are the library's: the shared token embedding (the encoder's, the decoder's and, tied, the
 /// head's table), pre-norm blocks with RMS norms (<c>TransformerEncoderLayer</c> with RMS norms, <c>DecoderBlock</c> with
 /// cross-attention), attention without score scaling, the library's "bucketed" relative position bias of each stack's
 /// first block shared by the others (both ways in the encoder, one way in the decoder), the ReLU feed-forward (T5 v1.0,

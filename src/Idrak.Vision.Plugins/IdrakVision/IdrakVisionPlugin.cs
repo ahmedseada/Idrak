@@ -11,8 +11,8 @@ namespace Idrak.Vision.Plugins.IdrakVision;
 /// The IdrakVision family's text decoder (a Llama decoder read from <c>text_config</c>, its tensors under
 /// <c>language_model.</c>, written back from a spec) beside its vision part (<see cref="IdrakVisionFamily"/>), both for
 /// <see cref="IdrakVisionFamily.Architecture"/>. Its image tokens attend by the library's rule "image-blocks"
-/// (<see cref="ImageBlocksRule"/>: an image's tokens see each other, the rest causal), or by "causal". Registering it is
-/// not on the new design yet.
+/// (<see cref="ImageBlocksRule"/>: an image's tokens see each other, the rest causal), or by "causal". Both are in the
+/// package's list (<see cref="BuiltInVisionFamilies"/>).
 /// </summary>
 public static class IdrakVisionPlugin
 {
@@ -20,7 +20,7 @@ public static class IdrakVisionPlugin
     public const string ImageBlocks = ImageAttentionRules.ImageBlocks;
 
     // The text side: Llama's spec from text_config, its tensors under language_model., a spec written as text_config.
-    internal static IPretrainedArchitecture TextDecoder() => new TextDecoderArchitecture(PretrainedFamilies.CommonArchitecture((_, spec, _) => spec, "llama"));
+    internal static IPretrainedArchitecture TextDecoder() => new TextDecoderArchitecture(PretrainedFamilies.CommonArchitecture((_, spec, _) => spec, "llama")) { Names = [IdrakVisionFamily.Architecture] };
 
     private sealed class TextDecoderArchitecture(IConfigWritingArchitecture llama) : PretrainedArchitecture, IConfigWritingArchitecture
     {

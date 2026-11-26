@@ -338,22 +338,54 @@ public sealed record PretrainedEncoderOptions
     /// <summary>How the folder's tokenizer is read (the defaults when null).</summary>
     public TokenizerOptions? Tokenizer { get; init; }
 
-    /// <summary>The pooler (a name in <see cref="SequencePoolers"/>) instead of the family's (encoders only).</summary>
+    /// <summary>The pooler (a name one of <see cref="SequencePoolers.All"/> states) instead of the family's (encoders only).</summary>
     public string? Pooler { get; init; }
+
+    /// <summary>
+    /// The families a checkpoint's own name (config.json's "architectures") is matched against where it comes in: their
+    /// encoder families (<see cref="IFamilyProvider.EncoderFamilies"/>) or encoder-decoder families
+    /// (<see cref="IFamilyProvider.Seq2SeqFamilies"/>), walked in order, each family's own names compared (Idrak.Text.Plugins'
+    /// <c>BuiltInFamilies.All</c>); null: none, and the load is refused naming the checkpoint's name.
+    /// </summary>
+    public IFamilyProvider? Families { get; init; }
 }
 
-// What both loaders read first: the folder prepared by its checkpoint format, its config.json and architecture name.
+// What both loaders read first: the folder prepared by its checkpoint format (the library's that opens it), its config.json
+// and architecture name; and the family stating that name.
 internal static class EncoderCheckpoints
 {
-    public static (string Folder, JsonObject Config, string Name, ICheckpointFormat Format) Read(string folder, string? architecture)
+    public static (string Folder, JsonObject Config, string Name, ICheckpointFormat Format) Read(string folder, string? architecture, IFamilyProvider? families)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
-        var format = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {folder}");
+        var format = PretrainedModel.FormatOf(folder, families);
         folder = format.Prepare(folder);
         var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))!.AsObject();
         string name = architecture ?? (string?)config["architectures"]?[0]
             ?? throw new InvalidDataException("config.json names no architecture; pass the options' Architecture.");
         return (folder, config, name, format);
+    }
+
+    /// <summary>
+    /// The family of <paramref name="families"/> that states <paramref name="name"/> (the name a checkpoint calls itself by)
+    /// among its own names (<paramref name="names"/>): the list walked in order where the checkpoint comes in.
+    /// </summary>
+    /// <exception cref="NotSupportedException">None states it (the message names those the list holds).</exception>
+    public static T Named<T>(IReadOnlyList<T> families, Func<T, IReadOnlyList<string>> names, string name, string kind) where T : class
+    {
+        foreach (var family in families)
+        {
+            foreach (string own in names(family))
+            {
+                if (string.Equals(own, name, StringComparison.Ordinal))
+                {
+                    return family;
+                }
+            }
+        }
+
+        throw new NotSupportedException(families.Count == 0
+            ? $"The checkpoint is a '{name}'; no {kind} family was handed over to read it (give the options' Families: Idrak.Text.Plugins' BuiltInFamilies.All, or a package's own list)."
+            : $"The checkpoint is a '{name}'; none of the {kind} families handed over states that name ({string.Join(", ", families.SelectMany(names))}).");
     }
 }
 
@@ -365,10 +397,12 @@ internal static class EncoderCheckpoints
 /// </summary>
 public sealed class PretrainedEncoderModel : IDisposable
 {
+    private readonly ISequencePooler _pooler;
+
     private PretrainedEncoderModel(string folder, JsonObject config, string architecture, ISequenceEncoder encoder, IReadOnlyDictionary<string, EncoderHead> heads,
-        string pooler, IPretrainedTokenizer? tokenizer, IReadOnlyList<string> notes)
+        ISequencePooler pooler, IPretrainedTokenizer? tokenizer, IReadOnlyList<string> notes)
     {
-        (Folder, Config, Architecture, Encoder, Heads, Pooler, Tokenizer, Notes) = (folder, config, architecture, encoder, heads, pooler, tokenizer, notes);
+        (Folder, Config, Architecture, Encoder, Heads, _pooler, Pooler, Tokenizer, Notes) = (folder, config, architecture, encoder, heads, pooler, pooler.Name, tokenizer, notes);
     }
 
     /// <summary>The model folder.</summary>
@@ -386,7 +420,7 @@ public sealed class PretrainedEncoderModel : IDisposable
     /// <summary>The heads the checkpoint holds, by kind.</summary>
     public IReadOnlyDictionary<string, EncoderHead> Heads { get; }
 
-    /// <summary>The pooler of <see cref="Pooled"/> (a name in <see cref="SequencePoolers"/>).</summary>
+    /// <summary>The name of the pooler of <see cref="Pooled"/> (one of <see cref="SequencePoolers.All"/>, found by it at load).</summary>
     public string Pooler { get; }
 
     /// <summary>The folder's tokenizer, or null when it has none.</summary>
@@ -399,15 +433,16 @@ public sealed class PretrainedEncoderModel : IDisposable
     public Device Device => Encoder.Device;
 
     /// <summary>
-    /// Reads the model in <paramref name="folder"/> with the family of its architecture name.
+    /// Reads the model in <paramref name="folder"/> with the encoder family of <see cref="PretrainedEncoderOptions.Families"/>
+    /// that states its architecture name.
     /// </summary>
-    /// <exception cref="NotSupportedException">Picking the family by its name is not on the new design yet.</exception>
+    /// <exception cref="NotSupportedException">No family handed over states the checkpoint's name.</exception>
     public static PretrainedEncoderModel Load(string folder, PretrainedEncoderOptions? options = null)
     {
         options ??= new PretrainedEncoderOptions();
-        var (prepared, config, name, format) = EncoderCheckpoints.Read(folder, options.Architecture);
-        var family = NotOnTheNewDesign.Yet<IPretrainedEncoderFamily>($"Picking the encoder family '{name}' by its name");
-        string pooler = options.Pooler ?? family.Pooler(config);
+        var (prepared, config, name, format) = EncoderCheckpoints.Read(folder, options.Architecture, options.Families);
+        var family = EncoderCheckpoints.Named(options.Families?.EncoderFamilies ?? [], f => f.Names, name, "encoder");
+        var pooler = SequencePoolers.Named(options.Pooler ?? family.Pooler(config));             // by its own name, once
         var notes = new List<string>();
         notes.AddRange(format.Notes(prepared));
         ISequenceEncoder encoder;
@@ -442,7 +477,7 @@ public sealed class PretrainedEncoderModel : IDisposable
 
     /// <summary>One vector per sequence [batch, width]: the states pooled by <see cref="Pooler"/>.</summary>
     public Tensor Pooled(Tensor ids, IReadOnlyList<int>? lengths = null, Tensor? tokenTypes = null) =>
-        NotOnTheNewDesign.Yet<ISequencePooler>($"Picking the pooler '{Pooler}' by its name").Pool(Hidden(ids, lengths, tokenTypes), lengths);
+        _pooler.Pool(Hidden(ids, lengths, tokenTypes), lengths);
 
     /// <summary>The output of the head <paramref name="kind"/>: over the pooled vectors or the states, as the head reads.</summary>
     /// <exception cref="ArgumentException">The checkpoint holds no head of that kind (the message lists those it holds).</exception>
@@ -504,13 +539,13 @@ public sealed class PretrainedSeq2SeqModel : IDisposable
     /// <summary>Where it runs.</summary>
     public Device Device => Model.Device;
 
-    /// <summary>Reads the model in <paramref name="folder"/> with the family of its architecture name.</summary>
-    /// <exception cref="NotSupportedException">Picking the family by its name is not on the new design yet.</exception>
+    /// <summary>Reads the model in <paramref name="folder"/> with the encoder-decoder family of <see cref="PretrainedEncoderOptions.Families"/> that states its architecture name.</summary>
+    /// <exception cref="NotSupportedException">No family handed over states the checkpoint's name.</exception>
     public static PretrainedSeq2SeqModel Load(string folder, PretrainedEncoderOptions? options = null)
     {
         options ??= new PretrainedEncoderOptions();
-        var (prepared, config, name, format) = EncoderCheckpoints.Read(folder, options.Architecture);
-        var family = NotOnTheNewDesign.Yet<IPretrainedSeq2SeqFamily>($"Picking the encoder-decoder family '{name}' by its name");
+        var (prepared, config, name, format) = EncoderCheckpoints.Read(folder, options.Architecture, options.Families);
+        var family = EncoderCheckpoints.Named(options.Families?.Seq2SeqFamilies ?? [], f => f.Names, name, "encoder-decoder");
         var notes = new List<string>();
         notes.AddRange(format.Notes(prepared));
         ISeq2SeqModel model;

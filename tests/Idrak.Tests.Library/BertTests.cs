@@ -24,19 +24,49 @@ using Idrak.Text.Retrieval;
 internal abstract partial class Tests
 {
 
+    // transformers and the library both compute in float32: they differ by summation order (see the remarks above).
+    internal const float BertTolerance = 1e-4f;
+
     // The owner's real models: more layers and width, so more rounding (see BertReal).
     internal const float BertRealTolerance = 2e-3f;
 
     internal static readonly (string Name, Action<Device> Run)[] BertGroup =
     [
         ("engine: post-norm block: TransformerEncoderLayer with NormPlacement.After equals its own sublayers composed as LayerNorm(x + Attention(x)), then LayerNorm(x + FeedForward(x)) (tanh GELU fused, and an exact GELU), in inference and with the gradient recorded (every parameter gets a gradient); cached steps equal the whole causal sequence; Before stays the default and the earlier overloads' bits; the layer description and the network builder carry \"norms\": \"after\" both ways; an undefined placement and unknown norms are refused naming the setting", PostNormBlock),
+        ("plugins: bert: the tiny checkpoint read as BertForMaskedLM, BertModel and BertForSequenceClassification (each by its own name, through the families handed over) gives transformers' hidden states, pooled output, masked-LM logits and classification logits within 1e-4 for three single texts and a padded batch of pairs with token types, in inference and with the gradient recorded; the folder's WordPiece tokenizer gives transformers' ids and type ids", BertMatchesTransformers),
         ("bert real: (the owner's: make_tiny_bert.py --real first) google-bert/bert-base-uncased and aubmindlab/bert-base-arabertv02 from the cache give transformers' ids, hidden states and pooled output within 2e-3 and the masked-LM logits of each [MASK] at transformers' 32 best tokens, the best the same", BertReal),
     ];
 
+    internal static readonly string[] BertCases = ["single0", "single1", "single2", "batch"];
+
     internal static string BertData(string relative) => TestData(Path.Combine("plugins", "bert", relative));
 
+    // The encoder families a checkpoint's own name is matched against (Idrak.Text.Plugins').
     internal static PretrainedEncoderModel LoadBert(string folder, Device device, string? architecture = null) =>
-        PretrainedEncoderModel.Load(folder, new PretrainedEncoderOptions { Device = device, Architecture = architecture });
+        PretrainedEncoderModel.Load(folder, new PretrainedEncoderOptions { Device = device, Architecture = architecture, Families = Idrak.Text.Plugins.BuiltInFamilies.All });
+
+    // The tiny model in a folder of its own, with the committed WordPiece tokenizer beside it; `edit` changes its config.json.
+    internal static string BertFolder(Action<JsonObject>? edit = null)
+    {
+        string folder = TempFolder();
+        File.Copy(BertData("tiny-bert/model.safetensors"), Path.Combine(folder, "model.safetensors"));
+        var config = JsonNode.Parse(File.ReadAllText(BertData("tiny-bert/config.json")))!.AsObject();
+        edit?.Invoke(config);
+        File.WriteAllText(Path.Combine(folder, "config.json"), config.ToJsonString());
+        foreach (string name in new[] { "tokenizer.json", "tokenizer_config.json", "vocab.txt" })
+        {
+            File.Copy(TestData($"tokenizers/wordpiece-uncased/{name}"), Path.Combine(folder, name));
+        }
+
+        return folder;
+    }
+
+    internal static BertCase ReadBertCase(SafeTensorsReader references, string name)
+    {
+        int[] shape = references.Tensors[$"{name}.ids"].Shape;
+        return new BertCase(name, references.Read($"{name}.ids"), references.Read($"{name}.types"),
+            [.. references.Read($"{name}.lengths").Select(l => (int)l)], shape[1]);
+    }
 
     // A case of reference.safetensors: its padded ids, type ids, lengths and shape.
     internal sealed record BertCase(string Name, float[] Ids, float[] Types, int[] Lengths, int Time);
@@ -76,6 +106,89 @@ internal abstract partial class Tests
 
         float[] classes = model.Logits(EncoderHeads.SequenceClassification, Ids(), c.Lengths, Types()).ToArray();
         return (hidden, pooled, words, classes);
+    }
+
+    // ---------------------------------------------------------------- BERT against transformers
+
+    internal static void BertMatchesTransformers(Device device)
+    {
+        string folder = BertFolder();
+        try
+        {
+            using var references = SafeTensorsReader.Open(BertData("reference.safetensors"));
+            var cases = JsonNode.Parse(File.ReadAllText(BertData("reference.json")))!["cases"]!.AsObject();
+            using var model = LoadBert(folder, device);
+            Check(model.Architecture == BertPlugin.BertForMaskedLM && model.Pooler == SequencePoolers.First
+                && model.Heads.Keys.Order(StringComparer.Ordinal).SequenceEqual([EncoderHeads.MaskedLanguageModel, EncoderHeads.Pooler, EncoderHeads.SequenceClassification]),
+                $"BertForMaskedLM with the pooler, the masked-LM head and the classifier the checkpoint holds ({model.Pooler}; {string.Join(", ", model.Heads.Keys)})");
+            Check(model.Encoder is SequenceEncoder { Blocks.Count: 2, TypeVocabulary: 2, MaxPositions: 64, Width: 32, Vocabulary: 1862 } encoder
+                && encoder.Blocks.All(b => b is TransformerEncoderLayer { Placement: NormPlacement.After }), $"two post-norm blocks: {model.Encoder}");
+            var tokenizer = model.Tokenizer ?? throw new InvalidOperationException("the folder's tokenizer was not read");
+            int width = model.Encoder.Width, vocabulary = model.Encoder.Vocabulary;
+            float worstHidden = 0f, worstPooled = 0f, worstWords = 0f, worstClasses = 0f;
+            foreach (string name in BertCases)
+            {
+                var c = ReadBertCase(references, name);
+                int n = c.Lengths.Length;
+
+                // The tokenizer gives transformers' ids and type ids (special tokens and pairs included).
+                var record = cases[name]!.AsObject();
+                for (int b = 0; b < n; b++)
+                {
+                    var encoding = record["pairs"] is JsonArray pairs
+                        ? tokenizer.Encode((string)pairs[b]![0]!, (string)pairs[b]![1]!, new TokenizerEncodeOptions())
+                        : tokenizer.Encode((string)record["text"]!, null, new TokenizerEncodeOptions());
+                    int length = c.Lengths[b];
+                    Check(encoding.Ids.SequenceEqual(c.Ids.AsSpan(b * c.Time, length).ToArray().Select(v => (int)v))
+                        && encoding.TypeIds.SequenceEqual(c.Types.AsSpan(b * c.Time, length).ToArray().Select(v => (int)v)),
+                        $"{name}[{b}]: the tokenizer's ids {string.Join(" ", encoding.Ids)} and types {string.Join(" ", encoding.TypeIds)}");
+                }
+
+                float[] positions = references.Read($"{name}.mlm_positions");
+                float[] hidden = RealPositions(references.Read($"{name}.hidden"), c.Lengths, c.Time, width);
+                (float[] Hidden, float[] Pooled, float[] Words, float[] Classes) inference;
+                using (new TensorScope())
+                using (Autograd.NoGrad())
+                {
+                    inference = BertOutputs(model, c, positions, device);
+                }
+
+                worstHidden = MathF.Max(worstHidden, Compared(hidden, RealPositions(inference.Hidden, c.Lengths, c.Time, width), BertTolerance, $"{name}: hidden states"));
+                worstPooled = MathF.Max(worstPooled, Compared(references.Read($"{name}.pooled"), inference.Pooled, BertTolerance, $"{name}: pooled output"));
+                worstWords = MathF.Max(worstWords, Compared(references.Read($"{name}.mlm"), inference.Words, BertTolerance, $"{name}: masked-LM logits"));
+                worstClasses = MathF.Max(worstClasses, Compared(references.Read($"{name}.classes"), inference.Classes, BertTolerance, $"{name}: classification logits"));
+                Check(inference.Words.Length == positions.Length * vocabulary, $"{name}: logits over the whole vocabulary");
+
+                // With the gradient recorded (the blocks' unfused path).
+                using (new TensorScope())
+                {
+                    var recorded = BertOutputs(model, c, positions, device);
+                    worstHidden = MathF.Max(worstHidden, Compared(hidden, RealPositions(recorded.Hidden, c.Lengths, c.Time, width), BertTolerance, $"{name}: hidden states, gradient recorded"));
+                    Compared(references.Read($"{name}.mlm"), recorded.Words, BertTolerance, $"{name}: masked-LM logits, gradient recorded");
+                }
+            }
+
+            Console.WriteLine($"    largest difference from transformers: hidden {worstHidden:E1}, pooled {worstPooled:E1}, masked-LM {worstWords:E1}, classes {worstClasses:E1}");
+
+            // The same checkpoint read as the other two architectures: the same states and heads.
+            var batch = ReadBertCase(references, "batch");
+            float[] batchPositions = references.Read("batch.mlm_positions");
+            foreach (string architecture in new[] { BertPlugin.BertModel, BertPlugin.BertForSequenceClassification })
+            {
+                using var other = LoadBert(folder, device, architecture);
+                Check(other.Architecture == architecture && other.Heads.Count == 3, $"{architecture}: read with the heads the checkpoint holds ({string.Join(", ", other.Heads.Keys)})");
+                using var scope = new TensorScope();
+                using var noGrad = Autograd.NoGrad();
+                var mine = BertOutputs(model, batch, batchPositions, device);
+                var theirs = BertOutputs(other, batch, batchPositions, device);
+                BitsEqual(mine.Hidden, theirs.Hidden, $"{architecture}: the states");
+                BitsEqual(mine.Classes, theirs.Classes, $"{architecture}: the class logits");
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
     }
 
     // ---------------------------------------------------------------- the post-norm block (library)

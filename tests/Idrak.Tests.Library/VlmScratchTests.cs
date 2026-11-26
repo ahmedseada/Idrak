@@ -10,7 +10,7 @@ internal abstract partial class Tests
 {
     internal static string ScratchData(string relative) => TestData($"vlm-scratch/{relative}");
 
-    internal static PretrainedModel LoadScratch(Device device) => PretrainedModel.Load(ScratchData("tiny-idrak-vision"), new PretrainedOptions { Device = device });
+    internal static PretrainedModel LoadScratch(Device device) => PretrainedModel.Load(ScratchData("tiny-idrak-vision"), new PretrainedOptions { Device = device, Families = Idrak.Vision.Plugins.BuiltInVisionFamilies.All });
 
     internal static JsonObject ScratchDescription()
     {

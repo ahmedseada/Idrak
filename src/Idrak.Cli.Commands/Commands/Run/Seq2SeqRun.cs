@@ -113,7 +113,7 @@ internal static class Seq2SeqRun
         PretrainedSeq2SeqModel loaded;
         using (var progress = new ProgressLine(context, $"loading {model} on {device}", unit: ProgressUnit.Elapsed))
         {
-            loaded = PretrainedSeq2SeqModel.Load(folder, new PretrainedEncoderOptions { Device = device });
+            loaded = PretrainedSeq2SeqModel.Load(folder, new PretrainedEncoderOptions { Device = device, Families = Idrak.Text.Plugins.BuiltInFamilies.All });
             progress.Clear();
         }
 

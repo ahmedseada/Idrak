@@ -29,6 +29,12 @@ public interface IPretrainedEncoderFamily
     /// <summary>The architecture name its checkpoints give (config.json's "architectures").</summary>
     string Name { get; }
 
+    /// <summary>
+    /// The names its checkpoints call it by, the family's own: a checkpoint's name is matched against them where it comes in
+    /// (<see cref="IFamilyProvider.EncoderFamilies"/>, walked in order). <see cref="Name"/> by default.
+    /// </summary>
+    IReadOnlyList<string> Names => [Name];
+
     /// <summary>The encoder of the checkpoint (Idrak's <c>SequenceEncoder</c> built from its tensors, or one of the family's own).</summary>
     /// <exception cref="InvalidDataException">A tensor is missing or its shape disagrees with the configuration.</exception>
     ISequenceEncoder Build(PretrainedCheckpoint checkpoint);
@@ -39,7 +45,7 @@ public interface IPretrainedEncoderFamily
     /// </summary>
     IReadOnlyList<EncoderHead> Heads(PretrainedCheckpoint checkpoint, ISequenceEncoder encoder) => [];
 
-    /// <summary>The pooler (a name in <see cref="SequencePoolers"/>) the family's sequence vectors use: "first" by default.</summary>
+    /// <summary>The pooler (a name one of <see cref="SequencePoolers.All"/> states) the family's sequence vectors use: "first" by default.</summary>
     string Pooler(JsonObject config) => SequencePoolers.First;
 }
 
@@ -52,6 +58,12 @@ public interface IPretrainedSeq2SeqFamily
 {
     /// <summary>The architecture name its checkpoints give (config.json's "architectures").</summary>
     string Name { get; }
+
+    /// <summary>
+    /// The names its checkpoints call it by, the family's own: a checkpoint's name is matched against them where it comes in
+    /// (<see cref="IFamilyProvider.Seq2SeqFamilies"/>, walked in order). <see cref="Name"/> by default.
+    /// </summary>
+    IReadOnlyList<string> Names => [Name];
 
     /// <summary>
     /// The model of the checkpoint: Idrak's <c>Seq2SeqNetwork</c> (an <see cref="ISequenceEncoder"/> and a decoder of

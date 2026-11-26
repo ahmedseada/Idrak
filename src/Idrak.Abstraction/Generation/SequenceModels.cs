@@ -66,7 +66,7 @@ public interface ISequencePooler
 /// The names of the library's sequence poolers: "first" (the first position's state), "mean" (the average of each
 /// sequence's states: Idrak.Text's <c>TextEncoder</c> default) and "max" (each feature's largest value over the
 /// sequence). A pooled vector feeds a head or an index trained with it, so a pooler is used whole, never another in its
-/// place. Picking one by its name is not on the new design yet.
+/// place. A name (a family's, an option's) is matched against the poolers' own names where it comes in (<see cref="Named"/>).
 /// </summary>
 public static class SequencePoolers
 {
@@ -78,6 +78,29 @@ public static class SequencePoolers
 
     /// <summary>Each feature's largest value over the sequence: "max".</summary>
     public const string Max = "max";
+
+    /// <summary>The library's poolers, one immutable list in source, each its own class stating its name: first, mean, max.</summary>
+    public static IReadOnlyList<ISequencePooler> All { get; } = Array.AsReadOnly<ISequencePooler>([new FirstPooler(), new MeanPooler(), new MaxPooler()]);
+
+    /// <summary>
+    /// The pooler of <paramref name="poolers"/> (<see cref="All"/> when null) whose own name is <paramref name="name"/> (a
+    /// family's or an option's text): the list walked where the text comes in, each pooler's name compared.
+    /// </summary>
+    /// <exception cref="NotSupportedException">No pooler has the name.</exception>
+    public static ISequencePooler Named(string name, IReadOnlyList<ISequencePooler>? poolers = null)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        poolers ??= All;
+        foreach (var pooler in poolers)
+        {
+            if (string.Equals(pooler.Name, name, StringComparison.Ordinal))
+            {
+                return pooler;
+            }
+        }
+
+        throw new NotSupportedException($"No pooler handed over is named '{name}' ({string.Join(", ", poolers.Select(p => p.Name))}).");
+    }
 
     /// <summary>
     /// The batch, time and width of <paramref name="hidden"/> [batch, time, width], checked against

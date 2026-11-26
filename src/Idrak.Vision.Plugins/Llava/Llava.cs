@@ -15,8 +15,8 @@ namespace Idrak.Vision.Plugins.Llava;
 /// layers, the hidden states of <c>vision_feature_layer</c> (one layer or several, concatenated) with
 /// <c>vision_feature_select_strategy</c> ("default" drops the class token), a two-layer MLP projector, a Llama-style text
 /// decoder read with Idrak.Text.Plugins' text family, image tokens attending causally (the library's causal rule), and
-/// LlavaImageProcessor's preprocessing (resize by the shortest edge, bicubic, center crop, CLIP's mean and std).
-/// Registering it is not on the new design yet.
+/// LlavaImageProcessor's preprocessing (resize by the shortest edge, bicubic, center crop, CLIP's mean and std). Both are
+/// in the package's list (<see cref="BuiltInVisionFamilies"/>).
 /// </summary>
 public static class LlavaPlugin
 {
@@ -24,16 +24,21 @@ public static class LlavaPlugin
     public const string Architecture = "LlavaForConditionalGeneration";
 }
 
-// LLaVA's text decoder: text_config read by Idrak.Text.Plugins' text family of its model_type, under the checkpoint's naming.
+// LLaVA's text decoder: text_config read by the Idrak.Text.Plugins text family that states its model_type, under the
+// checkpoint's naming.
 internal static class LlavaText
 {
     public static readonly (string Text, string Head)[] Layouts = [("language_model.model.", "language_model.lm_head."), ("model.language_model.", "lm_head.")];
 
-    private static readonly Dictionary<string, string> TextFamilies = new(StringComparer.Ordinal)
-    {
-        ["llama"] = Idrak.Text.Plugins.Llama.LlamaPlugin.LlamaForCausalLM, ["mistral"] = Idrak.Text.Plugins.Mistral.MistralPlugin.MistralForCausalLM,
-        ["qwen2"] = Idrak.Text.Plugins.Qwen.QwenPlugin.Qwen2ForCausalLM,
-    };
+    // A text family a LLaVA checkpoint's text_config may name, stating the model types it goes by.
+    private sealed record TextFamily(IReadOnlyList<string> ModelTypes, IPretrainedArchitecture Family);
+
+    // The text families LLaVA's decoder is read by, one fixed list in source, walked where a text_config comes in.
+    private static readonly TextFamily[] TextFamilies =
+    [
+        new(["llama"], Idrak.Text.Plugins.Llama.LlamaArchitectures.Llama()), new(["mistral"], Idrak.Text.Plugins.Mistral.MistralArchitectures.Mistral()),
+        new(["qwen2"], Idrak.Text.Plugins.Qwen.QwenArchitectures.Qwen2()),
+    ];
 
     // transformers' LlamaConfig defaults, for the keys a sparse text_config leaves out (llava-1.5's names only a few).
     private const string LlamaDefaults = """
@@ -41,14 +46,14 @@ internal static class LlavaText
          "hidden_act": "silu", "max_position_embeddings": 2048, "rms_norm_eps": 1e-6, "rope_theta": 10000.0, "tie_word_embeddings": false}
         """;
 
-    public static IPretrainedArchitecture Architecture((string Text, string Head) layout) => new Decoder(layout);
+    public static IPretrainedArchitecture Architecture((string Text, string Head) layout) => new Decoder(layout) { Names = [LlavaPlugin.Architecture] };
 
     private sealed class Decoder((string Text, string Head) layout) : PretrainedArchitecture, ICheckpointFittedArchitecture
     {
         public override DecoderSpec Spec(JsonObject config, List<string> notes)
         {
-            var (family, _) = TextConfig(config);
-            throw new NotSupportedException($"LLaVA's text decoder, the family '{family}' picked by its name, is not on the new design yet.");
+            var (family, text) = TextConfig(config);
+            return family.Spec(text, notes);
         }
 
         public override string? TensorName(string name) => PretrainedFamilies.CommonTensorName(name) switch
@@ -63,16 +68,14 @@ internal static class LlavaText
                 : throw new InvalidDataException("This LLaVA checkpoint has no text decoder under a known name."));
     }
 
-    // The text family's name and its config: text_config, LlamaConfig's defaults for a llama one, and transformers 5's
-    // rope_parameters read as rope_theta and rope_scaling.
-    public static (string Family, JsonObject Text) TextConfig(JsonObject config)
+    // The text family stating text_config's model_type, and its config: text_config, LlamaConfig's defaults for a llama one,
+    // and transformers 5's rope_parameters read as rope_theta and rope_scaling.
+    public static (IPretrainedArchitecture Family, JsonObject Text) TextConfig(JsonObject config)
     {
         var text = config["text_config"] is JsonObject given ? (JsonObject)given.DeepClone() : new JsonObject { ["model_type"] = "llama" };
         string type = (string?)text["model_type"] ?? "llama";
-        if (!TextFamilies.TryGetValue(type, out var family))
-        {
-            throw new NotSupportedException($"LLaVA's text_config model_type '{type}' is not read here ({string.Join(", ", TextFamilies.Keys)}).");
-        }
+        var family = TextFamilies.FirstOrDefault(f => f.ModelTypes.Contains(type, StringComparer.Ordinal))?.Family
+            ?? throw new NotSupportedException($"LLaVA's text_config model_type '{type}' is none of its text families' ({string.Join(", ", TextFamilies.SelectMany(f => f.ModelTypes))}).");
 
         if (type == "llama")
         {

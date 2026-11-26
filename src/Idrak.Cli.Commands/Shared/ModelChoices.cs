@@ -310,7 +310,7 @@ internal static class ModelChoices
                 DeviceLayers = choice.DeviceLayers,
                 ExpertPlacement = choice.MoeExperts,
                 Weights = choice.Weights,
-                Families = Idrak.Text.Plugins.BuiltInFamilies.All,
+                Families = Idrak.Vision.Plugins.BuiltInVisionFamilies.All,                  // the text families and the vision-language ones
                 ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader,
             });
             progress.Clear();

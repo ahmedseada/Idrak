@@ -24,6 +24,12 @@ public interface IVisionFamily
     string Name { get; }
 
     /// <summary>
+    /// The names its checkpoints call it by (config.json's "architectures"), the family's own: a checkpoint's name is matched
+    /// against them where it comes in (<see cref="IFamilyProvider.VisionFamilies"/>, walked in order). <see cref="Name"/> by default.
+    /// </summary>
+    IReadOnlyList<string> Names => [Name];
+
+    /// <summary>
     /// The checkpoint's vision part (configuration, tensors checked, encoder, prompt format, attention rule), or null when
     /// this checkpoint of the family has no vision weights (a note says so).
     /// </summary>

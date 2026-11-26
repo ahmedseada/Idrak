@@ -372,7 +372,7 @@ internal sealed class ServeHost
         var device = _context.Device;
         long before = ComputeResources.GetMemoryUsage(device).InUse;
         var watch = Stopwatch.StartNew();
-        var loaded = PretrainedSeq2SeqModel.Load(model.Folder, new PretrainedEncoderOptions { Device = device });
+        var loaded = PretrainedSeq2SeqModel.Load(model.Folder, new PretrainedEncoderOptions { Device = device, Families = Idrak.Text.Plugins.BuiltInFamilies.All });
         Seq2SeqGenerator generator;
         try
         {

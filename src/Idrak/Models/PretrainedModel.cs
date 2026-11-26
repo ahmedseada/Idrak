@@ -107,6 +107,16 @@ public sealed record CreateOptions
     /// files written with the model's; null or empty for none.
     /// </summary>
     public IReadOnlyDictionary<string, JsonObject>? Parts { get; init; }
+
+    /// <summary>
+    /// The families the architecture's name (and a decoder folder's, and a vision part's) is matched against, walked in
+    /// order, each family's own names compared (Idrak.Text.Plugins' <c>BuiltInFamilies.All</c>, Idrak.Vision.Plugins'
+    /// <c>BuiltInVisionFamilies.All</c>); the made model is loaded through them too. Null: none, and the name is refused.
+    /// </summary>
+    public IFamilyProvider? Families { get; init; }
+
+    /// <summary>The reader of the made folder's own chat template when it is loaded (<see cref="PretrainedOptions.ChatTemplateReader"/>), or null.</summary>
+    public IChatTemplateReader? ChatTemplateReader { get; init; }
 }
 
 /// <summary>
@@ -398,7 +408,7 @@ public sealed class PretrainedModel : IDisposable
     /// a .gguf file or the folder prepared from one (read through <paramref name="families"/>' GGUF mappings), else a model
     /// folder of safetensors.
     /// </summary>
-    private static ICheckpointFormat FormatOf(string path, IFamilyProvider? families)
+    internal static ICheckpointFormat FormatOf(string path, IFamilyProvider? families)
     {
         foreach (var format in (ReadOnlySpan<ICheckpointFormat>)[new GgufCheckpointFormat(families), SafeTensorsCheckpointFormat.Format])
         {
@@ -414,8 +424,8 @@ public sealed class PretrainedModel : IDisposable
     /// <summary>
     /// Reads the model in <paramref name="folder"/> (a model folder, a .gguf file). Every weight is read from disk one
     /// tensor at a time, so the model is never held twice. Its architecture is <see cref="PretrainedOptions.Family"/>, or
-    /// the family of <see cref="PretrainedOptions.Families"/> that states the name config.json gives; picking the folder's
-    /// checkpoint format and its vision family by name is not on the new design yet.
+    /// the family of <see cref="PretrainedOptions.Families"/> that states the name config.json gives; a vision-language
+    /// checkpoint's vision part is read by the vision family of the same list stating that name.
     /// </summary>
     public static PretrainedModel Load(string folder, PretrainedOptions? options = null)
     {
@@ -433,8 +443,9 @@ public sealed class PretrainedModel : IDisposable
         string name = options.Architecture ?? (string?)config["architectures"]?[0]
             ?? throw new InvalidDataException("config.json names no architecture; pass PretrainedOptions.Architecture.");
         var architecture = options.Family ?? FamilyNamed(options.Families, name);
-        // A vision-language checkpoint (one with a vision_config) is read by its own vision family, by the same name.
-        var visionFamily = config["vision_config"] is JsonObject ? NotOnTheNewDesign.Yet<IVisionFamily>($"Picking the vision family '{name}' by its name") : null;
+        // A vision-language checkpoint (one with a vision_config) is read by its own vision family, the one of the families
+        // handed over that states the same name.
+        var visionFamily = config["vision_config"] is JsonObject ? EncoderCheckpoints.Named(options.Families?.VisionFamilies ?? [], f => f.Names, name, "vision") : null;
 
         using var reader = format.Open(folder);
         if (architecture is ICheckpointFittedArchitecture fitted)
@@ -602,6 +613,7 @@ public sealed class PretrainedModel : IDisposable
         }
 
         model._loadBytes = reader.BytesRead;
+        model._format = format;
         model.Placement = plan;
         model.ExpertPlacement = expertPlan;
         model._lazyReader = lazyReader;
@@ -647,7 +659,7 @@ public sealed class PretrainedModel : IDisposable
     /// template and special-token files of <paramref name="files"/>), then loaded from there, so it is a model like any
     /// other: it runs, chats, serves, tunes and trains (plan 19).
     /// </summary>
-    /// <exception cref="NotSupportedException">Picking the architecture by its name is not on the new design yet; or it cannot be written from a spec, or cannot hold this spec.</exception>
+    /// <exception cref="NotSupportedException">No family of <see cref="CreateOptions.Families"/> states the architecture's name; or it cannot be written from a spec, or cannot hold this spec.</exception>
     /// <exception cref="ArgumentException">The tokenizer is larger than the vocabulary, or a named token is not in it.</exception>
     /// <exception cref="IOException">The folder holds files and <see cref="CreateOptions.Overwrite"/> is off.</exception>
     public static PretrainedModel Create(string folder, DecoderSpec spec, string architecture, ModelFiles files, CreateOptions? options = null)
@@ -656,7 +668,7 @@ public sealed class PretrainedModel : IDisposable
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentNullException.ThrowIfNull(files);
         options ??= new CreateOptions();
-        var family = NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"Picking the architecture '{architecture}' by its name");
+        var family = FamilyNamed(options.Families, architecture);
         var write = family is IConfigWritingArchitecture writing ? writing : throw new NotSupportedException(
             $"Architecture '{architecture}' cannot be written from a spec (it reads checkpoints only); choose one that can.");
         var tokenizer = files.Tokenizer;
@@ -696,7 +708,7 @@ public sealed class PretrainedModel : IDisposable
         CreatedVision? vision = null;
         if (options.Vision is { } description)
         {
-            var visionFamily = NotOnTheNewDesign.Yet<IVisionFamily>($"Picking the vision family '{architecture}' by its name");
+            var visionFamily = EncoderCheckpoints.Named(options.Families?.VisionFamilies ?? [], f => f.Names, architecture, "vision");
             vision = visionFamily.Create(description, spec.Dim, tokenizer, options.Seed);
             foreach (var (key, value) in vision.Config)
             {
@@ -721,11 +733,11 @@ public sealed class PretrainedModel : IDisposable
         if (options.Decoder is { } decoderFolder)
         {
             // The decoder of a model that exists (its spec the new one's but for the context length), read as Load reads it.
-            var format = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {decoderFolder}");
+            var format = FormatOf(decoderFolder, options.Families);
             decoderFolder = format.Prepare(decoderFolder);
             var decoderConfig = JsonNode.Parse(File.ReadAllText(Path.Combine(decoderFolder, "config.json")))!.AsObject();
             string decoderArchitecture = (string?)decoderConfig["architectures"]?[0] ?? throw new InvalidDataException($"{decoderFolder}/config.json names no architecture.");
-            var decoderFamily = NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"Picking the architecture '{decoderArchitecture}' by its name");
+            var decoderFamily = FamilyNamed(options.Families, decoderArchitecture);
             var decoderSpec = decoderFamily.Spec(decoderConfig, []);
             var mine = (spec with { MaxPositions = 0, Dropout = 0 }).ToJson();
             var theirs = (decoderSpec with { MaxPositions = 0, Dropout = 0 }).ToJson();
@@ -792,7 +804,7 @@ public sealed class PretrainedModel : IDisposable
             File.Copy(source, Path.Combine(folder, name), overwrite: true);
         }
 
-        return Load(folder, new PretrainedOptions { Device = options.Device });
+        return Load(folder, new PretrainedOptions { Device = options.Device, Families = options.Families, ChatTemplateReader = options.ChatTemplateReader });
     }
 
     /// <summary>
@@ -819,6 +831,12 @@ public sealed class PretrainedModel : IDisposable
 
     /// <summary>Where the time of <see cref="Load"/> went, by stage (read, convert, upload, adapter merge, tokenizer, …).</summary>
     public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default);
+
+    // The format the model was loaded by (its folder opened again through it).
+    private ICheckpointFormat? _format;
+
+    // The format the folder is opened by again: the one it was loaded by, else the library's that opens it.
+    private ICheckpointFormat Format => _format ??= FormatOf(Folder, null);
 
     // The trained vision tensors (a vision part's fine-tuned modules), by their checkpoint names, in the checkpoint's layout.
     private readonly Dictionary<string, (int[] Shape, float[] Values)> _vision = new(StringComparer.Ordinal);
@@ -878,7 +896,7 @@ public sealed class PretrainedModel : IDisposable
         }
 
         var part = NotOnTheNewDesign.Yet<IModelPart>($"Picking the model part '{kind}' by its name");
-        var format = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {Folder}");
+        var format = Format;
         using var tensors = format.Open(Folder);
         string architecture = (string?)Config["architectures"]?[0] ?? throw new InvalidDataException($"{Folder}/config.json names no architecture.");
         return part.Open(new ModelPartCheckpoint(architecture, Config, tensors, Folder, () => format.Open(Folder), []),
@@ -1321,7 +1339,7 @@ public sealed class PretrainedModel : IDisposable
     /// </summary>
     public void SaveHuggingFace(string folder, IReadOnlyDictionary<string, Tensor>? vision, Func<StoredTensor, float[]>? values)
     {
-        using var source = Vision is null && _partTensors.Count == 0 ? null : NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {Folder}").Open(Folder);
+        using var source = Vision is null && _partTensors.Count == 0 ? null : Format.Open(Folder);
         var visionTensors = Vision is null ? [] : Vision.StoredTensors.Order(StringComparer.Ordinal).Select(name =>
             vision is not null && vision.TryGetValue(name, out var trained) ? (name, [.. trained.Shape], (Func<float[]>)trained.ToArray)
             : _vision.TryGetValue(name, out var kept) ? (name, kept.Shape, () => kept.Values)

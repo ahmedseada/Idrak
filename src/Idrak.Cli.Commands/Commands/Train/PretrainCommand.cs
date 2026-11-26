@@ -233,7 +233,7 @@ internal sealed class PretrainCommand : Command
         PretrainedModel model;
         // A rank holding part of the model (a pipeline stage, a parameters shard) reads only its own tensors (plan 23, C8b).
         bool part = rank?.Context.Options is { OwnTensorsOnly: true } cluster && (cluster.Pipelined || cluster.Shard == ShardMode.Parameters);
-        model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = device, Deferred = part, Families = Idrak.Text.Plugins.BuiltInFamilies.All, ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader });
+        model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = device, Deferred = part, Families = Idrak.Vision.Plugins.BuiltInVisionFamilies.All, ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader });
 
         using (model)
         {
@@ -245,7 +245,7 @@ internal sealed class PretrainCommand : Command
 
             // A teacher (not kept in checkpoints: given again on resume).
             using var teacherModel = context.Option("--teacher") is { } teacherPath
-                ? PretrainedModel.Load(teacherPath, new PretrainedOptions { Device = context.Option("--teacher-device") is { } td ? Idrak.Abstraction.Device.Parse(td) : device, Families = Idrak.Text.Plugins.BuiltInFamilies.All, ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader })
+                ? PretrainedModel.Load(teacherPath, new PretrainedOptions { Device = context.Option("--teacher-device") is { } td ? Idrak.Abstraction.Device.Parse(td) : device, Families = Idrak.Vision.Plugins.BuiltInVisionFamilies.All, ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader })
                 : null;
             using var teacher = teacherModel is null ? null : DistillationTeachers.FromModel(teacherModel, context.IntOption("--top-k", 0), options.BatchTokens, options.Images);
             if (teacher is not null)

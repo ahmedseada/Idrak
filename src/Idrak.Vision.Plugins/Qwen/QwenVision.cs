@@ -12,7 +12,7 @@ namespace Idrak.Vision.Plugins.Qwen;
 /// The Qwen-VL vision-language families as a plug-in of Idrak's contracts (plan 16): the library knows no family; this
 /// plug-in brings Qwen2.5-VL (<c>Qwen2_5_VLForConditionalGeneration</c>) and Qwen2-VL
 /// (<c>Qwen2VLForConditionalGeneration</c>): for each, its vision part (<see cref="QwenVisionFamily"/>) and its text
-/// decoder (<see cref="QwenTextDecoder"/>), nothing of Qwen in the library. Registering them is not on the new design yet.
+/// decoder (<see cref="QwenTextDecoder"/>), nothing of Qwen in the library. Both are in the package's list (<see cref="BuiltInVisionFamilies"/>).
 /// </summary>
 /// <remarks>
 /// What the library gives it: the image tokens placed on three rotary axes by the library's
