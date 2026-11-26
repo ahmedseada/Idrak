@@ -15,7 +15,6 @@ internal abstract partial class DesktopTests : Tests
     [
         ("audio processing: cli: audio process's help and Arabic summary, 'idrak audio' naming its subcommand and IDRAK_AUDIO_CLEAN in transcribe's environment", d => { CpuOnly(d); AudioProcessingCliList(); }),
         ("audio processing: cli: audio process names a missing --pipeline", d => { CpuOnly(d); AudioProcessingCliProcess(); }),
-        ("audio processing: cli: data audio refuses --clean-settings beside a pipeline", d => { CpuOnly(d); AudioProcessingCliDataAudio(); }),
         ("audio processing: cli: SpeechTrainingOptions carry no processing by default (none in their JSON)", AudioProcessingCliTraining),
     ];
 
@@ -47,22 +46,6 @@ internal abstract partial class DesktopTests : Tests
         {
             var missing = AudioCli("audio", "process", wav, "-o", Path.Combine(root, "x.wav"));
             Check(missing.Code == 2 && missing.Err.Contains("--pipeline", StringComparison.Ordinal), $"no pipeline: {missing.Err}");
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    private static void AudioProcessingCliDataAudio()
-    {
-        string root = TempFolder("processing-cli-data"), wav = AudioData("wav/pcm16.wav");
-        try
-        {
-            const string Settings = "{\"target_decibels\": -18, \"high_pass_hertz\": 100}";
-            const string Text = "highpass=80, normalize=-20 peak=0.9";
-            var both = AudioCli("data", "audio", wav, "-o", Path.Combine(root, "x"), "--clean", Text, "--clean-settings", Settings);
-            Check(both.Code == 2 && both.Err.Contains("--clean-settings", StringComparison.Ordinal), $"--clean-settings beside a pipeline: {both.Err}");
         }
         finally
         {

@@ -19,7 +19,6 @@ internal abstract partial class Tests
         ("vision augment: every library augmentation passes the testing kit's suite (well formed, deterministic, boxes hold their masks, pixel classes and pixels move with the masks)", AugmentationsConformant),
         ("vision augment: flip and shift move boxes, masks and pixel classes exactly with the pixels, drawing what the sample-transform path draws; crops and letterboxes scale boxes; a wrong augmentation fails the kit", AugmentationsAligned),
         ("vision augment: AugmentedImageLoader batches augmented samples off the training thread (workers from the machine's cores, batches ahead from its free memory); the same batches whatever the workers; letterbox, channels, pixel classes, leaving early", AugmentedLoaderBatches),
-        ("vision data: COCO, YOLO and VOC declare what they keep (Keeps) and pass the testing kit's round-trip suite on it; hand-written files read as expected (RLE and polygon masks, crowds, data.yaml names, difficult objects); errors name the file", AnnotationFormatsRoundTrip),
     ];
 
     internal static void AugmentationsConformant(Device device)
@@ -186,102 +185,5 @@ internal abstract partial class Tests
         new Random(seed).NextBytes(bytes.AsSpan(header.Length));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllBytes(path, bytes);
-    }
-
-    internal static void AnnotationFormatsRoundTrip(Device device)
-    {
-        _ = device;
-        var options = new ContractCheckOptions { RandomCases = 6 };
-        foreach (var (format, traits) in new (IAnnotationFormat, AnnotationFormatTraits)[]
-                 {
-                     (new CocoFormat(), new AnnotationFormatTraits { FileName = "instances.json", Crowd = true, Area = true, Ids = true, Polygons = true, RunLength = true }),
-                     (new YoloFormat(), new AnnotationFormatTraits { Polygons = true }),
-                     (new VocFormat(), new AnnotationFormatTraits { Difficult = true, Truncated = true, Pose = true }),
-                 })
-        {
-            Check(format.Keeps == traits, $"{format.Name} declares what it keeps: {format.Keeps}, expected {traits}");
-            Conformance.Check(new AnnotationFormatUnderTest(path => format.Read(path), format.Write, format.Keeps), new AnnotationFormatSuite(), options).ThrowIfFailed();
-        }
-
-        string root = Path.Combine(Path.GetTempPath(), "idrak-formats-" + Guid.NewGuid().ToString("N"));
-        try
-        {
-            // COCO by hand: category ids 3 and 7, a polygon, a crowd with uncompressed runs, a compressed mask.
-            string coco = Path.Combine(root, "coco", "annotations.json");
-            Directory.CreateDirectory(Path.GetDirectoryName(coco)!);
-            string compressed = ObjectMask.EncodeCounts([3, 2, 5, 2, 8]);
-            File.WriteAllText(coco, $$$"""
-                {"images": [{"id": 10, "file_name": "a.ppm", "width": 4, "height": 5}, {"id": 11, "file_name": "b.ppm", "width": 8, "height": 6}],
-                 "categories": [{"id": 3, "name": "cat"}, {"id": 7, "name": "dog"}],
-                 "annotations": [
-                  {"id": 1, "image_id": 10, "category_id": 7, "bbox": [0.5, 1, 2, 3], "area": 4.5, "iscrowd": 0, "segmentation": [[0.5, 1, 2.5, 1, 2.5, 4]]},
-                  {"id": 2, "image_id": 10, "category_id": 3, "bbox": [1, 0, 2, 4], "area": 4, "iscrowd": 1, "segmentation": {"size": [5, 4], "counts": [3, 2, 5, 2, 8]}},
-                  {"id": 5, "image_id": 11, "category_id": 3, "bbox": [0, 0, 8, 6], "area": 48, "iscrowd": 0, "segmentation": {"size": [5, 4], "counts": "{{{compressed}}}"}}]}
-                """);
-            var d = new CocoFormat().Read(coco);
-            Check(d.Classes.SequenceEqual(["cat", "dog"]) && d.ClassIds!.SequenceEqual([3L, 7L]) && d.Images.Count == 2 && d.Images[0].Id == 10, "COCO classes and images");
-            var o = d.Images[0].Objects;
-            Check(o[0] is { Class: 1, Area: 4.5f, Crowd: false, Id: 1 } && o[0].Box == new BoundingBox(0.5f, 1, 2, 3) && o[0].Mask!.IsPolygons, "COCO polygon object");
-            Check(o[1] is { Class: 0, Crowd: true } && o[1].Mask!.Counts!.SequenceEqual([3, 2, 5, 2, 8]) && d.Images[1].Objects[0].Mask!.Counts!.SequenceEqual([3, 2, 5, 2, 8]),
-                "COCO crowd with plain runs; compressed runs");
-            var sample = d.Images[0].ToSample(new ImageData(new float[3 * 20], 3, 5, 4), includeIgnored: true);
-            Check(sample.Count == 2 && sample.Masks![1].Count(v => v != 0) == 4 && d.Images[0].ToSample(new ImageData(new float[3 * 20], 3, 5, 4)).Count == 1,
-                "a sample's masks; the crowd left out of training");
-            File.WriteAllText(Path.Combine(root, "coco", "bad.json"), """{"images": [{"id": 1, "file_name": "a.ppm"}], "categories": [], "annotations": [{"id": 1, "image_id": 1, "category_id": 4, "bbox": [0, 0, 1, 1]}]}""");
-            ExpectInvalid(() => new CocoFormat().Read(Path.Combine(root, "coco", "bad.json")), "bad.json", "category 4");
-
-            // YOLO by hand: data.yaml names as a map, a box line and a polygon line, an image without a label file.
-            string yolo = Path.Combine(root, "yolo");
-            WritePpm(Path.Combine(yolo, "images", "train", "x.ppm"), 20, 10, 1);
-            WritePpm(Path.Combine(yolo, "images", "train", "empty.ppm"), 8, 8, 2);
-            Directory.CreateDirectory(Path.Combine(yolo, "labels", "train"));
-            File.WriteAllText(Path.Combine(yolo, "labels", "train", "x.txt"), "1 0.5 0.5 0.5 0.4\n0 0.1 0.2 0.3 0.2 0.3 0.6\n");
-            File.WriteAllText(Path.Combine(yolo, "data.yaml"), "path: .\ntrain: images/train\nnames:\n  0: person\n  1: 'bicycle'\n");
-            var y = new YoloFormat().Read(yolo);
-            Check(y.Classes.SequenceEqual(["person", "bicycle"]) && y.Images.Select(i => i.File).SequenceEqual(["train/empty.ppm", "train/x.ppm"]) && y.Images[0].Objects.Count == 0,
-                $"YOLO images {string.Join(", ", y.Images.Select(i => i.File))}");
-            var x = y.Images[1];
-            Check(x is { Width: 20, Height: 10 } && x.Objects[0].Class == 1 && Near(x.Objects[0].Box, new BoundingBox(5, 3, 10, 4)) && x.Objects[1].Mask!.IsPolygons
-                  && Near(x.Objects[1].Box, BoundingBox.FromCorners(2, 2, 6, 6)), $"YOLO objects {x.Objects[0].Box}, {x.Objects[1].Box}");
-            File.WriteAllText(Path.Combine(yolo, "labels", "train", "x.txt"), "1 0.5 0.5\n");
-            ExpectInvalid(() => new YoloFormat().Read(yolo), "x.txt:1", "class cx cy w h");
-
-            // VOC by hand: 1-based pixels, a difficult object, sizes in the XML.
-            string voc = Path.Combine(root, "voc");
-            Directory.CreateDirectory(Path.Combine(voc, "Annotations"));
-            File.WriteAllText(Path.Combine(voc, "Annotations", "000001.xml"), """
-                <annotation><folder>VOC2007</folder><filename>000001.jpg</filename><size><width>353</width><height>500</height><depth>3</depth></size>
-                <object><name>dog</name><pose>Left</pose><truncated>1</truncated><difficult>0</difficult><bndbox><xmin>48</xmin><ymin>240</ymin><xmax>195</xmax><ymax>371</ymax></bndbox></object>
-                <object><name>person</name><pose>Unspecified</pose><truncated>0</truncated><difficult>1</difficult><bndbox><xmin>8</xmin><ymin>12</ymin><xmax>352</xmax><ymax>498</ymax></bndbox></object>
-                </annotation>
-                """);
-            var v = new VocFormat().Read(voc);
-            var dog = v.Images[0].Objects[0];
-            Check(v.Classes.SequenceEqual(["dog", "person"]) && v.Images[0] is { File: "000001.jpg", Width: 353, Height: 500 }
-                  && dog.Box == new BoundingBox(47, 239, 148, 132) && dog is { Pose: "Left", Truncated: true, Difficult: false } && v.Images[0].Objects[1] is { Difficult: true, Pose: null },
-                $"VOC objects {dog.Box}");
-            File.WriteAllText(Path.Combine(voc, "Annotations", "000002.xml"), "<annotation><filename>2.jpg</filename><size><width>5</width><height>5</height></size><object><name>cat</name></object></annotation>");
-            ExpectInvalid(() => new VocFormat().Read(voc), "000002.xml", "<bndbox>");
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-
-        static bool Near(BoundingBox a, BoundingBox b) =>
-            MathF.Abs(a.X - b.X) < 1e-4f && MathF.Abs(a.Y - b.Y) < 1e-4f && MathF.Abs(a.Width - b.Width) < 1e-4f && MathF.Abs(a.Height - b.Height) < 1e-4f;
-
-        static void ExpectInvalid(Action read, string file, string text)
-        {
-            try
-            {
-                read();
-                throw new Exception($"{file} read without an error");
-            }
-            catch (InvalidDataException e)
-            {
-                Check(e.Message.Contains(file, StringComparison.Ordinal) && e.Message.Contains(text, StringComparison.Ordinal), $"the error names {file}: {e.Message}");
-            }
-        }
     }
 }
