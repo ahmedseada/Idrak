@@ -14,11 +14,9 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] TokenizerGroup =
     [
         ("tokenizers: every BPE fixture loads through PretrainedTokenizers.Load (and BpeTokenizer.Load) to the ids, refusals and text BpeTokenizer.Load gave before the registry (tokenizers/bpe-baseline.json)", TokenizersBpeBaseline),
-        ("tokenizers: the model registry names BPE, builds it from a definition, refuses an unknown model type naming the registered ones and TokenizerModels.Register, and an app's model type is built and unregistered", TokenizersModelRegistry),
-        ("tokenizers: the readers find tokenizer.json in a folder and as a file, a list vocabulary is read as pieces and scores, Format and IDRAK_TOKENIZER_FORMAT pick the reader, and a folder without a tokenizer names the readers", TokenizersFileReaders),
+        ("tokenizers: the tokenizer.json reader reads a list vocabulary as pieces and scores, the model's other fields kept in its JSON", TokenizersFileReaders),
         ("tokenizers: the decoded text's spaces: a folder whose tokenizer_config.json sets clean_up_tokenization_spaces takes out the space before punctuation and English contractions as transformers does (each replacement in its order); CleanUpSpaces and IDRAK_TOKENIZER_CLEANUP override it, a bad value refused naming the variable; without the setting nothing is taken out", TokenizersCleanUpSpaces),
         ("tokenizers: a tokenizer.json that names no model type (written before tokenizers did: t5-small's, many BERT folders') is read as Hugging Face tokenizers reads it, from what its model holds (merges BPE, [piece, score] pairs Unigram, WordPiece's settings WordPiece, any other vocabulary WordLevel), to the ids of the same file naming it", TokenizersUntypedModel),
-        ("tokenizers: an app's model overriding BPE is guarded: under FallBack one that fails to build or to encode (a text, a range, a batch, padded as the built-in pads it) is answered by the built-in, under Throw its failure reaches the caller", TokenizersGuardedModel),
         ("tokenizers: the piece cache is a setting (PieceCacheLimit, IDRAK_TOKENIZER_CACHE; 0 caches nothing and gives the same ids), a bad value is refused naming it, and PretrainedOptions carries the settings", TokenizersPieceCache),
         ("tokenizers: the built-in BPE passes the pretrained tokenizer suite (ranges, tokens by name, tokenizer.json naming the model) and a saved tokenizer loads back to the same ids", TokenizersPretrainedSuite),
         ("tokenizers: bpe: EncodeRange into a reused list allocates 0 bytes once warm on every corpus line (SentencePiece-style from tokenizer.json and tokenizer.model, byte level, with the piece cache and without it)", TokenizersBpeAllocatesNothing),
@@ -366,51 +364,10 @@ internal abstract partial class Tests
         return (Convert.ToHexStringLower(ids.GetHashAndReset()), Convert.ToHexStringLower(decoded.GetHashAndReset()));
     }
 
-    internal static void TokenizersModelRegistry(Device device)
-    {
-        Check(TokenizerModels.Names.Contains(TokenizerModels.Bpe) && TokenizerModels.Origin(TokenizerModels.Bpe) == Overrides.Library,
-            $"the library registers BPE (registered: {string.Join(", ", TokenizerModels.Names)})");
-        string folder = PretrainData("tokenizer");
-        var definition = PretrainedTokenizers.Read(folder);
-        Check(definition.ModelType == TokenizerModels.Bpe && definition.Vocabulary is { Count: > 0 } && definition.Merges is { Length: > 0 } && definition.Pieces is null,
-            "a BPE tokenizer.json reads to its vocabulary object and merges");
-        Check(definition.Json["model"]?["vocab"] is null && definition.Json["model"]?["merges"] is null, "the definition's JSON leaves the big tables out");
-        var built = TokenizerModels.Create(definition);
-        Check(built.Encode("hello world").SequenceEqual(BpeTokenizer.Load(folder).Encode("hello world")), "the registry's BPE encodes as BpeTokenizer.Load's");
-
-        var unknown = new TokenizerDefinition { Source = "test", Json = new JsonObject { ["model"] = new JsonObject { ["type"] = "Imaginary" } } };
-        Expect<NotSupportedException>(() => TokenizerModels.Create(unknown), "Tokenizer model 'Imaginary' is not registered (registered: ", "an unknown model type");
-        Expect<NotSupportedException>(() => TokenizerModels.Create(unknown), "add it with TokenizerModels.Register", "the hint to register one");
-        Expect<InvalidDataException>(() => TokenizerModels.Create(new TokenizerDefinition { Source = "untyped", Json = [] }), "names no model type", "a definition without a model type");
-        Expect<NotSupportedException>(() => BpeTokenizer.FromJson(new JsonObject { ["model"] = new JsonObject { ["type"] = "Imaginary", ["vocab"] = new JsonObject() } }),
-            "PretrainedTokenizers.Load", "BpeTokenizer pointing to the loader for other model types");
-
-        // An app's model type: built for files naming it, gone when unregistered.
-        TokenizerModels.Register(TestKinds.TokenizerModel("Imaginary", (d, o) => BpeTokenizer.Load(folder)));
-        try
-        {
-            Check(TokenizerModels.Origin("Imaginary") is { } origin && origin != Overrides.Library, "the app's model type is the app's");
-            Check(TokenizerModels.Create(unknown).Encode("hello world").Count > 0, "the app's model type is built");
-        }
-        finally
-        {
-            TokenizerModels.Unregister("Imaginary");
-        }
-
-        Check(!TokenizerModels.Names.Contains("Imaginary") && TokenizerModels.Find("Imaginary") is null, "unregistering leaves the registry as found");
-        Check(!TokenizerModels.Unregister(TokenizerModels.Bpe), "the built-in BPE cannot be unregistered");
-    }
-
     internal static void TokenizersFileReaders(Device device)
     {
-        Check(TokenizerFiles.Names.FirstOrDefault() == TokenizerFiles.TokenizerJson, $"tokenizer.json is the first reader (readers: {string.Join(", ", TokenizerFiles.Names)})");
-        string folder = PretrainData("tokenizer");
-        string file = Path.Combine(folder, "tokenizer.json");
-        Check(PretrainedTokenizers.Find(folder) is { } inFolder && inFolder.File == file && inFolder.Reader.Name == TokenizerFiles.TokenizerJson, "a folder's tokenizer.json is found");
-        Check(PretrainedTokenizers.Find(file) is { } asFile && asFile.File == file, "a tokenizer.json given as a file is found");
-
+        _ = device;
         var temporary = Directory.CreateTempSubdirectory("idrak-tokenizers-");
-        string? previous = Environment.GetEnvironmentVariable(TokenizerOptions.FormatVariable);
         try
         {
             // A Unigram tokenizer.json: the list vocabulary becomes pieces and scores.
@@ -419,26 +376,13 @@ internal abstract partial class Tests
                 {"added_tokens": [], "normalizer": null, "pre_tokenizer": null, "post_processor": null, "decoder": null,
                  "model": {"type": "Unigram", "unk_id": 0, "vocab": [["<unk>", 0.0], ["▁a", -1.5], ["b", -2.25]], "byte_fallback": false}}
                 """);
-            var definition = PretrainedTokenizers.Read(unigram);
+            var definition = new TokenizerJsonReader().Read(unigram, new TokenizerOptions());
             Check(definition.ModelType == "Unigram" && definition.Vocabulary is null && definition.Pieces is { Count: 3 } pieces
                   && pieces[1] == ("▁a", -1.5) && pieces[2] == ("b", -2.25), "a list vocabulary reads to pieces and scores in id order");
             Check((int?)definition.Json["model"]?["unk_id"] == 0, "the model's other fields stay in its JSON");
-
-            string empty = Directory.CreateDirectory(Path.Combine(temporary.FullName, "empty")).FullName;
-            Check(PretrainedTokenizers.TryLoad(empty) is null && !PretrainedTokenizers.Exists(empty), "a folder without a tokenizer has none");
-            Expect<FileNotFoundException>(() => PretrainedTokenizers.Load(empty), "No tokenizer file at", "a folder without a tokenizer");
-            Expect<FileNotFoundException>(() => PretrainedTokenizers.Load(empty), "readers: tokenizer.json", "the readers it looked with");
-
-            Check(PretrainedTokenizers.Find(folder, new TokenizerOptions { Format = "TOKENIZER.JSON" }) is not null, "Format names a reader, ignoring case");
-            Expect<NotSupportedException>(() => PretrainedTokenizers.Find(folder, new TokenizerOptions { Format = "vocab.bin" }),
-                "Tokenizer file reader 'vocab.bin' is not registered", "an unknown Format");
-            Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, "vocab.bin");
-            Expect<NotSupportedException>(() => PretrainedTokenizers.Find(folder), "'vocab.bin' is not registered", "IDRAK_TOKENIZER_FORMAT when no Format is set");
-            Check(PretrainedTokenizers.Find(folder, new TokenizerOptions { Format = TokenizerFiles.TokenizerJson }) is not null, "Format wins over the variable");
         }
         finally
         {
-            Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, previous);
             temporary.Delete(recursive: true);
         }
     }
@@ -512,70 +456,6 @@ internal abstract partial class Tests
         {
             temporary.Delete(recursive: true);
         }
-    }
-
-    internal static void TokenizersGuardedModel(Device device)
-    {
-        string folder = PretrainData("tokenizer");
-        var expected = BpeTokenizer.Load(folder).Encode("guarded models answer");
-        try
-        {
-            TokenizerModels.Register(TestKinds.TokenizerModel(TokenizerModels.Bpe, (d, o) => throw new InvalidOperationException("the app's model cannot be built")));
-            Expect<InvalidOperationException>(() => PretrainedTokenizers.Load(folder), "cannot be built", "under Throw, the app's failure");
-            TokenizerModels.SetPolicy(TokenizerModels.Bpe, SlotPolicy.FallBack);
-            Check(PretrainedTokenizers.Load(folder).Encode("guarded models answer").SequenceEqual(expected), "under FallBack, the built-in builds the tokenizer");
-
-            TokenizerModels.Register(TestKinds.TokenizerModel(TokenizerModels.Bpe, (d, o) => new FailingEncoder(BpeTokenizer.FromDefinition(d, o))));
-            var tokenizer = PretrainedTokenizers.Load(folder);
-            Check(tokenizer.Encode("guarded models answer").SequenceEqual(expected), "under FallBack, the built-in answers an encode that throws");
-            var ranged = new List<int>();
-            tokenizer.EncodeRange("guarded models answer", 0, 21, ranged);
-            Check(ranged.SequenceEqual(expected), "and a range that throws");
-            var batch = tokenizer.EncodeBatch(["guarded", "guarded models answer"], null,
-                new TokenizerEncodeOptions { AddSpecialTokens = false, Padding = "longest", PadId = 0 });
-            Check(batch.Count == 2 && batch[1].Ids.SequenceEqual(expected) && batch[0].Count == batch[1].Count && batch[0].AttentionMask.Sum() < batch[0].Count,
-                "and a batch that throws, through the built-in's own batch encode (padded to its longest)");
-        }
-        finally
-        {
-            TokenizerModels.SetPolicy(TokenizerModels.Bpe, SlotPolicy.Throw);
-            TokenizerModels.Unregister(TokenizerModels.Bpe);
-        }
-
-        Check(TokenizerModels.Origin(TokenizerModels.Bpe) == Overrides.Library, "the built-in BPE is back");
-    }
-
-    // A model whose encodes fail (its tokens, decodes and files are the BPE model's).
-    internal sealed class FailingEncoder(IPretrainedTokenizer inner) : IPretrainedTokenizer
-    {
-        public string Model => inner.Model;
-
-        public int VocabularySize => inner.VocabularySize;
-
-        public IReadOnlyList<int> Encode(string text) => throw new InvalidOperationException("the app's encode fails");
-
-        public void EncodeRange(string text, int start, int length, List<int> ids) => throw new InvalidOperationException("the app's range fails");
-
-        public string Decode(IEnumerable<int> ids) => inner.Decode(ids);
-
-        public TokenizerEncoding Encode(string text, string? pair, TokenizerEncodeOptions options) => throw new InvalidOperationException("the app's encode fails");
-
-        public IReadOnlyList<TokenizerEncoding> EncodeBatch(IReadOnlyList<string> texts, IReadOnlyList<string>? pairs, TokenizerEncodeOptions options) =>
-            throw new InvalidOperationException("the app's encode fails");
-
-        public string TokenOf(int id) => inner.TokenOf(id);
-
-        public int? IdOf(string token) => inner.IdOf(token);
-
-        public bool IsSpecial(int id) => inner.IsSpecial(id);
-
-        public void PadVocabulary(int size) => inner.PadVocabulary(size);
-
-        public JsonObject ToJson() => inner.ToJson();
-
-        public void WriteTo(Stream stream) => inner.WriteTo(stream);
-
-        public void Save(string path) => inner.Save(path);
     }
 
     internal static void TokenizersPieceCache(Device device)

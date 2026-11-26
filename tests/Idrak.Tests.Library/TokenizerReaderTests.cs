@@ -21,7 +21,7 @@ internal abstract partial class Tests
         ("tokenizers: trie: each fixture's precompiled charsmap reads to the entries an independent Python reader decodes (count, SHA-256) and common-prefix search at every byte of every corpus line equals a brute-force scan", TrieReadsCharsmaps),
         ("tokenizers: trie: a trie built from seeded random keys (one past 2^21 units, so offsets take the far form) and from each fixture's pieces answers exact and common-prefix searches as a brute-force scan; bad keys are refused", TrieBuiltFromKeys),
         ("tokenizers: trie: common-prefix and exact search allocate nothing once warm, on a read and on a built trie", TrieSearchAllocatesNothing),
-        ("tokenizers: sentencepiece: the reader is registered after tokenizer.json; a folder with both reads tokenizer.json unless Format or IDRAK_TOKENIZER_FORMAT names sentencepiece; it finds tokenizer.model, spiece.model, sentencepiece.bpe.model in that order, and a .model file itself", SentencePieceReaderFinds),
+        ("tokenizers: sentencepiece: the reader finds tokenizer.model, spiece.model, sentencepiece.bpe.model in that order, and a .model file itself (a .json file not), and reads a folder's model and a file's", SentencePieceReaderFinds),
         ("tokenizers: sentencepiece: each fixture's tokenizer.model reads to its tokenizer.json's model: pieces and scores bit for bit, ids, added tokens, unknown and byte fallback, and (bpe) the vocabulary and every merge in order", SentencePieceDefinitionsMatchJson),
         ("tokenizers: sentencepiece: the bpe fixture from tokenizer.model encodes every corpus line to sentencepiece's ids and decodes to its text, and from tokenizer.json to tokenizers' (the known differences named); saved and loaded again it gives the same ids", SentencePieceBpeEncodes),
         ("tokenizers: precompiled: every charsmap normalizes every corpus line as tokenizers' Precompiled does (grapheme mode) and, with the reader's whitespace normalizers, as sentencepiece's normalizer does; a tokenizer.json with Precompiled encodes through the BPE pipeline", PrecompiledMatchesReferences),
@@ -542,9 +542,9 @@ internal abstract partial class Tests
         Check(allocated == 0, $"one warm pass of searches over the corpus allocated {allocated} bytes (result {result})");
     }
 
-    // A fixture's tokenizer.model through the registered "sentencepiece" reader.
+    // A fixture's tokenizer.model through the "sentencepiece" reader.
     internal static TokenizerDefinition SentencePieceDefinition(string name) =>
-        TokenizerFiles.Get(TokenizerFiles.SentencePiece).Read(TokenizerData($"{name}/tokenizer.model"), new TokenizerOptions());
+        new SentencePieceReader().Read(TokenizerData($"{name}/tokenizer.model"), new TokenizerOptions());
 
     // Text with its controls and invisible characters written as \uXXXX, for messages.
     internal static string Escaped(string text) => string.Concat(text.Select(c => c < ' ' || c is >= '\u007F' and <= ' ' or >= ' ' and <= '‏' or '▁'
@@ -553,31 +553,15 @@ internal abstract partial class Tests
     internal static void SentencePieceReaderFinds(Device device)
     {
         _ = device;
-        var names = TokenizerFiles.Names.ToList();
-        int json = names.IndexOf(TokenizerFiles.TokenizerJson), spm = names.IndexOf(TokenizerFiles.SentencePiece);
-        Check(json >= 0 && spm > json, $"sentencepiece is registered after tokenizer.json (readers: {string.Join(", ", names)})");
-        var reader = TokenizerFiles.Get(TokenizerFiles.SentencePiece);
-        Check(reader.Name == "sentencepiece" && reader.Summary.Contains("tokenizer.model", StringComparison.Ordinal)
-              && TokenizerFiles.Origin(TokenizerFiles.SentencePiece) == TokenizerFiles.Origin(TokenizerFiles.TokenizerJson),
-            $"the reader's name, summary and origin (the library's): {reader.Name}, {reader.Summary}, {TokenizerFiles.Origin(TokenizerFiles.SentencePiece)}");
-
-        static string? Picked(string path, TokenizerOptions? options = null) =>
-            PretrainedTokenizers.Find(path, options) is { } hit ? $"{hit.Reader.Name}:{Path.GetFileName(hit.File)}" : null;
+        var reader = new SentencePieceReader();
+        Check(reader.Name == TokenizerFiles.SentencePiece, $"the reader's name: {reader.Name}");
+        string? Picked(string path) => reader.Find(path) is { } file ? $"sentencepiece:{Path.GetFileName(file)}" : null;
 
         string folder = TokenizerData("bpe");
-        string? saved = Environment.GetEnvironmentVariable(TokenizerOptions.FormatVariable);
         string temp = Path.Combine(Path.GetTempPath(), "idrak-spm-" + Guid.NewGuid().ToString("N"));
         try
         {
-            Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, null);
-            Check(Picked(folder) == "tokenizer.json:tokenizer.json", $"a folder with both files reads tokenizer.json, not {Picked(folder)}");
-            Check(Picked(folder, new TokenizerOptions { Format = TokenizerFiles.SentencePiece }) == "sentencepiece:tokenizer.model",
-                $"Format sentencepiece reads tokenizer.model, not {Picked(folder, new TokenizerOptions { Format = TokenizerFiles.SentencePiece })}");
-            Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, "sentencepiece");
-            Check(Picked(folder) == "sentencepiece:tokenizer.model", $"IDRAK_TOKENIZER_FORMAT=sentencepiece reads tokenizer.model, not {Picked(folder)}");
-            Check(Picked(folder, new TokenizerOptions { Format = TokenizerFiles.TokenizerJson }) == "tokenizer.json:tokenizer.json", "the option wins over the variable");
-            Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, null);
-
+            Check(Picked(folder) == "sentencepiece:tokenizer.model", $"a folder with both files: its tokenizer.model, not {Picked(folder)}");
             Directory.CreateDirectory(temp);
             Check(Picked(temp) is null, "an empty folder has no tokenizer");
             File.Copy(TokenizerData("unigram/tokenizer.model"), Path.Combine(temp, "sentencepiece.bpe.model"));
@@ -589,13 +573,12 @@ internal abstract partial class Tests
             string single = Path.Combine(temp, "custom.model");
             File.Copy(TokenizerData("bpe/tokenizer.model"), single);
             Check(Picked(single) == "sentencepiece:custom.model", $"a .model file is read as itself, not {Picked(single)}");
-            Check(Picked(TokenizerData("bpe/tokenizer.json"), new TokenizerOptions { Format = TokenizerFiles.SentencePiece }) is null, "a .json file is no SentencePiece model");
-            Check(PretrainedTokenizers.Read(temp).ModelType == "Unigram" && PretrainedTokenizers.Read(single).ModelType == "BPE"
-                  && PretrainedTokenizers.Load(single).Model == "BPE", "a folder's model and a file's read, and the BPE one loads");
+            Check(Picked(TokenizerData("bpe/tokenizer.json")) is null, "a .json file is no SentencePiece model");
+            Check(reader.Read(reader.Find(temp)!, new TokenizerOptions()).ModelType == "Unigram" && reader.Read(single, new TokenizerOptions()).ModelType == "BPE",
+                "a folder's model and a file's read");
         }
         finally
         {
-            Environment.SetEnvironmentVariable(TokenizerOptions.FormatVariable, saved);
             if (Directory.Exists(temp))
             {
                 Directory.Delete(temp, recursive: true);
@@ -736,8 +719,6 @@ internal abstract partial class Tests
     internal static void PrecompiledMatchesReferences(Device device)
     {
         _ = device;
-        Check(TokenizerComponents.NormalizerTypes.Contains("Precompiled") && TokenizerComponents.DefaultNormalizer("Precompiled") is not null,
-            $"Precompiled is a built-in normalizer type ({string.Join(", ", TokenizerComponents.NormalizerTypes)})");
         var lines = TokenizerCorpusLines();
         int maps = 0;
         foreach (var name in SentencePieceFixtures)

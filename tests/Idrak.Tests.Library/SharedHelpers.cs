@@ -6,7 +6,6 @@ using System.IO.Compression;
 using System.Text.Json.Nodes;
 using System.Text;
 using Idrak.Abstraction.Cluster;
-using Idrak.Abstraction.Plugins;
 using Idrak.Abstraction.Reinforcement;
 using Idrak.Cluster;
 using Idrak.Data;
@@ -65,54 +64,6 @@ internal abstract partial class Tests
         return texts;
     }
 
-    // From ServeImageTests.cs.
-    // Records the greedy tokens of every generation while it runs (the default sampler wrapped).
-    internal static T WithRecordedTokens<T>(List<int> sampled, Func<T> run)
-    {
-        var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
-        TokenSamplers.Register(TestKinds.Sampler(TokenSamplers.DefaultName, request => new RecordingSampler(library.Create(request), sampled)));
-        try
-        {
-            return run();
-        }
-        finally
-        {
-            TokenSamplers.Unregister(TokenSamplers.DefaultName);
-        }
-    }
-
-    // From TextFamilyPluginTests.cs.
-    // P7's plug-ins, in TextPlugins.All's order (re-registered in it, so the tool-call formats keep the order they are asked in).
-    internal static readonly IIdrakPlugin[] TextFamilyPlugins = [LlamaPlugin.Plugin, QwenPlugin.Plugin, MistralPlugin.Plugin, HarmonyPlugin.Plugin, DeepSeekPlugin.Plugin];
-
-    // Runs `body` with P7's families taken away, then registers again, in TextPlugins.All's order, those that were.
-    internal static void WithoutTextFamilies(Action body)
-    {
-        var was = TextFamilyPlugins.Where(p => p.IsRegistered).ToList();
-        try
-        {
-            foreach (var plugin in Enumerable.Reverse(TextFamilyPlugins))
-            {
-                IdrakPlugins.Unregister(plugin);
-            }
-
-            Check(TextFamilyPlugins.All(p => !p.IsRegistered && IdrakPlugins.Find(p.Name) is null), "P7's families taken away");
-            body();
-        }
-        finally
-        {
-            foreach (var plugin in Enumerable.Reverse(TextFamilyPlugins))
-            {
-                IdrakPlugins.Unregister(plugin);
-            }
-
-            foreach (var plugin in TextFamilyPlugins.Where(was.Contains))
-            {
-                IdrakPlugins.Register(plugin);
-            }
-        }
-    }
-
     // From CliImageTests.cs.
     internal static string VlmModel => TestData("vlm/tiny-gemma3");
 
@@ -129,79 +80,8 @@ internal abstract partial class Tests
         }
     }
 
-    // The default sampler, recording the ids of the first row it hands out (the CLI's generations, seen from outside).
-    internal sealed class RecordingSampler(ITokenSampler inner, List<int> ids) : ITokenSampler
-    {
-        public int Rows => inner.Rows;
-
-        public int Vocabulary => inner.Vocabulary;
-
-        public Tensor Ids => inner.Ids;
-
-        public bool Recordable => inner.Recordable;
-
-        public void Sample(Tensor logits) => inner.Sample(logits);
-
-        public void SetHistory(IReadOnlyList<int> tokens) => inner.SetHistory(tokens);
-
-        public void Reset() => inner.Reset();
-
-        public SampledToken[][] Read(int fromStep, int toStep)
-        {
-            var steps = inner.Read(fromStep, toStep);
-            if (fromStep > 0 || toStep > 1)
-            {
-                ids.AddRange(steps.Select(s => s[0].Id));                // the prompt's own step (0 to 1) is read again later
-            }
-
-            return steps;
-        }
-
-        public void Dispose() => inner.Dispose();
-    }
-
     // From VisionContractTests.cs.
     internal static string LlavaData(string name) => TestData($"vlm-llava/{name}");
-
-    /// <summary>Registers the Gemma 3 vision family (Idrak.Vision.Plugins' plug-in, with its text decoder), as an app or <c>-P</c> does.</summary>
-    internal static void RegisterGemma3Vision() => Gemma3VisionPlugin.Register();
-
-    /// <summary>
-    /// Takes the Gemma 3 vision family away and keeps its text decoder (Idrak.Text.Plugins' Gemma family) registered, as for
-    /// an app that registers the text plug-ins only; <see cref="RegisterGemma3Vision"/> puts it back.
-    /// </summary>
-    internal static void UnregisterGemma3Vision()
-    {
-        Gemma3VisionPlugin.Unregister();
-        GemmaPlugin.Register();
-    }
-
-    /// <summary>
-    /// Removes the Gemma 3 vision family and its attention rule, and checks that the tiny Gemma 3 vision checkpoint then
-    /// fails to load with the "not registered" error naming the registry (no fallback to any family).
-    /// </summary>
-    internal static void Gemma3VisionNotRegistered(Device device)
-    {
-        UnregisterGemma3Vision();
-        ImageAttentionRules.Unregister(Gemma3VisionPlugin.ImageBlocks);
-        Check(VisionFamilies.Find(Gemma3VisionFamily.Architecture) is null && VisionFamilies.Default(Gemma3VisionFamily.Architecture) is null
-              && ImageAttentionRules.Origin(Gemma3VisionPlugin.ImageBlocks) == Overrides.Library
-              && ImageAttentionRules.Names.SequenceEqual([ImageAttentionRules.Causal, ImageAttentionRules.ImageBlocks]),
-            "the library registers no vision family; its image attention rules are causal and image-blocks (the plug-in uses the library's)");
-        try
-        {
-            using var _ = PretrainedModel.Load(TestData("vlm/tiny-gemma3-v5"), new PretrainedOptions { Device = device });
-            Check(false, "a vision checkpoint whose family is not registered is refused");
-        }
-        catch (NotSupportedException e)
-        {
-            Check(e.Message.Contains("Vision family 'Gemma3ForConditionalGeneration' is not registered", StringComparison.Ordinal)
-                  && e.Message.Contains("VisionFamilies.Register", StringComparison.Ordinal) && e.Message.Contains("Idrak.Vision.Plugins", StringComparison.Ordinal),
-                $"the error names the registry and the plug-in package: {e.Message}");
-        }
-
-        Check(VisionFamilies.For("Gemma3ForCausalLM", new System.Text.Json.Nodes.JsonObject()) is null, "a text checkpoint needs no vision family");
-    }
 
     // From OnnxTests.cs.
     internal static float[] TransposeRows(float[] values, int rows, int columns)
@@ -463,8 +343,6 @@ internal abstract partial class Tests
 
     // From FontTests.cs.
     internal static string FontData(string name) => TestData($"fonts/{name}");
-
-    internal static IFontFace SubsetFace() => FontFormats.Read(FontData("dejavu-sans-subset.ttf")).Single();
 
     // From GenericVisionComponentTests.cs.
     // A line of dark marks on a light page: a full stroke for a, the upper half for b, the lower half for c, a gap between.

@@ -12,7 +12,7 @@ internal abstract partial class Tests
     [
         ("tokenizers: pipeline: every built-in normalizer and pre-tokenizer on spans gives the pieces its string form gives (every fixture's tokenizer.json and hand-made specs, the suite's texts and both corpora, at the start and not)", TokenizerPipelineEqualsStrings),
         ("tokenizers: pipeline: each piece stands for its range of the original text (splits in order, a metaspace's replacement for its space, a prefix for the first character, NFKC and lowercase per character, a range inside a longer text)", TokenizerPipelineOrigins),
-        ("tokenizers: pipeline: an app's string-only normalizer and pre-tokenizer run in the span pipeline with their results, Strip, WhitespaceSplit and Punctuation load in a BPE tokenizer.json, and the post-processor table lists the built-ins and registers, guards and unregisters an app's", TokenizerPipelineAppComponents),
+        ("tokenizers: pipeline: Strip, WhitespaceSplit and Punctuation load in a BPE tokenizer.json and split as the string pipeline does", TokenizerPipelineAppComponents),
         ("tokenizers: pipeline: a warm run allocates nothing on text normalization leaves as it is (NFKC, Replace, Lowercase, Strip, Metaspace, Split and ByteLevel on Latin, Arabic and CJK text); text NFKC changes allocates nothing either (the library's own normalization)", TokenizerPipelineAllocations),
         ("tokenizers: pipeline: the BERT one pass (BertNormalizer and BertPreTokenizer) writes the normalized text, every character's range and the pieces the steps write, for every BertNormalizer setting and none, on the pipeline texts and hand-made ones; text it leaves to the steps is theirs; a warm pass allocates nothing", TokenizerPipelineBertOnePass),
     ];
@@ -304,32 +304,7 @@ internal abstract partial class Tests
 
     internal static void TokenizerPipelineAppComponents(Device device)
     {
-        using var output = new PreTokenizedText();
-        try
-        {
-            TokenizerComponents.RegisterNormalizer(TestKinds.Normalizer("TestUpper", spec => new UpperNormalizer()));
-            TokenizerComponents.RegisterPreTokenizer(TestKinds.PreTokenizer("TestPairs", spec => new PairsPreTokenizer()));
-            TokenizerComponents.RegisterPreTokenizer(TestKinds.PreTokenizer("TestEcho", spec => new EchoPreTokenizer()));
-            var pipeline = new TokenizerPipeline(JsonNode.Parse("""
-                {"normalizer": {"type": "TestUpper"}, "pre_tokenizer": {"type": "Sequence", "pretokenizers": [{"type": "WhitespaceSplit"}, {"type": "TestPairs"}]}}
-                """)!.AsObject());
-            pipeline.Run("abc de", 0, 6, true, output);
-            Check(output.PieceStrings().SequenceEqual(["AB", "C", "DE"]), $"the app's components run: {string.Join(" | ", output.PieceStrings())}");
-            Check(Enumerable.Range(0, 3).All(i => output.OriginOf(i) == (0, 6)), "a string-only normalizer's change stands for the whole changed text (coarse)");
-
-            new TokenizerPipeline(JsonNode.Parse("""{"pre_tokenizer": {"type": "Sequence", "pretokenizers": [{"type": "WhitespaceSplit"}, {"type": "TestPairs"}]}}""")!.AsObject())
-                .Run("abc de", 0, 6, true, output);
-            Check(output.OriginOf(0) == (0, 2) && output.OriginOf(1) == (2, 3) && output.OriginOf(2) == (4, 6), "a string-only split keeps the ranges it was found at");
-
-            new TokenizerPipeline(JsonNode.Parse("""{"pre_tokenizer": {"type": "TestEcho"}}""")!.AsObject()).Run("one two", 0, 7, true, output);
-            Check(output.PieceStrings().SequenceEqual(["<one two>"]) && output.OriginOf(0) == (0, 7), "a rewritten piece stands for the piece it came from");
-        }
-        finally
-        {
-            TokenizerComponents.UnregisterNormalizer("TestUpper");
-            TokenizerComponents.UnregisterPreTokenizer("TestPairs");
-            TokenizerComponents.UnregisterPreTokenizer("TestEcho");
-        }
+        _ = device;
 
         // The new built-in types load in a BPE tokenizer.json and split as the string pipeline does.
         var json = JsonNode.Parse(File.ReadAllText(PretrainData("tokenizer/tokenizer.json")))!.AsObject();
@@ -339,56 +314,6 @@ internal abstract partial class Tests
         var ids = tokenizer.Encode("  Hello, world!  ");
         var pieces = new[] { "Hello", ",", "world", "!" }.SelectMany(p => BpeTokenizer.FromJson(json).Encode(p)).ToArray();
         Check(ids.SequenceEqual(pieces), "Strip, WhitespaceSplit and Punctuation run in a BPE tokenizer");
-
-        // The post-processor table: the built-in types (T2), an app's type registered, guarded and removed.
-        Check(new[] { "TemplateProcessing", "BertProcessing", "RobertaProcessing", "ByteLevel", "Sequence" }.All(TokenizerComponents.PostProcessorTypes.Contains),
-            $"the built-in post-processors (registered: {string.Join(", ", TokenizerComponents.PostProcessorTypes)})");
-        TokenizerComponents.RegisterPostProcessor(TestKinds.PostProcessor("TestWrap", spec => new WrapPostProcessor((int)spec["id"]!)));
-        try
-        {
-            var processor = TokenizerComponents.FindPostProcessor("TestWrap")!.Create(JsonNode.Parse("""{"type": "TestWrap", "id": 9}""")!.AsObject());
-            var single = TokenizerEncoding.Of([5, 6], [(0, 1), (1, 2)]);
-            var wrapped = processor.Process(single, null, addSpecialTokens: true);
-            Check(processor.AddedTokens(pair: false) == 2 && wrapped.Ids.SequenceEqual([9, 5, 6, 9]) && wrapped.SpecialTokensMask.SequenceEqual([1, 0, 0, 1]),
-                "the app's post-processor runs");
-            Check(TokenizerComponents.PostProcessorOrigin("TestWrap") is { } origin && origin != Overrides.Library, "it is the app's");
-        }
-        finally
-        {
-            TokenizerComponents.UnregisterPostProcessor("TestWrap");
-        }
-
-        Check(!TokenizerComponents.PostProcessorTypes.Contains("TestWrap"), "unregistered");
-    }
-
-    internal sealed class UpperNormalizer : ITokenizerNormalizer
-    {
-        public string Normalize(string text) => text.ToUpperInvariant();
-    }
-
-    // Cuts each piece into pairs of characters.
-    internal sealed class PairsPreTokenizer : IPreTokenizer
-    {
-        public IReadOnlyList<string> PreTokenize(IReadOnlyList<string> pieces, bool atStart) =>
-            [.. pieces.SelectMany(p => Enumerable.Range(0, (p.Length + 1) / 2).Select(i => p.Substring(i * 2, Math.Min(2, p.Length - i * 2))))];
-    }
-
-    // Rewrites each piece.
-    internal sealed class EchoPreTokenizer : IPreTokenizer
-    {
-        public IReadOnlyList<string> PreTokenize(IReadOnlyList<string> pieces, bool atStart) => [.. pieces.Select(p => $"<{p}>")];
-    }
-
-    internal sealed class WrapPostProcessor(int id) : ITokenizerPostProcessor
-    {
-        public int AddedTokens(bool pair) => pair ? 3 : 2;
-
-        public TokenizerEncoding Process(TokenizerEncoding encoding, TokenizerEncoding? pair, bool addSpecialTokens) => new()
-        {
-            Ids = [id, .. encoding.Ids, id], TypeIds = [0, .. encoding.TypeIds, 0], Offsets = [(0, 0), .. encoding.Offsets, (0, 0)],
-            AttentionMask = [1, .. encoding.AttentionMask, 1], SpecialTokensMask = [1, .. encoding.SpecialTokensMask, 1],
-            SequenceIds = [-1, .. encoding.SequenceIds, -1],
-        };
     }
 
     internal static void TokenizerPipelineAllocations(Device device)

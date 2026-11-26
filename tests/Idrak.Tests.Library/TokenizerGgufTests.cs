@@ -12,7 +12,6 @@ internal abstract partial class Tests
         ("tokenizers: gguf: a llama (SentencePiece BPE) GGUF tokenizer writes the tokenizer.json its tokenizer.model reads to, byte for byte, and encodes and decodes every corpus line as it", TokenizersGgufLlama),
         ("tokenizers: gguf: a t5 (SentencePiece Unigram) GGUF tokenizer with its precompiled character map writes the tokenizer.json its tokenizer.model reads to, byte for byte", TokenizersGgufT5),
         ("tokenizers: gguf: a bert GGUF tokenizer in llama.cpp's form (▁ word starts, bare continuations) gives tokenizer.json's ids and special tokens on every corpus line", TokenizersGgufBert),
-        ("tokenizers: gguf: a tokenizer nobody registered fails naming it and GgufTokenizers.Register; an app's converter is used, then unregistered", TokenizersGgufRegistry),
     ];
 
     // A GGUF holding only tokenizer metadata, prepared as GgufModel prepares a model's tokenizer; the folder it wrote.
@@ -135,34 +134,6 @@ internal abstract partial class Tests
             }
 
             Check(gguf.IsSpecial(gguf.IdOf("[CLS]")!.Value) && ((WordPieceTokenizer)gguf).PostProcessor is not null, "special tokens and [CLS] … [SEP]");
-        }
-        finally
-        {
-            root.Delete(recursive: true);
-        }
-    }
-
-    internal static void TokenizersGgufRegistry(Device device)
-    {
-        Check(new[] { "gpt2", "llama", "t5", "bert" }.All(GgufTokenizers.Names.Contains), $"the built-in GGUF tokenizers (registered: {string.Join(", ", GgufTokenizers.Names)})");
-        var root = Directory.CreateTempSubdirectory("idrak-gguf-tokenizer-");
-        try
-        {
-            List<KeyValuePair<string, object>> metadata = [new("tokenizer.ggml.model", "imaginary"), new("tokenizer.ggml.tokens", new[] { "a", "b" })];
-            Expect<NotSupportedException>(() => PrepareGgufTokenizer(root.FullName, "unknown", metadata), "GGUF tokenizer 'imaginary' is not registered", "an unregistered tokenizer");
-            Expect<NotSupportedException>(() => PrepareGgufTokenizer(root.FullName, "unknown2", metadata), "add it with GgufTokenizers.Register", "the hint");
-            GgufTokenizers.Register(TestKinds.GgufTokenizer("imaginary", request => GgufTokenizers.Default("bert")!.Create(request with { Tokens = ["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]", "▁a"] })));
-            try
-            {
-                string folder = PrepareGgufTokenizer(root.FullName, "app", metadata);
-                Check(PretrainedTokenizers.Load(folder).Encode("a").SequenceEqual([5]), "the app's converter is used");
-            }
-            finally
-            {
-                GgufTokenizers.Unregister("imaginary");
-            }
-
-            Check(!GgufTokenizers.Names.Contains("imaginary"), "unregistered");
         }
         finally
         {

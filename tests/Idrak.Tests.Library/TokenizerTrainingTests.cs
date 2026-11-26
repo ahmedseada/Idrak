@@ -18,7 +18,7 @@ internal abstract partial class Tests
         ("tokenizer training: bpe with the metaspace pre-tokenizer learns Hugging Face's vocabulary and merges and encodes as it does", TokenizerTrainingMetaspace),
         ("tokenizer training: a trained tokenizer saved as tokenizer.json loads back to the same ids, passes the tokenizer contract, and a loaded file saves to the same vocabulary and merges", TokenizerTrainingSave),
         ("tokenizer training: a file with Windows line ends (CRLF) trains the tokenizer its LF copy trains (byte level and metaspace), LineEnds \"keep\" learns the \\r as Hugging Face does, and another value is refused", TokenizerTrainingLineEnds),
-        ("tokenizer training: the registry names bpe, unigram and wordpiece, refuses an unregistered trainer, bad options and missing files, and one worker counts the same words as many", TokenizerTrainingRegistry),
+        ("tokenizer training: bpe refuses bad options and missing files, and one worker counts the same words as many", TokenizerTrainingRegistry),
         ("tokenizer training: unigram learns SentencePiece's vocabulary from the same text and options (the special and byte pieces at the same ids, the learned pieces overlapping above the measured threshold), with and without byte fallback, split digits, the Arabic removals and each of SentencePiece's switches (whitespace, script and number splits, whitespace as a suffix, whitespace-only pieces, the longest line, the nfkc and nmt_nfkc rules), each switch changing the pieces as it should", TokenizerTrainingUnigramReference),
         ("tokenizer training: unigram's tokenizer saved as tokenizer.json and tokenizer.model loads back from both to its ids on every line, and with byte fallback decodes every line back to its text", TokenizerTrainingUnigramFiles),
         ("tokenizer training: wordpiece by frequency learns the vocabulary of Hugging Face's WordPieceTrainer algorithm with its ties fixed, exactly, and overlaps Hugging Face's own run above the measured threshold", TokenizerTrainingWordPieceReference),
@@ -177,7 +177,7 @@ internal abstract partial class Tests
             return;
         }
 
-        var trained = TokenizerTrainers.Get("bpe").Train([PretrainData("corpus.txt")], ReferenceTrainingOptions("tokenizer"));
+        var trained = new BpeTrainer().Train([PretrainData("corpus.txt")], ReferenceTrainingOptions("tokenizer"));
         CheckTrainedAgainstReference(trained, "tokenizer");
     }
 
@@ -188,7 +188,7 @@ internal abstract partial class Tests
             return;
         }
 
-        var trained = TokenizerTrainers.Get("bpe").Train([PretrainData("corpus.txt")], ReferenceTrainingOptions("tokenizer-full"));
+        var trained = new BpeTrainer().Train([PretrainData("corpus.txt")], ReferenceTrainingOptions("tokenizer-full"));
         CheckTrainedAgainstReference(trained, "tokenizer-full");
     }
 
@@ -199,7 +199,7 @@ internal abstract partial class Tests
             return;
         }
 
-        var trained = TokenizerTrainers.Get("bpe").Train([PretrainData("corpus.txt")], ReferenceTrainingOptions("metaspace"));
+        var trained = new BpeTrainer().Train([PretrainData("corpus.txt")], ReferenceTrainingOptions("metaspace"));
         CheckTrainedAgainstReference(trained, "metaspace");
     }
 
@@ -210,7 +210,7 @@ internal abstract partial class Tests
             return;
         }
 
-        var trained = TokenizerTrainers.Get("bpe").Train([PretrainData("corpus.txt")], ReferenceTrainingOptions("tokenizer"));
+        var trained = new BpeTrainer().Train([PretrainData("corpus.txt")], ReferenceTrainingOptions("tokenizer"));
         string folder = TempFolder("tokenizer-training");
         try
         {
@@ -247,23 +247,7 @@ internal abstract partial class Tests
             return;
         }
 
-        foreach (string name in new[] { "bpe", "unigram", "wordpiece" })
-        {
-            Check(TokenizerTrainers.Names.Contains(name) && TokenizerTrainers.Origin(name) == Idrak.Abstraction.Overrides.Library, $"{name} is the library's");
-            Check(TokenizerTrainers.Describe().Contains($"{name}:", StringComparison.Ordinal), TokenizerTrainers.Describe());
-        }
-        string refused = "";
-        try
-        {
-            TokenizerTrainers.Get("nope");
-        }
-        catch (NotSupportedException e)
-        {
-            refused = e.Message;
-        }
-
-        Check(refused.Contains("is not registered", StringComparison.Ordinal) && refused.Contains("TokenizerTrainers.Register", StringComparison.Ordinal), $"an unregistered trainer: {refused}");
-        var bpe = TokenizerTrainers.Get("bpe");
+        var bpe = new BpeTrainer();
         string corpus = PretrainData("corpus.txt");
         Throws<ArgumentException>(() => bpe.Train([corpus], new TokenizerTrainingOptions { VocabularySize = 0 }), "vocabulary 0");
         Throws<ArgumentException>(() => bpe.Train([corpus], new TokenizerTrainingOptions { PreTokenizer = "whitespace" }), "an unknown pre-tokenizer");
@@ -295,7 +279,7 @@ internal abstract partial class Tests
             string lf = Path.Combine(folder, "lf.txt"), crlf = Path.Combine(folder, "crlf.txt");
             File.WriteAllText(lf, string.Join("\n", lines) + "\n");
             File.WriteAllText(crlf, string.Join("\r\n", lines) + "\r\n");
-            var trainer = TokenizerTrainers.Get(TokenizerTrainers.Bpe);
+            var trainer = new BpeTrainer();
             static string[] Vocabulary(IPretrainedTokenizer t) => [.. Enumerable.Range(0, t.VocabularySize).Select(t.TokenOf)];
             foreach (string pre in new[] { TokenizerTrainers.ByteLevel, TokenizerTrainers.Metaspace })
             {
@@ -326,7 +310,7 @@ internal abstract partial class Tests
         {
             var options = UnigramOptions(entry!["options"]!);
             var watch = Stopwatch.StartNew();
-            var trained = TokenizerTrainers.Get(TokenizerTrainers.Unigram).Train(UnigramCorpus(entry["options"]!), options);
+            var trained = new UnigramTrainer().Train(UnigramCorpus(entry["options"]!), options);
             double seconds = watch.Elapsed.TotalSeconds;
             var pieces = Vocabulary(trained);
             var expected = entry["pieces"]!.AsArray().Select(p => (Piece: (string)p![0]!, Type: (int)p[2]!)).ToList();
@@ -361,7 +345,7 @@ internal abstract partial class Tests
         string folder = TempFolder("unigram-training");
         try
         {
-            var trained = TokenizerTrainers.Get(TokenizerTrainers.Unigram).Train(TrainingCorpus,
+            var trained = new UnigramTrainer().Train(TrainingCorpus,
                 new TokenizerTrainingOptions { VocabularySize = 1200, SpecialTokens = ["<unk>", "<s>", "</s>", "<|im_end|>"], ByteFallback = true });
             Check(trained.Model == TokenizerModels.Unigram, $"the trained model is {trained.Model}");
             var companions = trained as ITokenizerCompanionFiles;
@@ -408,7 +392,7 @@ internal abstract partial class Tests
         }
 
         var reference = TrainingReference("wordpiece.json");
-        var trained = TokenizerTrainers.Get(TokenizerTrainers.WordPiece).Train(TrainingCorpus, WordPieceOptions(reference["options"]!));
+        var trained = new WordPieceTrainer().Train(TrainingCorpus, WordPieceOptions(reference["options"]!));
         Check(trained.Model == TokenizerModels.WordPiece, $"the trained model is {trained.Model}");
         var vocabulary = Vocabulary(trained);
         var expected = reference["fixed"]!.AsArray().Select(t => (string)t!).ToArray();
@@ -435,7 +419,7 @@ internal abstract partial class Tests
             foreach (string scoring in new[] { TokenizerTrainers.Frequency, TokenizerTrainers.Likelihood })
             {
                 var options = WordPieceOptions(TrainingReference("wordpiece.json")["options"]!) with { Scoring = scoring };
-                var trained = TokenizerTrainers.Get(TokenizerTrainers.WordPiece).Train(TrainingCorpus, options);
+                var trained = new WordPieceTrainer().Train(TrainingCorpus, options);
                 string file = Path.Combine(folder, $"{scoring}.json");
                 trained.Save(file);
                 var loaded = PretrainedTokenizers.Load(file);
@@ -492,22 +476,22 @@ internal abstract partial class Tests
 
         var unigram = new TokenizerTrainingOptions { VocabularySize = 900, SpecialTokens = ["<unk>", "<s>", "</s>"], SeedSize = 5000 };
         var wordpiece = WordPieceOptions(TrainingReference("wordpiece.json")["options"]!);
-        foreach (var (name, options) in new[]
+        foreach (var (trainer, options) in new (ITokenizerTrainer Trainer, TokenizerTrainingOptions Options)[]
                  {
-                     (TokenizerTrainers.Unigram, unigram),
-                     (TokenizerTrainers.Unigram, unigram with { Normalization = TokenizerTrainers.NmtNfkc, TreatWhitespaceAsSuffix = true, SplitByWhitespace = false }),
-                     (TokenizerTrainers.WordPiece, wordpiece),
-                     (TokenizerTrainers.WordPiece, wordpiece with { Scoring = TokenizerTrainers.Likelihood }),
+                     (new UnigramTrainer(), unigram),
+                     (new UnigramTrainer(), unigram with { Normalization = TokenizerTrainers.NmtNfkc, TreatWhitespaceAsSuffix = true, SplitByWhitespace = false }),
+                     (new WordPieceTrainer(), wordpiece),
+                     (new WordPieceTrainer(), wordpiece with { Scoring = TokenizerTrainers.Likelihood }),
                  })
         {
-            var trainer = TokenizerTrainers.Get(name);
+            string name = trainer.Name;
             var one = trainer.Train(TrainingCorpus, options with { Workers = 1 }).ToJson()["model"]!;
             var many = trainer.Train(TrainingCorpus, options with { Workers = 4 }).ToJson()["model"]!;
             Check(JsonNode.DeepEquals(one, many), $"{name} ({options.Scoring}, {options.Normalization}): one worker and four learn the same model");
         }
 
-        var frequency = Vocabulary(TokenizerTrainers.Get(TokenizerTrainers.WordPiece).Train(TrainingCorpus, wordpiece));
-        var likelihood = Vocabulary(TokenizerTrainers.Get(TokenizerTrainers.WordPiece).Train(TrainingCorpus, wordpiece with { Scoring = TokenizerTrainers.Likelihood }));
+        var frequency = Vocabulary(new WordPieceTrainer().Train(TrainingCorpus, wordpiece));
+        var likelihood = Vocabulary(new WordPieceTrainer().Train(TrainingCorpus, wordpiece with { Scoring = TokenizerTrainers.Likelihood }));
         Check(!frequency.SequenceEqual(likelihood), "likelihood scoring learns another vocabulary than frequency");
     }
 
@@ -522,9 +506,9 @@ internal abstract partial class Tests
         try
         {
             string[] arabic = [TokenizerTrainers.Tatweel, TokenizerTrainers.Diacritics];
-            var unigram = TokenizerTrainers.Get(TokenizerTrainers.Unigram).Train(TrainingCorpus,
+            var unigram = new UnigramTrainer().Train(TrainingCorpus,
                 new TokenizerTrainingOptions { VocabularySize = 900, SpecialTokens = ["<unk>", "<s>", "</s>"], Arabic = arabic });
-            var wordpiece = TokenizerTrainers.Get(TokenizerTrainers.WordPiece).Train(TrainingCorpus,
+            var wordpiece = new WordPieceTrainer().Train(TrainingCorpus,
                 WordPieceOptions(TrainingReference("wordpiece.json")["options"]!) with { Arabic = arabic });
             unigram.Save(folder);
             ((ITokenizerCompanionFiles)unigram).SaveCompanion("tokenizer.model", Path.Combine(folder, "tokenizer.model"));
@@ -561,8 +545,8 @@ internal abstract partial class Tests
         }
 
         string corpus = PretrainData("corpus.txt");
-        var unigram = TokenizerTrainers.Get(TokenizerTrainers.Unigram);
-        var wordpiece = TokenizerTrainers.Get(TokenizerTrainers.WordPiece);
+        var unigram = new UnigramTrainer();
+        var wordpiece = new WordPieceTrainer();
         var good = new TokenizerTrainingOptions { VocabularySize = 400 };
         foreach (var (options, setting) in new (TokenizerTrainingOptions, string)[]
                  {
@@ -582,9 +566,9 @@ internal abstract partial class Tests
         }
 
         ThrowsNaming<ArgumentException>(() => unigram.Train([corpus], good with { VocabularySize = 40 }), "unigram, a vocabulary smaller than the alphabet", "VocabularySize", "CharacterCoverage");
-        ThrowsNaming<ArgumentException>(() => TokenizerTrainers.Get(TokenizerTrainers.Bpe).Train([corpus], good with { Arabic = ["tatweel"] }), "bpe, Arabic", "Arabic");
+        ThrowsNaming<ArgumentException>(() => new BpeTrainer().Train([corpus], good with { Arabic = ["tatweel"] }), "bpe, Arabic", "Arabic");
         ThrowsNaming<ArgumentException>(() => wordpiece.Train([corpus], good with { Normalization = TokenizerTrainers.Nfkc }), "wordpiece, Normalization", "Normalization", "unigram");
-        ThrowsNaming<ArgumentException>(() => TokenizerTrainers.Get(TokenizerTrainers.Bpe).Train([corpus], good with { Normalization = TokenizerTrainers.NmtNfkc }), "bpe, Normalization", "Normalization");
+        ThrowsNaming<ArgumentException>(() => new BpeTrainer().Train([corpus], good with { Normalization = TokenizerTrainers.NmtNfkc }), "bpe, Normalization", "Normalization");
         _ = unigram.Train([corpus], good with { Normalization = "NFKC" });                       // a rule's name in any case
         Throws<FileNotFoundException>(() => unigram.Train([corpus + ".missing"], good), "unigram, a missing file");
         Throws<ArgumentException>(() => wordpiece.Train([], good), "wordpiece, no files");
@@ -698,7 +682,7 @@ internal abstract partial class Tests
             && defaults.Normalization == TokenizerTrainers.Identity && defaults.MaxSentenceLength == 0 && defaults.DesiredSizeFactor == 1.1 && defaults.ExpectedCountFloor == 0.5
             && defaults.UnknownPenalty == 10, "the switches' defaults are SentencePiece's (and no line skipped for length)");
 
-        var unigram = TokenizerTrainers.Get(TokenizerTrainers.Unigram);
+        var unigram = new UnigramTrainer();
         string folder = TempFolder("unigram-switches");
         try
         {
@@ -808,7 +792,7 @@ internal abstract partial class Tests
             };
             byte[] proto = SentencePieceWriter.Write([.. pieces.Select(p => (string)p![0]!)], [.. pieces.Select(p => (float)(double)p![1]!)],
                 [.. pieces.Select(p => (SentencePieceType)(int)p![2]!)], settings);
-            var tokenizer = TokenizerModels.Create(SentencePieceReader.FromModel(SentencePieceModel.Read(proto, name)), new TokenizerOptions());
+            var tokenizer = UnigramTokenizer.FromDefinition(SentencePieceReader.FromModel(SentencePieceModel.Read(proto, name)), new TokenizerOptions());
             var scores = pieces.Select(p => (float)(double)p![1]!).ToArray();
             var failures = new List<string>();
             var ties = new List<string>();

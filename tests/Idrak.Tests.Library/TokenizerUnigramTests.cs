@@ -16,7 +16,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] TokenizerUnigramGroup =
     [
-        ("tokenizers: unigram: the library registers the Unigram model; each fixture's tokenizer.json encodes every corpus line to tokenizers' ids (without the post-processor's special tokens) and decodes to its text, and tokenizers' ids with the special tokens decode to its text with them (the known differences named)", UnigramJsonMatchesTokenizers),
+        ("tokenizers: unigram: each fixture's tokenizer.json encodes every corpus line to tokenizers' ids (without the post-processor's special tokens) and decodes to its text, and tokenizers' ids with the special tokens decode to its text with them (the known differences named)", UnigramJsonMatchesTokenizers),
         ("tokenizers: unigram: each fixture's tokenizer.model encodes every corpus line to sentencepiece's ids and decodes to its text, scores summed in float as sentencepiece sums them, so the 300-a tie agrees too (the known differences named)", UnigramModelMatchesSentencePiece),
         ("tokenizers: unigram: byte fallback round-trips arbitrary characters (outside the vocabulary, through their <0xNN> pieces) from tokenizer.json and tokenizer.model; without it a run of unknown characters is one unknown id", UnigramByteFallbackRoundTrips),
         ("tokenizers: unigram: sampling is off by default; with SamplingAlpha it is repeatable with a seed (whole lattice and n-best), varies, decodes to the best segmentation's text and bypasses the cache; SamplingBest 1 gives the best ids; IDRAK_TOKENIZER_ALPHA, _NBEST and _SEED set it and a bad value is refused naming it", UnigramSampling),
@@ -106,8 +106,6 @@ internal abstract partial class Tests
     internal static void UnigramJsonMatchesTokenizers(Device device)
     {
         _ = device;
-        Check(TokenizerModels.Names.Contains(TokenizerModels.Unigram) && TokenizerModels.Origin(TokenizerModels.Unigram) == Overrides.Library,
-            $"the library registers Unigram (registered: {string.Join(", ", TokenizerModels.Names)})");
         UnigramAgainst("tokenizer.json", name => UnigramFromJson(name), (_, row) =>
         {
             // Encode adds no special tokens: tokenizers' ids without the post-processor's (sequence id -1).

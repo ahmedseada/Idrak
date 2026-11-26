@@ -18,13 +18,13 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] EngineGroup =
     [
         ("engine: attention options: with nothing set, MultiHeadAttention and TransformerEncoderLayer give the bits of the same layers with the default score scale set explicitly and of a padding scope that pads nothing (inference, fused, and with the gradient); a score scale of 2/√d gives the bits of the default layer with its query projection doubled", AttentionOptionsOff),
-        ("engine: attention options: MultiHeadAttention with a score scale, heads narrower than the model, a position bias (the library's \"relative\" and an outside kind), causal or not, with key padding or none, equals a host reference within 1e-4 at every real position, in inference and with the gradient recorded; each sequence of a padded batch equals itself alone; the bias table gets a gradient", AttentionOptionsReference),
+        ("engine: attention options: MultiHeadAttention with a score scale, heads narrower than the model, a position bias (the library's \"relative\"), causal or not, with key padding or none, equals a host reference within 1e-4 at every real position, in inference and with the gradient recorded; each sequence of a padded batch equals itself alone; the bias table gets a gradient", AttentionOptionsReference),
         ("engine: attention options: cached decoding with a position bias (a causal MultiHeadAttention, and a CausalSelfAttention in a DecoderBlock with and without its fused step) equals the whole sequence at once, step by step and after a prefill; a bias shared by two layers is computed once per shape", AttentionOptionsCached),
-        ("engine: attention options: invalid settings are refused naming the setting (ScoreScale 0, -1 and NaN on MultiHeadAttention, CausalSelfAttention and CrossAttention; a bias for other heads; max_distance and bidirectional of \"relative\"); an unknown bias kind is not registered; the position bias suite passes \"relative\" both ways (its values the table's buckets) and the outside kind, and fails a bias that ignores the query's position", AttentionOptionsRefused),
-        ("engine: encoders: the poolers first, mean and max pass the pooler suite against plain loops; a pooler that reads the padding fails it; an unknown pooler is not registered", EncoderPoolers),
+        ("engine: attention options: invalid settings are refused naming the setting (ScoreScale 0, -1 and NaN on MultiHeadAttention, CausalSelfAttention and CrossAttention; a bias for other heads; max_distance of \"relative\"); the position bias suite passes \"relative\" both ways (its values the table's buckets) and fails a bias that ignores the query's position", AttentionOptionsRefused),
+        ("engine: encoders: the poolers first, mean and max pass the pooler suite against plain loops; a pooler that reads the padding fails it", EncoderPoolers),
         ("engine: encoders: the library's SequenceEncoder built from layers (token types, learned positions, blocks sharing a position bias) passes the encoder suite; TextEncoder over it gives each text's unit vector alone and in a batch with the mean, first and max poolers; TextEncoder over a plain model gives the bits of its average as it always computed it", EncoderLibrary),
-        ("engine: encoders: an encoder family registered from Idrak.PluginTests (public API only) loads through PretrainedEncoderModel.Load and passes the encoder suite with no bias, \"relative\" and an outside kind; its classifier and masked-language-model heads give a padded batch's logits one by one; unregistered, its checkpoint is refused as not registered naming PretrainedEncoders; head settings refused naming the setting; an unknown head kind is not registered", EncoderPlugin),
-        ("engine: seq2seq: an encoder-decoder family registered from Idrak.PluginTests loads through PretrainedSeq2SeqModel.Load and passes the seq2seq suite (cached equals uncached, padded batch equals one by one, one memory for two rows, greedy) with no bias, \"relative\" and an outside kind; unregistered, it is refused as not registered naming PretrainedSeq2Seq", Seq2SeqPlugin),
+        ("engine: encoders: an encoder family of Idrak.PluginTests (public API only) loads through PretrainedEncoderModel.Load and passes the encoder suite with no bias and \"relative\"; its classifier and masked-language-model heads give a padded batch's logits one by one; head settings refused naming the setting", EncoderPlugin),
+        ("engine: seq2seq: an encoder-decoder family of Idrak.PluginTests loads through PretrainedSeq2SeqModel.Load and passes the seq2seq suite (cached equals uncached, padded batch equals one by one, one memory for two rows, greedy) with no bias and \"relative\"", Seq2SeqPlugin),
         ("engine: seq2seq: Seq2SeqGenerator generates through the library's sampler: greedy ids equal greedy over the whole target recomputed each step and a one-beam search; Generate, Stream and StreamAsync give the same text; NumPredict ends it with \"length\" unless the end token came first; a seed repeats a sampled answer; a padded batch of memories decodes through the cache as each alone; memory lengths out of range refused", Seq2SeqGeneration),
     ];
 
@@ -205,7 +205,6 @@ internal abstract partial class Tests
 
     internal static void AttentionOptionsReference(Device device)
     {
-        ToyEncoderPlugin.Register();
         var random = new Random(23);
         const int n = 3, t = 6, d = 16;
         int[] lengths = [6, 2, 4];
@@ -217,14 +216,12 @@ internal abstract partial class Tests
             ("narrow heads, padded", 2, 8, false, null, null, true),
             ("relative bias", 4, 16, false, RelativePositionBias.KindName, null, false),
             ("relative bias, padded, scale 1", 4, 16, false, RelativePositionBias.KindName, 1f, true),
-            ("outside bias, padded, wide heads", 2, 24, false, ToyEncoderPlugin.DistanceBias, null, true),
             ("causal, relative one-way bias", 4, 16, true, RelativePositionBias.KindName, null, false),
             ("causal, padded (the padding after the real positions changes nothing)", 4, 16, true, null, null, true),
         };
         foreach (var c in cases)
         {
-            var bias = c.Bias is null ? null : AttentionPositionBiases.Create(c.Bias, new PositionBiasRequest(c.Heads,
-                new JsonObject { ["max_distance"] = 3, ["bidirectional"] = !c.Causal }, device, Seed: 4));
+            var bias = c.Bias is null ? null : new RelativePositionBias(c.Heads, 3, !c.Causal, device, new Random(4));
             var qkv = new Linear(d, 3 * c.Inner, device: device, random: random);
             var output = new Linear(c.Inner, d, device: device, random: random);
             using var layer = c.Scale is { } scale
@@ -412,7 +409,6 @@ internal abstract partial class Tests
 
     internal static void AttentionOptionsRefused(Device device)
     {
-        ToyEncoderPlugin.Register();
         foreach (float bad in new[] { 0f, -1f, float.NaN, float.PositiveInfinity })
         {
             ThrowsNaming<ArgumentOutOfRangeException>(() => _ = new MultiHeadAttention(16, 4, device: device) { ScoreScale = bad }, $"MultiHeadAttention ScoreScale {bad}", "ScoreScale");
@@ -423,21 +419,12 @@ internal abstract partial class Tests
         var threeHeads = new RelativePositionBias(3, 4, true, device);
         ThrowsNaming<ArgumentException>(() => _ = new MultiHeadAttention(16, 4, device: device) { PositionBias = threeHeads }, "a bias of 3 heads on 4", "PositionBias");
         ThrowsNaming<ArgumentException>(() => _ = new CausalSelfAttention(16, 4, 4, 4, null, 8, device: device) { PositionBias = threeHeads }, "a bias of 3 heads on 4", "PositionBias");
-        ThrowsNaming<ArgumentException>(() => AttentionPositionBiases.Create(RelativePositionBias.KindName, new PositionBiasRequest(4, new JsonObject { ["max_distance"] = 0 }, device)),
-            "max_distance 0", "max_distance");
-        ThrowsNaming<ArgumentException>(() => AttentionPositionBiases.Create(RelativePositionBias.KindName, new PositionBiasRequest(4, new JsonObject { ["max_distance"] = "far" }, device)),
-            "max_distance a word", "max_distance");
-        ThrowsNaming<ArgumentException>(() => AttentionPositionBiases.Create(RelativePositionBias.KindName, new PositionBiasRequest(4, new JsonObject { ["bidirectional"] = 1 }, device)),
-            "bidirectional a number", "bidirectional");
-        ThrowsNaming<NotSupportedException>(() => AttentionPositionBiases.Create("no-such-bias", new PositionBiasRequest(4, [], device)), "an unknown bias kind",
-            "not registered", "AttentionPositionBiases.Register");
-        Check(AttentionPositionBiases.Origin(RelativePositionBias.KindName) == Overrides.Library, "\"relative\" is the library's");
+        ThrowsNaming<ArgumentException>(() => { using var _ = new RelativePositionBias(4, 0, true, device); }, "max_distance 0", "max_distance");
 
         // "relative": its values are the table's rows by the clipped distance, and it passes the suite both ways.
         foreach (bool bidirectional in new[] { true, false })
         {
-            var relative = (RelativePositionBias)AttentionPositionBiases.Create(RelativePositionBias.KindName,
-                new PositionBiasRequest(3, new JsonObject { ["max_distance"] = 5, ["bidirectional"] = bidirectional }, device, Seed: 9));
+            var relative = new RelativePositionBias(3, 5, bidirectional, device, new Random(9));
             float[] table = relative.Table.ToArray(), values;
             using (Autograd.NoGrad())
             {
@@ -459,7 +446,6 @@ internal abstract partial class Tests
             Conformance.Check(relative, new PositionBiasSuite(device: device)).ThrowIfFailed();
         }
 
-        Conformance.Check(AttentionPositionBiases.Create(ToyEncoderPlugin.DistanceBias, new PositionBiasRequest(2, [], device)), new PositionBiasSuite(device: device)).ThrowIfFailed();
         var startless = Conformance.Check(new StartlessBias(2), new PositionBiasSuite(device: device));
         Check(!startless.Passed && startless.ToString().Contains("whole sequence's rows", StringComparison.Ordinal), $"a bias that ignores the query's position fails the suite: {startless}");
     }
@@ -507,15 +493,13 @@ internal abstract partial class Tests
 
     internal static void EncoderPoolers(Device device)
     {
-        foreach (string name in new[] { SequencePoolers.First, SequencePoolers.Mean, SequencePoolers.Max })
+        foreach (var pooler in new ISequencePooler[] { new FirstPooler(), new MeanPooler(), new MaxPooler() })
         {
-            Check(SequencePoolers.Origin(name) == Overrides.Library, $"the pooler {name} is the library's");
-            Conformance.Check(SequencePoolers.Get(name), new SequencePoolerSuite(new HostPooler(name), device)).ThrowIfFailed();
+            Conformance.Check(pooler, new SequencePoolerSuite(new HostPooler(pooler.Name), device)).ThrowIfFailed();
         }
 
         var report = Conformance.Check<ISequencePooler>(new PaddingPooler(), new SequencePoolerSuite(device: device));
         Check(!report.Passed && report.ToString().Contains("the padding does not matter", StringComparison.Ordinal), $"a pooler that reads the padding fails the suite: {report}");
-        ThrowsNaming<NotSupportedException>(() => SequencePoolers.Get("no-such-pooler"), "an unknown pooler", "not registered", "SequencePoolers.Register");
     }
 
     // An encoder of layers: token types, learned positions, an embedding norm, two blocks sharing a relative bias.
@@ -559,7 +543,6 @@ internal abstract partial class Tests
             }
         }
 
-        ThrowsNaming<NotSupportedException>(() => _ = new TextEncoder((ISequenceEncoder)encoder, tokenizer, 20, alphabet.Length) { Pooler = "nope" }, "an unknown pooler", "not registered");
         ThrowsNaming<ArgumentOutOfRangeException>(() => _ = new TextEncoder((ISequenceEncoder)encoder, tokenizer, 25, alphabet.Length), "a length past the encoder's", "maxLength");
 
         // A plain model (ids alone): the mean pooler gives the bits of the average the encoder always computed.
@@ -603,18 +586,16 @@ internal abstract partial class Tests
 
     internal static void EncoderPlugin(Device device)
     {
-        ToyEncoderPlugin.Register();
         string root = EngineFolder("encoder");
         try
         {
-            foreach (string bias in new[] { "none", RelativePositionBias.KindName, ToyEncoderPlugin.DistanceBias })
+            foreach (string bias in new[] { "none", RelativePositionBias.KindName })
             {
                 var sizes = new ToySizes(PositionBias: bias, Seed: bias.Length);
                 string folder = ToyEncoderPlugin.WriteEncoder(Path.Combine(root, bias), sizes);
                 using var model = PretrainedEncoderModel.Load(folder, new PretrainedEncoderOptions { Device = device });
                 Check(model.Architecture == ToyEncoderPlugin.Architecture && model.Pooler == SequencePoolers.First && model.Heads.Count == 2,
                     $"bias {bias}: the toy encoder with its two heads and the family's pooler ({model.Pooler}, {string.Join(", ", model.Heads.Keys)})");
-                Check(PretrainedEncoders.Origin(ToyEncoderPlugin.Architecture) == typeof(ToyEncoderPlugin).Assembly.GetName().Name, "the family is the plug-in's");
                 Conformance.Check(model.Encoder, new SequenceEncoderSuite(device)).ThrowIfFailed();
 
                 // The heads over a padded batch, one by one.
@@ -645,22 +626,14 @@ internal abstract partial class Tests
                     "token-classification", EncoderHeads.MaskedLanguageModel);
             }
 
-            ThrowsNaming<ArgumentException>(() => EncoderHeads.Create(EncoderHeads.MaskedLanguageModel, new EncoderHeadRequest(16, 0, [], device)), "outputs 0", "outputs");
-            ThrowsNaming<ArgumentException>(() => EncoderHeads.Create(EncoderHeads.SequenceClassification, new EncoderHeadRequest(16, 3,
+            ThrowsNaming<ArgumentException>(() => EncoderHead.MaskedLanguageModel(new EncoderHeadRequest(16, 0, [], device)), "outputs 0", "outputs");
+            ThrowsNaming<ArgumentException>(() => EncoderHead.Classification(new EncoderHeadRequest(16, 3,
                 new JsonObject { ["dense"] = true, ["activation"] = "swish" }, device)), "an unknown activation", "activation");
-            ThrowsNaming<ArgumentException>(() => EncoderHeads.Create(EncoderHeads.MaskedLanguageModel, new EncoderHeadRequest(16, 3,
+            ThrowsNaming<ArgumentException>(() => EncoderHead.MaskedLanguageModel(new EncoderHeadRequest(16, 3,
                 new JsonObject { ["transform"] = "yes" }, device)), "transform a word", "transform");
-            ThrowsNaming<NotSupportedException>(() => EncoderHeads.Get("no-such-head"), "an unknown head kind", "not registered", "EncoderHeads.Register");
-            ThrowsNaming<NotSupportedException>(() => PretrainedEncoderModel.Load(Path.Combine(root, "none"), new PretrainedEncoderOptions { Device = device, Pooler = "nope" }),
-                "an unknown pooler asked for", "not registered");
-
-            ToyEncoderPlugin.Unregister();
-            ThrowsNaming<NotSupportedException>(() => PretrainedEncoderModel.Load(Path.Combine(root, "none"), new PretrainedEncoderOptions { Device = device }),
-                "an unregistered encoder family", "not registered", "PretrainedEncoders.Register", ToyEncoderPlugin.Architecture);
         }
         finally
         {
-            ToyEncoderPlugin.Register();
             Directory.Delete(root, recursive: true);
         }
     }
@@ -669,11 +642,10 @@ internal abstract partial class Tests
 
     internal static void Seq2SeqPlugin(Device device)
     {
-        ToyEncoderPlugin.Register();
         string root = EngineFolder("seq2seq");
         try
         {
-            foreach (string bias in new[] { "none", RelativePositionBias.KindName, ToyEncoderPlugin.DistanceBias })
+            foreach (string bias in new[] { "none", RelativePositionBias.KindName })
             {
                 string folder = ToyEncoderPlugin.WriteSeq2Seq(Path.Combine(root, bias), new ToySizes(PositionBias: bias, Seed: 7 + bias.Length));
                 using var model = PretrainedSeq2SeqModel.Load(folder, new PretrainedEncoderOptions { Device = device });
@@ -681,21 +653,15 @@ internal abstract partial class Tests
                     $"bias {bias}: the toy encoder-decoder ({model.Model})");
                 Conformance.Check(model.Model, new Seq2SeqModelSuite(device)).ThrowIfFailed();
             }
-
-            ToyEncoderPlugin.Unregister();
-            ThrowsNaming<NotSupportedException>(() => PretrainedSeq2SeqModel.Load(Path.Combine(root, "none"), new PretrainedEncoderOptions { Device = device }),
-                "an unregistered encoder-decoder family", "not registered", "PretrainedSeq2Seq.Register", ToyEncoderPlugin.Seq2SeqArchitecture);
         }
         finally
         {
-            ToyEncoderPlugin.Register();
             Directory.Delete(root, recursive: true);
         }
     }
 
     internal static void Seq2SeqGeneration(Device device)
     {
-        ToyEncoderPlugin.Register();
         string root = EngineFolder("generation");
         try
         {

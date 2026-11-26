@@ -4,13 +4,11 @@
 using System.Buffers.Binary;
 using System.Text;
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Plugins;
 using Idrak.Abstraction.Testing;
 using Idrak.Layers;
 using Idrak.Layers.Abstractions;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
-using Idrak.Text.Plugins;
 using Idrak.Text.Plugins.Bert;
 using Idrak.Text.Retrieval;
 
@@ -36,7 +34,6 @@ internal abstract partial class Tests
         ("plugins: bert: the tiny checkpoint read as BertForMaskedLM, BertModel and BertForSequenceClassification gives transformers' hidden states, pooled output, masked-LM logits and classification logits within 1e-4 for three single texts and a padded batch of pairs with token types, in inference and with the gradient recorded; the folder's WordPiece tokenizer gives transformers' ids and type ids", BertMatchesTransformers),
         ("plugins: bert: each sequence of the padded batch equals itself alone (states, pooled output, masked-LM and class logits); the BERT encoder passes the sequence encoder suite; the masked-LM decoder reads the word embeddings in place (no copy), and an untied checkpoint (tie_word_embeddings false, its own decoder weight) gives the same logits", BertBatchAndHeads),
         ("plugins: bert: TextEncoder over the BERT encoder with SpecialTokens gives transformers' mean and first-token unit vectors within 1e-4, a text alone as in the batch; SpecialTokens is off by default and refused for a tokenizer without special tokens", BertTextEncoder),
-        ("plugins: bert: BertPlugin is the plug-in \"bert\" of TextPlugins.All; Register twice registers BertModel, BertForMaskedLM and BertForSequenceClassification once, from Idrak.Text.Plugins; Unregister leaves PretrainedEncoders as found; without it the checkpoint is refused as not registered, naming the architecture and Idrak.Text.Plugins", BertRegistration),
         ("plugins: bert: BertModel's layout (no \"bert.\" prefix, LayerNorm gamma and beta, an int64 position_ids the safetensors reader leaves out) gives the tiny model's bits; refused naming the cause: position_embedding_type relative_key, an unknown hidden_act, a tensor of another shape than the configuration's, a BertForSequenceClassification or BertForMaskedLM without its head, an untied model without its decoder; the pooler head kind and a tied head of another shape are refused naming the setting", BertLayouts),
         ("bert real: (the owner's: make_tiny_bert.py --real first) google-bert/bert-base-uncased and aubmindlab/bert-base-arabertv02 from the cache give transformers' ids, hidden states and pooled output within 2e-3 and the masked-LM logits of each [MASK] at transformers' 32 best tokens, the best the same", BertReal),
     ];
@@ -200,19 +197,7 @@ internal abstract partial class Tests
             AssertClose(whole, [.. steps], 1e-4f, "a causal post-norm block: cached steps after a prefill of 2 against the whole sequence");
         }
 
-        // The layer description and the network builder carry the placement.
-        using (var described = new TransformerEncoderLayer(d, heads, ff, 0f, device: device) { Placement = NormPlacement.After })
-        {
-            var description = LayerTypes.Describe(described);
-            Check((string?)description["norms"] == "after", $"a post-norm layer's description says so: {description.ToJsonString()}");
-            using var rebuilt = (TransformerEncoderLayer)LayerTypes.Create(description, device);
-            Check(rebuilt.Placement == NormPlacement.After, "the description rebuilds a post-norm layer");
-            using var pre = new TransformerEncoderLayer(d, heads, ff, 0f, device: device);
-            Check(LayerTypes.Describe(pre)["norms"] is null, "a pre-norm layer is described as before");
-            description["norms"] = "sideways";
-            ThrowsNaming<InvalidDataException>(() => LayerTypes.Create(description, device), "unknown norms in a description", "norms", "sideways");
-        }
-
+        // The network builder carries the placement.
         var builder = Network.Tokens(5).Seed(45).Embedding(11, 8).TransformerEncoderLayer(2, ffDim: 12, dropout: 0f, placement: NormPlacement.After).MeanOverTime();
         var json = builder.ToJson();
         Check(json.ToJsonString().Contains("\"norms\":\"after\"", StringComparison.Ordinal), $"the builder writes the placement: {json.ToJsonString()}");
@@ -238,7 +223,6 @@ internal abstract partial class Tests
 
     internal static void BertMatchesTransformers(Device device)
     {
-        BertPlugin.Register();
         string folder = BertFolder();
         try
         {
@@ -320,7 +304,6 @@ internal abstract partial class Tests
 
     internal static void BertBatchAndHeads(Device device)
     {
-        BertPlugin.Register();
         string folder = BertFolder();
         string untied = BertFolder(config => config["tie_word_embeddings"] = false);
         try
@@ -379,7 +362,6 @@ internal abstract partial class Tests
 
     internal static void BertTextEncoder(Device device)
     {
-        BertPlugin.Register();
         string folder = BertFolder();
         try
         {
@@ -411,55 +393,8 @@ internal abstract partial class Tests
         }
     }
 
-    internal static void BertRegistration(Device device)
-    {
-        bool wasRegistered = BertPlugin.IsRegistered;
-        string folder = BertFolder();
-        try
-        {
-            Check(TextPlugins.All.Contains(BertPlugin.Plugin) && BertPlugin.Plugin.Name == "bert" && BertPlugin.Plugin.GetType().Namespace == "Idrak.Text.Plugins.Bert",
-                "BertPlugin.Plugin is \"bert\", of TextPlugins.All, in Idrak.Text.Plugins.Bert");
-            BertPlugin.Unregister();
-            Check(!BertPlugin.IsRegistered && IdrakPlugins.Find("bert") is null && BertPlugin.Architectures.All(a => PretrainedEncoders.Find(a) is null),
-                "unregistered: no BERT architecture is registered");
-            var found = PretrainedEncoders.Names.Order(StringComparer.Ordinal).ToList();
-            ThrowsNaming<NotSupportedException>(() => LoadBert(folder, device).Dispose(), "a BERT checkpoint without the plug-in", "not registered",
-                BertPlugin.BertForMaskedLM, TextPlugins.Package.Name);
-
-            BertPlugin.Register();
-            BertPlugin.Register();
-            Check(BertPlugin.IsRegistered && ReferenceEquals(IdrakPlugins.Find("bert"), BertPlugin.Plugin), "registered and recorded as \"bert\"");
-            Check(PretrainedEncoders.Names.Order(StringComparer.Ordinal).SequenceEqual(found.Concat(BertPlugin.Architectures).Order(StringComparer.Ordinal)),
-                $"Register twice registers the three architectures once: {string.Join(", ", PretrainedEncoders.Names)}");
-            Check(BertPlugin.Architectures.All(a => PretrainedEncoders.Origin(a) == TextPlugins.Package.Name), "the architectures are Idrak.Text.Plugins'");
-            using (var model = LoadBert(folder, device))
-            {
-                Check(model.Architecture == BertPlugin.BertForMaskedLM, "registered, the checkpoint loads");
-            }
-
-            BertPlugin.Unregister();
-            Check(PretrainedEncoders.Names.Order(StringComparer.Ordinal).SequenceEqual(found), "Unregister leaves PretrainedEncoders as found");
-            TextPlugins.RegisterAll();
-            Check(BertPlugin.IsRegistered, "TextPlugins.RegisterAll registers BERT");
-        }
-        finally
-        {
-            if (wasRegistered)
-            {
-                BertPlugin.Register();
-            }
-            else
-            {
-                BertPlugin.Unregister();
-            }
-
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
     internal static void BertLayouts(Device device)
     {
-        BertPlugin.Register();
         string folder = BertFolder();
         string old = BertFolder(config => config["architectures"] = new JsonArray(BertPlugin.BertModel));
         var edited = new List<string>();
@@ -524,9 +459,9 @@ internal abstract partial class Tests
                 "cls.predictions.decoder.weight");
 
             // The library's head kinds refuse what does not fit.
-            ThrowsNaming<ArgumentException>(() => EncoderHeads.Create(EncoderHeads.Pooler, new EncoderHeadRequest(16, 8, [], device)), "a pooler of other outputs than its width", "outputs");
+            ThrowsNaming<ArgumentException>(() => EncoderHead.Pooler(new EncoderHeadRequest(16, 8, [], device)), "a pooler of other outputs than its width", "outputs");
             using var table = new Embedding(10, 8, device);
-            ThrowsNaming<ArgumentException>(() => EncoderHeads.Create(EncoderHeads.MaskedLanguageModel, new EncoderHeadRequest(16, 10, [], device) { TiedTo = table }),
+            ThrowsNaming<ArgumentException>(() => EncoderHead.MaskedLanguageModel(new EncoderHeadRequest(16, 10, [], device) { TiedTo = table }),
                 "a tied output of another width", "TiedTo");
         }
         finally
@@ -591,7 +526,6 @@ internal abstract partial class Tests
     // of 3,072 terms sum in float32 in other orders than PyTorch's; a wrong layer still moves the states by far more.
     internal static void BertReal(Device device)
     {
-        BertPlugin.Register();
         string real = Path.Combine(Path.GetDirectoryName(BertData("manifest.json"))!, "real");
         string[] records = Directory.Exists(real) ? Directory.GetFiles(real, "*.json") : [];
         if (records.Length == 0)

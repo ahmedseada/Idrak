@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Formats;
@@ -27,9 +26,9 @@ internal abstract partial class DesktopTests : Tests
     [
         ("generic components: timings probe: time per operation by name and shape and per layer type and depth in a run of its own, the device waited for meanwhile and restored after, nothing subscribed outside the run", GenericTimingsProbe),
         ("generic components: char tokenizer: the default reads UTF-16 units with the ids it always gave on BMP text (and its file as before); whole code points read a surrogate pair as one id, a lone half as U+FFFD, the unknown character may be any code point, files carry the setting; GPT training's rune tokenizer gives the same ids; the tokenizer suite passes", GenericCharTokenizer),
-        ("generic components: progress: the console, plain, json and quiet reporters pass the reporter suite (no allocation between showings); console redraws in place as the tool's line did, plain writes lines at intervals, json writes records, quiet nothing; the choice by option, IDRAK_PROGRESS (refused when unknown, in the tool too) or the output; an app's reporter registered and removed", GenericProgress),
-        ("generic components: keyword index: bm25 through KeywordIndexes passes the keyword-index suite against Bm25Index; retrieval through the registry ranks as before and saves as before; an app's index saves by name and reads back through the registry; the re-ranker's BM25 ranked the matching passages the same; unknown names refused (rag index --keywords too)", GenericKeywordIndex),
-        ("generic components: network recipes: mlp, cnn, rnn, transformer-classifier and gpt registered over Architectures pass the recipe suite; each builds the steps of its static method; gpt with the GPT samples' sizes and random is their network weight for weight; missing arguments and unknown recipes refused; an app's recipe registered, falling back and removed", GenericNetworkRecipes),
+        ("generic components: progress: the library's console, plain, json and quiet reporters, in order; console redraws in place as the tool's line did, plain writes lines at intervals, json writes records, quiet nothing; the choice by option, IDRAK_PROGRESS (refused when unknown, in the tool too) or the output; an unknown reporter refused", GenericProgress),
+        ("generic components: keyword index: Bm25Index passes the keyword-index suite, with its settings too; the re-ranker's BM25 ranked the matching passages the same", GenericKeywordIndex),
+        ("generic components: network architectures: gpt with the GPT samples' sizes and random is their network weight for weight", GenericNetworkRecipes),
         ("generic components: json numbers: NaN and infinity written as null by the converters (nullable forms too) and the writer helpers, null read back as NaN, finite numbers written as the serializer writes them, and the profile's json writer writing a NaN value as null", GenericJsonNumbers),
     ];
 
@@ -56,8 +55,8 @@ internal abstract partial class DesktopTests : Tests
 
     private static void GenericTimingsProbe(Device device)
     {
-        var probe = ProfileProbes.Get("timings");
-        Check(probe.Intrusive && probe.Supports(device) && ProfileProbes.Origin("timings") == Overrides.Library && ProfileProbes.Describe().Contains("timings", StringComparison.Ordinal),
+        var probe = ProfileProbes.Named("timings");
+        Check(probe.Intrusive && probe.Supports(device) && ProfileProbes.Describe().Contains("timings", StringComparison.Ordinal),
             "the timings probe is the library's, intrusive, on every device");
         bool synchronize = Telemetry.SynchronizeForTiming;
         var levels = Telemetry.ActiveLevels;
@@ -122,9 +121,9 @@ internal abstract partial class DesktopTests : Tests
         Check(halves.Encode(Emoji).Count == 2 && halves.VocabularySize == 3, "UTF-16 units split a pair (the default, unchanged)");
         var written = new MemoryStream();
         wide.Save(written);
-        written.Position = 0;
-        var loaded = CharTokenizer.Load(written);
-        Check(loaded.Options.CodePoints && loaded.Encode("x" + Emoji).SequenceEqual([4, 1]) && loaded.VocabularySize == 5, "the setting and a wide unknown survive the file");
+        var wideJson = JsonNode.Parse(written.ToArray())!.AsObject();
+        Check((bool?)wideJson["code_points"] == true && (string?)wideJson["unknown"] == Rocket && (string?)wideJson["vocabulary"] == wide.Vocabulary,
+            $"the setting and a wide unknown are in the file: {wideJson}");
         ThrowsNaming<ArgumentException>(() => _ = new CharTokenizer(["a", "a"], new CharTokenizerOptions { CodePoints = true }), "a repeated code point", ["twice"]);
         ThrowsNaming<ArgumentException>(() => _ = new CharTokenizer(["ab"], new CharTokenizerOptions { CodePoints = true }), "two characters as one", ["not one code point"]);
         ThrowsNaming<ArgumentException>(() => _ = new CharTokenizer("ab", new CharTokenizerOptions { CodePoints = true, UnknownCharacter = "c" }), "an unknown character outside", ["not one code point"]);
@@ -151,16 +150,12 @@ internal abstract partial class DesktopTests : Tests
     private static void GenericProgress(Device device)
     {
         _ = device;
-        Check(ProgressReporters.Names.SequenceEqual([ProgressReporters.ConsoleReporter, ProgressReporters.PlainReporter, ProgressReporters.JsonReporter, ProgressReporters.QuietReporter])
-              && ProgressReporters.Names.All(n => ProgressReporters.Origin(n) == Overrides.Library), "the library's four reporters, in order");
-        foreach (string name in ProgressReporters.Names)
-        {
-            Conformance.CheckProgressReporter(name).ThrowIfFailed();
-        }
+        Check(ProgressReporters.Names.SequenceEqual([ProgressReporters.ConsoleReporter, ProgressReporters.PlainReporter, ProgressReporters.JsonReporter, ProgressReporters.QuietReporter]),
+            "the library's four reporters, in order");
 
         // console: redrawn in place, as the tool's line was.
         var screen = new StringWriter();
-        var console = ProgressReporters.Get("console").Create(new ProgressRequest("work", 10, ProgressUnit.Items, screen, null));
+        var console = ProgressReporters.Start("work", 10, ProgressUnit.Items, new ProgressOptions { Reporter = "console", Output = screen });
         console.Report(5);
         Check(screen.ToString() == "\rwork   50%  5 / 10", $"console: '{screen}'");
         console.Erase();
@@ -172,7 +167,7 @@ internal abstract partial class DesktopTests : Tests
 
         // plain: a line, then none until the interval passes; json: records.
         var lines = new StringWriter();
-        using (var plain = ProgressReporters.Get("plain").Create(new ProgressRequest("copy", 1 << 20, ProgressUnit.Bytes, lines, TimeSpan.FromHours(1))))
+        using (var plain = ProgressReporters.Start("copy", 1 << 20, ProgressUnit.Bytes, new ProgressOptions { Reporter = "plain", Output = lines, Interval = TimeSpan.FromHours(1) }))
         {
             plain.Report(512 << 10);
             plain.Report(600 << 10);
@@ -182,7 +177,7 @@ internal abstract partial class DesktopTests : Tests
 
         Check(lines.ToString().Split('\n') is [var first, "copied", "done", ""] && first.StartsWith("copy   50%  512 KB / 1 MB", StringComparison.Ordinal), $"plain: '{lines}'");
         var records = new StringWriter();
-        using (var json = ProgressReporters.Get("json").Create(new ProgressRequest("load", 4, ProgressUnit.Items, records, TimeSpan.FromHours(1))))
+        using (var json = ProgressReporters.Start("load", 4, ProgressUnit.Items, new ProgressOptions { Reporter = "json", Output = records, Interval = TimeSpan.FromHours(1) }))
         {
             json.Report(1);
             json.Report(2);
@@ -193,7 +188,7 @@ internal abstract partial class DesktopTests : Tests
         Check(parsed.Count == 2 && (string?)parsed[0]["label"] == "load" && (long?)parsed[0]["done"] == 1 && (long?)parsed[0]["total"] == 4 && (string?)parsed[0]["unit"] == "items"
               && (bool?)parsed[1]["end"] == true && (string?)parsed[1]["message"] == "loaded" && (long?)parsed[1]["done"] == 2, $"json: '{records}'");
         var quiet = new StringWriter();
-        using (var none = ProgressReporters.Get("quiet").Create(new ProgressRequest("x", 3, ProgressUnit.Items, quiet, null)))
+        using (var none = ProgressReporters.Start("x", 3, ProgressUnit.Items, new ProgressOptions { Reporter = "quiet", Output = quiet }))
         {
             none.Report(2);
             none.Show();
@@ -226,41 +221,12 @@ internal abstract partial class DesktopTests : Tests
         });
         Check(EnvironmentVariables.All.Any(v => v.Name == ProgressReporters.EnvironmentVariable), "IDRAK_PROGRESS is in the tool's table");
 
-        // An app's reporter, over a library name and of its own; unknown names refused.
-        int made = 0;
-        ProgressReporters.Register(TestKinds.ProgressReporter("plain", request =>
-        {
-            made++;
-            return ProgressReporters.Default("quiet")!.Create(request);
-        }));
-        try
-        {
-            Check(ProgressReporters.Origin("plain") == "Idrak.Tests" && ProgressReporters.Start("x", options: new ProgressOptions { Reporter = "plain" }) is { Enabled: false } && made == 1,
-                "an app's reporter shadows the library's");
-        }
-        finally
-        {
-            Check(ProgressReporters.Unregister("plain") && !ProgressReporters.Unregister("plain") && ProgressReporters.Origin("plain") == Overrides.Library, "unregistering brings the library's back");
-        }
-
-        ThrowsNaming<NotSupportedException>(() => ProgressReporters.Get("fancy"), "an unknown reporter", ["'fancy' is not registered", "ProgressReporters.Register"]);
+        // An unknown name refused.
+        ThrowsNaming<NotSupportedException>(() => ProgressReporters.Start("x", options: new ProgressOptions { Reporter = "fancy", Output = new StringWriter() }), "an unknown reporter",
+            ["'fancy'", "console, plain, json, quiet"]);
     }
 
     // ------------------------------------------------------------------ G5: keyword indexes
-
-    // An app's keyword index: BM25 with its own k1, under a name of its own.
-    private sealed class TestKeywords(IEnumerable<string> texts, KeywordIndexOptions options) : IKeywordIndex
-    {
-        private readonly Bm25Index _index = new(texts, options.K1 * 2, options.B);
-
-        public string Name => "test-keywords";
-
-        public KeywordIndexOptions Options => options;
-
-        public int Count => _index.Count;
-
-        public IReadOnlyList<SearchHit> Search(string query, int top) => _index.Search(query, top);
-    }
 
     // The re-ranker sample's BM25 (before it took the library's): every text scored by a full scan.
     private static int[] OldBm25(IReadOnlyList<string> texts, string query, int k, double k1 = 1.2, double b = 0.75)
@@ -276,123 +242,26 @@ internal abstract partial class DesktopTests : Tests
     private static void GenericKeywordIndex(Device device)
     {
         _ = device;
-        Check(KeywordIndexes.Names.SequenceEqual([KeywordIndexes.Bm25]) && KeywordIndexes.Origin("BM25") == Overrides.Library && KeywordIndexes.Describe().StartsWith("bm25: ", StringComparison.Ordinal),
-            "bm25 is the library's keyword index");
         static KeywordIndexUnderTest Of(Func<IEnumerable<string>, IKeywordIndex> build) => new(texts => build(texts).Search);
-        Conformance.CheckKeywordIndex(Of(texts => KeywordIndexes.Create("bm25", texts)), Of(texts => new Bm25Index(texts))).ThrowIfFailed();
-        Conformance.CheckKeywordIndex(Of(texts => KeywordIndexes.Create("bm25", texts, new KeywordIndexOptions { K1 = 1.7, B = 0.3 })), Of(texts => new Bm25Index(texts, 1.7, 0.3))).ThrowIfFailed();
-
-        // Retrieval through the registry: the same rankings as the index itself, saved as before ("bm25", no "keywords").
-        Document[] documents =
-        [
-            new("a", "The river town has an old bridge. Its market sells fish."), new("b", "Rain falls on the north town every spring."),
-            new("c", "The mayor of the river town opened a market by the bridge."), new("d", "Nothing here."),
-        ];
-        var index = RetrievalIndex.Create().Documents(documents, ChunkUnit.Sentences, 1, 0).Bm25(k1: 1.5, b: 0.6).Build();
-        var direct = new Bm25Index(index.Chunks.Select(c => c.Text), 1.5, 0.6);
-        foreach (string query in new[] { "river bridge", "town", "market mayor", "spring rain", "absent" })
-        {
-            Check(index.Search(query, 4).Select(h => (h.Chunk.Id, h.Score)).SequenceEqual(direct.Search(query, 4).Select(h => (h.Id, h.Score))), $"'{query}' ranks as the index does");
-        }
-
-        Check(index.Keywords is { Name: "bm25" } k && k.Options.K1 == 1.5 && k.Options.B == 0.6, "the index's keyword index and its settings");
-        var file = new MemoryStream();
-        index.Save(file);
-        var settings = IndexSettings(file);
-        Check(settings["keywords"] is null && settings["bm25"]!["k1"]!.GetValue<double>() == 1.5 && settings["bm25"]!["b"]!.GetValue<double>() == 0.6, $"saved as before: {settings["bm25"]}");
-        file.Position = 0;
-        var reread = RetrievalIndex.Load(file, null);
-        Check(reread.Search("river bridge", 4).Select(h => (h.Chunk.Id, h.Score)).SequenceEqual(index.Search("river bridge", 4).Select(h => (h.Chunk.Id, h.Score))), "read back, the same rankings");
-
-        // An app's index: by name through the builder, saved by name, read back through the registry.
-        KeywordIndexes.Register(TestKinds.KeywordIndex("test-keywords", (texts, options) => new TestKeywords(texts, options), "boost"));
-        try
-        {
-            Check(KeywordIndexes.Origin("test-keywords") == "Idrak.Tests", "an app's index is the app's");
-            var mine = RetrievalIndex.Create().Documents(documents, ChunkUnit.Sentences, 1, 0)
-                .Keywords("test-keywords", new KeywordIndexOptions { K1 = 0.9, Parameters = new Dictionary<string, double> { ["boost"] = 2 } }).Build();
-            Check(mine.Keywords is TestKeywords, "the builder takes it by name");
-            var saved = new MemoryStream();
-            mine.Save(saved);
-            var named = IndexSettings(saved);
-            Check(named["bm25"] is null && (string?)named["keywords"]!["name"] == "test-keywords" && named["keywords"]!["k1"]!.GetValue<double>() == 0.9
-                  && named["keywords"]!["parameters"]!["boost"]!.GetValue<double>() == 2, $"saved by name: {named["keywords"]}");
-            saved.Position = 0;
-            var back = RetrievalIndex.Load(saved, null);
-            Check(back.Keywords is TestKeywords { Options.K1: 0.9 } t && t.Options.Parameters["boost"] == 2
-                  && back.Search("town", 4).Select(h => h.Chunk.Id).SequenceEqual(mine.Search("town", 4).Select(h => h.Chunk.Id)), "read back through the registry");
-        }
-        finally
-        {
-            Check(KeywordIndexes.Unregister("test-keywords") && KeywordIndexes.Find("test-keywords") is null, "unregistered");
-        }
-
-        ThrowsNaming<NotSupportedException>(() => RetrievalIndex.Create().Keywords("nope"), "an unknown index", ["'nope' is not registered", "KeywordIndexes.Register"]);
+        Conformance.CheckKeywordIndex(Of(texts => new Bm25Index(texts))).ThrowIfFailed();
+        Conformance.CheckKeywordIndex(Of(texts => new Bm25Index(texts, 1.7, 0.3))).ThrowIfFailed();
 
         // The re-ranker's BM25 ranked the passages sharing a word with the query as the library does.
         var random = new Random(11);
         string[] words = ["how", "many", "people", "live", "in", "north", "river", "town", "the", "market", "has", "about", "residents"];
         string[] passages = [.. Enumerable.Range(0, 60).Select(_ => string.Join(' ', Enumerable.Range(0, random.Next(1, 14)).Select(_ => words[random.Next(words.Length)])))];
-        var library = KeywordIndexes.Create(KeywordIndexes.Bm25, passages);
+        var library = new Bm25Index(passages);
         for (int q = 0; q < 30; q++)
         {
             string query = string.Join(' ', Enumerable.Range(0, random.Next(1, 6)).Select(_ => words[random.Next(words.Length)]));
             Check(library.Search(query, 20).Select(h => h.Id).SequenceEqual(OldBm25(passages, query, 20)), $"'{query}': the re-ranker's ranking");
         }
-
-        // idrak rag index --keywords: an unknown index refused.
-        string folder = Path.Combine(Path.GetTempPath(), $"idrak-keywords-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(folder);
-        try
-        {
-            File.WriteAllText(Path.Combine(folder, "a.txt"), "The river town has an old bridge.");
-            var (exit, _, error) = Cli("rag", "index", folder, "-o", Path.Combine(folder, "x.idx"), "--keywords", "nope");
-            Check(exit == 2 && error.Contains("no keyword index 'nope'", StringComparison.Ordinal), $"rag index --keywords nope: {exit} {error}");
-            var (built, _, builtError) = Cli("rag", "index", folder, "-o", Path.Combine(folder, "y.idx"), "--keywords", "BM25");
-            Check(built == 0, $"rag index --keywords BM25: {builtError}");
-        }
-        finally
-        {
-            Directory.Delete(folder, true);
-        }
     }
 
-    // The settings (index.json) of a saved retrieval index.
-    private static JsonObject IndexSettings(MemoryStream file)
-    {
-        file.Position = 0;
-        using var zip = new ZipArchive(file, ZipArchiveMode.Read, leaveOpen: true);
-        using var entry = zip.GetEntry("index.json")!.Open();
-        return JsonNode.Parse(entry)!.AsObject();
-    }
-
-    // ------------------------------------------------------------------ G6: network recipes
+    // ------------------------------------------------------------------ G6: network architectures
 
     private static void GenericNetworkRecipes(Device device)
     {
-        string[] library = ["mlp", "cnn", "rnn", "transformer-classifier", "gpt"];
-        Check(NetworkRecipes.Names.SequenceEqual(library) && library.All(n => NetworkRecipes.Origin(n) == Overrides.Library), $"the library's recipes: {string.Join(", ", NetworkRecipes.Names)}");
-        Check(NetworkRecipes.Describe().Contains("gpt(vocabulary, context, dim, heads, layers, ffDim = 4 · dim, dropout = 0.1)", StringComparison.Ordinal), NetworkRecipes.Describe());
-        static NetworkRecipeUnderTest Of(INetworkRecipe recipe) =>
-            new((arguments, random) => recipe.Build(new NetworkRecipeArguments(recipe.Name, arguments)).OnDevice(Device.Cpu).WithRandom(random).Build());
-        foreach (string name in library)
-        {
-            Conformance.CheckNetworkRecipe(name, Of(NetworkRecipes.Get(name)), Of(NetworkRecipes.Default(name)!)).ThrowIfFailed();
-        }
-
-        // Each is its static method's steps.
-        static string Steps(NetworkBuilder builder) => builder.ToJson().ToJsonString();
-        Check(Steps(NetworkRecipes.Build("mlp", new JsonObject { ["inputs"] = 4, ["hidden"] = new JsonArray(8), ["outputs"] = 2, ["activation"] = "GELU" }))
-              == Steps(Architectures.Mlp(4, [8], 2, Activation.GELU)), "mlp");
-        Check(Steps(NetworkRecipes.Build("mlp", new JsonObject { ["inputs"] = 4, ["hidden"] = new JsonArray(8, 6), ["outputs"] = 2, ["dropout"] = 0.2f }))
-              == Steps(Architectures.Mlp(4, [8, 6], 2, Activation.ReLU, 0.2f)), "mlp with dropout");
-        Check(Steps(NetworkRecipes.Build("cnn", new JsonObject { ["channels"] = 3, ["height"] = 16, ["width"] = 16, ["filters"] = new JsonArray(4), ["outputs"] = 5 }))
-              == Steps(Architectures.Cnn(3, 16, 16, [4], 3, 5)), "cnn");
-        Check(Steps(NetworkRecipes.Build("rnn", new JsonObject { ["cell"] = "gru", ["vocabulary"] = 20, ["length"] = 7, ["embed"] = 6, ["hidden"] = 5, ["outputs"] = 2 }))
-              == Steps(Architectures.Rnn(RecurrentCell.GRU, 20, 7, 6, 5, 2)), "rnn");
-        Check(Steps(NetworkRecipes.Build("transformer-classifier", new JsonObject { ["vocabulary"] = 20, ["length"] = 7, ["dim"] = 8, ["heads"] = 2, ["layers"] = 2, ["outputs"] = 3 }))
-              == Steps(Architectures.TransformerClassifier(20, 7, 8, 2, 2, 32, 0.1f, 3)), "transformer-classifier");
-
         // gpt with the GPT samples' sizes and random is the network they built themselves, weight for weight.
         const int Vocabulary = 23, Context = 16, Dim = 24, Heads = 4, Layers = 2;
         var random = new Random(2);
@@ -404,10 +273,7 @@ internal abstract partial class DesktopTests : Tests
 
         own.Add(new LayerNorm(Dim, device: device));
         own.Add(new Linear(Dim, Vocabulary, device: device, random: random));
-        using var recipe = NetworkRecipes.Build("gpt", new JsonObject
-        {
-            ["vocabulary"] = Vocabulary, ["context"] = Context, ["dim"] = Dim, ["heads"] = Heads, ["layers"] = Layers, ["ffDim"] = 4 * Dim, ["dropout"] = 0.1f,
-        }).OnDevice(device).WithRandom(new Random(2)).Named("char-gpt").Build();
+        using var recipe = Architectures.Gpt(Vocabulary, Context, Dim, Heads, Layers, 4 * Dim, 0.1f).OnDevice(device).WithRandom(new Random(2)).Named("char-gpt").Build();
         var a = own.Parameters().ToList();
         var b = recipe.Parameters().ToList();
         Check(a.Count == b.Count && own.ParameterCount == recipe.ParameterCount && recipe.Name == "char-gpt" && recipe.Count == own.Count, $"{b.Count} parameters, {a.Count} expected");
@@ -418,37 +284,6 @@ internal abstract partial class DesktopTests : Tests
 
         using var ids = Tensor.From([.. Enumerable.Range(0, 2 * Context).Select(i => (float)(i * 7 % Vocabulary))], [2, Context], device);
         AssertClose(own.Predict(ids).ToArray(), recipe.Predict(ids).ToArray(), 0f, "the same predictions");
-
-        // Refusals, and an app's recipe.
-        ThrowsNaming<InvalidDataException>(() => NetworkRecipes.Build("gpt", new JsonObject { ["vocabulary"] = 5 }), "a missing argument", ["'gpt'", "'context'"]);
-        ThrowsNaming<InvalidDataException>(() => NetworkRecipes.Build("rnn", new JsonObject { ["cell"] = "tree" }), "an unknown choice", ["lstm, gru", "'tree'"]);
-        ThrowsNaming<NotSupportedException>(() => NetworkRecipes.Get("unet"), "an unknown recipe", ["'unet' is not registered", "NetworkRecipes.Register"]);
-        var failing = new FailingRecipe();
-        NetworkRecipes.Register(failing);
-        try
-        {
-            Check(NetworkRecipes.Origin("gpt") == "Idrak.Tests", "an app's recipe shadows the library's");
-            ThrowsNaming<InvalidOperationException>(() => NetworkRecipes.Build("gpt", new JsonObject()), "under Throw the app's failure reaches the caller", ["broken recipe"]);
-            NetworkRecipes.SetPolicy("gpt", SlotPolicy.FallBack);
-            var fallen = NetworkRecipes.Build("gpt", new JsonObject { ["vocabulary"] = 5, ["context"] = 4, ["dim"] = 4, ["heads"] = 1, ["layers"] = 1 });
-            Check(fallen.Count == 2 + 1 + 2, $"under FallBack the library's recipe builds ({fallen.Count} steps)");
-        }
-        finally
-        {
-            NetworkRecipes.SetPolicy("gpt", SlotPolicy.Throw);
-            Check(NetworkRecipes.Unregister("gpt") && NetworkRecipes.Origin("gpt") == Overrides.Library, "unregistering brings the library's back");
-        }
-    }
-
-    private sealed class FailingRecipe : INetworkRecipe
-    {
-        public string Name => "gpt";
-
-        public string Summary => "a recipe that fails";
-
-        public IReadOnlyList<NetworkRecipeParameter> Parameters => [];
-
-        public NetworkBuilder Build(NetworkRecipeArguments arguments) => throw new InvalidOperationException("broken recipe");
     }
 
     // ------------------------------------------------------------------ G7: finite JSON numbers

@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Plugins;
 using Idrak.Abstraction.Testing;
 using Idrak.Generation;
 using Idrak.Inference;
@@ -12,7 +11,6 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.PluginTests;
 using Idrak.Text.Inference;
-using Idrak.Text.Plugins;
 using Idrak.Text.Plugins.T5;
 
 // Plan 26, phase P10: the generic pieces T5 needed (the "bucketed" position bias, RMS norms and a feed-forward block in
@@ -36,13 +34,12 @@ internal abstract partial class DesktopTests : Tests
 
     private static readonly (string Name, Action<Device> Run)[] T5Group =
     [
-        ("engine: bucketed position bias: BucketedPositionBias's buckets equal transformers' _relative_position_bucket over -700..700 for 32 buckets with max distances 20 and 128, both ways; its bias is the table's rows by bucket, passes the position bias suite both ways, is the library's \"bucketed\" kind made from settings and a table; num_buckets, max_distance and bidirectional that do not fit are refused naming the setting", T5BucketedBias),
-        ("engine: rms-norm block: TransformerEncoderLayer from RMS norms and a feed-forward block (gated GELU and plain ReLU, pre- and post-norm) equals its sublayers composed, in inference and with the gradient recorded (every parameter gets a gradient); cached causal steps equal the whole sequence; Normalization = RmsNorm on a new block, the layer description (\"norm\": \"rms\") and the network builder carry it both ways; LayerNorm stays the default; mixed, mis-sized or foreign norms and an undefined Normalization are refused naming the setting", T5RmsNormBlock),
+        ("engine: bucketed position bias: BucketedPositionBias's buckets equal transformers' _relative_position_bucket over -700..700 for 32 buckets with max distances 20 and 128, both ways; its bias is the table's rows by bucket, passes the position bias suite both ways; num_buckets and max_distance that do not fit are refused naming the setting", T5BucketedBias),
+        ("engine: rms-norm block: TransformerEncoderLayer from RMS norms and a feed-forward block (gated GELU and plain ReLU, pre- and post-norm) equals its sublayers composed, in inference and with the gradient recorded (every parameter gets a gradient); cached causal steps equal the whole sequence; Normalization = RmsNorm on a new block and the network builder carry it both ways; LayerNorm stays the default; mixed, mis-sized or foreign norms and an undefined Normalization are refused naming the setting", T5RmsNormBlock),
         ("engine: beam setting: GenerationOptions.NumBeams (1 by default), LengthPenalty and EarlyStopping; NumBeams below 1 and a non-finite LengthPenalty are refused naming the setting; Seq2SeqGenerator with NumBeams 3 answers with BeamSearch.Decode's best hypothesis (GenerateIds, GenerateBeams, Generate's text, \"stop\" or \"length\"), NumBeams 1 is the sampler's greedy answer unchanged", T5BeamSetting),
         ("plugins: t5: the tiny T5 v1.0 (ReLU, tied head scaled by d_model^-0.5) and v1.1 (gated GELU, its own head) read as T5ForConditionalGeneration give transformers' encoder states and decoder logits within 1e-4 for three texts and a padded batch, in inference and with the gradient recorded; the layers are the library's (RMS-norm blocks, one bucketed bias per stack shared, the shared embedding read in place); the folder's Unigram tokenizer gives transformers' ids", T5MatchesTransformers),
         ("plugins: t5: greedy generations (some ending at </s>) and beam searches of 3 (early_stopping true and false, ended and running hypotheses) equal transformers' token for token, in its order, with its scores within 1e-4, and their texts; KV-cached decoding equals the whole target; each sequence of a padded batch equals itself alone (states and logits); the seq2seq and encoder suites pass", T5Generation),
         ("plugins: t5: T5EncoderModel (and the encoder of a T5ForConditionalGeneration read as one) through PretrainedEncoderModel gives the encoder-decoder's states bit for bit with the mean pooler; MT5ForConditionalGeneration reads the same checkpoint; a folder with spiece.model alone (no post-processor) generates as tokenizer.json does (</s> appended); the inference engine's \"seq2seq\" kind answers through ITextModel as the generator does", T5EncoderAndEngine),
-        ("plugins: t5: T5Plugin is the plug-in \"t5\" of TextPlugins.All; Register twice registers its two encoder-decoder and two encoder architectures once, from Idrak.Text.Plugins; Unregister leaves PretrainedSeq2Seq and PretrainedEncoders as found; without it a checkpoint is refused as not registered, naming the architecture and Idrak.Text.Plugins", T5Registration),
         ("plugins: t5: refused naming the cause: feed_forward_proj other than relu, gated-gelu and gated-silu, relative_attention_num_buckets odd or below 4, relative_attention_max_distance not above the exact buckets, an untied checkpoint without lm_head.weight, a tensor of another shape than the configuration's, a missing decoder tensor", T5Refused),
         ("engine: position bias steps: a decoding step's bias of the \"bucketed\" and \"relative\" kinds (one way and both ways) equals the row of the whole sequence's bias bit for bit, past the max distance and across the widening of the values by distance", PositionBiasSteps),
         ("engine: beam search on the device: BeamSearch.Decode choosing candidates where the logits are (SelectOnDevice) gives the host's hypotheses bit for bit on the CPU (tokens, scores, log-probabilities), with suppressed tokens, begin suppressions, a least length, the n-gram rule, a length penalty and both early-stopping rules; Seq2SeqGenerator.SelectBeamsOnDevice false gives the same", BeamsOnDevice),
@@ -145,31 +142,10 @@ internal abstract partial class DesktopTests : Tests
             Conformance.Check<IAttentionPositionBias>(bias, new PositionBiasSuite(device: device)).ThrowIfFailed();
         }
 
-        // The library's kind, made from settings and a table.
-        Check(AttentionPositionBiases.Names.Contains(BucketedPositionBias.KindName) && AttentionPositionBiases.Origin(BucketedPositionBias.KindName) == Overrides.Library,
-            "\"bucketed\" is the library's");
-        float[] values2 = [.. Enumerable.Range(0, 8 * 3).Select(i => i * 0.25f - 2f)];
-        var made = AttentionPositionBiases.Create(BucketedPositionBias.KindName, new PositionBiasRequest(3,
-            new JsonObject { ["num_buckets"] = 8, ["max_distance"] = 9, ["bidirectional"] = false }, device, 0, (name, _) => name == "table" ? values2 : null));
-        Check(made is BucketedPositionBias { Buckets: 8, MaxDistance: 9, Bidirectional: false } kind && kind.Table.ToArray().SequenceEqual(values2),
-            $"the kind made from settings and a table: {made}");
-        ((IDisposable)made).Dispose();
-        using (var defaults = (BucketedPositionBias)AttentionPositionBiases.Create(BucketedPositionBias.KindName, new PositionBiasRequest(4, [], device)))
-        {
-            Check(defaults is { Buckets: 32, MaxDistance: 128, Bidirectional: true }, $"the settings' defaults: {defaults}");
-        }
-
-        PositionBiasRequest Request(JsonObject settings) => new(2, settings, device);
-        ThrowsNaming<ArgumentException>(() => AttentionPositionBiases.Create(BucketedPositionBias.KindName, Request(new JsonObject { ["num_buckets"] = 3 })),
-            "an odd number of buckets both ways", "num_buckets");
-        ThrowsNaming<ArgumentException>(() => AttentionPositionBiases.Create(BucketedPositionBias.KindName, Request(new JsonObject { ["num_buckets"] = 0 })),
-            "no buckets", "num_buckets");
-        ThrowsNaming<ArgumentException>(() => AttentionPositionBiases.Create(BucketedPositionBias.KindName, Request(new JsonObject { ["num_buckets"] = 32, ["max_distance"] = 8 })),
-            "a max distance the exact buckets reach", "max_distance");
-        ThrowsNaming<ArgumentException>(() => AttentionPositionBiases.Create(BucketedPositionBias.KindName, Request(new JsonObject { ["bidirectional"] = "yes" })),
-            "bidirectional not a truth value", "bidirectional");
-        ThrowsNaming<ArgumentException>(() => AttentionPositionBiases.Create(BucketedPositionBias.KindName, Request(new JsonObject { ["max_distance"] = 2.5 })),
-            "a max distance that is not whole", "max_distance");
+        // Counts that do not fit are refused naming the setting.
+        ThrowsNaming<ArgumentException>(() => { using var _ = new BucketedPositionBias(2, 3, 128, true, device); }, "an odd number of buckets both ways", "num_buckets");
+        ThrowsNaming<ArgumentException>(() => { using var _ = new BucketedPositionBias(2, 0, 128, true, device); }, "no buckets", "num_buckets");
+        ThrowsNaming<ArgumentException>(() => { using var _ = new BucketedPositionBias(2, 32, 8, true, device); }, "a max distance the exact buckets reach", "max_distance");
     }
 
     // ---------------------------------------------------------------- the RMS-norm block (library)
@@ -259,11 +235,10 @@ internal abstract partial class DesktopTests : Tests
             AssertClose(whole, [.. steps], 1e-4f, "a causal RMS-norm block: cached steps after a prefill of 2 against the whole sequence");
         }
 
-        // A new block takes the setting; the description and the builder carry it; LayerNorm stays the default.
+        // A new block takes the setting; the builder carries it; LayerNorm stays the default.
         using (var plain = new TransformerEncoderLayer(d, heads, ff, 0f, device: device))
         {
-            Check(plain.Normalization == BlockNormalization.LayerNorm && plain.Children().First() is LayerNorm && LayerTypes.Describe(plain)["norm"] is null,
-                "LayerNorm is the default, described as before");
+            Check(plain.Normalization == BlockNormalization.LayerNorm && plain.Children().First() is LayerNorm, "LayerNorm is the default");
         }
 
         using (var described = new TransformerEncoderLayer(d, heads, ff, 0f, device: device) { Normalization = BlockNormalization.RmsNorm, Placement = NormPlacement.After })
@@ -271,12 +246,6 @@ internal abstract partial class DesktopTests : Tests
             var children = described.Children().ToList();
             Check(children[0] is RMSNorm { Features: d } && children[2] is RMSNorm { Features: d } && described.Normalization == BlockNormalization.RmsNorm,
                 $"Normalization = RmsNorm on a new block gives it RMS norms: {string.Join(", ", children)}");
-            var description = LayerTypes.Describe(described);
-            Check((string?)description["norm"] == "rms" && (string?)description["norms"] == "after", $"the description says so: {description.ToJsonString()}");
-            using var rebuilt = (TransformerEncoderLayer)LayerTypes.Create(description, device);
-            Check(rebuilt.Normalization == BlockNormalization.RmsNorm && rebuilt.Placement == NormPlacement.After, "the description rebuilds an RMS-norm, post-norm layer");
-            description["norm"] = "batch";
-            ThrowsNaming<InvalidDataException>(() => LayerTypes.Create(description, device), "an unknown norm in a description", "norm", "batch");
         }
 
         var builder = Network.Tokens(5).Seed(45).Embedding(11, 8).TransformerEncoderLayer(2, ffDim: 12, dropout: 0f, normalization: BlockNormalization.RmsNorm).MeanOverTime();
@@ -318,7 +287,6 @@ internal abstract partial class DesktopTests : Tests
         ThrowsNaming<ArgumentOutOfRangeException>(() => _ = new GenerationOptions { LengthPenalty = float.NaN }, "a NaN length penalty", "LengthPenalty");
         ThrowsNaming<ArgumentOutOfRangeException>(() => _ = new GenerationOptions { LengthPenalty = float.PositiveInfinity }, "an infinite length penalty", "LengthPenalty");
 
-        ToyEncoderPlugin.Register();
         string root = EngineFolder("beams");
         try
         {
@@ -370,7 +338,6 @@ internal abstract partial class DesktopTests : Tests
 
     private static void T5MatchesTransformers(Device device)
     {
-        T5Plugin.Register();
         using var references = SafeTensorsReader.Open(T5Data("reference.safetensors"));
         var record = T5Record();
         foreach (string name in T5Models)
@@ -446,7 +413,6 @@ internal abstract partial class DesktopTests : Tests
 
     private static void T5Generation(Device device)
     {
-        T5Plugin.Register();
         using var references = SafeTensorsReader.Open(T5Data("reference.safetensors"));
         var record = T5Record();
         foreach (string name in T5Models)
@@ -550,7 +516,6 @@ internal abstract partial class DesktopTests : Tests
 
     private static void T5EncoderAndEngine(Device device)
     {
-        T5Plugin.Register();
         var record = T5Record();
         string folder = T5Folder("tiny-t5-gated");
         string encoderOnly = T5Folder("tiny-t5-gated", config => config["architectures"] = new JsonArray(T5Plugin.T5EncoderModel));
@@ -640,63 +605,8 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
-    private static void T5Registration(Device device)
-    {
-        bool wasRegistered = T5Plugin.IsRegistered;
-        string folder = T5Folder("tiny-t5");
-        string[] all = [.. T5Plugin.Seq2SeqArchitectures, .. T5Plugin.EncoderArchitectures];
-        try
-        {
-            Check(TextPlugins.All.Contains(T5Plugin.Plugin) && T5Plugin.Plugin.Name == "t5" && T5Plugin.Plugin.GetType().Namespace == "Idrak.Text.Plugins.T5",
-                "T5Plugin.Plugin is \"t5\", of TextPlugins.All, in Idrak.Text.Plugins.T5");
-            T5Plugin.Unregister();
-            Check(!T5Plugin.IsRegistered && IdrakPlugins.Find("t5") is null && T5Plugin.Seq2SeqArchitectures.All(a => PretrainedSeq2Seq.Find(a) is null)
-                && T5Plugin.EncoderArchitectures.All(a => PretrainedEncoders.Find(a) is null), "unregistered: no T5 architecture is registered");
-            var seq2seq = PretrainedSeq2Seq.Names.Order(StringComparer.Ordinal).ToList();
-            var encoders = PretrainedEncoders.Names.Order(StringComparer.Ordinal).ToList();
-            ThrowsNaming<NotSupportedException>(() => LoadT5(folder, device).Dispose(), "a T5 checkpoint without the plug-in", "not registered",
-                T5Plugin.T5ForConditionalGeneration, TextPlugins.Package.Name);
-            ThrowsNaming<NotSupportedException>(() => PretrainedEncoderModel.Load(folder, new PretrainedEncoderOptions { Device = device, Architecture = T5Plugin.T5EncoderModel }).Dispose(),
-                "a T5 encoder without the plug-in", "not registered", T5Plugin.T5EncoderModel, TextPlugins.Package.Name);
-
-            T5Plugin.Register();
-            T5Plugin.Register();
-            Check(T5Plugin.IsRegistered && ReferenceEquals(IdrakPlugins.Find("t5"), T5Plugin.Plugin), "registered and recorded as \"t5\"");
-            Check(PretrainedSeq2Seq.Names.Order(StringComparer.Ordinal).SequenceEqual(seq2seq.Concat(T5Plugin.Seq2SeqArchitectures).Order(StringComparer.Ordinal))
-                && PretrainedEncoders.Names.Order(StringComparer.Ordinal).SequenceEqual(encoders.Concat(T5Plugin.EncoderArchitectures).Order(StringComparer.Ordinal)),
-                $"Register twice registers the four architectures once: {string.Join(", ", PretrainedSeq2Seq.Names)}; {string.Join(", ", PretrainedEncoders.Names)}");
-            Check(T5Plugin.Seq2SeqArchitectures.All(a => PretrainedSeq2Seq.Origin(a) == TextPlugins.Package.Name) && T5Plugin.EncoderArchitectures.All(a => PretrainedEncoders.Origin(a) == TextPlugins.Package.Name),
-                "the architectures are Idrak.Text.Plugins'");
-            using (var model = LoadT5(folder, device))
-            {
-                Check(model.Architecture == T5Plugin.T5ForConditionalGeneration, "registered, the checkpoint loads");
-            }
-
-            T5Plugin.Unregister();
-            Check(PretrainedSeq2Seq.Names.Order(StringComparer.Ordinal).SequenceEqual(seq2seq) && PretrainedEncoders.Names.Order(StringComparer.Ordinal).SequenceEqual(encoders),
-                "Unregister leaves PretrainedSeq2Seq and PretrainedEncoders as found");
-            Check(all.All(a => PretrainedSeq2Seq.Find(a) is null && PretrainedEncoders.Find(a) is null), "nothing of T5 is left");
-            TextPlugins.RegisterAll();
-            Check(T5Plugin.IsRegistered, "TextPlugins.RegisterAll registers T5");
-        }
-        finally
-        {
-            if (wasRegistered)
-            {
-                T5Plugin.Register();
-            }
-            else
-            {
-                T5Plugin.Unregister();
-            }
-
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
     private static void T5Refused(Device device)
     {
-        T5Plugin.Register();
         var folders = new List<string>();
         string Edited(string model, Action<JsonObject> edit)
         {
@@ -927,7 +837,6 @@ internal abstract partial class DesktopTests : Tests
     // a wrong layer still moves the states by far more.
     private static void T5Real(Device device)
     {
-        T5Plugin.Register();
         string real = Path.Combine(Path.GetDirectoryName(T5Data("manifest.json"))!, "real");
         string[] records = Directory.Exists(real) ? Directory.GetFiles(real, "*.json") : [];
         if (records.Length == 0)

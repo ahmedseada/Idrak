@@ -9,7 +9,6 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
-using Idrak.Text.Plugins;
 using Idrak.Text.Plugins.Llama;
 
 // GGUF: dequantization checked against the gguf package's reference, and models read from GGUF files against the same
@@ -24,7 +23,7 @@ internal abstract partial class Tests
         ("gguf: gemma: a Gemma file written by llama.cpp's converter (f16, its norm gains stored with the 1 added) reads as its Hugging Face folder: spec, SentencePiece tokens and the chat prompt's, chat template, logits, greedy tokens", device => GgufGemma(device, "tiny-gemma", "GemmaForCausalLM")),
         ("gguf: gemma2: a Gemma 2 file written by llama.cpp's converter reads as its Hugging Face folder (post-norms under llama.cpp's names, GELU, soft-capping and window from the file, the query scalar llama.cpp takes): spec, tokens, chat template, logits over more positions than the window, greedy tokens", device => GgufGemma(device, "tiny-gemma2", "Gemma2ForCausalLM")),
         ("gguf: gemma3: a Gemma 3 file written by llama.cpp's converter reads as its Hugging Face folder (q/k norms, five windowed layers in six as llama.cpp assumes, the windowed layers' RoPE base from the file and the global one scaled): spec, tokens, chat template, logits over more positions than the window, greedy tokens", device => GgufGemma(device, "tiny-gemma3", "Gemma3ForCausalLM")),
-        ("gguf: chat templates: a file without one gets the first registered fallback for its tokens (the library's ChatML, then Llama 3's from Idrak.Text.Plugins), an app's too; with none for its tokens it has no template, as a folder without one, and the note names GgufChatTemplates; a name nobody registered is refused as not registered", GgufChatTemplateFallbacks),
+        ("gguf: chat templates: a file's own chat template is written as it is, with no note", GgufChatTemplateFallbacks),
         ("gguf: F16 widened whole vectors at a time (IGgufType.Dequantize, through HalfFloats) gives .NET's own conversion bit for bit for every half (zeros, subnormals, infinities) and a NaN with its payload kept as the devices' float16 kernels keep it (not quieted), at a vector boundary and in the scalar tail", GgufHalfWidening),
     ];
 
@@ -122,70 +121,16 @@ internal abstract partial class Tests
     internal static void GgufChatTemplateFallbacks(Device device)
     {
         _ = device;
-        string library = Overrides.Library;
-        Check(GgufChatTemplates.Names.First() == "chatml" && GgufChatTemplates.Origin("chatml") == library && GgufChatTemplates.Default("chatml") is not null
-              && GgufChatTemplates.Origin(LlamaPlugin.ChatTemplateName) == TextPlugins.Package.Name && GgufChatTemplates.Default(LlamaPlugin.ChatTemplateName) is null,
-            $"the library's ChatML first, Llama 3's the plug-in's: {string.Join(", ", GgufChatTemplates.Names.Select(n => $"{n}={GgufChatTemplates.Origin(n)}"))}");
-        string refused = Failure<NotSupportedException>(() => GgufChatTemplates.Get("imaginary")).Message;
-        Check(refused.Contains("GGUF chat template 'imaginary' is not registered", StringComparison.Ordinal) && refused.Contains("GgufChatTemplates.Register", StringComparison.Ordinal)
-              && refused.Contains("Idrak.Text.Plugins", StringComparison.Ordinal), $"a name nobody registered: {refused}");
-
         var root = Directory.CreateTempSubdirectory("idrak-gguf-template-");
         try
         {
-            // A GGUF tokenizer of these tokens (and template), prepared: the chat template written, and the notes.
-            int count = 0;
-            (string? Template, List<string> Notes, string Folder) Prepared(string[] tokens, string? template = null)
-            {
-                var notes = new List<string>();
-                List<KeyValuePair<string, object>> metadata = [new("tokenizer.ggml.model", "gpt2"), new("tokenizer.ggml.tokens", tokens)];
-                if (template is not null)
-                {
-                    metadata.Add(new("tokenizer.chat_template", template));
-                }
-
-                string folder = PrepareGgufTokenizer(root.FullName, $"t{count++}", metadata, notes);
-                return ((string?)JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "tokenizer_config.json")))!["chat_template"], notes, folder);
-            }
-
-            string[] chatMl = ["a", "b", "<|im_start|>", "<|im_end|>"], llama3 = ["a", "b", "<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>"];
-            var (written, notes, _) = Prepared(chatMl);
-            Check(written == GgufChatTemplates.Default("chatml")!.Template && written.Contains("<|im_start|>", StringComparison.Ordinal)
-                  && notes.Any(n => n.Contains("'chatml'", StringComparison.Ordinal) && n.Contains("GgufChatTemplates", StringComparison.Ordinal)), $"ChatML's tokens: {string.Join("; ", notes)}");
-            (written, notes, _) = Prepared(llama3);
-            Check(written == LlamaArchitectures.ChatTemplateText && notes.Any(n => n.Contains("'llama3'", StringComparison.Ordinal)), $"Llama 3's tokens: {string.Join("; ", notes)}");
-            (written, _, _) = Prepared([.. chatMl, .. llama3[2..]]);
-            Check(written == GgufChatTemplates.Default("chatml")!.Template, "both: ChatML, the library's asked first (as before the registry)");
-            (written, notes, _) = Prepared(chatMl, "{{ 'own' }}");
+            // A GGUF tokenizer of these tokens and its own template, prepared: the chat template written, and the notes.
+            var notes = new List<string>();
+            List<KeyValuePair<string, object>> metadata =
+                [new("tokenizer.ggml.model", "gpt2"), new("tokenizer.ggml.tokens", new[] { "a", "b", "<|im_start|>", "<|im_end|>" }), new("tokenizer.chat_template", "{{ 'own' }}")];
+            string folder = PrepareGgufTokenizer(root.FullName, "t0", metadata, notes);
+            string? written = (string?)JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "tokenizer_config.json")))!["chat_template"];
             Check(written == "{{ 'own' }}" && notes.Count == 0, "a file's own template is kept, no fallback asked");
-
-            // An app's template for its tokens, and over the library's; unregistered, the library's comes back.
-            GgufChatTemplates.Register("test-turns", new GgufChatTemplate { Matches = (_, tokens) => tokens.Contains("<|user|>"), Template = "{{ 'test' }}" });
-            GgufChatTemplates.Register("chatml", new GgufChatTemplate { Matches = (_, tokens) => tokens.Contains("<|im_start|>"), Template = "{{ 'app chatml' }}" });
-            try
-            {
-                Check(GgufChatTemplates.Origin("test-turns") == typeof(Tests).Assembly.GetName().Name && GgufChatTemplates.Names.Last() == "test-turns" && GgufChatTemplates.Names.First() == "chatml",
-                    "an app's new name is asked last; its template over the library's keeps the library's place");
-                Check(Prepared(["a", "<|user|>"]).Template == "{{ 'test' }}" && Prepared(chatMl).Template == "{{ 'app chatml' }}", "the app's templates are used");
-            }
-            finally
-            {
-                Check(GgufChatTemplates.Unregister("test-turns") && GgufChatTemplates.Unregister("chatml") && !GgufChatTemplates.Unregister("chatml"), "unregistered");
-            }
-
-            Check(GgufChatTemplates.Find("test-turns") is null && Prepared(chatMl).Template == GgufChatTemplates.Default("chatml")!.Template, "the library's ChatML is back");
-
-            // Without the families, Llama 3's tokens find no template: none is written, as a folder without one has none.
-            WithoutTextFamilies(() =>
-            {
-                Check(GgufChatTemplates.Find(LlamaPlugin.ChatTemplateName) is null && GgufChatTemplates.Names.SequenceEqual(["chatml"]), "only the library's ChatML is left");
-                var (none, why, folder) = Prepared(llama3);
-                Check(none is null && Idrak.Abstraction.Generation.ChatTemplates.Load(folder) is null, "no chat template, as a model folder without one");
-                Check(why.Any(n => n.Contains("no fallback registered in GgufChatTemplates (chatml)", StringComparison.Ordinal) && n.Contains("chat is not available", StringComparison.Ordinal)
-                      && n.Contains("GgufChatTemplates.Register", StringComparison.Ordinal) && n.Contains("Idrak.Text.Plugins", StringComparison.Ordinal)), $"the note names the registry: {string.Join("; ", why)}");
-            });
-            Check(GgufChatTemplates.Origin(LlamaPlugin.ChatTemplateName) == TextPlugins.Package.Name && Prepared(llama3).Template == LlamaArchitectures.ChatTemplateText,
-                "registered again, Llama 3's template is back");
         }
         finally
         {
