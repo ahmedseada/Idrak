@@ -18,7 +18,7 @@ internal abstract partial class Tests
         ("tokenizer training: bpe with the metaspace pre-tokenizer learns Hugging Face's vocabulary and merges and encodes as it does", TokenizerTrainingMetaspace),
         ("tokenizer training: a trained tokenizer saved as tokenizer.json loads back to the same ids, passes the tokenizer contract, and a loaded file saves to the same vocabulary and merges", TokenizerTrainingSave),
         ("tokenizer training: a file with Windows line ends (CRLF) trains the tokenizer its LF copy trains (byte level and metaspace), LineEnds \"keep\" learns the \\r as Hugging Face does, and another value is refused", TokenizerTrainingLineEnds),
-        ("tokenizer training: bpe refuses bad options and missing files, and one worker counts the same words as many", TokenizerTrainingRegistry),
+        ("tokenizer training: bpe refuses bad options and missing files, and one worker counts the same words as many", TokenizerTrainingRefusals),
         ("tokenizer training: unigram learns SentencePiece's vocabulary from the same text and options (the special and byte pieces at the same ids, the learned pieces overlapping above the measured threshold), with and without byte fallback, split digits, the Arabic removals and each of SentencePiece's switches (whitespace, script and number splits, whitespace as a suffix, whitespace-only pieces, the longest line, the nfkc and nmt_nfkc rules), each switch changing the pieces as it should", TokenizerTrainingUnigramReference),
         ("tokenizer training: unigram's tokenizer saved as tokenizer.json and tokenizer.model loads back from both to its ids on every line, and with byte fallback decodes every line back to its text", TokenizerTrainingUnigramFiles),
         ("tokenizer training: wordpiece by frequency learns the vocabulary of Hugging Face's WordPieceTrainer algorithm with its ties fixed, exactly, and overlaps Hugging Face's own run above the measured threshold", TokenizerTrainingWordPieceReference),
@@ -240,9 +240,9 @@ internal abstract partial class Tests
         }
     }
 
-    internal static void TokenizerTrainingRegistry(Device device)
+    internal static void TokenizerTrainingRefusals(Device device)
     {
-        if (!FirstRun(nameof(TokenizerTrainingRegistry)))
+        if (!FirstRun(nameof(TokenizerTrainingRefusals)))
         {
             return;
         }

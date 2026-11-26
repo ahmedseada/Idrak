@@ -6,8 +6,8 @@ using Idrak.Generation;
 using Idrak.Layers;
 
 // dotnet run -c Release --project tests/Idrak.Tests -- --bench-cpu
-// The CPU's decoding kernels at language-model sizes: bfloat16 products of 1-8 rows, attention of one new row over a
-// float32 / int8 / bfloat16 cache of 4,000 positions (16 heads of 128), and sampling over a 151,936-token vocabulary.
+// The CPU's decoding kernels at language-model sizes: products of 1-8 rows, attention of one new row over a
+// float32 cache of 4,000 positions (16 heads of 128), and sampling over a 151,936-token vocabulary.
 internal abstract partial class Tests
 {
     internal static int BenchCpu()

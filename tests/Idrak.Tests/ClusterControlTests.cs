@@ -15,14 +15,14 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterControlGroup =
     [
-        ("cluster control: reinforce: the pass rate's setting; in one process the control-file steering pauses, goes on and stops at a boundary (read at most every poll, a cancellation ending a pause), rank 0's state file saying so", ControlRegistry),
+        ("cluster control: reinforce: the pass rate's setting; in one process the control-file steering pauses, goes on and stops at a boundary (read at most every poll, a cancellation ending a pause), rank 0's state file saying so", ControlPassRate),
     ];
 
     private static bool ControlState(string file, string state, long step) => ClusterControlFile.ReadState(file) is { } said && said.State == state && said.Step == step;
 
-    private static void ControlRegistry(Device device)
+    private static void ControlPassRate(Device device)
     {
-        if (!FirstRun(nameof(ControlRegistry)))
+        if (!FirstRun(nameof(ControlPassRate)))
         {
             return;
         }

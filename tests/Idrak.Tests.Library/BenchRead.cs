@@ -20,11 +20,7 @@ using Idrak.Text.Generation;
 //   IDRAK_BENCH_TRANSFORMS  the card's pipeline (default grayscale,max_width=1024,contrast=1.5)
 //   IDRAK_BENCH_PROMPT      the instruction (default "Extract details to JSON.")
 //   IDRAK_BENCH_TOKENS      the answer's most tokens (default 64)
-//   IDRAK_BENCH_WEIGHTS     f32, bf16, int8 or int4 (default f32);  IDRAK_BENCH_CACHE f32 or bf16;  IDRAK_BENCH_ENCODER f32 or bf16;
-//                           IDRAK_BENCH_PREFILL f32 or bf16 (the prompt's pass)
-//   IDRAK_BENCH_HEAD        the head's format beside int8 or int4 weights: bf16 (the head is the only vocabulary table, as the
-//                           app's HeadWeights) or empty (as the weights, beside a bfloat16 token table: the default)
-//   IDRAK_LOOKUP_TABLES     where that separate token table lives: auto (on the device until it is full), host or device
+//   IDRAK_LOOKUP_TABLES     where a frozen model's separate token table lives: auto (on the device until it is full), host or device
 //   IDRAK_BENCH_CONTEXT     the context window (default the model's)
 //   IDRAK_BENCH_BATCH       pages read together (ImageReader.ReadBatch; default 1: the page alone): the page this many times,
 //                           with the time a page and the tokens a second of the whole batch

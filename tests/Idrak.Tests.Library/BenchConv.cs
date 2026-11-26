@@ -7,8 +7,7 @@ using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Gpu.Cuda;
 using Idrak.Gpu.Vulkan;
 
-// Convolutions on each device IDRAK_DEVICES names (default every GPU found), in the current precision (IDRAK_MATMUL=bf16
-// for the composed path's products on tensor cores or cooperative matrices): for each shape (a backbone's 3 x 3, a stem's
+// Convolutions on each device IDRAK_DEVICES names (default every GPU found): for each shape (a backbone's 3 x 3, a stem's
 // 7 x 7 stride 2, a pointwise 1 x 1, a depthwise 3 x 3, a text line's tall and wide filters) the forward pass, the input
 // gradient and the weight gradient, timed through each path the device has (composed: im2col and its products; tile:
 // the implicit product on 16 x 16 tiles; blocked: on 64 x 64 tiles; depthwise; on Vulkan the weight gradient's unfolded

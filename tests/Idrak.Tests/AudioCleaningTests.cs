@@ -12,7 +12,7 @@ internal abstract partial class DesktopTests : Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] AudioCleaningGroup =
     [
-        ("audio cleaning: the options round-trip through JSON (a plug-in's settings included) and refuse values out of range", AudioCleaningRegistry),
+        ("audio cleaning: the options round-trip through JSON (a plug-in's settings included) and refuse values out of range", AudioCleaningRoundTrip),
         ("audio cleaning: highpass takes a DC offset and a 10 Hz rumble out of a 1 kHz tone (each down over 20 dB) and keeps the tone within 0.5 dB on both channels; trim cuts the silence at both ends of a tone to the pad and leaves a silent clip and a tight one as they are; normalize brings the speech frames to the target level within 0.5 dB and never over the peak ceiling", AudioCleaningStages),
         ("audio cleaning: denoise on a tone spoken in bursts under white noise 20 dB down turns the noise in the pauses down by at least 8 dB, keeps the tone's level in a burst within 1 dB and the length exactly", AudioCleaningDenoise),
         ("audio cleaning: SpeechTrainingOptions carry the stages and their settings through JSON", AudioCleaningTraining),
@@ -64,7 +64,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static double Decibels(double ratio) => 10 * Math.Log10(ratio);
 
-    private static void AudioCleaningRegistry(Device device)
+    private static void AudioCleaningRoundTrip(Device device)
     {
         _ = device;
         var options = new AudioCleaningOptions { HighPassHertz = 80, TargetDecibels = -18, DenoiseStrength = 2, Settings = new JsonObject { ["model"] = "dfn3", ["passes"] = 2 } };

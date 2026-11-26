@@ -10,7 +10,7 @@ using Idrak.Text;
 // gave before.
 internal abstract partial class Tests
 {
-    internal static readonly (string Name, Action<Device> Run)[] TrainingRegistryGroup =
+    internal static readonly (string Name, Action<Device> Run)[] TuningMetricsGroup =
     [
         ("tuning metrics: number, exact, contains and f1 (AnswerMatchMetric; higher is better, each answer out of 1) score as ChatEvaluation scored them; their sum over answers is the mean; the final-answer marker", AnswerMetricsAsTuningMetrics),
     ];
