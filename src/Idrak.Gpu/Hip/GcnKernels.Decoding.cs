@@ -7,8 +7,8 @@ using System.Text;
 namespace Idrak.Gpu.Hip;
 
 // HIP's decoding kernels in GCN (plan 35, G5a), with CUDA's names and arguments where CUDA has the kernel
-// (Cuda/PtxKernels.Decoding.cs, .Decoder.cs, .Quantized.cs, .Advanced.cs), computing what the CPU backend computes
-// (CpuBackend.Decoding.cs, .Quantized.cs, .Advanced.cs, CpuMath.cs) within the device-against-CPU tolerance.
+// (Cuda/PtxKernels.Decoding.cs, .Decoder.cs, .Advanced.cs), computing what the CPU backend computes
+// (CpuBackend.Decoding.cs, .Advanced.cs, CpuMath.cs) within the device-against-CPU tolerance.
 //
 // - attention_rows_f32: decoding over a float32 cache, each row from its sequence's
 //   start (GcnKernels.Attention.cs's kernel with a table of starts); segment_spans_f32 writes the key range of each row

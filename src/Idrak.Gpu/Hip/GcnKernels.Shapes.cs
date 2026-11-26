@@ -8,8 +8,8 @@ namespace Idrak.Gpu.Hip;
 
 // HIP's shape kernels in GCN (plan 35, G4b): the key/value cache write, the decoder mask, the gather, the permute and
 // the strided copy (adding or not), with CUDA's names
-// and arguments in CUDA's order (PtxKernels.Decoding.cs, .Quantized.cs, .Advanced.cs: the buffers, then the 32-bit
-// values, the count n last), each computing what the CPU backend computes (CpuBackend.Decoding.cs, .Quantized.cs,
+// and arguments in CUDA's order (PtxKernels.Decoding.cs, .Advanced.cs: the buffers, then the 32-bit
+// values, the count n last), each computing what the CPU backend computes (CpuBackend.Decoding.cs,
 // .Advanced.cs), the reference their results are proven against.
 //
 // Every kernel has one shape: one output element a work-item,

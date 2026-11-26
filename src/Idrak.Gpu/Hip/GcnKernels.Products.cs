@@ -7,7 +7,7 @@ using System.Text;
 namespace Idrak.Gpu.Hip;
 
 // HIP's matrix products in GCN (plan 35, G4a), written for gfx9's wave of 64 as CUDA's are in PTX (Cuda/PtxKernels.cs,
-// .Rows.cs, .Quantized.cs): CUDA's names, CUDA's arguments in CUDA's order, the CPU backend's results within the
+// .Rows.cs): CUDA's names, CUDA's arguments in CUDA's order, the CPU backend's results within the
 // device-against-CPU tolerance. Every output's sum is taken in one order fixed by the shapes (rule 86): over k in
 // increasing order within a thread, then the parts (slices of k inside a block, splits of k across blocks) added in
 // their order, by LDS in a fixed shape, by the launch's last block or by a second kernel, never added by atomics; so a
@@ -51,7 +51,7 @@ namespace Idrak.Gpu.Hip;
 // together.)
 internal static partial class GcnKernels
 {
-    /// <summary>The products, the packed few-row products and the expansions, in the order they join <see cref="All"/>.</summary>
+    /// <summary>The products and the few-row products, in the order they join <see cref="All"/>.</summary>
     internal static IReadOnlyList<GcnKernelSource> Products => _products ??= BuildProducts();
 
     // Built on first use: the text reads this file's argument lists and names, whose static initializers come later.

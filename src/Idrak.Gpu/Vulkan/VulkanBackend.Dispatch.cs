@@ -51,8 +51,7 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
     // IDRAK_VULKAN_CHECK_NAN=1 (diagnostics, slow): after every kernel, wait for it and read back the storages it writes;
     // a NaN or +∞ there is reported on the error output with the kernel, its width and reductions, the storage, the
     // index and the push constants, the first CheckNanReports of them (the first names the kernel that made it: every
-    // earlier kernel's outputs were finite). -∞ is left out (masks hold it); a storage of packed values (16-bit, 8-bit or
-    // 4-bit words) may read as NaN, and its kernel names it.
+    // earlier kernel's outputs were finite). -∞ is left out (masks hold it).
     internal static bool CheckNan { get; set; } = Environment.GetEnvironmentVariable("IDRAK_VULKAN_CHECK_NAN") is "1" or "true";
 
     private const int CheckNanReports = 12;

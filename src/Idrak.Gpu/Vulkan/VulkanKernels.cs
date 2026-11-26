@@ -110,8 +110,7 @@ internal static partial class VulkanKernels
     }
 
     /// <summary>
-    /// Workgroup memory the widest kernel declares at a width, at most (bytes): the packed products' partial sums (8
-    /// floats per invocation), or the sampler's 2,048-score slice with three arrays of the width. The test list checks
+    /// Workgroup memory the widest kernel declares at a width, at most (bytes): 8 floats per invocation, or the sampler's 2,048-score slice with three arrays of the width. The test list checks
     /// every kernel against it.
     /// </summary>
     public static int SharedBytesBound(int width) => Math.Max(32 * width, 12 * width + 8448);

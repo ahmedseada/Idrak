@@ -6,7 +6,7 @@ using System.Globalization;
 namespace Idrak.Gpu.Hip;
 
 // HIP's attention kernels in GCN (plan 35, G4b), with CUDA's names where CUDA has the kernel (PtxKernels.Rows.cs,
-// .Spans.cs, .Quantized.cs) and the CPU backend's results (CpuBackend.Quantized.cs, .CacheAttention.cs, .Spans.cs) within
+// .Spans.cs) and the CPU backend's results (CpuBackend.CacheAttention.cs, .Spans.cs) within
 // the device-against-CPU tolerance.
 //
 // One kernel shape serves every attention over a range of keys: decoding and the tiled form over a key/value cache

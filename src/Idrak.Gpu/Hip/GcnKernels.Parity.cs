@@ -7,7 +7,7 @@ using System.Text;
 namespace Idrak.Gpu.Hip;
 
 // The kernels CUDA has and HIP lacked (plan 35, HIP parity), with CUDA's names and arguments (PtxKernels.Decoder.cs) and
-// the CPU backend's results (CpuBackend.Quantized.cs, CpuBackend.Decoder.cs) within the device-against-CPU tolerance:
+// the CPU backend's results (CpuBackend.Decoder.cs) within the device-against-CPU tolerance:
 // - softmax_ce_rows_f32 (Backend.SoftmaxCrossEntropyRows, a language model's token loss): a block of 1,024 a row, its sums
 //   grouped as CUDA's (each thread's columns in order, each warp's butterfly, the warps in order; plan 35's CE order):
 //   the row's max, Σ exp(x - max), lse = max + log Σ; the first thread writes

@@ -786,7 +786,7 @@ internal static partial class GcnKernels
     private static void TrainingPow(PointwiseWriter w, string target, string x, string p, string flags) => w.Pow(target, x, p, flags);
 
     // dgate += dy · up · act'(gate) (flags bit 0; bit 2: written instead), dup += dy · act(gate) (bit 1; bit 3: written);
-    // kind 0 SiLU, 1 GELU (tanh form), 2 ReLU, 3 tanh(gate) · sigmoid(up) (CpuBackend.Quantized's Activation and UpSide).
+    // kind 0 SiLU, 1 GELU (tanh form), 2 ReLU, 3 tanh(gate) · sigmoid(up) (the CPU backend's gated activations).
     private static GcnKernelSource GatedBackward() =>
         TrainingElementwise("gated_act_bwd_f32", new(["gate", "up", "dy", "dgate", "dup"], ["kind", "flags"], [0, 1, 2, 3, 4], [3, 4])
         {

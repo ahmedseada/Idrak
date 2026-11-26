@@ -7,7 +7,7 @@ namespace Idrak.Gpu;
 
 /// <summary>
 /// Device memory that one kind of work writes and reads within its own queued work (the split partial sums of a few-row
-/// packed product, added by its last block or by a reduction queued right after it): one block kept and reused in queue
+/// product, added by its last block or by a reduction queued right after it): one block kept and reused in queue
 /// order, as the pool would hand the same block back on the next call anyway, so a decoding step allocates no storage for
 /// it. A larger piece replaces the block and the one outgrown stays alive, unreleased: work recorded into a graph, and
 /// work other threads have queued, may still use it (shapes repeat, so it grows a few times and then stays).
