@@ -289,7 +289,7 @@ public static class PreferenceReferences
 /// <summary>
 /// A policy that also learns from preferences between its answers (<see cref="PreferenceChoice"/>, made by an
 /// <see cref="IPreferencePairSource"/>): one optimizer step on the pairs with a preference loss chosen by name (Idrak.Text's
-/// language-model policy: DPO, ORPO, SimPO from its <c>PreferenceLosses</c>), against a reference
+/// language-model policy: DPO, ORPO, SimPO), against a reference
 /// (<see cref="PreferenceReferences"/>). The trainer of Idrak.Reinforcement drives it round after round: collect a rollout,
 /// choose its pairs, update.
 /// </summary>

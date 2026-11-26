@@ -11,7 +11,7 @@ namespace Idrak.Audio.Plugins.IdrakAudio;
 
 /// <summary>
 /// An IdrakAudio "ctc" model: the encoder and head (<see cref="IdrakAudioEncoder"/>), its tokenizer and its features, as a
-/// speech recognizer (sound in, text out through the library's <c>CtcDecoders</c>: greedy, or "beam" when
+/// speech recognizer (sound in, text out through the library's CTC decoders: greedy, or "beam" when
 /// <see cref="TranscriptionOptions.Beams"/> is above 1) and as a model <c>SpeechTrainer</c> trains and saves.
 /// </summary>
 public sealed class IdrakAudioCtcModel : ICtcSpeechModel

@@ -26,7 +26,7 @@ public enum ImageTask
     /// <summary>
     /// A label sequence along the image's width (a line of text): [N, steps, classes] scores, a step per
     /// <see cref="LineRecognitionSettings.Stride"/> columns, CTC's blank among the classes, read by a CTC decoder
-    /// (<c>CtcDecoders</c>). The model's <see cref="ImageModel.Lines"/> say how a line becomes the network's input.
+    ///. The model's <see cref="ImageModel.Lines"/> say how a line becomes the network's input.
     /// </summary>
     LineRecognition,
 }

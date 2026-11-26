@@ -77,7 +77,7 @@ public static class ImageModelPredictors
 
     /// <summary>
     /// A line reader over the model (<see cref="ImageTask.LineRecognition"/>): its line settings, labels and channels, the
-    /// CTC decoder <paramref name="decoder"/> (<c>CtcDecoders</c>) with <paramref name="options"/>.
+    /// CTC decoder <paramref name="decoder"/> with <paramref name="options"/>.
     /// </summary>
     /// <exception cref="InvalidOperationException">The model is not a line recognizer.</exception>
     /// <exception cref="NotSupportedException">Picking the decoder or the model's reading order by its name is not on the new design yet.</exception>

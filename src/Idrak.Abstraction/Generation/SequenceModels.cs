@@ -11,7 +11,7 @@ namespace Idrak.Abstraction.Generation;
 /// optional token types) in, hidden states [batch, time, <see cref="Width"/>] out, every position seeing the whole of its
 /// sequence and nothing of its padding. A sequence's states are the same alone and in a padded batch (within float
 /// rounding); the states at padded positions are of no meaning. Idrak's <c>SequenceEncoder</c> is the library's encoder
-/// built from layers; a pretrained family (Idrak's <c>PretrainedEncoders</c>) builds one from its checkpoint.
+/// built from layers; a pretrained family builds one from its checkpoint.
 /// </summary>
 public interface ISequenceEncoder : IDisposable
 {

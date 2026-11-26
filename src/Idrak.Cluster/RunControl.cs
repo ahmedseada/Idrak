@@ -371,7 +371,7 @@ internal sealed class InProcessSteering(ClusterRunControl control, int rank, Dev
 
 /// <summary>
 /// The "live" failure model (plan 23, phase C9): faults asked for while a run goes (the dashboard's "inject at next step",
-/// <see cref="ClusterRunControl.Inject"/>, or <see cref="Queue"/> on the instance <c>FailureModels</c> holds), each
+/// <see cref="ClusterRunControl.Inject"/>, or <see cref="Queue"/> on the failure models' instance), each
 /// handed to the next step drawn, and faults scheduled at their own steps (a replay of a steered run). A steered run draws
 /// its own model's faults and this model's beside them, so the two compose; named on its own ("live") a run has the queued
 /// faults alone. Its draws take nothing from the seeded generator, so the run's own model draws what it would unsteered.

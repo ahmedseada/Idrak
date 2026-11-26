@@ -109,7 +109,7 @@ public sealed record IdrakAudioConfig
     /// <summary>"tts": the <see cref="Vocoders"/> name it speaks through when the call names none; null: the library's default ("griffin-lim").</summary>
     public string? Vocoder { get; init; }
 
-    /// <summary>The feature extractor (an <c>AudioFeatureExtractors</c> name).</summary>
+    /// <summary>The feature extractor.</summary>
     public string FeatureExtractor { get; init; } = "log-mel";
 
     /// <summary>The features: a family's rate, window, hop and mels; no padding to a segment (each utterance's own length).</summary>

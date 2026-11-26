@@ -17,7 +17,7 @@ namespace Idrak.Text;
 /// <summary>
 /// The parts a synthetic page adds around its record's text: header lines at the start, centre and end, a title, a
 /// subject, a signature and a footer, each drawn per page from its alternatives at its chance, their slots
-/// (<c>{digits:6}</c>, <c>{hijri}</c>, ...; see <c>PagePartFillers</c>) filled from the page's seed. Written as
+/// (<c>{digits:6}</c>, <c>{hijri}</c>, ...) filled from the page's seed. Written as
 /// JSON (<see cref="Read"/>): <c>{"headerStart": [["line", "line"], ...], "headerCenter", "headerEnd", "titles": ["..."],
 /// "subjects", "signatures", "footers", "chances": {"headerStart": 0.9, ...}, "digits": "٠١٢٣٤٥٦٧٨٩", "nativeDigits":
 /// 0.3, "language": "ar"}</c>; an alternative may be one line as a string. The library has no parts of its own: a page

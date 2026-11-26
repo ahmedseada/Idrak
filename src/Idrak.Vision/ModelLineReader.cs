@@ -27,7 +27,7 @@ public sealed record RecognizedLine(string Text, int[] Labels, double LogProbabi
 /// A line recognizer over a network (<see cref="ImageTask.LineRecognition"/>; <c>model.LineReader()</c> for a model loaded
 /// through its family): each line prepared as <see cref="LineRecognitionSettings"/> say (scaled to the height keeping its
 /// aspect, ink high, flipped for right to left), a batch padded with 0 on the right to its widest line, the network's
-/// [N, steps, classes] scores decoded by a CTC decoder (<c>CtcDecoders</c>), the labels' text turned to logical
+/// [N, steps, classes] scores decoded by a CTC decoder, the labels' text turned to logical
 /// order by the model's reading order (<see cref="ReadingOrders"/>). It uses the network without owning it. A line in a
 /// batch is padded to the widest; a network that reads its padding (a recurrent layer running backwards) reads lines of
 /// similar widths best together, so callers batch lines by width.
@@ -51,7 +51,7 @@ public sealed class ModelLineReader
     /// <param name="labels">Each class's text, in output order (the blank's empty).</param>
     /// <param name="settings">How lines are prepared and readings turned to text.</param>
     /// <param name="channels">The network's input channels (the grey line repeated to them).</param>
-    /// <param name="decoder">The CTC decoder (<c>CtcDecoders</c>; "greedy" unless given).</param>
+    /// <param name="decoder">The CTC decoder ("greedy" unless given).</param>
     /// <param name="options">The decoder's settings (its blank is the settings').</param>
     /// <param name="device">Where the network runs (its weights' device unless given).</param>
     /// <exception cref="ArgumentException">The settings do not fit the labels.</exception>

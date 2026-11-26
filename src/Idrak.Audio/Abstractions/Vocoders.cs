@@ -5,7 +5,7 @@ namespace Idrak.Audio.Abstractions;
 
 /// <summary>
 /// Turns a spectrogram a model produced into sound. The frames are rows (<c>[frames, mels]</c> log-mel as
-/// <c>AudioFeatureExtractors</c> "log-mel" lays them out, with the <see cref="AudioFeatureOptions"/> the vocoder
+/// the "log-mel" extractor lays them out, with the <see cref="AudioFeatureOptions"/> the vocoder
 /// was made with saying the rate, window, hop, mel count and normalisation).
 /// </summary>
 public interface IVocoder

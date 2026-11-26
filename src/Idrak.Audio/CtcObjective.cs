@@ -9,7 +9,7 @@ namespace Idrak.Audio;
 /// <summary>
 /// The "ctc" training objective (<see cref="SpeechTrainingObjectives"/>): an <see cref="ICtcSpeechModel"/>'s logits, a
 /// log-softmax over its classes, each utterance's steps (<see cref="ICtcSpeechModel.StepsFor"/> of its frames) and labels,
-/// PyTorch's <c>ctc_loss</c> with mean reduction and zero_infinity; evaluation decodes through <c>CtcDecoders</c>.
+/// PyTorch's <c>ctc_loss</c> with mean reduction and zero_infinity; evaluation decodes.
 /// An utterance whose steps are fewer than its labels need (<see cref="CtcAlignment.MinimumSteps"/>) is not trained on.
 /// </summary>
 public sealed class CtcObjective : ISpeechTrainingObjective

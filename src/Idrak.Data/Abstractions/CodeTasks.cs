@@ -17,7 +17,7 @@ public sealed record CodeSource(string Root)
     /// <summary>The coding languages it is read in, by their names; empty: those that detect it.</summary>
     public IReadOnlyList<string> Languages { get; init; } = [];
 
-    /// <summary>Its history (<c>RepositoryHistories</c>), or null when it has none or none is read.</summary>
+    /// <summary>Its history, or null when it has none or none is read.</summary>
     public IRepositoryHistory? History { get; init; }
 
     /// <summary>How its files are read (skipped folders, the largest file).</summary>

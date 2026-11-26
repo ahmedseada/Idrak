@@ -165,14 +165,14 @@ public sealed record ClusterOptions
     /// <summary>Where rank 0 listens (<c>IDRAK_COORDINATOR</c>, "host:port"), or null: the file's first node's address.</summary>
     public string? Coordinator { get; init; }
 
-    /// <summary>The transport, a <c>Transports</c> name, or "auto" for the selector's choice per pair
+    /// <summary>The transport by name, or "auto" for the selector's choice per pair
     /// (<c>IDRAK_CLUSTER_TRANSPORT</c>).</summary>
     public string Transport { get; init; } = "auto";
 
     /// <summary></summary>
     public string Selector { get; init; } = "fastest";
 
-    /// <summary>The <c>Collectives</c> name, or null: "hierarchical" when the topology has more than one node, else
+    /// <summary>The collective algorithm's name, or null: "hierarchical" when the topology has more than one node, else
     /// "ring" (<c>IDRAK_CLUSTER_COLLECTIVE</c>).</summary>
     public string? Collective { get; init; }
 
@@ -287,7 +287,7 @@ public sealed record ClusterOptions
 
     /// <summary>
     /// Whether every rank runs rank 0's measured kernel choices (a kernel's variant, its splits, the workgroup width,
-    /// the attention path: <c>MeasuredChoiceProviders</c>) instead of measuring its own, so a seeded run
+    /// the attention path) instead of measuring its own, so a seeded run
     /// on N ranks runs the kernels one process runs. Rank 0 still measures (or reads its cache); a rank on another
     /// device or driver than rank 0's keeps its own and says so (<see cref="Diagnostics.MeasuredChoicesShared"/>).
     /// Speed is unchanged; 0 lets each rank measure its own (<c>IDRAK_CLUSTER_SHARE_TUNING</c>: 1 or 0).

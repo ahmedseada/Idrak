@@ -6,8 +6,8 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The checks of an attention position bias (<see cref="IAttentionPositionBias"/>, a kind of
-/// <c>AttentionPositionBiases</c>) for queries, keys and a first query position:
+/// The checks of an attention position bias (<see cref="IAttentionPositionBias"/>) for
+/// queries, keys and a first query position:
 /// <list type="bullet">
 /// <item>the bias is [heads, queries, keys] on the asked device, every value finite;</item>
 /// <item>asked again, it gives the same values (a kept bias is the one computed);</item>

@@ -19,7 +19,7 @@ public sealed record ReinforcementOptions
     public string Algorithm { get; init; } = ReinforcementNames.Ppo;
 
     /// <summary>
-    /// The advantage estimator, an <c>AdvantageEstimators</c> name; null for the algorithm's: grpo's group, ppo's gae (returns
+    /// The advantage estimator by name; null for the algorithm's: grpo's group, ppo's gae (returns
     /// when the policy has no critic), returns for reinforce and an app's. <c>IDRAK_RL_ESTIMATOR</c>.
     /// </summary>
     public string? Estimator { get; init; }

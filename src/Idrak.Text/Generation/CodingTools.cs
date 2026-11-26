@@ -146,7 +146,7 @@ public sealed record CodingToolOptions
     public bool ReadBeforeEdit { get; init; } = true;
 
     /// <summary>
-    /// The <c>CommandSandboxes</c> sandbox every command runs in: <c>Process</c> unless
+    /// The sandbox every command runs in: <c>Process</c> unless
     /// <c>EnvironmentVariable</c> (IDRAK_SANDBOX) names another. <b>process is a plain process of
     /// this machine</b>, with the user's rights: no shell and only the programs allowed, but nothing isolates the files,
     /// the network or the processes a command reaches (a build or a test runs the project's code). Use it with models you
@@ -219,7 +219,7 @@ public sealed partial class CodingTools
     /// <summary>Tools over <paramref name="workspace"/>.</summary>
     /// <param name="workspace">The folder the tools work in.</param>
     /// <param name="options">What they may do; null for the defaults.</param>
-    /// <param name="sandbox">The sandbox commands run in; null for the one <see cref="CodingToolOptions.Sandbox"/> names in <c>CommandSandboxes</c>.</param>
+    /// <param name="sandbox">The sandbox commands run in; null for the one <see cref="CodingToolOptions.Sandbox"/> names (by name: not on the new design yet).</param>
     /// <exception cref="DirectoryNotFoundException">The workspace does not exist.</exception>
     /// <exception cref="NotSupportedException">
     /// Picking the sandbox or the write policy by its name is not on the new design yet, or the sandbox cannot enforce the options' limits (the message

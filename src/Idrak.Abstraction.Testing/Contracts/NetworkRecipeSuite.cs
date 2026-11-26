@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// A network recipe under test (Idrak's <c>INetworkRecipe</c> of <c>NetworkRecipes</c>, given as a delegate since this kit
+/// A network recipe under test (Idrak's <c>INetworkRecipe</c>, given as a delegate since this kit
 /// depends on Idrak.Abstraction alone): builds the network of the recipe's arguments, every layer's weights drawn in order
 /// from the random given.
 /// </summary>

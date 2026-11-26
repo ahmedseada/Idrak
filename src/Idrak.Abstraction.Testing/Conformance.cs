@@ -102,7 +102,7 @@ public static class Conformance
     }
 
     /// <summary>
-    /// Checks a network recipe (Idrak's <c>NetworkRecipes</c>, given as <see cref="NetworkRecipeUnderTest"/>;
+    /// Checks a network recipe (Idrak's, given as <see cref="NetworkRecipeUnderTest"/>;
     /// <see cref="NetworkRecipeSuite"/>): the same seed gives the same weights and predictions, the predictions are finite
     /// and keep the batch, and, given a <paramref name="reference"/> (the library's recipe of that name), the same
     /// parameters, weights and predictions. A library recipe has samples of its own; give <paramref name="samples"/> for

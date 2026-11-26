@@ -6,7 +6,7 @@ using Idrak.Abstraction.Reinforcement;
 namespace Idrak.Text.Reinforcement.Abstractions;
 
 /// <summary>
-/// An environment kind whose replies are scored by a reward expression (a <c>RewardFunctions</c> name, or weighted
+/// An environment kind whose replies are scored by a reward expression (a reward's name, or weighted
 /// terms "exact:1,length:0.1", each term's options as "term.key"), over at most a number of replies: the option keys a
 /// trainer's command line (<c>idrak reinforce --reward</c>, <c>--rounds</c>, <c>--no-think</c>) sets them by.
 /// </summary>

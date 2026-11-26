@@ -571,7 +571,7 @@ public readonly record struct TransportChosen(int RankA, int RankB, string Trans
 
 /// <summary>
 /// Published at <c>TelemetryLevel.Network</c> once per rank after rank 0 as a cluster run starts
-/// (<c>ClusterOptions.ShareTuning</c>): whether the rank runs rank 0's measured kernel choices (<c>MeasuredChoiceProviders</c>) or keeps its own, and why.
+/// (<c>ClusterOptions.ShareTuning</c>): whether the rank runs rank 0's measured kernel choices or keeps its own, and why.
 /// </summary>
 /// <param name="Rank">The rank.</param>
 /// <param name="Device">Its device.</param>

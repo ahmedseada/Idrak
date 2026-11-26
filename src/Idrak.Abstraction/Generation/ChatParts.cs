@@ -34,8 +34,8 @@ public sealed record ChatText(string Text) : ChatPart
 }
 
 /// <summary>
-/// An image in a message, as it was received: its encoded bytes (PNG, JPEG, ...; never decoded here, decoding is core's
-/// <c>ImageCodecs</c>), its media type when known, and the SHA-256 of the bytes (<see cref="Hash"/>), which identifies it:
+/// An image in a message, as it was received: its encoded bytes (PNG, JPEG, ...; never decoded here, decoding is the image
+/// codecs'), its media type when known, and the SHA-256 of the bytes (<see cref="Hash"/>), which identifies it:
 /// two images are equal when their bytes are, so a model can encode an image once per conversation. Make one with
 /// <see cref="FromFile"/>, <see cref="FromBytes"/> or <see cref="FromDataUrl"/>.
 /// </summary>

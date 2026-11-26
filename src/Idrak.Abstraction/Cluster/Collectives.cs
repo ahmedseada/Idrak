@@ -27,7 +27,7 @@ public enum ReduceOp
 /// </summary>
 public interface ICollectives : IDisposable
 {
-    /// <summary>The algorithm's name in <c>Collectives</c> ("naive", "ring", "hierarchical").</summary>
+    /// <summary>The algorithm's name ("naive", "ring", "hierarchical").</summary>
     string Name { get; }
 
     /// <summary>This rank.</summary>

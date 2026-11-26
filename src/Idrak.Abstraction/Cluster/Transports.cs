@@ -26,7 +26,7 @@ public readonly record struct TransportCapabilities(double BandwidthBytesPerSeco
 /// </summary>
 public interface ITransport : IDisposable
 {
-    /// <summary>The transport's name in <c>Transports</c> ("sim", "tcp", …).</summary>
+    /// <summary>The transport's name ("sim", "tcp", …).</summary>
     string Name { get; }
 
     /// <summary>This end's rank, from 0.</summary>

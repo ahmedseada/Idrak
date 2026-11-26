@@ -33,7 +33,7 @@ public sealed record PromptTask(IReadOnlyList<ChatMessage> Prompt, string? Refer
 /// <summary>
 /// The <c>prompts</c> environment kind (Plan 27, R3): chat
 /// prompts with references and optional tools, each episode one prompt drawn from its seed. The agent's reply ends the
-/// episode, rewarded by a reward expression (option <c>reward</c>: a <c>RewardFunctions</c> or
+/// episode, rewarded by a reward expression (option <c>reward</c>: a reward's or
 /// <see cref="TuningMetrics"/> name, "exact" by default, or weighted terms "exact:1,length:0.1"; each term's options as
 /// "term.key"); a reply that calls tools, when the kind was made with a tool registry, has them run and the results sent
 /// back, for at most <c>rounds</c> replies (1 by default), the last one cut by the limit (truncated) when it still

@@ -73,7 +73,7 @@ public static class ReinforcementTrainer
 /// <summary>
 /// The on-policy trainer: each iteration plays <see cref="ReinforcementOptions.EpisodesPerIteration"/> episodes with the
 /// policy (<see cref="RolloutCollector{TObservation, TAction}"/>), estimates their advantages and returns
-/// (<c>AdvantageEstimators</c>), then makes <see cref="ReinforcementOptions.Epochs"/> passes over them in mini-batches of
+///, then makes <see cref="ReinforcementOptions.Epochs"/> passes over them in mini-batches of
 /// <see cref="ReinforcementOptions.MiniBatch"/> episodes, each an update of the policy with the algorithm's loss
 ///. A policy that exposes its optimizer (<see cref="IScheduledPolicy"/>) gets the run's gradient
 /// clip and a learning-rate schedule over the run's updates.

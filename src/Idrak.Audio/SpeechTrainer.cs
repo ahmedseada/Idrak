@@ -91,7 +91,7 @@ public sealed record SpeechTrainingOptions
     /// <summary>The evaluation's score: a <see cref="TuningMetrics"/> name ("cer", "wer").</summary>
     public string Metric { get; init; } = TuningMetrics.CharacterErrorRate;
 
-    /// <summary>The evaluation's decoder: "greedy" or "beam" (for CTC, a <c>CtcDecoders</c> name).</summary>
+    /// <summary>The evaluation's decoder: "greedy" or "beam" (for CTC by name).</summary>
     public string Decoder { get; init; } = "greedy";
 
     /// <summary>The beam width of the "beam" decoder.</summary>

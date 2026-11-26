@@ -303,7 +303,7 @@ public sealed class CrnnRecognizer : IDisposable
     public Tensor LogProbabilities(Tensor images) => Network.Forward(images).LogSoftmax();
 
     /// <summary>
-    /// Reads <paramref name="lines"/> with the CTC decoder <paramref name="decoder"/> (<c>CtcDecoders</c>), in
+    /// Reads <paramref name="lines"/> with the CTC decoder <paramref name="decoder"/>, in
     /// batches measured on the device (<paramref name="batches"/>), widest lines first so each batch pads little.
     /// </summary>
     public IReadOnlyList<RecognizedLine> Read(IReadOnlyList<ImageData> lines, string decoder, CtcDecodeOptions options, MeasuredLineBatches batches)

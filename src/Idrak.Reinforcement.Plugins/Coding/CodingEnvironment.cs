@@ -28,7 +28,7 @@ namespace Idrak.Reinforcement.Plugins.Coding;
 /// (<see cref="CodingAgent.RunToolCallsAsync"/>) and their results are the next observation; the episode ends when a reply
 /// calls no tool (terminated), or when the rounds or the time run out (truncated).</item>
 /// <item><b>The end:</b> the hidden tests are copied in (over any copy the agent made) and the verification commands run;
-/// the reward is the option <c>reward</c>'s expression (<see cref="CodingRewards"/>, any <c>RewardFunctions</c>
+/// the reward is the option <c>reward</c>'s expression (<see cref="CodingRewards"/>, a reward's
 /// name, "tests-passed" by default) over the episode's info (<see cref="CodingInfo"/>). Files the agent changed where the
 /// hidden tests go are reported, and with <c>refuse-test-edits</c> the episode is refused: verification does not run and
 /// counts as failed.</item>
@@ -44,7 +44,7 @@ namespace Idrak.Reinforcement.Plugins.Coding;
 /// the tools and the prompt work with, <see cref="CodingToolOptions.Languages"/>: all, detected in the tasks' folders,
 /// none, or names; IDRAK_CODING_LANGUAGES, else all), <c>protect</c> (globs of files whose edits count as test edits
 /// beside the hidden tests' paths, separated by commas; none by default), <c>think</c>, <c>sandbox</c>
-/// (<c>CommandSandboxes</c>; IDRAK_SANDBOX, else process), <c>memory</c> (a command's memory: bytes, or with KB, MB,
+/// (IDRAK_SANDBOX, else process), <c>memory</c> (a command's memory: bytes, or with KB, MB,
 /// GB), <c>processes</c>, <c>cpus</c>, <c>network</c> (true or false), <c>command-timeout</c> and <c>verify-timeout</c>
 /// (seconds: a tool command's and a verification command's limit; by default measured per task: when a task is prepared
 /// its verification runs once on its starting files, in a copy, and each limit is <c>timeout-scale</c> (10) times that
