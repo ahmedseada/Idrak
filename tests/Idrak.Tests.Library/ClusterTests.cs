@@ -104,8 +104,8 @@ internal abstract partial class Tests
             ["IDRAK_CLUSTER_CHUNK_PROBE"] = "1MB", ["IDRAK_CLUSTER_TUNING_FILE"] = "sizes.txt", ["IDRAK_CLUSTER_EVENT_LOG_FLUSH"] = "4",
             // C8c: the cluster advisor's measurement on or off, the warm steps it measures and its slice.
             ["IDRAK_CLUSTER_SUGGEST"] = "0", ["IDRAK_CLUSTER_SUGGEST_STEPS"] = "5",
-            // Plan 27, R7: how the ranks agree on a stop, how often the boundary's own exchange runs, how long an asker waits.
-            ["IDRAK_CLUSTER_STOP"] = "all-reduce", ["IDRAK_CLUSTER_STOP_EVERY"] = "4", ["IDRAK_CLUSTER_STOP_WAIT"] = "30",
+            // Plan 27, R7: how often the stop agreement's own exchange runs, how long an asker waits.
+            ["IDRAK_CLUSTER_STOP_EVERY"] = "4", ["IDRAK_CLUSTER_STOP_WAIT"] = "30",
             // Phase 3: whether the ranks run rank 0's measured kernel choices.
             ["IDRAK_CLUSTER_SHARE_TUNING"] = "0",
             // Plan 36, G6: whether an in-process run gives its carved devices back when it ends.

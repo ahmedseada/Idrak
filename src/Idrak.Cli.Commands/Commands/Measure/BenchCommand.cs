@@ -44,7 +44,7 @@ internal sealed class BenchCommand : Command
         "      --num-ctx N       with a model: the context window a generation may use (default the prompt and the\n" +
         "                        tokens); a long one (32768) shows what its key/value caches hold: they grow on demand\n" +
         "                        (IDRAK_KV_GROW=0 reserves the whole window, as before), see the memory peak\n" +
-        "      --kernels LIST    without a model: matmul,gemv,attention (default all)\n" +
+        "      --kernels LIST    without a model: matmul,attention (default all)\n" +
         "      --small           without a model: small shapes (slow devices, quick checks)\n" +
         "  -n, --repeat N        runs per measurement (default 3 with a model, 10 for kernels); the median is kept\n" +
         "      --warmup TIME     without a model: the longest warm-up of one measurement (default 2s; 0: none\n" +
@@ -68,7 +68,7 @@ internal sealed class BenchCommand : Command
         "Examples:\n" +
         "  idrak bench org/model -d vulkan:0\n" +
         "  idrak b mymodel --save laptop && idrak b mymodel --compare laptop\n" +
-        "  idrak bench --kernels matmul,gemv -d cuda:0 -j\n" +
+        "  idrak bench --kernels matmul -d cuda:0 -j\n" +
         "  idrak bench --devices cpu --warmup 5s --settle 2 -n 30\n" +
         "  idrak b mymodel --devices all\n" +
         "  idrak b big-model --draft small-model -d cuda:0";

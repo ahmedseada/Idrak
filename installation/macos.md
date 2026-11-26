@@ -34,7 +34,7 @@ I=~/idrak-tool/idrak
 step 10-idrak-version $I version
 step 11-idrak-doctor $I doctor
 step 12-idrak-devices $I devices
-step 13-idrak-bench-kernels $I bench --kernels matmul,gemv -d cpu
+step 13-idrak-bench-kernels $I bench --kernels matmul -d cpu
 step 14-idrak-bench-model $I bench Qwen/Qwen3-0.6B -d cpu
 step 15-idrak-run $I run Qwen/Qwen3-0.6B "Explain in three sentences why the sky is blue." -d cpu
 cd ~ && rm -f idrak-mac-results.zip && zip -qr idrak-mac-results.zip idrak-mac-results && echo "DONE: ~/idrak-mac-results.zip"

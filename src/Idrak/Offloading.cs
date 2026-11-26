@@ -15,8 +15,12 @@ namespace Idrak;
 /// </summary>
 internal static class Offloading
 {
-    // Tensors live in Idrak.Abstraction and reach the offloading of Idrak's layers through these hooks. Connecting them
-    // is not on the new design yet, so nothing calls this.
+    // Tensors live in Idrak.Abstraction and reach the offloading of Idrak's layers through these hooks: connected when this
+    // assembly loads (before any of its layers runs), with no registry. One object made and one field written, so the
+    // module initializer is cheap and order-free; the hooks do nothing until a device offloads.
+#pragma warning disable CA2255 // the hooks must be in place before Idrak's first layer runs, whoever loads the assembly
+    [ModuleInitializer]
+#pragma warning restore CA2255
     internal static void ConnectTensors() => TensorOffloading.Register(new TensorHooks());
 
     // The hooks tensors and modules call (ITensorOffloadingHooks), Idrak's staging behind each.

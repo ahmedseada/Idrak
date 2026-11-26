@@ -159,7 +159,7 @@ internal sealed class TracedFontMaker : IFontMaker
         var roles = new Role[found.Count];
         for (int i = 0; i < found.Count; i++)
         {
-            string text = found[i].Text.IsNormalized(NormalizationForm.FormC) ? found[i].Text : found[i].Text.Normalize(NormalizationForm.FormC);
+            string text = Idrak.Abstraction.Text.UnicodeNormalization.Normalize(found[i].Text, NormalizationForm.FormC);   // the library's own (no platform call)
             int[] codes = [.. text.EnumerateRunes().Select(r => r.Value)];
             string? form = codes.Length == 1 && found[i].Form == "isol" ? null : found[i].Form;
             roles[i] = new Role(text, codes, form, codes.Length == 1 && UnicodeText.IsMark(codes[0]));

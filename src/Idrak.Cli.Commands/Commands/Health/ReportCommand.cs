@@ -276,12 +276,13 @@ internal sealed class ReportCommand : Command
         md.Append($"- OS: {m["os"]} ({m["architecture"]})\n- Processors: {m["processors"]}\n- Memory: {Units.Bytes(m["memoryBytes"]!.GetValue<long>())}\n- Runtime: {m["runtime"]}\n");
         md.Append($"- Libraries: {string.Join(", ", report["libraries"]!.AsObject().Select(p => $"{p.Key} {p.Value}"))}\n\n");
 
-        md.Append("## Devices\n\n| Device | Backend | Name | Memory | CUs | Lanes | Width | Matrix units | In a plain run |\n|---|---|---|---|---|---|---|---|---|\n");
+        // The devices as the listing describes them (it holds no matrix-unit fact: a device's kernels say what they use).
+        md.Append("## Devices\n\n| Device | Backend | Name | Memory | CUs | Lanes | Width | In a plain run |\n|---|---|---|---|---|---|---|---|\n");
         foreach (var d in report["devices"]!.AsArray())
         {
             string name = d!["error"] is { } error ? $"cannot start: {error}" : (string)d["name"]!;
             md.Append($"| {d["device"]} | {d["backend"]} | {Cell(name)} | {Machine.Bytes((long?)d["memoryBytes"])} | {Machine.Number((int?)d["computeUnits"])} | " +
-                      $"{Machine.Number((int?)d["subgroupSize"])} | {Machine.Number((int?)d["kernelWidth"])} | {((bool)d["matrixUnits"]! ? "yes" : "no")} | {((bool)d["listed"]! ? "yes" : "by name")} |\n");
+                      $"{Machine.Number((int?)d["subgroupSize"])} | {Machine.Number((int?)d["kernelWidth"])} | {((bool?)d["listed"] == true ? "yes" : "by name")} |\n");
         }
 
         md.Append("\n## Drivers\n\n");
@@ -369,7 +370,8 @@ internal sealed class ReportCommand : Command
         {
             string kind = (string?)d["kind"] ?? "–";
             md.Append($"    <tr><td>{date}</td><td><b>{Html((string)d["name"]!)}</b>{Html(Memory(d))}<br>{Html((string)d["backend"]!)}</td><td>{kind}</td><td>–</td>" +
-                      $"<td>{((bool)d["matrixUnits"]! ? "matrix units" : "–")}</td><td>{Html(Result((string?)d["device"]))}</td></tr>\n");
+                      $"<td>–</td><td>{Html(Result((string?)d["device"]))}</td></tr>\n");     // no matrix-unit fact listed
+
         }
 
         return md.ToString();

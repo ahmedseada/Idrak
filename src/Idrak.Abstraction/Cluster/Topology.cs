@@ -167,6 +167,17 @@ public sealed class ClusterTopology : IOverridingTopology, ISavableTopology
             world = checked(world + node.Devices.Count);
         }
 
+        // The links a topology needs are named (resolving a name to its profile is apart from these checks).
+        if (mixesDevices && intraNode is null)
+        {
+            throw new InvalidDataException("A node has more than one device, so the topology needs \"links\": { \"intra-node\": … } (nvlink, pcie, shared-memory).");
+        }
+
+        if (nodes.Count > 1 && interNode is null)
+        {
+            throw new InvalidDataException("The topology has more than one node, so it needs \"links\": { \"inter-node\": … } (ethernet-1g, direct-link, infiniband, …).");
+        }
+
         WorldSize = world;
         _rankNode = new int[world];
         _rankLocal = new int[world];

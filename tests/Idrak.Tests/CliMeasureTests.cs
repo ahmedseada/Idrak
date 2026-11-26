@@ -90,7 +90,7 @@ internal abstract partial class DesktopTests : Tests
                   && (double)json["settings"]!["warmup"]!["budget_ms"]! == 2000 && (int)json["settings"]!["warmup"]!["rounds"]! == 3,
                 $"the timing method and the default warm-up are recorded: {json["settings"]?.ToJsonString()}");
             var results = json["results"]!.AsArray();
-            Check(results.Count == 4 + 6, $"4 matmul and 6 attention results, got {results.Count}");
+            Check(results.Count == 2 + 2, $"2 matmul and 2 attention results (float32, two sizes and two cache lengths), got {results.Count}");
             foreach (var r in results)
             {
                 Check(r!["name"] is not null && (double)r["value"]! > 0 && r["unit"] is not null, $"result {r.ToJsonString()}");
@@ -117,7 +117,7 @@ internal abstract partial class DesktopTests : Tests
             IdrakJson(cache, [.. matmul, "--save", "kernels"]);
             var compared = IdrakJson(cache, [.. matmul, "--compare", "kernels"]);
             var rows = compared["compare"]!["results"]!.AsArray();
-            Check(rows.Count == 4 && (bool)compared["compare"]!["same_timing"]! && rows.All(r => (double?)r!["saved_cold"] > 0 && r["cold_change"] is not null),
+            Check(rows.Count == 2 && (bool)compared["compare"]!["same_timing"]! && rows.All(r => (double?)r!["saved_cold"] > 0 && r["cold_change"] is not null),
                 $"compared with the same method, cold values included: {compared["compare"]!.ToJsonString()}");
             string savedPath = Path.Combine(cache, "bench", "kernels.json");
             var old = JsonNode.Parse(File.ReadAllText(savedPath))!.AsObject();
@@ -190,7 +190,6 @@ internal abstract partial class DesktopTests : Tests
         try
         {
             Check(MeasureIdrak(cache, "bench", "--kernels", "nope").Code == 2, "unknown kernel");
-            Check(MeasureIdrak(cache, "bench").Code == 2, "--matrix without a model");
             Check(MeasureIdrak(cache, "bench", "--compare", "missing").Error.Contains("No saved results"), "missing saved results");
             Check(MeasureIdrak(cache, "bench", MeasureModel, "--small").Code == 2, "--small with a model");
             Check(MeasureIdrak(cache, "bench", "-d", "cpu", "--devices", "cpu").Code == 2, "--device with --devices");

@@ -609,7 +609,7 @@ the run is measured, and each case says how many (`read back: N encrypted`).
 ```bash
 idrak b qwen --save laptop && idrak b qwen --compare laptop
 idrak b qwen --devices all                     # one table across every device
-idrak b --kernels matmul,gemv -d cuda:0 -j     # the kernel benchmarks, without a model
+idrak b --kernels matmul -d cuda:0 -j          # the kernel benchmarks, without a model
 idrak b --devices cpu --warmup 5s --settle 2   # kernels with a longer, stricter warm-up
 idrak bench documents --save laptop            # the documents bench on the samples and the large set
 idrak b documents --sets ./reports --cases open,text-lines,text-parallel --compare laptop
