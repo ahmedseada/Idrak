@@ -17,111 +17,26 @@ its README lists it.
 |------|---------------|
 | Root (`Idrak.Abstraction`) | `Device`, `DeviceType`, `ComputeResources`, `Tensor`, `TensorScope`, autograd, `Module`; the CPU device (SIMD, multi-threaded), which is also every other device's host fallback |
 | Device API (`Idrak.Abstraction.Devices`) | `Backend` (memory, copies and a `NameKernel` per operation; `RetryOnHost`, off by default, runs an operation whose kernel fails on the CPU instead) and `IDeviceBackend` (what every device provides), the capability interfaces a device adds (`IGraphCaptureBackend`, `IKernelProfiler`, `IRowAttentionBackend`, `IMaskedCacheAttentionBackend`, `ISegmentedAttentionBackend`, `IFusedPackedKernels`, `IMatrixUnitBackend`, `IRecurrentKernels`, `IOffloadingBackend`, `IPeerCopyBackend`, `IMemoryReport`, `ILongLivedAllocations`), `Storage` and `IHostStorage`, `BackendCapabilities`, `IDeviceProvider`, `ISeparableDeviceProvider` and `DeviceProviders` (where a new kind of device registers), `DeviceException` (the base of every GPU error, reported to telemetry when raised), `IMemoryOffload`, `IHostStaging` and `ISlotStaging`, `ITensorOffloadingHooks`, `IBackwardStaging` |
-| Operations (`Idrak.Abstraction.Operations`) | `Ops` (a descriptor per operation), `PluginOperations` and `PluginOperation<TKernel>` (operations a plug-in declares, with a default kernel), `Kernels.Register` (a kernel for an operation on a kind of device), `Kernels.Chain` (which kernel each operation runs on a device), `Kernels.Trace` (calls and host fallbacks) |
+| Operations (`Idrak.Abstraction.Operations`) | `Ops` (a descriptor per operation), `Kernels.Chain` (which kernel each operation runs on a device), `Kernels.Trace` (calls and host fallbacks) |
 | Modules (`Idrak.Abstraction.Modules`) | `ILinearAdapter` with LoRA and DoRA, `ILinearLayer` |
 | Training (`Idrak.Abstraction.Training`) | `IOptimizer` and `IStatefulOptimizer` (saved state), the `Optimizer` base with SGD, Adam and AdamW; `ILearningRateScheduler` with the step, exponential, cosine and lambda schedules |
-| Data (`Idrak.Abstraction.Data`) | `ISampleSource`, `ISampleStream`, `ISampleReader`, `ISampleTransform`, `ImageData`, `IDownloader`, `ImageCodecs` and `IImageCodec`; for detection and segmentation `BoundingBox`, `AnnotatedImage`, `ObjectAnnotation`, `AnnotatedDataset`, `IAugmentation` and the `Augmentations` registry |
+| Data (`Idrak.Abstraction.Data`) | `ISampleSource`, `ISampleStream`, `ISampleReader`, `ISampleTransform`, `ImageData`, `IDownloader` and `IImageCodec`; for detection and segmentation `BoundingBox`, `AnnotatedImage`, `ObjectAnnotation`, `AnnotatedDataset`, and `IAugmentation` |
 | Formats (`Idrak.Abstraction.Formats`) | `IModelSource` and `ModelSources` (core registers the folder, store and .gguf sources, Idrak.Data the Hugging Face one); `IOnnxRuntimeLoader` and `OnnxRuntimeLoaders` (a runtime that runs an .onnx model outside Idrak's import; Idrak.Onnx.Runtime registers ONNX Runtime); |
 | Generation (`Idrak.Abstraction.Generation`) | `ITokenizer` (char and word tokenizers), `ChatTemplate` and `ChatTemplates`, `IChatModel` (with the part kinds it takes), `ChatPart` and `ChatParts` (text and image parts), `ITextModel`, `IToolCallParser` and `ToolCallFormats` (every built-in parser), `IFillInMiddleFormat` and `FillInMiddleFormats` (the prefix-suffix-middle and suffix-prefix-middle `FillInMiddleLayout`s; no family: Idrak.Text.Plugins registers them), `KeyValueLayout` and `KeyValueLayouts`, `RopeScalings`, `DecoderSpec`, `GenerationOptions`; the image side of vision-language models: `IVisionEncoder` (with `IVisionEncoderStages`), `IImagePromptFormat`, `IImageAttentionRule` and `ImageAttentionRules`, `PretrainedVision` (with `VisionEncoderOptions`), `IVisionTuningPart` (with `VisionTuningParts`: the projector or tower a family lets a fine-tune train, saved and read back by `Export` and `Import`); the feature caches the image and audio packages share: `IFeatureCache`, `FeatureCaches` and `FeatureCacheKey` (Idrak.Text registers "memory" and "disk") |
 | Generation: tools | `Tool`, `[Tool]`, `ToolResult`, `IToolRegistry` and its default `ToolRegistry` (validation, allow rules, approvals, a timeout); `IToolChatModel` (a chat model that carries tools) and `ChatTools.WithTools` (runs a chat model's tool calls on the server); `IToolProvider` (a tool assembly's tools as `ITool`, declared with `[assembly: ToolProvider(typeof(X))]`) and `ToolProviders` (`Of` reads an assembly's, `FromMethods` turns `[Tool]` methods into tools) |
 | Retrieval (`Idrak.Abstraction.Retrieval`) | `IEmbedder` |
 | Serving (`Idrak.Abstraction.Serving`) | the engine's model kinds (`IEngineModel<TCopy>` and its base `EngineModel<TCopy>`, `IEngineHost`, `IEngineLease`, `IEngineBatcher`), `IPredictor<TIn, TOut>`, `IModelCatalog` (named models reached through their contracts; the inference engine implements it), `KeepAlive` (parses "30m", "1h30m", 0, -1) |
 | Diagnostics (`Idrak.Abstraction.Diagnostics`) | `Telemetry`, `ITelemetryHook`, `TelemetryLevel` and the telemetry events (`DeviceFailed`, `OverrideFailed` and `OverrideCompared` among them; `DeviceFailed`: a GPU error, or an operation retried on the CPU, with a hint naming `IDRAK_RETRY_ON_HOST` while the retry is off); `ConsoleLogger` and `JsonLinesLogger` always include device failures and overrides failing or compared |
-| Reinforcement (`Idrak.Abstraction.Reinforcement`) | `IEnvironment<TObservation, TAction>` and `Space` (episodes reset from a seed and stepped; discrete, box, text and conversation spaces), `IEnvironmentKind` and `EnvironmentKinds`, `IPolicy<TObservation, TAction>`, `IRewardFunction` and `RewardFunctions`, `IAdvantageEstimator` and `AdvantageEstimators` (a fixed summation order), `IPolicyLoss` and `PolicyLosses`, `IPreferencePairSource` and `PreferencePairSources` (pairs from episodes: "group" and "verdict" built in, reading `PreferenceInfoKeys`) and `IPreferencePolicy`; `Trajectory`, `ActionRecord` and `RolloutBatch` (pooled arrays). The registries hold no defaults here but the pair sources': Idrak.Reinforcement registers the estimators and losses, Idrak.Text and the plug-ins the environments and rewards |
-| Command sandboxes (`Idrak.Abstraction`) | `ICommandSandbox` and `CommandSandboxes`: where an outside command a model asked for runs and under which `CommandLimits` (time, output, memory, processes, CPUs, network, the programs allowed), giving a `CommandResult`; a sandbox that cannot keep a limit refuses, naming one that can. `StartAsync` starts a command interactively (`CheckStart`; a `CommandStart` holding an `ICommandSession`: its standard input, output and error as streams, `Completion`, `Stop` ending its tree); a sandbox that cannot refuses with the reason. Idrak.Text registers `process` (both ways), the coding plug-in of Idrak.Reinforcement.Plugins `container` (runs only) |
-| Plug-ins (`Idrak.Abstraction.Plugins`) | `IIdrakPlugin` (a family or other named set of registrations kept outside the library), `IdrakPlugin` (its usual base: registers once, takes every part back), `IdrakPlugins` (the registered plug-ins by name; the plug-in packages' `RegisterAll()` go through it, and `Load` registers what an assembly a host loads declares), `IIdrakPluginPackage` (a package's plug-ins, declared with `[assembly: IdrakPluginPackage(typeof(X))]`, which the idrak tool's `-P` reads) |
-| The override loop (root) | `SlotTable<TKey, TValue>` (every registry's entries, each with its library default; string names also found by span), `Slot`, `SlotPolicy` (`FallBack`, `Throw`, `Shadow`), `SlotGuard<TValue>`, `Overrides` (`Report()`, `AsLibraryDefaults`), `Comparisons` (shared with the testing kit); `ILibraryRegistrations` (what a library package adds to the registries here, named with `[assembly: LibraryRegistrations(typeof(X))]` and called once per registry before its first use) |
-| Kinds (root) | `IKind` (a name and a summary), `IConfigurableKind` (the option keys it takes, an `OptionKeys`), `IKind<TRequest, T>` (made from one request record), and `KindTable<TKind>` (a registry of kinds over `SlotTable`: registered by their own name, found by span, listed and refused as "not registered" alike); `NotRegisteredException` (a registry's refusal: the registry, the name and the registered ones, a `NotSupportedException` caught by its type) |
+| Reinforcement (`Idrak.Abstraction.Reinforcement`) | `IEnvironment<TObservation, TAction>` and `Space` (episodes reset from a seed and stepped; discrete, box, text and conversation spaces), `IEnvironmentKind`, `IPolicy<TObservation, TAction>`, `IRewardFunction`, `IAdvantageEstimator` (a fixed summation order), `IPolicyLoss`, `IPreferencePairSource` (pairs from episodes: "group" and "verdict" built in, reading `PreferenceInfoKeys`) and `IPreferencePolicy`; `Trajectory`, `ActionRecord` and `RolloutBatch` (pooled arrays). The estimators and losses are Idrak.Reinforcement's, the environments and rewards Idrak.Text's and the plug-ins' |
+| Command sandboxes (`Idrak.Abstraction`) | `ICommandSandbox`: where an outside command a model asked for runs and under which `CommandLimits` (time, output, memory, processes, CPUs, network, the programs allowed), giving a `CommandResult`; a sandbox that cannot keep a limit refuses, naming one that can. `StartAsync` starts a command interactively (`CheckStart`; a `CommandStart` holding an `ICommandSession`: its standard input, output and error as streams, `Completion`, `Stop` ending its tree); a sandbox that cannot refuses with the reason. Idrak.Text has `process` (both ways), the coding plug-in of Idrak.Reinforcement.Plugins `container` (runs only) |
 
 The GPU devices (CUDA, Vulkan, HIP) ship in the `Idrak.Gpu` package (which `Idrak` brings) and are built on this
 public device API alone; when an application includes it, `Device.Available` lists them, even before any other type of
 Idrak is used. `idrak kernels -d DEVICE` lists which kernel each operation runs there.
 
-A kernel of one's own for an operation, on one kind of device, wherever a requirement on the device holds:
-
-```csharp
-using Idrak.Abstraction.Devices;
-using Idrak.Abstraction.Operations;
-
-OperationKernels.Softmax mine = (backend, x, y, rows, cols, log) =>
-{
-    if (log || cols > 4096)
-    {
-        backend.SoftmaxKernel(x, y, rows, cols, log);   // the device's own kernel for the other cases
-        return;
-    }
-
-    // ... my kernel
-};
-using var registration = Kernels.Register(Ops.Softmax, "vulkan", mine, requirement: b => b.FusedKernels);
-```
-
-A plug-in (a packed weight format, a key/value cache layout, a graph operation, an `Autograd.Function`) declares the
-operations it needs with a default kernel that runs on every device, and gets a fast path on the devices it registers
-kernels for. Its operations show in `Kernels.Chain` and `idrak kernels` ("plug-in" rows), and `Kernels.Trace` counts
-their calls:
-
-```csharp
-public delegate void ScaleRows(Backend backend, Storage rows, Storage scales, Storage output, int n, int width);
-
-// Declared once (a static field): its default composes the library's operations.
-static readonly PluginOperation<ScaleRows> Scale = PluginOperations.Register<ScaleRows>("MyLayout.ScaleRows",
-    (b, rows, scales, output, n, width) => b.GroupScaleShift(rows, scales, null, output, n, n / width, width, false),
-    KernelSource.Composed);
-
-// A faster kernel for one kind of device (Idrak.Gpu's VulkanKernel, CudaKernel and GcnKernel run SPIR-V, PTX and GCN of one's own).
-Kernels.Register(Scale, "cpu", (b, rows, scales, output, n, width) => { /* loops over ((IHostStorage)rows).HostMemory, ... */ });
-
-// Where the plug-in runs it (KeyValueLayout.Expand, say): the kernel for this device, cached per device.
-Scale.KernelFor(backend)(backend, rows.Storage, scales.Storage, output.Storage, rows.Size, width);
-```
-
-A default declared as `KernelSource.Host` reads its operands with `Download` and writes them back with `Upload`; off the
-CPU each call counts as a host fallback (`Kernels.HostCalls`, `KernelTrace.HostCallsByOperation`).
-
-To check a device or an override of a contract (a token sampler, a tokenizer, a RoPE scaling) against the default
-implementation, stress it and keep its failing cases, use the testing kit,
+To check a device against the default implementation, stress it and keep its failing cases, use the testing kit,
 [Idrak.Abstraction.Testing](https://www.nuget.org/packages/Idrak.Abstraction.Testing), from your test project:
 `Conformance.Check(Device.Get("mydevice")).ThrowIfFailed();`.
-
-## The override loop
-
-Every registry keeps its entries in a `SlotTable<TKey, TValue>`: each entry is a slot with the library default and,
-over it, what an app registered. An app's registration shadows the default without removing it, `Unregister` brings it
-back, and every registry has `Default(name)` and `Origin(name)`. While an app's entry shadows a default, the table hands
-it out guarded by the registry's `SlotGuard<TValue>` under the slot's `SlotPolicy`: `Throw` (the default: the failure
-reaches the caller and is reported with a hint naming the exact call, or `IDRAK_OVERRIDE_POLICY` setting, that switches
-the slot to the others), `FallBack` (a call that throws is retried on the default), or `Shadow` (the default answers,
-the app's runs on a share of the calls, 1% unless set, and `Comparisons` says how they differ). A slot with only its default hands it out as it
-is. The library's packages register their built-ins inside `Overrides.AsLibraryDefaults`, so they are defaults, not
-overrides. A default the library improves gets a higher version (`RegisterDefault(key, value, version, since)`); the
-older ones stay reachable with `Default(key, version)`. `Overrides.Report()` lists every override with its origin and
-policy, and says when one was built against a release older than the default it shadows (`SlotOverride.Outdated`). The
-events are `OverrideFailed` and
-`OverrideCompared` (`TelemetryLevel.Overrides`, always on in `ConsoleLogger` and `JsonLinesLogger`).
-
-A registry of one's own gets the same behavior from a table:
-
-```csharp
-public static class Greeters
-{
-    private static readonly SlotTable<string, Func<string, string>> Table = new("Greeters",
-        guard: (slot, app, library) => name => slot.Call(() => app(name), () => library(name), Comparisons.Exact));
-
-    static Greeters() => Overrides.AsLibraryDefaults(() => Table.Register("plain", name => $"Hello, {name}"));
-
-    [MethodImpl(MethodImplOptions.NoInlining)]   // its caller is the registering assembly, the entry's Origin
-    public static void Register(string name, Func<string, string> greet) => Table.Register(name, greet, Assembly.GetCallingAssembly());
-    public static bool Unregister(string name) => Table.Unregister(name);
-    public static Func<string, string> Get(string name) => Table.Find(name) ?? throw new NotSupportedException(name);
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-}
-```
-
-A registry of kinds (contracts with a name, a summary and, often, option keys) uses a `KindTable<TKind>` instead: it
-registers each kind under its own `Name`, finds it by a name read from input without making a string
-(`Find(ReadOnlySpan<char>)`, `TryGet`, `Get`), and words `Describe()` and its "not registered" error as every registry
-does. `SlotTable`'s own `TryGet`, `Find` and `Contains` take a `ReadOnlySpan<char>` too when its names are strings.
 
 Projects with implicit usings get `using Idrak.Abstraction;` from this package, so code written for Idrak 0.3 compiles
 unchanged.

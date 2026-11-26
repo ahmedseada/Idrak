@@ -61,7 +61,6 @@ Common options (every command):
 | Option | Meaning |
 |---|---|
 | `-d, --device NAME` | `cpu`, `cuda:0`, `vulkan:1`, `hip:0`; default: the config's device, else the default device |
-| `-P, --plugin PATH` | Load an assembly that registers formats, families, tool-call formats, ... (repeatable); the tool registers the families of `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` and `Idrak.Reinforcement.Plugins` and the font formats of `Idrak.Imaging.Plugins` (WOFF) itself, before these (`IDRAK_PLUGIN_PACKAGES` chooses which) |
 | `-j, --json` | One JSON document (also `--format json`) |
 | `-q, --quiet` / `-v, --verbose` | Less or more output; `--verbose` (also `IDRAK_VERBOSE=1`) also prints the library's work as it happens, on the error stream: each prompt pass (rows, positions, pieces, time), decoding every few seconds, each kernel choice measured, the first host fallback of each operation, each device failure (once) |
 | `-C, --config FILE` | The config file (default `IDRAK_CONFIG` or `~/.idrak/config.json`) |
@@ -116,7 +115,6 @@ What works on this machine, and the tool's own settings.
 | `idrak config unset` | Removes a config value |
 | `idrak config list` | Every config value (or a profile's), and the file's path |
 | `idrak plugins list` | Everything registered: formats, families, RoPE scalings, tool-call formats, ops, devices |
-| `idrak overrides` | What the plug-ins override: each registry entry, where it comes from and its failure policy |
 | `idrak formats` | Every registered weight, KV cache, checkpoint, dataset and tool-call format |
 | `idrak completion` | Prints a shell completion script (bash, zsh, fish, pwsh) |
 | `idrak update` | Whether a newer version of the tool exists, and the command to install it |

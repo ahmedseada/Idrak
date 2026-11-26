@@ -152,7 +152,6 @@ internal sealed class VlmCheckCommand : Command
         var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer (tokenizer.json).");
         int vocabulary = tokenizer.VocabularySize;
         var watch = Stopwatch.StartNew();
-        visionOptions.ThrowIfUnknown(vision.Family, vision.VisionOptionKeys);
         using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = model.Device, VisionOptions = visionOptions });   // grey through the transforms
         double buildMs = watch.Elapsed.TotalMilliseconds;
         var stages = encoder as IVisionEncoderStages

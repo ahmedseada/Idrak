@@ -208,35 +208,10 @@ dependency.
 - Model packages (`.ikm`) with `idrak package`, `idrak inspect`, `idrak verify`; ONNX export and import
   (`idrak onnx export|import|check`) with registered translators; ONNX Runtime execution.
 
-### Plug-ins and conformance
+### Conformance
 
-Every extension point is a contract plus a `SlotTable` registry; a plug-in is an assembly loaded with `-P path.dll` or
-the config's `plugins`. `idrak plugins list` prints what is registered:
-
-| Registry | Built in |
-|---|---|
-| Device kinds | cpu, cuda, vulkan, hip |
-| Weight formats | bfloat16, int8, int4 |
-| KV cache formats | bfloat16, float32, int8 |
-| Checkpoint formats | safetensors, gguf, pytorch |
-| Dataset file formats | Code, Csv, Json, JsonLines, Parquet, Text, Tsv |
-| Dataset sources | file, folder, github, hf, http, kaggle, zenodo |
-| Tool-call formats | deepseek, harmony, json, mistral, pythonic, qwen3-coder |
-| Model families | 11 (above) |
-| GGUF architectures | 8 (above) |
-| RoPE scalings | dynamic, linear, llama3, yarn |
-| Graph operations | 36 |
-| Layer types | 31 |
-| ONNX import operators | 23 |
-| Audio codecs | flac, mp3, wav |
-| Audio encoders | mp3, wav |
-| Audio feature extractors | log-mel |
-| Vocoders | griffin-lim |
-| Audio splitters | silence, seconds |
-
-Also registered through the same mechanism: chat templates, tokenizer components, pretrained families, image codecs
-and transforms, image encoders, speech sources, speech training objectives, augmentations, voice converters, voice
-stores, speaker encoders, samplers, engine model kinds and telemetry hooks.
+The registries and the plug-in loading (`-P`) are gone: picking a kind by its name is not on the new design
+yet, and the contracts stay.
 
 `Idrak.Abstraction.Testing` checks any implementation against the library default: `DeviceCases` (every kernel, fixed
 and random shapes, sampling over small and large vocabularies), stress (threads, long runs, odd shapes, cancellation,
