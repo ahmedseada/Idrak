@@ -10,7 +10,6 @@ using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Text;
-using Idrak.Text.Plugins;
 
 // Chat with a language model in the Hugging Face layout (Llama, Qwen, Mistral, Gemma …), run by Idrak's own engine
 // (CPU, CUDA or any Vulkan GPU):
@@ -29,23 +28,20 @@ using Idrak.Text.Plugins;
 //   downloading models: the idrak tool (idrak tune, idrak pull; src/Idrak.Cli).
 //
 // Options: --offload (when the GPU is full, keep tensors in system memory: slower, but larger models and batches fit),
-//          --gpu-memory GiB (cap the GPU memory used), --adapter <dir> (load a PEFT adapter), --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --context N (default 4096),
+//          --gpu-memory GiB (cap the GPU memory used), --adapter <dir> (load a PEFT adapter), --cpu / --device NAME (cpu), --context N (default 4096),
 //          --folder F (check: read the model from F instead of the folder named in the reference), --no-think.
-TextPlugins.RegisterAll();                          // the model families (Llama, Qwen, Mistral, Gemma, …) are Idrak.Text.Plugins'
 
 var positional = new List<string>();
 bool noThink = false;
 int context = 4096;
 string? folderOverride = null, adapterFolder = null;
-Device device = Device.Default;                                       // CUDA, else a Vulkan GPU with IDRAK_VULKAN_DEFAULT=1, else the CPU
+Device device = Device.Default;                                       // the CPU
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
-        case "--cuda" or "--gpu": device = Device.Cuda(); break;
         case "--cpu": device = Device.Cpu; break;
-        case "--vulkan": device = Device.Parse("vulkan:0"); break;
-        case "--device": device = Device.Parse(args[++i]); break;     // any name --list-devices shows: cpu, cuda:N, vulkan:N
+        case "--device": device = Device.Parse(args[++i]); break;     // any name --list-devices shows: cpu
         case "--no-think": noThink = true; break;
         case "--context": context = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
         case "--folder": folderOverride = args[++i]; break;
@@ -62,7 +58,7 @@ for (int i = 0; i < args.Length; i++)
 if (positional.Count < 2 || positional[0] is not ("info" or "chat" or "check" or "profile"))
 {
     Console.WriteLine("usage: info <folder> | chat <folder> | profile <folder> | check <reference.json>");
-    Console.WriteLine("       [--cuda|--cpu|--vulkan|--device NAME] [--context N] [--adapter DIR] [--folder F] [--no-think]");
+    Console.WriteLine("       [--cpu|--device NAME] [--context N] [--adapter DIR] [--folder F] [--no-think]");
     Console.WriteLine("fine-tuning, evaluating, exporting and downloading models: idrak tune, idrak pull (src/Idrak.Cli)");
     return 1;
 }

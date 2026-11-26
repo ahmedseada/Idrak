@@ -23,6 +23,7 @@ using Idrak.Optimizers;
 using Idrak.Samples;
 using Idrak.Samples.ReRanker;
 using Idrak.Text.Abstractions;
+using Idrak.Text.Retrieval;
 using Idrak.Training;
 
 if (SampleOptions.Parse(args) is not { } options)
@@ -38,7 +39,7 @@ const int Length = 28, Dim = 64, Placeholders = 8, Group = 8, Candidates = 20, T
 string modelPath = options.ModelPath("reranker.weights");
 string vocabularyPath = Path.ChangeExtension(modelPath, ".vocab.txt");
 var collection = new Collection(Towns, seed: 1);
-var bm25 = KeywordIndexes.Create(KeywordIndexes.Bm25, collection.Passages.Select(p => p.Text));   // the library's BM25 (k1 1.2, b 0.75)
+var bm25 = new Bm25Index(collection.Passages.Select(p => p.Text));   // the library's BM25 (k1 1.2, b 0.75)
 
 // The ids of the k best passages for a query by BM25, best first (passages sharing no word are left out).
 int[] FirstStage(string query, int k) => [.. bm25.Search(query, k).Select(hit => hit.Id)];

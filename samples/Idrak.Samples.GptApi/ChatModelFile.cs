@@ -22,7 +22,6 @@ public static class ChatModelFile
         var device = (configuration["Gpt:Device"] ?? "auto") switch
         {
             "cpu" => Device.Cpu,
-            "cuda" when Device.IsCudaAvailable => Device.Cuda(),
             _ => Device.Default,
         };
         var gpt = CharGpt.Load(path, device);

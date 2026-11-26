@@ -5,7 +5,7 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
-  <!-- Samples that reference Idrak as packages (Idrak.Samples.Override, as an app would) build against this clone unless
+  <!-- Samples that reference Idrak as packages (as an app would) build against this clone unless
        IdrakFromPackages is true: dotnet build -p:IdrakFromPackages=true -p:IdrakVersion=VERSION
        -p:RestoreAdditionalProjectSources=FOLDER takes them from a folder that dotnet pack filled (see
        build/IdrakFromSource.targets). Give the feed's exact VERSION: the default floating one would prefer a release on

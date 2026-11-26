@@ -33,7 +33,6 @@ jobs:
       - run: dotnet run -c Release --no-build --project tests/Idrak.Tests
         env:
           IDRAK_DEVICES: cpu
-      - run: dotnet run -c Release --no-build --project samples/Idrak.Samples.Override.Tests
       - run: dotnet run -c Release --no-build --project samples/Idrak.Samples.ArabicOcr.Tests
         env:
           IDRAK_DEVICES: cpu

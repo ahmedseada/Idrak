@@ -47,7 +47,7 @@ if (args is ["compare", .. var logs])
     return CompareLogs(logs);
 }
 
-string[] flagNames = ["--skip-clean", "--grad-checkpoint", "--cpu", "--cuda", "--offload", "--profile", "--no-save"];
+string[] flagNames = ["--skip-clean", "--grad-checkpoint", "--cpu", "--offload", "--profile", "--no-save"];
 string[] valueNames = ["--corpus", "--clean-out", "--out", "--block", "--batch", "--dmodel", "--heads", "--layers", "--dropout", "--lr", "--min-lr",
     "--warmup", "--steps", "--eval-every", "--eval-steps", "--save-every", "--seed", "--resume", "--bin", "--vocab-file", "--gpu-memory",
     "--log-every", "--loss-log", "--checkpoint", "--prompt", "--tokens", "--temperature", "--top-k", "--top-p", "--repeat-penalty"];
@@ -86,7 +86,7 @@ if (flags.Contains("--offload"))
     ComputeResources.OffloadToHostMemory = true;
 }
 
-var device = flags.Contains("--cpu") || !Device.IsCudaAvailable ? Device.Cpu : Device.Cuda();
+var device = Device.Cpu;
 Console.WriteLine($"device={device}  {device.Name}");
 return command == "generate" ? Generate() : Train();
 

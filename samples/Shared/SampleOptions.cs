@@ -54,8 +54,8 @@ internal sealed record SampleOptions
 
     public const string Usage = """
         Options:
-          --device <auto|cpu|cuda:N|vulkan:N>  where to run (default: auto = CUDA, else a Vulkan GPU with IDRAK_VULKAN_DEFAULT=1, else CPU)
-          --cpu / --cuda                   shortcuts for --device cpu / --device cuda
+          --device <auto|cpu>              where to run (default: auto = the CPU)
+          --cpu                            shortcut for --device cpu
           --threads <n>                    CPU threads to use (default: all cores)
           --gpu-memory <MiB>               cap GPU tensor memory (default: unlimited)
           --cpu-memory <MiB>               cap CPU tensor memory (default: unlimited)
@@ -110,9 +110,6 @@ internal sealed record SampleOptions
                     break;
                 case "--cpu":
                     options = options with { Device = Device.Cpu };
-                    break;
-                case "--cuda" or "--gpu":
-                    options = options with { Device = Device.Cuda() };
                     break;
                 case "--device":
                     options = options with { Device = ParseDevice(Next()) };
@@ -172,10 +169,8 @@ internal sealed record SampleOptions
 
     private static Device ParseDevice(string text) => text.ToLowerInvariant() switch
     {
-        "auto" => Device.Default,                                       // CUDA, else a Vulkan GPU with IDRAK_VULKAN_DEFAULT=1, else the CPU
-        "cuda" or "gpu" => Device.Cuda(),
-        "vulkan" => Device.Parse("vulkan:0"),
-        var s => Device.Parse(s),                                       // cpu, cuda:N, vulkan:N, ... (what --list-devices shows)
+        "auto" => Device.Default,                                       // the CPU
+        var s => Device.Parse(s),                                       // cpu (what --list-devices shows)
     };
 
     private static TelemetryLevel ParseLevels(string text) =>

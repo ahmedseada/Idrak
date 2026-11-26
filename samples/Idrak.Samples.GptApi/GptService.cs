@@ -52,7 +52,7 @@ public sealed record ModelInfo(
 /// <param name="Temperature">Sampling temperature (0.05-3): lower is more predictable, higher more varied.</param>
 /// <param name="TopK">Sample only among the k most likely characters; 0 uses all.</param>
 /// <param name="Seed">Random seed for reproducible output; null for random.</param>
-/// <param name="Device">"cpu", "cuda", "cuda:N", "vulkan" or "vulkan:N"; null keeps the current device.</param>
+/// <param name="Device">"cpu"; null keeps the current device.</param>
 /// <param name="Samples">Independent continuations generated together as one batch (1-32).</param>
 /// <param name="UseCache">Incremental decoding with a KV cache; false recomputes the whole window every step (for comparison).</param>
 /// <param name="UseGraph">Record the decoding step once and replay it as a CUDA graph (GPU only; needs the cache).</param>
@@ -151,15 +151,6 @@ public sealed class GptService(IConfiguration configuration, ILogger<GptService>
     {
         var active = _gpt?.Device;
         var devices = new List<DeviceInfo> { Info(Device.Cpu, true) };
-        for (int i = 0; i < Device.CudaDeviceCount; i++)
-        {
-            devices.Add(Info(Device.Cuda(i), true));
-        }
-
-        if (Device.CudaDeviceCount == 0)
-        {
-            devices.Add(new DeviceInfo("cuda", "No NVIDIA GPU detected", "Cuda", false, false, null));
-        }
 
         return devices;
 
@@ -230,7 +221,7 @@ public sealed class GptService(IConfiguration configuration, ILogger<GptService>
         var gpt = Model;
         if (request.Device is { Length: > 0 } requested)
         {
-            var device = ParseDevice(requested) ?? throw new ArgumentException($"Unknown device '{requested}'. Use cpu, cuda, cuda:N, vulkan or vulkan:N.");
+            var device = ParseDevice(requested) ?? throw new ArgumentException($"Unknown device '{requested}'. Use cpu.");
             if (device != gpt.Device)
             {
                 var sw = Stopwatch.StartNew();
@@ -257,9 +248,7 @@ public sealed class GptService(IConfiguration configuration, ILogger<GptService>
     {
         null or "" or "auto" => null,
         "cpu" => Device.Cpu,
-        "cuda" or "gpu" => Device.IsCudaAvailable ? Device.Cuda() : throw new ArgumentException("CUDA is not available on this machine."),
-        "vulkan" => Device.Parse("vulkan:0"),
-        var s => Device.Parse(s),                                       // cuda:N, vulkan:N, ... (what --list-devices shows)
+        var s => Device.Parse(s),                                       // what --list-devices shows
     };
 
     public override void Dispose()

@@ -10,8 +10,6 @@
     <Project Path="samples/Idrak.Samples.HousePrices/Idrak.Samples.HousePrices.csproj" />
     <Project Path="samples/Idrak.Samples.Ocr/Idrak.Samples.Ocr.csproj" />
     <Project Path="samples/Idrak.Samples.OnnxImport/Idrak.Samples.OnnxImport.csproj" />
-    <Project Path="samples/Idrak.Samples.Override/Idrak.Samples.Override.csproj" />
-    <Project Path="samples/Idrak.Samples.Override.Tests/Idrak.Samples.Override.Tests.csproj" />
     <Project Path="samples/Idrak.Samples.Rag/Idrak.Samples.Rag.csproj" />
     <Project Path="samples/Idrak.Samples.ReRanker/Idrak.Samples.ReRanker.csproj" />
     <Project Path="samples/Idrak.Samples.Sentiment/Idrak.Samples.Sentiment.csproj" />

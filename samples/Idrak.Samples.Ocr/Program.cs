@@ -112,18 +112,24 @@ else
     Console.WriteLine($"Recognized: {Read(pixels, width, Cell)}");
     if (options.Get("save-image") is { } savePath)
     {
-        ImageEncoders.Save(savePath, Page(pixels, width, Cell));                                // the library's Netpbm (or PNG) encoder
+        SaveImage(savePath, Page(pixels, width, Cell));
         Console.WriteLine($"Saved the line to {savePath}; read it back with --image {savePath}");
     }
 }
 
 return 0;
 
+// The image's encoder and codec were picked by the file's extension and first bytes among the registered ones: not on the
+// new design yet.
+static void SaveImage(string path, ImageData image) => throw new NotSupportedException($"Picking the image encoder of {path} is not on the new design yet.");
+
+static ImageData DecodeImage(string path) => throw new NotSupportedException($"Picking the image codec of {path} is not on the new design yet.");
+
 // Loads an image (any format the library decodes: PNG, JPEG, BMP, PGM, PPM) as ink intensities in [0, 1] (colour averaged
 // to grey); light backgrounds are inverted, so ink is bright.
 static (float[] Pixels, int Width, int Height) ReadImage(string path)
 {
-    var image = ImageCodecs.Decode(path);
+    var image = DecodeImage(path);
     var pixels = image.Resize(1, image.Height, image.Width);
     if (pixels.Average() > 0.5f)
     {
@@ -189,7 +195,7 @@ string Characters(int perClass, int seed, string root)
         Renderer.RenderCharacter(label, image, rng);
         string classFolder = Path.Combine(root, alphabet[label].ToString());
         Directory.CreateDirectory(classFolder);
-        ImageEncoders.Save(Path.Combine(classFolder, $"{s:D5}.pgm"), new ImageData(image, 1, Cell, Cell));   // bright ink, as trained
+        SaveImage(Path.Combine(classFolder, $"{s:D5}.pgm"), new ImageData(image, 1, Cell, Cell));   // bright ink, as trained
     }
 
     return root;

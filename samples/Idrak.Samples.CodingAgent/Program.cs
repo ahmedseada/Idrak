@@ -13,12 +13,10 @@ using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Reinforcement;
-using Idrak.Reinforcement.Plugins;
 using Idrak.Reinforcement.Plugins.Coding;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
 using Idrak.Text.Generation;
-using Idrak.Text.Plugins;
 using Idrak.Text.Reinforcement;
 
 // A coding agent: a language model (any family Idrak loads, in its own chat template) reads, searches, edits and writes
@@ -48,10 +46,8 @@ using Idrak.Text.Reinforcement;
 //   (<folder> may also be a Hugging Face model id, for example Qwen/Qwen3-0.6B, a .gguf file or store:name.)
 //   data/agent-demo-*.jsonl: tool-calling transcripts in this layout, to fine-tune a model for the agent with idrak tune.
 //
-// Options: --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --context N (default
+// Options: --cpu / --device NAME (cpu), --context N (default
 //          4096), --adapter <dir> (load a PEFT adapter), --no-think, --offload, --gpu-memory GiB.
-TextPlugins.RegisterAll();                          // the model families (Llama, Qwen, Mistral, Gemma, …) are Idrak.Text.Plugins'
-ReinforcementPlugins.RegisterAll();                 // the coding plug-in: the container sandbox (IDRAK_SANDBOX=container) among it
 
 var positional = new List<string>();
 bool noThink = false;
@@ -65,15 +61,13 @@ string? algorithm = null;
 bool resume = false;
 bool yes = false;                                   // --yes: the interactive agent runs commands and writes files without asking
 float? temperature = null;
-Device device = Device.Default;                                       // CUDA, else a Vulkan GPU with IDRAK_VULKAN_DEFAULT=1, else the CPU
+Device device = Device.Default;                                       // the CPU
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
-        case "--cuda" or "--gpu": device = Device.Cuda(); break;
         case "--cpu": device = Device.Cpu; break;
-        case "--vulkan": device = Device.Parse("vulkan:0"); break;
-        case "--device": device = Device.Parse(args[++i]); break;     // any name --list-devices shows: cpu, cuda:N, vulkan:N
+        case "--device": device = Device.Parse(args[++i]); break;     // any name --list-devices shows: cpu
         case "--no-think": noThink = true; break;
         case "--context": context = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
         case "--out": output = args[++i]; break;
@@ -107,12 +101,13 @@ if (positional.Count < 2 || positional[0] is not ("agent" or "agent-run" or "age
 {
     Console.WriteLine("usage: agent <folder> <task…> --workspace <dir> [--yes] | agent-run <folder> <suite> --out <runs.jsonl> [--attempts N] | agent-check <suite>");
     Console.WriteLine("       | agent-train <folder> <suite> --out <dir> [--algorithm grpo|ppo|reinforce] [--iterations N] [--group N] [--episodes N] [--resume]");
-    Console.WriteLine("       [--cuda|--cpu|--vulkan|--device NAME] [--context N] [--adapter DIR] [--no-think]");
+    Console.WriteLine("       [--cpu|--device NAME] [--context N] [--adapter DIR] [--no-think]");
     return 1;
 }
 
 // The first line: whether the model's commands and writes are asked about, and where its commands run.
-string sandboxNote = $"in the {CommandSandboxes.DefaultName} sandbox{(CommandSandboxes.DefaultName == CommandSandboxes.Process ? " (a plain process with your rights; IDRAK_SANDBOX=container isolates them, Docker or Podman)" : "")}";
+string sandboxName = new CodingToolOptions().Sandbox;                 // IDRAK_SANDBOX, else "process"
+string sandboxNote = $"in the {sandboxName} sandbox{(sandboxName == "process" ? " (a plain process with your rights; IDRAK_SANDBOX=container isolates them, Docker or Podman)" : "")}";
 Console.WriteLine(positional[0] switch
 {
     "agent" when !yes => $"The model's commands and file writes are asked about before they happen (y to go on); --yes runs them without asking. Commands run {sandboxNote}.",
@@ -123,6 +118,13 @@ Console.WriteLine(positional[0] switch
 
 Device.Default = device;
 var cacheFormat = KeyValueFormat.Float32;
+
+// The command sandbox and the learning-rate schedule were picked by their names among the registered ones: not on the new
+// design yet.
+static ICommandSandbox SandboxNamed(string name) => throw new NotSupportedException($"The command sandbox '{name}' by name is not on the new design yet.");
+
+static Func<Optimizer, int, ILearningRateScheduler> ScheduleNamed(string name) =>
+    throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");
 
 // A model folder, or a Hugging Face model id (owner/name): found in a cache or downloaded (with progress) on first use.
 static string ResolveModel(string model) =>
@@ -221,7 +223,7 @@ switch (positional[0])
         {
             Rank = rank ?? defaults.Rank,
             LearningRate = learningRate ?? defaults.LearningRate,
-            Scheduler = LearningRateSchedules.Factory(options.Schedule, options.ScheduleSettings),
+            Scheduler = ScheduleNamed(options.Schedule),
         };
         var session = new FineTuningSession(model, tuning, updates);
         using var policy = new LanguageModelPolicy(session, new LanguageModelPolicyOptions
@@ -238,7 +240,7 @@ switch (positional[0])
 
         Console.WriteLine($"{options.Algorithm} on {positional[2]}: {options.Iterations} iterations of {options.EpisodesPerIteration} episodes, checkpoints in {options.CheckpointFolder}");
         using var progress = ProgressReporters.Start("agent-train", options.Iterations);
-        var trainer = new ReinforcementTrainer<ChatObservation, ChatMessage>(EnvironmentKinds.Get("coding"), policy, options)
+        var trainer = new ReinforcementTrainer<ChatObservation, ChatMessage>(new CodingEnvironmentKind(), policy, options)
         {
             Progress = progress,
             OnIteration = s =>
@@ -342,10 +344,8 @@ switch (positional[0])
             }
             else
             {
-                // Asked on the terminal: each write (the "ask" write policy) and each command (the sandbox, wrapped).
-                WritePolicies.Register(new AskingWritePolicy((write, _) =>
-                    ValueTask.FromResult(Asking.Ask($"{(write.Tool == "edit_file" ? "edit" : "write")} {write.Path} ({(write.Creates ? "new file, " : "")}{write.Change})"))));
-                tools = new CodingTools(workspace!, agentOptions.Tools with { WritePolicy = WritePolicies.Ask }, new Asking(CommandSandboxes.Get(agentOptions.Tools.Sandbox)));
+                // Asked on the terminal: each write (the "ask" write policy, picked by its name) and each command (the sandbox, wrapped).
+                tools = new CodingTools(workspace!, agentOptions.Tools with { WritePolicy = WritePolicies.Ask }, new Asking(SandboxNamed(agentOptions.Tools.Sandbox)));
             }
 
             var run = await agent.RunAsync(task.Prompt, tools, cancel.Token);

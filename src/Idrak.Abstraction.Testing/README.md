@@ -107,9 +107,7 @@ A saved operation call holds the operation, its arguments and the values of its 
 bits); a saved contract case holds the case's data. The case that made an app write its override stays its test, and
 the library's once the fix moves there.
 
-`samples/Idrak.Samples.Override` (an app with its own token sampler) and its tests
-(`samples/Idrak.Samples.Override.Tests`) show the whole loop; `tests/Idrak.PluginTests` has a plain-loop device written
-outside the library that passes the device check.
+`tests/Idrak.PluginTests` has a plain-loop device written outside the library that passes the device check.
 
 ## Status
 
