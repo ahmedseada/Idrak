@@ -25,7 +25,7 @@ public static class CSharpInfo
 }
 
 /// <summary>
-/// The C# rewards (registered by <see cref="CSharpCodingPlugin"/> in <see cref="RewardFunctions"/>), read from the
+/// The C# rewards (registered by <see cref="CSharpCodingPlugin"/> in <c>RewardFunctions</c>), read from the
 /// <c>csharp</c> environment's info (<see cref="CSharpInfo"/>), combined with the coding ones (<c>rounds</c>,
 /// <c>tool-errors</c>) and a teacher term by weights in the reward expression:
 /// <list type="bullet">
@@ -67,19 +67,23 @@ public static class CSharpRewards
         return ValueTask.FromResult(scores);
     }
 
-    private sealed class TestsReward : IRewardFunction, IOptionSchema
+    // The options by key the contract still passes: a reward's options are its constructor's, so every key is one it does
+    // not take.
+    private static void NoOptions(string reward, IReadOnlyDictionary<string, string>? options)
+    {
+        if (options is { Count: > 0 })
+        {
+            throw new ArgumentException($"The reward {reward} takes its options as constructor parameters, not by key (given '{string.Join("', '", options.Keys)}').", nameof(options));
+        }
+    }
+
+    private sealed class TestsReward : IRewardFunction
     {
         public string Name => Tests;
 
-        public string Summary => "the share of the C# task's tests that passed, from dotnet test's TRX results (tests that did not run count as failed)";
-
-        public OptionSchema Options { get; } = new($"reward {Tests}");
-
-        public IReadOnlySet<string> Keys => Options.Keys;
-
         public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
         {
-            _ = Options.Parse(options);
+            NoOptions(Name, options);
             return Score(inputs, cancellationToken, input =>
             {
                 int total = Count(Name, input, CSharpInfo.TestsTotal), passed = Count(Name, input, CSharpInfo.TestsPassed);
@@ -88,24 +92,15 @@ public static class CSharpRewards
         }
     }
 
-    private sealed class BuildReward : IRewardFunction, IOptionSchema
+    // 1 when the C# task's build passed, else 0, less error (0.1) per error and warning (0) per warning in the build's logs,
+    // at least floor (-1).
+    private sealed class BuildReward(float error = 0.1f, float warning = 0f, float floor = -1f) : IRewardFunction
     {
-        private static readonly OptionSpec<float> Error = OptionSpec.Number("error", 0.1f, takes: "a number", summary: "taken per error");
-        private static readonly OptionSpec<float> Warning = OptionSpec.Number("warning", 0f, takes: "a number", summary: "taken per warning");
-        private static readonly OptionSpec<float> Floor = OptionSpec.Number("floor", -1f, takes: "a number", summary: "the least score");
-
         public string Name => Build;
-
-        public string Summary => "1 when the C# task's build passed, else 0, less error (0.1) per error and warning (0) per warning in the build's logs, at least floor (-1)";
-
-        public OptionSchema Options { get; } = new($"reward {Build}", Error, Warning, Floor);
-
-        public IReadOnlySet<string> Keys => Options.Keys;
 
         public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
         {
-            var own = Options.Parse(options);
-            float error = own.Get(Error), warning = own.Get(Warning), floor = own.Get(Floor);
+            NoOptions(Name, options);
             return Score(inputs, cancellationToken, input =>
             {
                 float score = (Flag(Name, input, CSharpInfo.BuildPassed) ? 1f : 0f) - error * Count(Name, input, CSharpInfo.BuildErrors)

@@ -69,7 +69,7 @@ public static class CodingSuite
     {
         ArgumentNullException.ThrowIfNull(folder);
         folder = Path.GetFullPath(folder);
-        var skipped = new HashSet<string>([".git", .. (languages ?? CodingLanguages.Registered).SelectMany(l => l.IgnoredDirectories.Concat(l.LinkedDirectories))],
+        var skipped = new HashSet<string>([".git", .. (languages ?? []).SelectMany(l => l.IgnoredDirectories.Concat(l.LinkedDirectories))],
             StringComparer.OrdinalIgnoreCase);
         var found = new List<string>();
         var pending = new Stack<string>();

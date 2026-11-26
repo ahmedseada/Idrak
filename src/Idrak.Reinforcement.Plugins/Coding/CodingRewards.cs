@@ -47,7 +47,7 @@ public static class CodingInfo
 }
 
 /// <summary>
-/// The coding rewards (registered by <see cref="CodingPlugin"/> in <see cref="RewardFunctions"/>), read from the
+/// The coding rewards (registered by <see cref="CodingPlugin"/> in <c>RewardFunctions</c>), read from the
 /// <c>coding</c> environment's info (<see cref="CodingInfo"/>), combined with weights in its reward expression
 /// ("tests-passed:1,rounds:1,tool-errors:1"):
 /// <list type="bullet">
@@ -84,6 +84,16 @@ public static class CodingRewards
         input.Info is { } info && info.TryGet(key, out bool value) ? value
         : throw new ArgumentException($"The reward {reward} reads '{key.Name}' from the coding environment's info (Idrak.Reinforcement.Plugins.Coding); this answer has none.");
 
+    // The options by key the contract still passes: a reward's options are its constructor's, so every key is one it does
+    // not take.
+    private static void NoOptions(string reward, IReadOnlyDictionary<string, string>? options)
+    {
+        if (options is { Count: > 0 })
+        {
+            throw new ArgumentException($"The reward {reward} takes its options as constructor parameters, not by key (given '{string.Join("', '", options.Keys)}').", nameof(options));
+        }
+    }
+
     private static ValueTask<float[]> Score(IReadOnlyList<RewardInput> inputs, CancellationToken cancellationToken, Func<RewardInput, float> score)
     {
         ArgumentNullException.ThrowIfNull(inputs);
@@ -97,36 +107,24 @@ public static class CodingRewards
         return ValueTask.FromResult(scores);
     }
 
-    private sealed class TestsPassedReward : IRewardFunction, IOptionSchema
+    private sealed class TestsPassedReward : IRewardFunction
     {
         public string Name => TestsPassed;
 
-        public string Summary => "1 when every verification command of the coding task passed (its hidden tests), else 0";
-
-        public OptionSchema Options { get; } = new($"reward {TestsPassed}");
-
-        public IReadOnlySet<string> Keys => Options.Keys;
-
         public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
         {
-            _ = Options.Parse(options);
+            NoOptions(Name, options);
             return Score(inputs, cancellationToken, input => Flag(Name, input, CodingInfo.VerifyPassed) ? 1f : 0f);
         }
     }
 
-    private sealed class VerifyFractionReward : IRewardFunction, IOptionSchema
+    private sealed class VerifyFractionReward : IRewardFunction
     {
         public string Name => VerifyFraction;
 
-        public string Summary => "the share of the coding task's verification commands that passed, in order up to the first failure";
-
-        public OptionSchema Options { get; } = new($"reward {VerifyFraction}");
-
-        public IReadOnlySet<string> Keys => Options.Keys;
-
         public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
         {
-            _ = Options.Parse(options);
+            NoOptions(Name, options);
             return Score(inputs, cancellationToken, input =>
             {
                 int commands = Count(Name, input, CodingInfo.VerifyCommands), passed = Count(Name, input, CodingInfo.VerifyPassedCommands);
@@ -135,43 +133,26 @@ public static class CodingRewards
         }
     }
 
-    private sealed class RoundsReward : IRewardFunction, IOptionSchema
+    // −penalty (0.01) per reply of the coding agent past free (0).
+    private sealed class RoundsReward(float penalty = 0.01f, float free = 0f) : IRewardFunction
     {
-        private static readonly OptionSpec<float> Penalty = OptionSpec.Number("penalty", 0.01f, takes: "a number", summary: "taken per reply past free");
-        private static readonly OptionSpec<float> Free = OptionSpec.Number("free", 0f, takes: "a number", summary: "replies without a penalty");
-
         public string Name => RoundsPenalty;
-
-        public string Summary => "−penalty (0.01) per reply of the coding agent past free (0)";
-
-        public OptionSchema Options { get; } = new($"reward {RoundsPenalty}", Penalty, Free);
-
-        public IReadOnlySet<string> Keys => Options.Keys;
 
         public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
         {
-            var own = Options.Parse(options);
-            float penalty = own.Get(Penalty), free = own.Get(Free);
+            NoOptions(Name, options);
             return Score(inputs, cancellationToken, input => -penalty * Math.Max(0f, Count(Name, input, CodingInfo.Rounds) - free));
         }
     }
 
-    private sealed class ToolErrorsReward : IRewardFunction, IOptionSchema
+    // −penalty (0.05) per tool call of the coding agent that failed.
+    private sealed class ToolErrorsReward(float penalty = 0.05f) : IRewardFunction
     {
-        private static readonly OptionSpec<float> Penalty = OptionSpec.Number("penalty", 0.05f, takes: "a number", summary: "taken per failed tool call");
-
         public string Name => ToolErrorsPenalty;
-
-        public string Summary => "−penalty (0.05) per tool call of the coding agent that failed";
-
-        public OptionSchema Options { get; } = new($"reward {ToolErrorsPenalty}", Penalty);
-
-        public IReadOnlySet<string> Keys => Options.Keys;
 
         public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
         {
-            var own = Options.Parse(options);
-            float penalty = own.Get(Penalty);
+            NoOptions(Name, options);
             return Score(inputs, cancellationToken, input => -penalty * Count(Name, input, CodingInfo.ToolErrors));
         }
     }

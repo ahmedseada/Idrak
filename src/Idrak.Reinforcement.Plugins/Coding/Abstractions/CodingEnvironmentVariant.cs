@@ -8,15 +8,18 @@ namespace Idrak.Reinforcement.Plugins.Coding.Abstractions;
 
 /// <summary>
 /// A variant of the <c>coding</c> environment for one coding language (the C# plug-in's <c>csharp</c>): an environment
-/// kind of its own <see cref="IKind.Name"/> (<see cref="CodingEnvironmentKind"/>, made with the variant) that is the coding
+/// kind of its own <see cref="Name"/> (<see cref="CodingEnvironmentKind"/>, made with the variant) that is the coding
 /// environment with the language's defaults (its setup and verification for a task that names none, its programs and
 /// prompt lines) and defaults for the coding options (<see cref="Defaults"/>: the reward, the protected files). A variant
 /// with options of its own implements <see cref="IVariantOptions"/>; one that reads the workspace around verification
 /// into the episode's info (for its rewards) implements <see cref="IVerificationHooks"/>. It copies nothing of the coding
 /// environment.
 /// </summary>
-public interface ICodingEnvironmentVariant : IKind
+public interface ICodingEnvironmentVariant
 {
+    /// <summary>The variant's name, its environment kind's (<see cref="CodingEnvironmentKind"/>).</summary>
+    string Name { get; }
+
     /// <summary>The coding language (a <see cref="CodingLanguages"/> name) whose defaults the tasks get, and the coding option <c>languages</c> unless given.</summary>
     string Language { get; }
 
@@ -31,13 +34,16 @@ public interface ICodingEnvironmentVariant : IKind
 }
 
 /// <summary>
-/// A coding variant with options of its own (<see cref="IConfigurableKind.Keys"/>, beside the coding environment's): its
+/// A coding variant with options of its own (<see cref="Keys"/>, beside the coding environment's): its
 /// keys, the check of their values, and the variables every command of a run gets from them, declared together so they
 /// agree.
 /// </summary>
-public interface IVariantOptions : ICodingEnvironmentVariant, IConfigurableKind
+public interface IVariantOptions : ICodingEnvironmentVariant
 {
-    /// <summary>Checks its own options (<paramref name="options"/>: those of <see cref="IConfigurableKind.Keys"/> given), once per run; throws <see cref="ArgumentException"/> naming a bad one.</summary>
+    /// <summary>The keys of its own options, which the coding environment takes beside its own.</summary>
+    IReadOnlySet<string> Keys { get; }
+
+    /// <summary>Checks its own options (<paramref name="options"/>: those of <see cref="Keys"/> given), once per run; throws <see cref="ArgumentException"/> naming a bad one.</summary>
     void Check(IReadOnlyDictionary<string, string> options);
 
     /// <summary>Variables every command of a run gets (the agent's tools, setup and verification), over the languages' own.</summary>

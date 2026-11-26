@@ -65,14 +65,10 @@ public sealed class CSharpEnvironmentVariant : IVariantOptions, IVerificationHoo
     public string Name => KindName;
 
     /// <inheritdoc />
-    public string Summary =>
-        "C# coding tasks (suite=DIR): the coding environment with dotnet's defaults; rewards from the build's error log and the tests' TRX results (reward=csharp-tests)";
-
-    /// <inheritdoc />
     public string Language => CSharpLanguagePlugin.LanguageName;
 
     /// <inheritdoc />
-    public IReadOnlySet<string> Keys { get; } = new OptionKeys("packages", "node-reuse", "build-server");
+    public IReadOnlySet<string> Keys { get; } = new HashSet<string>(["packages", "node-reuse", "build-server"], StringComparer.Ordinal);
 
     /// <summary>The protected globs: <see cref="ProtectVariable"/>'s, else <see cref="DefaultProtect"/>.</summary>
     public static IReadOnlyList<string> Protect =>

@@ -40,7 +40,7 @@ public static class CodingWorkspace
         }
 
         Directory.CreateDirectory(workFolder);
-        languages ??= CodingLanguages.Registered;
+        languages ??= [];                                      // the languages were registered: none now
         var skipped = NotCopied(languages);
         var linked = CodingLanguages.Merge([.. languages.Select(l => l.LinkedDirectories)], StringComparer.OrdinalIgnoreCase);
         foreach (var source in new[] { task.Base, task.Workspace })
@@ -77,7 +77,7 @@ public static class CodingWorkspace
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(workFolder);
-        CopyTree(source, workFolder, overwrite: true, NotCopied(languages ?? CodingLanguages.Registered));
+        CopyTree(source, workFolder, overwrite: true, NotCopied(languages ?? []));
     }
 
     /// <summary>
@@ -94,7 +94,7 @@ public static class CodingWorkspace
             return;
         }
 
-        var excludes = CodingLanguages.Merge([.. (languages ?? CodingLanguages.Registered).Select(l => l.GitExcludes)]);
+        var excludes = CodingLanguages.Merge([.. (languages ?? []).Select(l => l.GitExcludes)]);
         try
         {
             Git(folder, "init", "-q");
@@ -158,7 +158,7 @@ public static class CodingWorkspace
         }
 
         var files = new List<string>();
-        Collect(hidden, hidden, files, NotCopied(languages ?? CodingLanguages.Registered));
+        Collect(hidden, hidden, files, NotCopied(languages ?? []));
         files.Sort(StringComparer.Ordinal);
         return files;
     }
@@ -217,7 +217,7 @@ public static class CodingWorkspace
         }
 
         var patterns = globs.Select(DataFiles.Glob).ToList();
-        var skipped = NotCopied(languages ?? CodingLanguages.Registered);
+        var skipped = NotCopied(languages ?? []);
         var candidates = new SortedSet<string>(StringComparer.Ordinal);
         foreach (var root in new[] { start, workspace })
         {

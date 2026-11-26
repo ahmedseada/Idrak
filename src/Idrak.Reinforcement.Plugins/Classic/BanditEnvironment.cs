@@ -7,7 +7,7 @@ using Idrak.Abstraction.Reinforcement;
 namespace Idrak.Reinforcement.Plugins.Classic;
 
 /// <summary>
-/// The settings of a <see cref="BanditEnvironment"/>; as the kind's options (<see cref="FromOptions"/>): <c>arms</c>,
+/// The settings of a <see cref="BanditEnvironment"/>; as the kind's options (<c>FromOptions</c>): <c>arms</c>,
 /// <c>means</c>, <c>spreads</c>, <c>means-seed</c>, <c>pulls</c>. By default Sutton and Barto's 10-armed testbed (2018,
 /// section 2.3): 10 arms whose means are drawn once from a standard normal (by <see cref="MeansSeed"/>), each pull paying its
 /// arm's mean plus standard normal noise.
@@ -31,36 +31,6 @@ public sealed record BanditOptions
 
     /// <summary>The pulls of an episode (each a step; the last one terminates it). Option <c>pulls</c>.</summary>
     public int Pulls { get; init; } = 1;
-
-    private static readonly OptionSpec<int> ArmsOption = OptionSpec.Whole("arms", 10, min: 1, summary: "the arms (as many as the means when given)");
-    private static readonly OptionSpec<double[]?> MeansOption = OptionSpec.Reals("means", summary: "each arm's mean; drawn from means-seed when not given");
-    private static readonly OptionSpec<double[]?> SpreadsOption = OptionSpec.Reals("spreads", min: 0, summary: "each arm's spread, or one for all (1)");
-    private static readonly OptionSpec<int> Seed = OptionSpec.Whole("means-seed", 0, summary: "the seed the means are drawn from");
-    private static readonly OptionSpec<int> PullsOption = OptionSpec.Whole("pulls", 1, min: 1, summary: "the pulls of an episode");
-
-    /// <summary>The kind's options: their keys, types, ranges and defaults (a value of blanks is the default).</summary>
-    public static OptionSchema Schema { get; } = new($"{BanditEnvironment.KindName} environment", blankIsDefault: true, ArmsOption, MeansOption, SpreadsOption, Seed, PullsOption);
-
-    /// <summary>The kind's option keys.</summary>
-    public static OptionKeys Keys => Schema.Keys;
-
-    /// <summary>The settings the kind's <paramref name="options"/> give (the defaults for those not given).</summary>
-    /// <exception cref="ArgumentException">An option not in <see cref="Keys"/>, a bad value, or means and spreads of other counts than the arms.</exception>
-    public static BanditOptions FromOptions(IReadOnlyDictionary<string, string>? options)
-    {
-        var read = Schema.Parse(options);
-        var means = read.Get(MeansOption);
-        var settings = new BanditOptions
-        {
-            Arms = read.IsGiven(ArmsOption) ? read.Get(ArmsOption) : means?.Length ?? 10,
-            Means = means,
-            Spreads = read.Get(SpreadsOption) ?? [1.0],
-            MeansSeed = read.Get(Seed),
-            Pulls = read.Get(PullsOption),
-        };
-        settings.Check();
-        return settings;
-    }
 
     // The arms' means and spreads, checked: as many as the arms (one spread may stand for all).
     internal (double[] Means, double[] Spreads) Resolve()
@@ -120,7 +90,7 @@ public sealed record BanditOptions
 /// </summary>
 public sealed class BanditEnvironment : IEnvironment<float[], int>
 {
-    /// <summary>The kind's name in <see cref="EnvironmentKinds"/>: "bandit".</summary>
+    /// <summary>The kind's name in <c>EnvironmentKinds</c>: "bandit".</summary>
     public const string KindName = "bandit";
 
     private readonly double[] _means, _spreads;

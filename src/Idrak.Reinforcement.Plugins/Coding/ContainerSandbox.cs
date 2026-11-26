@@ -55,7 +55,7 @@ public sealed record ContainerSandboxOptions
 }
 
 /// <summary>
-/// The <c>container</c> command sandbox (<see cref="CommandSandboxes.Container"/>, registered by <see cref="CodingPlugin"/>):
+/// The <c>container</c> command sandbox (<c>CommandSandboxes.Container</c>, registered by <see cref="CodingPlugin"/>):
 /// each command runs in a fresh container of <see cref="ContainerSandboxOptions.Image"/> started by Docker or Podman
 /// (<c>run --rm</c>), the workspace mounted at <see cref="ContainerSandboxOptions.MountPoint"/>, the network off unless
 /// allowed, and the memory, CPU and process limits of <see cref="CommandLimits"/> given to the program, which enforces them
@@ -70,7 +70,7 @@ public sealed class ContainerSandbox(ContainerSandboxOptions? options = null) : 
     public ContainerSandboxOptions Options { get; } = options ?? new ContainerSandboxOptions();
 
     /// <inheritdoc />
-    public string Name => CommandSandboxes.Container;
+    public string Name => "container";
 
     /// <inheritdoc />
     public string Summary => "a Docker or Podman container per command: the workspace mounted, the network off unless allowed, memory, CPU and process limits (IDRAK_SANDBOX_IMAGE)";
@@ -215,7 +215,7 @@ public sealed class ContainerSandbox(ContainerSandboxOptions? options = null) : 
         }
 
         // The program itself runs as a plain process under the time limit and the output cap; the container holds the rest.
-        var process = CommandSandboxes.Default(CommandSandboxes.Process) ?? new ProcessCommandSandbox();
+        var process = new ProcessCommandSandbox();                     // the library's process sandbox, reached directly
         var outer = new CommandLimits { Time = limits.Time, MaxOutputCharacters = limits.MaxOutputCharacters, Output = limits.Output, Requester = limits.Requester, Purpose = limits.Purpose };
         try
         {

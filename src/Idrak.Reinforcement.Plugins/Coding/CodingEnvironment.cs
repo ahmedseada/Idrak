@@ -14,7 +14,7 @@ using Idrak.Text.Reinforcement.Abstractions;
 namespace Idrak.Reinforcement.Plugins.Coding;
 
 /// <summary>
-/// The <c>coding</c> environment kind (<see cref="EnvironmentKinds"/>, registered by <see cref="CodingPlugin"/>): an
+/// The <c>coding</c> environment kind (<c>EnvironmentKinds</c>, registered by <see cref="CodingPlugin"/>): an
 /// agent with <see cref="CodingTools"/> works on coding tasks (<see cref="CodingTask"/>), each episode one task drawn
 /// from its seed, rewarded by the task's verification. Observations are conversations (<see cref="ChatObservation"/>:
 /// the system prompt, the task's prompt, the replies and the tools' results, the tools offered), actions the assistant's
@@ -28,7 +28,7 @@ namespace Idrak.Reinforcement.Plugins.Coding;
 /// (<see cref="CodingAgent.RunToolCallsAsync"/>) and their results are the next observation; the episode ends when a reply
 /// calls no tool (terminated), or when the rounds or the time run out (truncated).</item>
 /// <item><b>The end:</b> the hidden tests are copied in (over any copy the agent made) and the verification commands run;
-/// the reward is the option <c>reward</c>'s expression (<see cref="CodingRewards"/>, any <see cref="RewardFunctions"/>
+/// the reward is the option <c>reward</c>'s expression (<see cref="CodingRewards"/>, any <c>RewardFunctions</c>
 /// name, "tests-passed" by default) over the episode's info (<see cref="CodingInfo"/>). Files the agent changed where the
 /// hidden tests go are reported, and with <c>refuse-test-edits</c> the episode is refused: verification does not run and
 /// counts as failed.</item>
@@ -44,7 +44,7 @@ namespace Idrak.Reinforcement.Plugins.Coding;
 /// the tools and the prompt work with, <see cref="CodingToolOptions.Languages"/>: all, detected in the tasks' folders,
 /// none, or names; IDRAK_CODING_LANGUAGES, else all), <c>protect</c> (globs of files whose edits count as test edits
 /// beside the hidden tests' paths, separated by commas; none by default), <c>think</c>, <c>sandbox</c>
-/// (<see cref="CommandSandboxes"/>; IDRAK_SANDBOX, else process), <c>memory</c> (a command's memory: bytes, or with KB, MB,
+/// (<c>CommandSandboxes</c>; IDRAK_SANDBOX, else process), <c>memory</c> (a command's memory: bytes, or with KB, MB,
 /// GB), <c>processes</c>, <c>cpus</c>, <c>network</c> (true or false), <c>command-timeout</c> and <c>verify-timeout</c>
 /// (seconds: a tool command's and a verification command's limit; by default measured per task: when a task is prepared
 /// its verification runs once on its starting files, in a copy, and each limit is <c>timeout-scale</c> (10) times that
@@ -131,9 +131,6 @@ public sealed class CodingEnvironmentKind : ISuiteEnvironmentKind, IRewardedEnvi
     internal IVariantOptions? VariantOptions => _variantOptions;
 
     /// <inheritdoc />
-    public string Summary => _variant?.Summary ?? "coding tasks (suite=DIR): the agent works with the coding tools; the hidden tests' verification is the reward (reward=tests-passed)";
-
-    /// <inheritdoc />
     public IReadOnlySet<string> Keys { get; }
 
     /// <inheritdoc />
@@ -184,8 +181,8 @@ public sealed class CodingEnvironmentKind : ISuiteEnvironmentKind, IRewardedEnvi
     }
 
     // The coding options and the variant's own, made once: a kind of fixed tasks takes no suite.
-    private static OptionKeys KeysOf(ICodingEnvironmentVariant? variant, IReadOnlyList<CodingTask>? tasks) =>
-        new(OwnKeys.Concat((variant as IVariantOptions)?.Keys ?? Enumerable.Empty<string>()).Where(k => tasks is null || k != "suite"));
+    private static IReadOnlySet<string> KeysOf(ICodingEnvironmentVariant? variant, IReadOnlyList<CodingTask>? tasks) =>
+        new HashSet<string>(OwnKeys.Concat((variant as IVariantOptions)?.Keys ?? Enumerable.Empty<string>()).Where(k => tasks is null || k != "suite"), StringComparer.Ordinal);
 }
 
 // The parsed options of one Create call; equal options share a run (prepared copies, the workspace limit).
@@ -230,7 +227,7 @@ internal sealed record CodingSettings(string? Suite, string? Filter, string Rewa
         }
 
         string? suite = null, filter = null, work = null, think = null, system = null;
-        string reward = CodingRewards.TestsPassed, sandbox = CommandSandboxes.DefaultName, languages = CodingLanguages.DefaultChoice;
+        string reward = CodingRewards.TestsPassed, sandbox = System.Environment.GetEnvironmentVariable("IDRAK_SANDBOX") is { } named && named.Trim().Length > 0 ? named.Trim() : "process", languages = CodingLanguages.DefaultChoice;
         IReadOnlyList<string> protect = [];
         var rewardOptions = new Dictionary<string, string>(StringComparer.Ordinal);
         var variantOptions = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -396,6 +393,10 @@ internal sealed class CodingSuiteRun
     private int _users, _slots;
     private long _largest;
 
+    // The coding languages were registered (CodingLanguages) and picked by name or by what the tasks hold: not on the new
+    // design yet.
+    private static IReadOnlyList<ICodingLanguage> LanguagesNamed(string choice) => throw new NotSupportedException($"The coding languages '{choice}' by name are not on the new design yet.");
+
     public CodingSuiteRun(CodingSettings settings, IReadOnlyList<CodingTask> tasks, Lock kind, Action forget, ICodingEnvironmentVariant? variant = null)
     {
         Settings = settings;
@@ -404,16 +405,14 @@ internal sealed class CodingSuiteRun
         _kind = kind;
         _forget = forget;
 
-        // The languages once for the run (detected: in any task's folders), named explicitly for every workspace's tools,
-        // so the tools' definitions and the prompt are the same in every episode.
-        Languages = settings.Languages.Trim().Equals(CodingLanguages.Detected, StringComparison.OrdinalIgnoreCase)
-            ? [.. CodingLanguages.Registered.Where(l => tasks.Any(t => new[] { t.Base, t.Workspace }.Any(f => f is not null && l.Detect(f, settings.Tools.DetectionDepth))))]
-            : CodingLanguages.Resolve(settings.Languages);
+        // The languages once for the run, named explicitly for every workspace's tools, so the tools' definitions and the
+        // prompt are the same in every episode.
+        Languages = LanguagesNamed(settings.Languages);
         Tools = settings.Tools with { Languages = Languages.Count == 0 ? CodingLanguages.None : string.Join(",", Languages.Select(l => l.Name)) };
         SystemPrompt = settings.SystemPrompt ?? CodingAgent.SystemPrompt(Languages);
         if (variant is not null)
         {
-            var language = CodingLanguages.Get(variant.Language);
+            var language = LanguagesNamed(variant.Language)[0];
             tasks = [.. tasks.Select(t => variant.Task(t, language, settings.VariantOptions))];
         }
 

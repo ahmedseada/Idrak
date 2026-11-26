@@ -7,7 +7,7 @@ namespace Idrak.Reinforcement.Plugins.Classic;
 
 /// <summary>
 /// The settings of a <see cref="PendulumEnvironment"/>, by default Gymnasium's Pendulum-v1; as the kind's options
-/// (<see cref="FromOptions"/>): <c>max-steps</c>, <c>g</c>, <c>reset-angle</c>, <c>reset-speed</c>.
+/// (<c>FromOptions</c>): <c>max-steps</c>, <c>g</c>, <c>reset-angle</c>, <c>reset-speed</c>.
 /// </summary>
 public sealed record PendulumOptions
 {
@@ -22,31 +22,6 @@ public sealed record PendulumOptions
 
     /// <summary>The start angular velocity is drawn uniformly from [−this, this) (Gymnasium's 1, its y_init). Option <c>reset-speed</c>.</summary>
     public double ResetSpeed { get; init; } = 1.0;
-
-    private static readonly OptionSpec<int> MaxStepsOption = OptionSpec.Whole("max-steps", 200, min: 0, summary: "the step that reaches it is truncated; 0 for no limit");
-    private static readonly OptionSpec<double> G = OptionSpec.Real("g", 10.0, summary: "the gravity");
-    private static readonly OptionSpec<double> Angle = OptionSpec.Real("reset-angle", Math.PI, min: 0, summary: "the start angle's bound");
-    private static readonly OptionSpec<double> Speed = OptionSpec.Real("reset-speed", 1.0, min: 0, summary: "the start speed's bound");
-
-    /// <summary>The kind's options: their keys, types, ranges and defaults (a value of blanks is the default).</summary>
-    public static OptionSchema Schema { get; } = new($"{PendulumEnvironment.KindName} environment", blankIsDefault: true, MaxStepsOption, G, Angle, Speed);
-
-    /// <summary>The kind's option keys.</summary>
-    public static OptionKeys Keys => Schema.Keys;
-
-    /// <summary>The settings the kind's <paramref name="options"/> give (the defaults for those not given).</summary>
-    /// <exception cref="ArgumentException">An option not in <see cref="Keys"/>, or a bad value.</exception>
-    public static PendulumOptions FromOptions(IReadOnlyDictionary<string, string>? options)
-    {
-        var read = Schema.Parse(options);
-        return new PendulumOptions
-        {
-            MaxSteps = read.Get(MaxStepsOption),
-            Gravity = read.Get(G),
-            ResetAngle = read.Get(Angle),
-            ResetSpeed = read.Get(Speed),
-        };
-    }
 }
 
 /// <summary>
@@ -69,7 +44,7 @@ public sealed record PendulumOptions
 /// </summary>
 public sealed class PendulumEnvironment : IEnvironment<float[], float[]>
 {
-    /// <summary>The kind's name in <see cref="EnvironmentKinds"/>: "pendulum".</summary>
+    /// <summary>The kind's name in <c>EnvironmentKinds</c>: "pendulum".</summary>
     public const string KindName = "pendulum";
 
     private const double MaxSpeed = 8, Dt = 0.05, Mass = 1.0, Length = 1.0;
