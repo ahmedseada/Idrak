@@ -22,16 +22,17 @@ Idrak is a neural network library for **.NET 10**, written entirely in C#.
 - **Every GPU, one code base.** CUDA, Vulkan and HIP devices beside SIMD CPU kernels on x64 and ARM64 (Windows, Linux,
   macOS, Android). Kernel choices are measured on the device at run time, never looked up by a card's name.
 - **Build and train.** Tensors with automatic differentiation; dense, convolutional, recurrent, attention and
-  transformer layers; losses, optimizers and schedules; trainers, mixed precision and data loaders for data that does
+  transformer layers; losses, optimizers and schedules; trainers and data loaders for data that does
   not fit in memory.
 - **Run real models.** Language, vision-language, speech, encoder and encoder-decoder models from Hugging Face folders
   or GGUF files, with their own tokenizers and chat templates. The model families live in three plug-in packages
-  (`Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins`) that the `idrak` tool registers for you.
-- **Tune, serve and ship.** LoRA (also over a frozen int4 or int8 base) and DoRA fine-tuning, distillation and evaluation; an inference engine with
+  (`Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins`); finding a checkpoint's family by its
+  architecture name is not on the new design yet.
+- **Tune, serve and ship.** LoRA and DoRA fine-tuning, distillation and evaluation; an inference engine with
   batching, an OpenAI-style `/v1` API and MCP front ends; retrieval and RAG; ONNX export and import; and one command-line tool,
   `idrak`, over all of it.
-- **Open by contract.** Every behaviour goes through a contract with a registry, so a model family, a file format, a
-  device or a kernel is added from a plug-in without touching the library.
+- **Open by contract.** Every behaviour goes through a contract, so a model family, a file format or a kernel is
+  written outside the library on its public API; picking one by its name is not on the new design yet.
 
 This file is the library's map: what it can do today, on which hardware that was verified, how it is laid out, and what
 is planned.
@@ -45,22 +46,22 @@ along; the GPU devices are `dotnet add package Idrak.Gpu`, and the others are ad
 
 | Package | What it holds |
 |---|---|
-| `Idrak.Abstraction` | The contracts the library is built on, each with its default implementation: `Tensor`, `Autograd`, `Module`, devices and the CPU device (the host fallback of every other device), optimizers and schedules, telemetry, tokenizers, chat and tools, serving contracts, sample sources, the `SlotTable` registries. Reference it alone to write a plug-in. |
-| `Idrak` | Layers and networks, training (`Trainer`, callbacks, mixed precision, activation checkpointing), datasets and loaders, model loading (safetensors, GGUF, PyTorch zip, PEFT adapters), packed weights (bfloat16, int8, int4), ONNX export and import, the inference engine, model packages (`.ikm`). |
+| `Idrak.Abstraction` | The contracts the library is built on, each with its default implementation: `Tensor`, `Autograd`, `Module`, devices and the CPU device, optimizers and schedules, telemetry, tokenizers, chat and tools, serving contracts, sample sources. Reference it alone to write a plug-in. |
+| `Idrak` | Layers and networks, training (`Trainer`, callbacks, activation checkpointing), datasets and loaders, model loading (safetensors, GGUF, PyTorch zip, PEFT adapters), ONNX export and import, the inference engine, model packages (`.ikm`). |
 | `Idrak.Gpu` | The GPU devices: CUDA (driver API, PTX generated in C#), Vulkan (SPIR-V generated in C#), HIP (GCN generated and assembled in C#; no SDK). Loads the driver installed on the machine; no native files of its own. Kernel tuning per size class with a persisted cache. |
 | `Idrak.Network` | The real transports and collectives of a cluster: shared memory, TCP with a keyed rendezvous, a direct cable, host-staged and peer copies between the GPUs of one process; naive, ring and hierarchical all-reduce, all-gather, reduce-scatter and broadcast over any transport; the fastest-first transport selector and the `network` profiler probe. Built on `Idrak.Abstraction`'s cluster contracts. |
 | `Idrak.Cluster` | A cluster of GPUs and machines simulated on one machine: devices carved from a physical one with hard memory caps, the `sim` transport charged on a virtual clock from link profiles, the built-in link profiles, the topology builder and the `cluster` profiler probe. Built on `Idrak.Abstraction`'s cluster contracts; `Idrak.Network` holds the real transports. |
 | `Idrak.Data` | Row datasets: JSON Lines, JSON, CSV, TSV, text, code and Parquet; archives and compressed files; sources file, folder, http, Hugging Face, GitHub, Kaggle, Zenodo; filter, map, shuffle, deduplicate, split, mix; chat transcripts for fine-tuning; the Hugging Face model downloader. Documents: PDF read (text in reading order, images, vector content, embedded files; encrypted ones too), written (pages of images, paths and text with its fonts embedded), edited (incremental updates, rewrites, pages merged and split, encrypted), signed and checked (PAdES), and drawn to pixels; forms filled, added and flattened, annotations, bookmarks, and redaction that removes what it covers. |
-| `Idrak.Text` | Text generation and chat with tools, the models' own Jinja chat templates, tool-call formats, LLM fine-tuning (LoRA, LoRA on a frozen int4 or int8 base, DoRA, full), distillation, evaluation, retrieval and RAG, synthetic training pages, the coding agent, the engine's text and chat models. |
+| `Idrak.Text` | Text generation and chat with tools, the models' own Jinja chat templates, tool-call formats, LLM fine-tuning (LoRA, DoRA, full), distillation, evaluation, retrieval and RAG, synthetic training pages, the coding agent, the engine's text and chat models. |
 | `Idrak.Imaging` | PNG, JPEG, BMP and Netpbm codecs; Pillow's resampling, filters and enhancements byte for byte; model preprocessors on the device; a font engine (TrueType, CFF, Type 1, OpenType shaping, bidi) for rendering text, and fonts written as TrueType (whole or subset); any document page drawn to pixels; image transforms and augmentations; image-folder datasets. |
 | `Idrak.Vision` | Image model families (classifiers, detectors, segmenters), region classification in batches, content framing, channel statistics, detection and segmentation over any network, CTC decoding for OCR. |
 | `Idrak.Audio` | WAV, FLAC and MP3 decoding and WAV and MP3 encoding in C#; resampling, STFT and log-mel features; speech recognition and synthesis contracts; vocoders, speaker encoders, voice conversion and voice stores; speech training (CTC, seq2seq, TTS, adversarial synthesis) with the library's HiFi-GAN, WaveNet and flow layers. |
-| `Idrak.Reinforcement` | Reinforcement learning: the general algorithms on `Idrak.Abstraction`'s reinforcement contracts (environments and their spaces, policies, reward functions, advantage estimators, policy losses, rollout batches in pooled arrays), registered by name; no environment, task or model family, and no reference to `Idrak.Text`. |
-| `Idrak.Text.Plugins` | The text model families as plug-ins on the public API, one namespace per family; `TextPlugins.RegisterAll()` registers them. |
-| `Idrak.Vision.Plugins` | The vision model families (vision-language towers, image models, line recognizers) as plug-ins; `VisionPlugins.RegisterAll()`. |
-| `Idrak.Audio.Plugins` | The speech and voice model families (recognition, synthesis, voice conversion) as plug-ins; `AudioPlugins.RegisterAll()`. |
-| `Idrak.Reinforcement.Plugins` | The reinforcement-learning environment families (environments and their rewards) as plug-ins, one namespace per family; `ReinforcementPlugins.RegisterAll()`. |
-| `Idrak.Imaging.Plugins` | Image and font formats as plug-ins, registered from outside the library: WOFF fonts read and written (`FontFormats`, `FontWriters`); `ImagingPlugins.RegisterAll()`. |
+| `Idrak.Reinforcement` | Reinforcement learning: the general algorithms on `Idrak.Abstraction`'s reinforcement contracts (environments and their spaces, policies, reward functions, advantage estimators, policy losses, rollout batches in pooled arrays); no environment, task or model family, and no reference to `Idrak.Text`. |
+| `Idrak.Text.Plugins` | The text model families as plug-ins on the public API, one namespace per family. |
+| `Idrak.Vision.Plugins` | The vision model families (vision-language towers, image models, line recognizers) as plug-ins. |
+| `Idrak.Audio.Plugins` | The speech and voice model families (recognition, synthesis, voice conversion) as plug-ins. |
+| `Idrak.Reinforcement.Plugins` | The reinforcement-learning environment families (environments and their rewards) as plug-ins, one namespace per family. |
+| `Idrak.Imaging.Plugins` | Image and font formats as plug-ins: WOFF fonts read and written (`WoffFormat`, `WoffWriter`). |
 | `Idrak.AspNetCore` | Predictions, generation, chat and an OpenAI-style `/v1` API (chat completions, embeddings; a request field it does not implement is refused by name, never ignored) as thin endpoints over the inference engine. |
 | `Idrak.Mcp` | Model Context Protocol: MCP servers' tools in conversations, and the engine's models served as the MCP tools `generate`, `chat` and `embed`. |
 | `Idrak.Onnx.Runtime` | Runs ONNX models with ONNX Runtime as Idrak modules, so they serve through the same engine and endpoints. |
@@ -91,8 +92,8 @@ dependency.
 ### Tensors, autograd and devices
 
 - Float32 tensors, contiguous in memory (a reshape shares the storage; slices, transposes and permutations copy), with
-  broadcasting, in-place updates and a reverse-mode autograd with user-defined differentiable functions. Mixed precision (bfloat16 products on the devices that have tensor cores),
-  activation checkpointing, scoped allocation (`TensorScope`) and pooled device memory that is measured, not guessed.
+  broadcasting, in-place updates and a reverse-mode autograd with user-defined differentiable functions. Activation
+  checkpointing, scoped allocation (`TensorScope`) and pooled device memory that is measured, not guessed.
 - One `Backend` contract behind every device; every kernel has a CPU implementation (the host fallback), so any model
   runs anywhere .NET 10 runs and a device only has to be faster.
 - **CPU:** `Vector<T>` SIMD (AVX2, AVX-512, NEON), a register-blocked matrix product, multi-threading for large
@@ -118,9 +119,9 @@ dependency.
   `dynamic`, `linear`, `llama3` and `yarn` scalings, mixture-of-experts feed-forwards, weight-norm parametrization,
   flows (rational-quadratic splines, residual coupling), WaveNet and HiFi-GAN blocks, GAN and feature-matching losses,
   CTC loss, monotonic alignment, a differentiable log-mel.
-- A network builder and `GraphModule` for arbitrary graphs; 31 layer types and 36 graph operations are registered and
-  any plug-in adds more.
-- Optimizers: SGD, Adam, AdamW, AdamW 8-bit, grouped and host optimizers; schedules step, exponential, cosine, lambda.
+- A network builder and `GraphModule` for arbitrary graphs; 31 layer types and 36 graph operations (picking one
+  by its name is not on the new design yet).
+- Optimizers: SGD, Adam, AdamW, grouped and host optimizers; schedules step, exponential, cosine, lambda.
 - `Trainer` with callbacks, metrics, history, early stopping, weight checkpoints, sample sources and streams with
   transforms and bucketed batching; a stopped cluster run writes its weights, optimizer state and step, and
   `ResumeFrom` goes on to the end the uninterrupted run reaches. Out-of-memory recovery is not `Trainer`'s: text
@@ -130,26 +131,21 @@ dependency.
 
 ### Language models
 
-- Families: the plug-in package `Idrak.Text.Plugins` (`TextPlugins.RegisterAll()`; the `idrak` tool registers it):
+- Families: the plug-in package `Idrak.Text.Plugins`:
   Llama, Mistral, Mixtral, Qwen2, Qwen2-MoE, Qwen3, Qwen3-MoE (GGUF architectures llama, qwen2, qwen2moe, qwen3,
   qwen3moe), Gemma, Gemma 2 and Gemma 3 (GGUF gemma, gemma2, gemma3), BERT and T5, one namespace each; the library
-  registers none. A family nobody
-  registered fails loudly with "not registered" and is added as a plug-in (`PretrainedFamilies`, `GgufArchitectures`).
-- Checkpoints: safetensors (F32, F16, BF16; F8_E4M3, F8_E5M2 and I8 weights with their scales, dequantized to
-  float32), GGUF (F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K to Q6_K, IQ1_S, IQ1_M, IQ2_XXS, IQ2_XS, IQ2_S,
-  IQ3_XXS, IQ3_S, IQ4_NL, IQ4_XS, TQ1_0, TQ2_0 and MXFP4 dequantized as ggml does, bit for bit; another type is refused
-  unless a plug-in registers it in `GgufTypes`),
-  PyTorch zip read without running it; PEFT adapter folders (LoRA, DoRA, rsLoRA) loaded or merged; packed weights bfloat16, int8, int4; KV caches in
-  bfloat16, float32 or int8.
-- Tokenizers: BPE from `tokenizer.json` or GGUF with the registered normalizers, pre-tokenizers and decoders; a BPE
+  has none. Finding a checkpoint's family by its architecture name is not on the new design yet, so loading stops there.
+- Checkpoints: safetensors (F32; tensors of other types are refused when read, their types not on the new design yet), GGUF (F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K to Q6_K, IQ1_S, IQ1_M, IQ2_XXS, IQ2_XS, IQ2_S,
+  IQ3_XXS, IQ3_S, IQ4_NL, IQ4_XS, TQ1_0, TQ2_0 and MXFP4 dequantized as ggml does, bit for bit; another type is refused),
+  PyTorch zip read without running it; PEFT adapter folders (LoRA, DoRA, rsLoRA) loaded or merged; KV caches in float32.
+- Tokenizers: BPE from `tokenizer.json` or GGUF with its normalizers, pre-tokenizers and decoders; a BPE
   trainer (`idrak data tokenizer`).
 - Generation: a device-side decoding step (sampling, penalties, token history, RoPE and norms as kernels, the host
   waits once per read of the sampled tokens), batching, streaming, string stops, temperature, top-k, top-p, min-p,
   repetition penalties; the kit checks every device's draws against the CPU's.
 - Chat: the model's own Jinja template, tool calling in the `json`, `pythonic`, `qwen3-coder`, `mistral`, `harmony`
   and `deepseek` formats, server-side tool rounds for any chat model, MCP tools, conversations with memory.
-- Fine-tuning: LoRA, LoRA over a frozen int4 or int8 base (QLoRA-style: the library's own int4 and int8 formats, not
-  QLoRA's NF4 with double quantization), DoRA, full tuning; chat and completion objectives; distillation from a
+- Fine-tuning: LoRA, DoRA, full tuning; chat and completion objectives; distillation from a
   teacher model or saved distributions; `idrak tune`, `idrak distill`, `idrak merge`, `idrak quantize`.
 - Pre-training from scratch: `idrak pretrain` over the decoder spec, with `idrak data tokens`.
 - Evaluation: perplexity, answer metrics (exact match, F1, CER, WER, contains), `idrak eval`, `idrak score`,
@@ -206,12 +202,11 @@ dependency.
   `idrak server load|unload|ps|stop`, `idrak api`, `idrak ui`.
 - MCP in both directions (`idrak mcp serve`, `idrak serve --mcp`, `idrak tools list|test`).
 - Model packages (`.ikm`) with `idrak package`, `idrak inspect`, `idrak verify`; ONNX export and import
-  (`idrak onnx export|import|check`) with registered translators; ONNX Runtime execution.
+  (`idrak onnx export|import|check`) with its translators; ONNX Runtime execution.
 
 ### Conformance
 
-The registries and the plug-in loading (`-P`) are gone: picking a kind by its name is not on the new design
-yet, and the contracts stay.
+Picking a kind by its name and loading plug-ins are not on the new design yet; the contracts stay.
 
 `Idrak.Abstraction.Testing` checks any implementation against the library default: `DeviceCases` (every kernel, fixed
 and random shapes, sampling over small and large vocabularies), stress (threads, long runs, odd shapes, cancellation,
@@ -237,7 +232,6 @@ Measured this month on the owner's card (CUDA unless said), from the benches in 
 | Bench | Result |
 |---|---|
 | `train-decoder`, medium, float32 | 490 ms a step, 8,350 tokens/s |
-| `train-decoder`, medium, bfloat16 products | 127 ms a step, 32,300 tokens/s |
 | `train-speech`, VITS fine-tuning step, one clip / eight clips | 0.14 s / 0.17 s warm (was 3.5 s and 28 s before the tuning lends across size classes) |
 | `voice train`, a real voice from mms-tts-ara | about 215x real time, 1.1 to 1.7 s a step |
 | `launch`, the host's cost a kernel launch | CUDA 6.7 µs (the driver's launch call itself), Vulkan 0.8 µs, CPU 0.1 to 0.5 µs; the library adds nothing measurable |
@@ -253,7 +247,7 @@ environment variable with its scope):
 | Group | Commands |
 |---|---|
 | Devices and health | `devices`, `check`, `doctor`, `kernels`, `kernels dump`, `tuning show`, `tune init`, `memory`, `profile`, `trace`, `bench`, `compare`, `version`, `update`, `setup android` |
-| Models | `pull`, `list`, `show`, `rm`, `search`, `inspect`, `verify`, `convert`, `quantize`, `merge`, `package`, `families`, `formats`, `overrides`, `cache info`, `cache clear`, `login`, `logout` |
+| Models | `pull`, `list`, `show`, `rm`, `search`, `inspect`, `verify`, `convert`, `quantize`, `merge`, `package`, `families`, `formats`, `cache info`, `cache clear`, `login`, `logout` |
 | Generation | `chat`, `complete`, `run`, `batch`, `embed`, `tokenize`, `template`, `predict`, `agent`, `suggest`, `shell`, `demo` |
 | Training | `train`, `tune`, `pretrain`, `pretrain init`, `distill`, `resume`, `eval`, `perplexity`, `diff`, `runs list`, `runs show`, `runs compare`, `report`, `viz` |
 | Data | `data preview`, `stats`, `validate`, `convert`, `dedupe`, `split`, `mix`, `sample`, `tokens`, `tokenizer`, `synth`, `text`, `fonts`, `audio`, `mel` |
@@ -264,7 +258,7 @@ environment variable with its scope):
 | Interchange | `onnx export`, `onnx import`, `onnx check`, `create`, `create init`, `new`, `init` |
 | Configuration | `config get`, `set`, `list`, `unset`, `alias set`, `list`, `rm`, `env`, `env set`, `env unset`, `env reset`, `plugins list`, `completion`, `test` |
 
-Every command takes `-d DEVICE` (`cpu`, `cuda`, `cuda:1`, `vulkan`, ...), `-P PLUGIN.dll`, `-v` and `--json`.
+Every command takes `-d DEVICE` (`cpu`), `-v` and `--json`.
 
 ---
 
@@ -323,10 +317,8 @@ Ordered by how soon they are likely to matter.
 - **Vision-language:** runs of the real models and of the from-scratch IdrakVision family on a GPU.
 - **Extensibility gaps still open:** model packages storing custom architectures, scalers and tokenizers; generation
   hooks (stopping criteria, logits processors, speculative decoding, structured output); full metrics and optimizer
-  state in checkpoints; evaluation metrics as a registry; more engine model kinds and options; retrieval pooling,
-  chunking, indexes and fusion as registries; registered dataset formats when picking hub files, compression and
-  archives; checkpoint export for every module and format; first-class packed-weight
-  plug-ins; Jinja filters and tests; initializers, activations and precisions; structured and image tool results.
+  state in checkpoints; more engine model kinds and options; dataset formats when picking hub files, compression and
+  archives; checkpoint export for every module and format; Jinja filters and tests; initializers and activations; structured and image tool results.
 
 **Later**
 

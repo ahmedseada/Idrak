@@ -8,8 +8,8 @@ Runs ONNX models (exported by Idrak or any other tool) with ONNX Runtime as Idra
 dotnet add package Idrak.Onnx.Runtime
 ```
 
-Referenced (or loaded by a host, as the idrak tool's `-P` does), it registers ONNX Runtime as "onnxruntime" in
-`OnnxRuntimeLoaders` (Idrak.Abstraction), where `idrak onnx check` finds it to compare Idrak's import with.
+It has ONNX Runtime as an `IOnnxRuntimeLoader` ("onnxruntime", Idrak.Abstraction's contract), which `idrak onnx check`
+compares Idrak's import with; finding it by its name is not on the new design yet.
 
 Part of [Idrak](https://www.nuget.org/packages/Idrak), a self-contained deep-learning library for .NET.
 

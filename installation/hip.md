@@ -31,8 +31,8 @@ whose metadata does not read, is deleted and assembled again. The load is report
 assembly apart from the warm load.
 
 The kernels are unavailable, and every operation takes the host fallback, when `IDRAK_HIP_KERNELS=0` turns them off,
-when the GPU reports a target no registered GCN family handles (the reason names it: "not registered"; gfx9 is built
-in, later families come with plan 35's phase G8), or when the runtime refuses the code object in every format. The
+when the GPU reports a target no GCN family of the fixed list (`GcnTargets`) handles (the reason names it; gfx9 is
+built in, later families come with plan 35's phase G8), or when the runtime refuses the code object in every format. The
 reason shows in `idrak kernels -d hip:0`, `idrak devices`, the host fallbacks' `--verbose` lines and the HIP device test.
 
 What the backend needs at run time (nothing at build time):
@@ -79,8 +79,9 @@ const string ScaleText = """
     """;
 static readonly GcnKernel Scale = new(ScaleText, "my_scale");
 
-Kernels.Register(MyOps.Scale, "hip", (b, x, y, scale, n) => Scale.Launch(b, (uint)((n + 255) / 256), 1, 1, 256, 1, 1, [x, y, scale, n]),
-    b => GcnKernel.UnavailableReason(b) is null);
+// Launched on a HIP backend; making it the kernel an operation runs is not on the new design yet.
+if (GcnKernel.UnavailableReason(backend) is null)
+    Scale.Launch(backend, (uint)((n + 255) / 256), 1, 1, 256, 1, 1, [x, y, scale, n]);
 ```
 
 - **Arguments.** Read from the `.arg` lines (`Parameters`: `p` a storage, `w` a 4-byte value that takes an `int` or a
@@ -93,8 +94,8 @@ Kernels.Register(MyOps.Scale, "hip", (b, x, y, scale, n) => Scale.Launch(b, (uin
   driver and library versions), so a later run loads it without assembling. The load is reported once to the telemetry
   (`KernelsLoaded`, "plug-in GCN kernel …", from the cache or assembled).
 - **Errors.** Declarations that do not read are refused when the kernel is made; text that does not assemble for the
-  GPU's target raises `HipException` at its first launch, with the line and column. A GPU whose target no registered
-  GCN family handles gives `GcnKernel.UnavailableReason`, so the requirement above runs the operation's default kernel.
+  GPU's target raises `HipException` at its first launch, with the line and column. A GPU whose target no GCN
+  family handles gives `GcnKernel.UnavailableReason`, so the check above skips the launch.
 - **Profiling and telemetry.** Each launch is timed under the kernel's name while a profile runs, and a launch the
   runtime refuses reaches the telemetry, as Idrak's own kernels do. `IDRAK_HIP_KERNELS=0` turns off Idrak's kernels,
   not a plug-in's (as CUDA always runs a plug-in's PTX).
