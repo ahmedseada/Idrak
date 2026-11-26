@@ -290,7 +290,7 @@ internal abstract partial class DesktopTests : Tests
 
         public Device Device => inner.Device;
 
-        public void AllReduce(Storage buffer, int count, ReduceOp op, WireType wire = WireType.Float32) => inner.AllReduce(buffer, count, op, wire);
+        public void AllReduce(Storage buffer, int count, ReduceOp op) => inner.AllReduce(buffer, count, op);
 
         public void AllGather(Storage input, int count, Storage output) => inner.AllGather(input, count, output);
 

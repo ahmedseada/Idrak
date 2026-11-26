@@ -66,7 +66,7 @@ internal sealed class LocalSgd : SyncCore
         long wall = Stopwatch.GetTimestamp();
         bool own = tokens > 0;
         Span<float> head = [(float)tokens, own ? (float)(normalized ? loss : loss * tokens) : 0f];
-        Values.AllReduce(head, WireType.Float32);
+        Values.AllReduce(head);
         double total = head[0], losses = head[1];
         if (total <= 0)
         {
@@ -126,7 +126,7 @@ internal sealed class LocalSgd : SyncCore
                 }
 
                 DenseCompressor.Scale(bucket, share);
-                Values.AllReduce(bucket, WireType.Float32);
+                Values.AllReduce(bucket);
                 foreach (var (parameter, offset, n, at) in _layout.Pieces(b))
                 {
                     var p = Parameters[parameter];

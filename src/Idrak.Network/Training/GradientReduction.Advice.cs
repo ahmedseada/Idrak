@@ -97,7 +97,7 @@ internal partial class GradientReduction
     private bool AgreeAdvice()
     {
         Span<float> wanted = [AdviceWanted ? 1f : 0f];
-        Values.AllReduce(wanted, WireType.Float32, ReduceOp.Max);
+        Values.AllReduce(wanted, ReduceOp.Max);
         return wanted[0] > 0f;
     }
 
@@ -172,7 +172,7 @@ internal partial class GradientReduction
             exact[n + 1] = (float)meter.Exposed;
             exact[n + 2] = (float)meter.Network;
             exact[n + 3] = (float)meter.Backward;
-            Values.AllReduce(exact.AsSpan(0, n + 4), WireType.Float32);
+            Values.AllReduce(exact.AsSpan(0, n + 4));
 
             double count = (double)World * Math.Max(1, meter.Steps);
             (step, exposed, network, backward) = (exact[n] / count, exact[n + 1] / count, exact[n + 2] / count, exact[n + 3] / count);

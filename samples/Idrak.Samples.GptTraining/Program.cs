@@ -8,17 +8,15 @@
 //                    or --corpus text.txt [--skip-clean] (the text is encoded once to <out>/corpus.bin)
 //                    --block 384 --batch 32 --dmodel 768 --heads 12 --layers 12 --dropout 0.1
 //                    --lr 3e-4 --min-lr 3e-5 --warmup 1000 --steps 80000 --eval-every 500 --eval-steps 40
-//                    --save-every 1000 --seed 42 --resume <out>/last.ikw --grad-checkpoint --optim8bit
-//                    Idrak only: --fp32 (no bfloat16 tensor cores), --fp8 (FP8 tensor-core products, compute
-//                    capability 8.9+: faster, coarser; compare the loss curve), --cpu, --gpu-memory GiB, --offload,
+//                    --save-every 1000 --seed 42 --resume <out>/last.ikw --grad-checkpoint
+//                    Idrak only: --cpu, --gpu-memory GiB, --offload,
 //                    --log-every N (a new progress line every N steps; default: the library's progress reporter, one
 //                    line redrawn in place on a console, IDRAK_PROGRESS to choose another),
 //                    --profile (time every kernel of one step, after three warm-up steps, and exit; without a corpus
 //                    it times random tokens), --loss-log file.csv (step, loss, lr and, at evaluations, val per step),
 //                    --no-save (no checkpoints: comparison runs)
 //   compare          a.csv b.csv [c.csv …] [--window 200]: loss logs side by side (the mean loss of each window of
-//                    steps, each run's difference from the first) and their validation losses, e.g. --fp8 against
-//                    bfloat16 from the same --seed and schedule
+//                    steps, each run's difference from the first) and their validation losses
 //   generate         --out <checkpoint dir> [--checkpoint best|last] --prompt "text" --tokens 500
 //                    --temperature 0.7 --top-k 0 --top-p 0.9 --repeat-penalty 1.15
 //
@@ -49,7 +47,7 @@ if (args is ["compare", .. var logs])
     return CompareLogs(logs);
 }
 
-string[] flagNames = ["--skip-clean", "--grad-checkpoint", "--optim8bit", "--fp32", "--cpu", "--cuda", "--offload", "--profile", "--no-save"];
+string[] flagNames = ["--skip-clean", "--grad-checkpoint", "--cpu", "--cuda", "--offload", "--profile", "--no-save"];
 string[] valueNames = ["--corpus", "--clean-out", "--out", "--block", "--batch", "--dmodel", "--heads", "--layers", "--dropout", "--lr", "--min-lr",
     "--warmup", "--steps", "--eval-every", "--eval-steps", "--save-every", "--seed", "--resume", "--bin", "--vocab-file", "--gpu-memory",
     "--log-every", "--loss-log", "--checkpoint", "--prompt", "--tokens", "--temperature", "--top-k", "--top-p", "--repeat-penalty"];
@@ -99,8 +97,7 @@ int Train()
     int steps = Int("--steps", 80000), warmup = Int("--warmup", 1000), evalEvery = Int("--eval-every", 500), evalSteps = Int("--eval-steps", 40);
     int saveEvery = Int("--save-every", 1000), seed = Int("--seed", 42), logEvery = Int("--log-every", 0);
     float dropout = Float("--dropout", 0.1f), baseLr = Float("--lr", 3e-4f), minLr = Float("--min-lr", 3e-5f);
-    bool checkpointing = flags.Contains("--grad-checkpoint"), eightBit = flags.Contains("--optim8bit");
-    var precision = flags.Contains("--fp32") ? MatMulPrecision.Float32 : flags.Contains("--fp8") ? MatMulPrecision.Float8 : MatMulPrecision.BFloat16;
+    bool checkpointing = flags.Contains("--grad-checkpoint");
     Directory.CreateDirectory(outDir);
 
     // ---------------------------------------------------------------- data
@@ -183,17 +180,10 @@ int Train()
     long parameters = model.Parameters().Sum(p => (long)p.Size);
     int tokensPerStep = batch * block;
     Console.WriteLine($"params={parameters:N0}  block={block}  batch={batch}  steps={steps}  tok/step={tokensPerStep:N0}  "
-                      + $"seen≈{(double)steps * tokensPerStep / 1e6:F1}M  grad_checkpoint={checkpointing}  optim8bit={eightBit}  "
-                      + $"matmul={(precision == MatMulPrecision.Float32 ? "float32" : MixedPrecision.TensorCoresUnavailable(device) is { } why ? $"float32 ({why})" : precision == MatMulPrecision.Float8 ? "fp8 tensor cores" : "bfloat16 tensor cores")}");
+                      + $"seen≈{(double)steps * tokensPerStep / 1e6:F1}M  grad_checkpoint={checkpointing}");
 
     var trainable = model.Parameters().ToList();
-    using Optimizer optimizer = eightBit
-        ? new AdamW8Bit(trainable, baseLr, 0.9f, 0.95f, 1e-8f, weightDecay: 0.1f)
-        : new AdamW(trainable, baseLr, 0.9f, 0.95f, 1e-8f, weightDecay: 0.1f);
-    if (eightBit)
-    {
-        Console.WriteLine("using Idrak AdamW8Bit");
-    }
+    using Optimizer optimizer = new AdamW(trainable, baseLr, 0.9f, 0.95f, 1e-8f, weightDecay: 0.1f);
 
     var head = (Linear)model[^1];
     var body = model.Take(model.Count - 1).ToList();
@@ -232,7 +222,6 @@ int Train()
         double sum = 0;
         var range = val.Length > block + 1 ? val : train;
         using (Autograd.NoGrad())
-        using (MixedPrecision.Use(precision))
         {
             for (int s = 0; s < evalSteps; s++)
             {
@@ -317,7 +306,6 @@ int Train()
         optimizer.LearningRate = lr;
         Sample(train);
         float loss;
-        using (MixedPrecision.Use(precision))
         using (var scope = new TensorScope())
         {
             optimizer.ZeroGrad();

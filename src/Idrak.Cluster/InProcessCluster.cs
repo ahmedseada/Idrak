@@ -464,7 +464,7 @@ internal sealed class SimStepper : ICollectives, IStepGroup, IShardedHostValueCo
     // The rank finished its work: its clock goes to the log.
     public void Finish() => _world.Log.End(Real, _world.Clock.Now(Real));
 
-    public void AllReduce(Storage buffer, int count, ReduceOp op, WireType wire = WireType.Float32) => Current.AllReduce(buffer, count, op, wire);
+    public void AllReduce(Storage buffer, int count, ReduceOp op) => Current.AllReduce(buffer, count, op);
 
     public void AllGather(Storage input, int count, Storage output) => Current.AllGather(input, count, output);
 
@@ -474,14 +474,14 @@ internal sealed class SimStepper : ICollectives, IStepGroup, IShardedHostValueCo
 
     public void Barrier() => Current.Barrier();
 
-    public bool TryAllReduce(Span<float> values, ReduceOp op, WireType wire) => Current is IHostValueCollectives host && host.TryAllReduce(values, op, wire);
+    public bool TryAllReduce(Span<float> values, ReduceOp op) => Current is IHostValueCollectives host && host.TryAllReduce(values, op);
 
     public bool TryAllGather(Span<float> all, int count) => Current is IHostValueCollectives host && host.TryAllGather(all, count);
 
     public bool TryBroadcast(Span<float> values, int root) => Current is IHostValueCollectives host && host.TryBroadcast(values, root);
 
-    public bool TryReduceScatter(Span<float> values, ReadOnlySpan<int> counts, ReduceOp op, WireType wire) =>
-        Current is IShardedHostValueCollectives host && host.TryReduceScatter(values, counts, op, wire);
+    public bool TryReduceScatter(Span<float> values, ReadOnlySpan<int> counts, ReduceOp op) =>
+        Current is IShardedHostValueCollectives host && host.TryReduceScatter(values, counts, op);
 
     public bool TryAllGather(Span<float> values, ReadOnlySpan<int> counts) => Current is IShardedHostValueCollectives host && host.TryAllGather(values, counts);
 

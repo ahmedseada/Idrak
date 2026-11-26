@@ -27,7 +27,6 @@ public static class KernelPluginTests
     /// <summary>The tests, by name.</summary>
     public static IReadOnlyList<(string Name, Action<Device> Run)> All { get; } =
     [
-        ("outside plug-in kernels: the key/value cache layout expands its rows through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX, HIP GCN), and generates the float32 cache's text", CacheLayoutKernel),
         ("outside plug-in kernels: an Autograd.Function and a graph operation run their plug-in operations, by default and through the CPU kernel, with their gradients", FunctionAndGraphOpKernels),
         ("outside plug-in kernels: the testing kit checks each plug-in kernel on the device against its default kernel on the CPU (Conformance.Check)", KitChecksKernels),
         ("outside plug-in kernels: CUDA kernels read their parameters from the PTX, HIP's GCN kernels theirs from the .arg lines (refusing text whose declarations do not read, with the line and column), and both refuse other devices, mismatched arguments and, for GCN, a block its text does not declare", GpuKernelShapes),
@@ -99,41 +98,6 @@ public static class KernelPluginTests
 
         bool registers = RegistersFormatKernels(device.Backend);
         Check(reports[0].Entries[0].Detail.StartsWith(registers ? "the registered kernel" : "the host kernel", StringComparison.Ordinal), reports[0].Entries[0].Detail);
-    }
-
-    private static void CacheLayoutKernel(Device device)
-    {
-        var layout = new ScaledLayout();
-        var tokenizer = new CharTokenizer("abcdefghijklmnopqrstuvwxyz .,");
-        var random = new Random(8);
-        using var model = new Sequential
-        {
-            new Embedding(tokenizer.VocabularySize, 16, device, random),
-            new PositionalEncoding(32, 16, device),
-            new TransformerEncoderLayer(16, 2, dropout: 0f, causal: true, device: device, random: random),
-            new LayerNorm(16, device: device),
-            new Linear(16, tokenizer.VocabularySize, device: device, random: random),
-        };
-        var options = new GenerationOptions { Temperature = 0f, TopK = 1, RepeatPenalty = 1f, NumPredict = 8 };
-        string expected = new TextGenerator(model, tokenizer, 32) { KeepCache = false }.Generate("abc", options).Text;
-
-        var backend = device.Backend;
-        var scale = PluginKernels.Scale;
-        foreach (bool installed in new[] { false, true })
-        {
-            using var kernels = installed ? PluginKernels.Install() : null;
-            var source = installed && RegistersFormatKernels(backend) ? KernelSource.Registered : KernelSource.Composed;
-            Check(Kernels.Chain(backend)[scale.Index].Source == source, $"installed {installed}: {Kernels.Chain(backend)[scale.Index].Source}, expected {source}");
-            string actual;
-            long calls;
-            using (var trace = Kernels.Trace(backend))
-            {
-                actual = new TextGenerator(model, tokenizer, 32) { KeepCache = false, CacheLayout = layout }.Generate("abc", options).Text;
-                calls = trace.Calls(scale);
-            }
-
-            Check(actual == expected && calls > 0, $"installed {installed}: '{actual}' through {calls} expansions, float32 cache '{expected}'");
-        }
     }
 
     private static void FunctionAndGraphOpKernels(Device device)

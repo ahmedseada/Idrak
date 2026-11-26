@@ -90,15 +90,15 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
 
     public ClusterContext? Context { get; }
 
-    public void AllReduce(Storage buffer, int count, ReduceOp op, WireType wire = WireType.Float32)
+    public void AllReduce(Storage buffer, int count, ReduceOp op)
     {
         Check(buffer, count, nameof(buffer));
-        if (_device is not null && op == ReduceOp.Sum && wire == WireType.Float32 && OnDevice("all-reduce", () => AllReduceDevice(buffer, count)))
+        if (_device is not null && op == ReduceOp.Sum && OnDevice("all-reduce", () => AllReduceDevice(buffer, count)))
         {
             return;
         }
 
-        Measure("all-reduce", count, buffer, values => AllReduceHost(values, op, wire), upload: buffer, at: 0, length: count);
+        Measure("all-reduce", count, buffer, values => AllReduceHost(values, op), upload: buffer, at: 0, length: count);
     }
 
     public void AllGather(Storage input, int count, Storage output)
@@ -312,13 +312,13 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
     /// An all-reduce of values the caller already holds on the host (a gradient synchronisation's bucket, plan 23 C2), with
     /// no device copy: the same algorithm, chunks, sum order and telemetry as <see cref="AllReduce"/>.
     /// </summary>
-    internal void AllReduceHostValues(Span<float> values, ReduceOp op, WireType wire)
+    internal void AllReduceHostValues(Span<float> values, ReduceOp op)
     {
         _staging = null;
         bool timed = BeginTiming(out long start, out var simulated);
         try
         {
-            AllReduceHost(values, op, wire);
+            AllReduceHost(values, op);
         }
         finally
         {
@@ -334,9 +334,9 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
 
     public bool Simulated => Transport.Simulated;
 
-    public bool TryAllReduce(Span<float> values, ReduceOp op, WireType wire)
+    public bool TryAllReduce(Span<float> values, ReduceOp op)
     {
-        AllReduceHostValues(values, op, wire);
+        AllReduceHostValues(values, op);
         return true;
     }
 
@@ -384,14 +384,14 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
         return true;
     }
 
-    public bool TryReduceScatter(Span<float> values, ReadOnlySpan<int> counts, ReduceOp op, WireType wire)
+    public bool TryReduceScatter(Span<float> values, ReadOnlySpan<int> counts, ReduceOp op)
     {
         var pieces = Pieces(values.Length, counts);
         _staging = null;
         bool timed = BeginTiming(out long start, out var simulated);
         try
         {
-            ReduceScatterPiecesHost(values, pieces, op, op == ReduceOp.Sum ? wire : WireType.Float32);
+            ReduceScatterPiecesHost(values, pieces, op);
         }
         finally
         {
@@ -457,7 +457,7 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
         for (int k = 1; k < WorldSize; k++)
         {
             int to = (Rank + k) % WorldSize, from = (Rank - k + WorldSize) % WorldSize;
-            Exchange(to, send.Slice(to * count, count), from, receive.Slice(from * count, count), AllToAllTag, WireType.Float32);
+            Exchange(to, send.Slice(to * count, count), from, receive.Slice(from * count, count), AllToAllTag);
         }
     }
 
@@ -466,7 +466,7 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
     /// the reduction. By default an all-reduce of every value (each piece complete on every rank, the reduction's order the
     /// algorithm's all-reduce); an algorithm with a cheaper way overrides it.
     /// </summary>
-    protected virtual void ReduceScatterPiecesHost(Span<float> values, int[] counts, ReduceOp op, WireType wire) => AllReduceHost(values, op, wire);
+    protected virtual void ReduceScatterPiecesHost(Span<float> values, int[] counts, ReduceOp op) => AllReduceHost(values, op);
 
     /// <summary>
     /// Every rank's piece of <paramref name="values"/> (pieces of <paramref name="counts"/> values in rank order) on every
@@ -592,7 +592,7 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
         (_sendScratch, _receiveScratch) = (null, null);
     }
 
-    protected abstract void AllReduceHost(Span<float> values, ReduceOp op, WireType wire);
+    protected abstract void AllReduceHost(Span<float> values, ReduceOp op);
 
     // `all` holds this rank's values at Rank * count; every rank's afterwards.
     protected abstract void AllGatherHost(Span<float> all, int count);
@@ -603,17 +603,17 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
     protected abstract void BroadcastHost(Span<float> values, int root);
 
     /// <summary>Sends <paramref name="values"/> to <paramref name="to"/> in chunks.</summary>
-    protected void Send(int to, ReadOnlySpan<float> values, int tag, WireType wire)
+    protected void Send(int to, ReadOnlySpan<float> values, int tag)
     {
-        int per = PerChunk(wire);
-        var bytes = ArrayPool<byte>.Shared.Rent(Math.Max(1, Math.Min(values.Length, per) * WireValues.BytesPerValue(wire)));
+        int per = PerChunk();
+        var bytes = ArrayPool<byte>.Shared.Rent(Math.Max(1, Math.Min(values.Length, per) * sizeof(float)));
         try
         {
             int at = 0;
             do
             {
                 int length = Math.Min(per, values.Length - at);
-                SendChunk(to, values.Slice(at, length), tag, wire, bytes);
+                SendChunk(to, values.Slice(at, length), tag, bytes);
                 at += length;
             }
             while (at < values.Length);
@@ -625,17 +625,17 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
     }
 
     /// <summary>Receives <paramref name="into"/>.Length values from <paramref name="from"/> in chunks.</summary>
-    protected void Receive(int from, Span<float> into, int tag, WireType wire)
+    protected void Receive(int from, Span<float> into, int tag)
     {
-        int per = PerChunk(wire);
-        var bytes = ArrayPool<byte>.Shared.Rent(Math.Max(1, Math.Min(into.Length, per) * WireValues.BytesPerValue(wire)));
+        int per = PerChunk();
+        var bytes = ArrayPool<byte>.Shared.Rent(Math.Max(1, Math.Min(into.Length, per) * sizeof(float)));
         try
         {
             int at = 0;
             do
             {
                 int length = Math.Min(per, into.Length - at);
-                ReceiveChunk(from, into.Slice(at, length), tag, wire, bytes);
+                ReceiveChunk(from, into.Slice(at, length), tag, bytes);
                 at += length;
             }
             while (at < into.Length);
@@ -651,10 +651,10 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
     /// <paramref name="from"/> chunk by chunk in turn, so ranks that all send then receive never wait on each other in a
     /// circle (a ring's step).
     /// </summary>
-    protected void Exchange(int to, ReadOnlySpan<float> outgoing, int from, Span<float> incoming, int tag, WireType wire)
+    protected void Exchange(int to, ReadOnlySpan<float> outgoing, int from, Span<float> incoming, int tag)
     {
-        int per = PerChunk(wire);
-        int bytesPer = WireValues.BytesPerValue(wire);
+        int per = PerChunk();
+        int bytesPer = sizeof(float);
         var sendBytes = ArrayPool<byte>.Shared.Rent(Math.Max(1, Math.Min(outgoing.Length, per) * bytesPer));
         var receiveBytes = ArrayPool<byte>.Shared.Rent(Math.Max(1, Math.Min(incoming.Length, per) * bytesPer));
         try
@@ -664,12 +664,12 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
             {
                 if (k < sendChunks)
                 {
-                    SendChunk(to, outgoing.Slice(k * per, Math.Min(per, outgoing.Length - (k * per))), tag, wire, sendBytes);
+                    SendChunk(to, outgoing.Slice(k * per, Math.Min(per, outgoing.Length - (k * per))), tag, sendBytes);
                 }
 
                 if (k < receiveChunks)
                 {
-                    ReceiveChunk(from, incoming.Slice(k * per, Math.Min(per, incoming.Length - (k * per))), tag, wire, receiveBytes);
+                    ReceiveChunk(from, incoming.Slice(k * per, Math.Min(per, incoming.Length - (k * per))), tag, receiveBytes);
                 }
             }
         }
@@ -686,8 +686,7 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
     /// [offset(p), offset(p) + size(p)) of <paramref name="values"/>) reduced over every member, in the order p+1, p+2, …,
     /// p: an order fixed by the sizes alone (rule 86).
     /// </summary>
-    protected void RingScatter(Span<float> values, ReadOnlySpan<int> members, int position, Func<int, int> offset, Func<int, int> size, ReduceOp op,
-        WireType wire, int tag)
+    protected void RingScatter(Span<float> values, ReadOnlySpan<int> members, int position, Func<int, int> offset, Func<int, int> size, ReduceOp op, int tag)
     {
         int count = members.Length;
         if (count <= 1)
@@ -710,7 +709,7 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
                 int send = Wrap(position - 1 - step, count), take = Wrap(position - 2 - step, count);
                 var outgoing = values.Slice(offset(send), size(send));
                 var incoming = arrived.AsSpan(0, size(take));
-                Exchange(next, outgoing, previous, incoming, tag, wire);
+                Exchange(next, outgoing, previous, incoming, tag);
                 var mine = values.Slice(offset(take), size(take));
                 Combine(mine, incoming, op);                       // what arrived, then this rank's own
             }
@@ -737,7 +736,7 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
         for (int step = 0; step < count - 1; step++)
         {
             int send = Wrap(position - step, count), take = Wrap(position - 1 - step, count);
-            Exchange(next, values.Slice(offset(send), size(send)), previous, values.Slice(offset(take), size(take)), tag, WireType.Float32);
+            Exchange(next, values.Slice(offset(send), size(send)), previous, values.Slice(offset(take), size(take)), tag);
         }
     }
 
@@ -785,18 +784,18 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
 
     private static int Chunks(int values, int per) => values == 0 ? 1 : (values + per - 1) / per;
 
-    private int PerChunk(WireType wire) => (int)Math.Max(1, _chunkBytes / WireValues.BytesPerValue(wire));
+    private int PerChunk() => (int)Math.Max(1, _chunkBytes / sizeof(float));
 
-    private void SendChunk(int to, ReadOnlySpan<float> values, int tag, WireType wire, byte[] bytes)
+    private void SendChunk(int to, ReadOnlySpan<float> values, int tag, byte[] bytes)
     {
-        int length = WireValues.Encode(values, bytes, wire);
+        int length = WireValues.Encode(values, bytes);
         Transport.Send(to, bytes.AsSpan(0, length), tag);
         _sent += length;
     }
 
-    private void ReceiveChunk(int from, Span<float> into, int tag, WireType wire, byte[] bytes)
+    private void ReceiveChunk(int from, Span<float> into, int tag, byte[] bytes)
     {
-        int expected = into.Length * WireValues.BytesPerValue(wire);
+        int expected = into.Length * sizeof(float);
         long start = _measuring ? Stopwatch.GetTimestamp() : 0;
         var simulatedBefore = _measuring ? Transport.SimulatedTime : TimeSpan.Zero;
         int length = Transport.Receive(from, bytes.AsSpan(0, Math.Max(1, expected)), tag);
@@ -816,7 +815,7 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
             throw new InvalidDataException($"rank {Rank} received {length} bytes from rank {from} (tag {tag}) where {expected} were due: the ranks called different collectives or sizes");
         }
 
-        WireValues.Decode(bytes.AsSpan(0, length), into, wire);
+        WireValues.Decode(bytes.AsSpan(0, length), into);
         _received += length;
     }
 

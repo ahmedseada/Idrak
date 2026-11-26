@@ -58,11 +58,10 @@ internal abstract partial class DesktopTests : Tests
 
     private static void ClusterSyncWeighted(Device device)
     {
-        foreach (var wire in new[] { WireType.Float32 })
         {
             // Values every step of the sum holds exactly (bfloat16 too), so the checks are exact.
-            int size = wire == WireType.Float32 ? 50 : 16;
-            var options = DpOptions(wire) with { BucketBytes = wire == WireType.Float32 ? 64 : 40 };   // parameter 0 cut across buckets
+            int size = 50;
+            var options = DpOptions() with { BucketBytes = 64 };   // parameter 0 cut across buckets
             double[] tokens = [1, 3, 0];
             var results = DpRun(DpTopology(device, 3), options, rank =>
             {
@@ -90,16 +89,15 @@ internal abstract partial class DesktopTests : Tests
                 return (Weighted: weighted, G0: g0, G1: g1, Summed: summed, S0: s0, None: none, After: p0.Grad!.ToArray());
             });
 
-            string w = wire.ToString();
             float[] expected0 = [.. Enumerable.Range(0, size).Select(j => 1.75f * j)], expected1 = [.. Enumerable.Range(0, 7).Select(j => 17.5f + j)];
             foreach (var (result, r) in results.Select((x, r) => (x, r)))
             {
-                Check(result.Weighted is { Tokens: 4, Loss: 5 }, $"{w}: rank {r}: the step's tokens and token-weighted loss: {result.Weighted}");
-                Check(result.G0.SequenceEqual(expected0), $"{w}: rank {r}: (1·g0 + 3·g1) / 4 cut across buckets: [{string.Join(", ", result.G0.Take(8))}…]");
-                Check(result.G1.SequenceEqual(expected1), $"{w}: rank {r}: a parameter rank 2 had no gradient for gets one: [{string.Join(", ", result.G1)}]");
+                Check(result.Weighted is { Tokens: 4, Loss: 5 }, $"rank {r}: the step's tokens and token-weighted loss: {result.Weighted}");
+                Check(result.G0.SequenceEqual(expected0), $"rank {r}: (1·g0 + 3·g1) / 4 cut across buckets: [{string.Join(", ", result.G0.Take(8))}…]");
+                Check(result.G1.SequenceEqual(expected1), $"rank {r}: a parameter rank 2 had no gradient for gets one: [{string.Join(", ", result.G1)}]");
                 Check(result.Summed is { Tokens: 4, Loss: 4 } && result.S0.SequenceEqual(Enumerable.Range(0, size).Select(j => 3f * j)),
-                    $"{w}: rank {r}: normalized losses and gradients summed as they are: {result.Summed}");
-                Check(result.None.Tokens == 0 && result.After.SequenceEqual(result.S0), $"{w}: rank {r}: a step no rank had rows in ends it, nothing moved");
+                    $"rank {r}: normalized losses and gradients summed as they are: {result.Summed}");
+                Check(result.None.Tokens == 0 && result.After.SequenceEqual(result.S0), $"rank {r}: a step no rank had rows in ends it, nothing moved");
             }
         }
     }
@@ -143,10 +141,10 @@ internal abstract partial class DesktopTests : Tests
     // Two ranks of the tiny model training with the Trainer on the fixture's windows (rank r's loader shard: windows r, r+2,
     // r+4, r+6), batch 4 a rank, one step an epoch; rank 0 saves the weights. Returns the global losses, each rank's own.
     private static (float[] Losses, float[][] RankLosses, string Saved) DdpTrain(Device device, string windows, string folder, string name, int epochs,
-        Func<IReadOnlyList<Tensor>, Optimizer> make, WireType wire = WireType.Float32, Func<ClusterOptions, ClusterOptions>? adjust = null)
+        Func<IReadOnlyList<Tensor>, Optimizer> make, Func<ClusterOptions, ClusterOptions>? adjust = null)
     {
         string saved = Path.Combine(folder, name);
-        var options = adjust is null ? DpOptions(wire) : adjust(DpOptions(wire));
+        var options = adjust is null ? DpOptions() : adjust(DpOptions());
         var ranks = DpRun(DpTopology(device, 2), options, rank =>
         {
             using var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = rank.Device });
@@ -241,22 +239,6 @@ internal abstract partial class DesktopTests : Tests
             Directory.Delete(folder, recursive: true);
         }
     }
-
-    // Measured on the CPU: an int8 or fp8 wire with error feedback (one scale a bucket of 1 MiB) against float32 on the ddp
-    // fixture's SGD run, the largest gap of the losses over three steps (against the fixture) and over ten (against Idrak's
-    // float32 run). On the fixture made from generic text (2026-11-13): int8 5.15e-4 and 0.011 (0.0133 without error
-    // feedback), fp8 6.19e-4 and 0.065 (0.040 without); on the earlier fixture: int8 5.17e-4 and 0.0090 (0.0297 without),
-    // fp8 1.41e-3 and 0.0288 (0.0632 without). Each tolerance is about 1.2 times its largest measurement.
-    // Error feedback keeps int8 closer to float32 than without it on both fixtures: int8 sends 30 to 45% of the values as
-    // zero, a loss feedback returns. fp8 sends 0.1% as zero and rounds the rest to 3 mantissa bits, so its rounding loses
-    // nothing systematic, and which of the two runs ends closer over ten steps is decided by where each wanders (feedback
-    // closer on the earlier fixture, farther on this one): the claim is held for int8 alone. Both are held to error
-    // feedback working as defined: the residual carried into each step is the error of the step before, and it stays
-    // within twice the largest error a step makes without feedback.
-    private const float Int8FixtureGap = 0.001f;
-    private const float Int8RunGap = 0.015f;
-    private const float Float8FixtureGap = 0.002f;
-    private const float Float8RunGap = 0.08f;
 
     // A small classifier without batch norm or dropout, so one process and its ranks compute the same function.
     private static Sequential DpClassifier(Device device)

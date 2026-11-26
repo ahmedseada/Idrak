@@ -122,8 +122,8 @@ internal partial class GradientReduction : SyncCore
         _mode = sharded ? (options.Shard == ShardMode.None ? ShardMode.Optimizer : options.Shard) : ShardMode.None;
         if (_mode != ShardMode.None)
         {
-            _wire = CheckSharded(options);
-            _compressor = new DenseCompressor("none", collectives, _wire);   // the changed buckets' path only; the rest reduce-scatters
+            CheckSharded(options);
+            _compressor = new DenseCompressor("none", collectives);   // the changed buckets' path only; the rest reduce-scatters
             _had = new bool[Parameters.Count];
             _hadKnown = new bool[Parameters.Count];
             _gatheredParts = new int[Parameters.Count];
@@ -393,7 +393,7 @@ internal partial class GradientReduction : SyncCore
             var head = buffer.AsSpan(0, header);
             WriteHeader(head, tokens, loss, normalized, changed: null);
             var headMark = Mark();
-            Values.AllReduce(head, WireType.Float32);
+            Values.AllReduce(head);
             _header = Sent(backward, headMark);
             var (total, losses) = ReadHeader(head);
             if (total <= 0)
@@ -448,7 +448,7 @@ internal partial class GradientReduction : SyncCore
         var head = held.AsSpan(_layout.Total, HeaderLength);
         WriteHeader(head, tokens, loss, normalized, _changed);
         var headMark = Mark();
-        Values.AllReduce(head, WireType.Float32);
+        Values.AllReduce(head);
         _header = Sent(backward, headMark);
         var (total, losses) = ReadHeader(head);
         for (int b = 0; b < _layout.Count; b++)
@@ -464,11 +464,11 @@ internal partial class GradientReduction : SyncCore
                 var mark = Mark();
                 if (_layout.Sharded)
                 {
-                    Values.ReduceScatter(bucket, _layout.Counts(b), WireType.Float32);
+                    Values.ReduceScatter(bucket, _layout.Counts(b));
                 }
                 else
                 {
-                    Values.AllReduce(bucket, WireType.Float32);
+                    Values.AllReduce(bucket);
                 }
 
                 Sent(backward, mark);
@@ -636,7 +636,7 @@ internal partial class GradientReduction : SyncCore
         }
 
         DenseCompressor.Scale(values, weight);
-        Values.ReduceScatter(values, _layout.Counts(bucket), _wire);
+        Values.ReduceScatter(values, _layout.Counts(bucket));
     }
 
     // values /= the step's tokens: the whole bucket, or (sharded) this rank's piece, the only one it writes back.
@@ -698,7 +698,7 @@ internal partial class GradientReduction : SyncCore
 
         long kept = ClusterCache.FindTuning(BucketKind, BucketKey, Options.TuningFile) is { Value: > 0 and var bytes } ? ValuesOf(bytes) : 0;
         Span<float> agree = [kept >> 20, kept & ((1 << 20) - 1), -(kept >> 20), -(kept & ((1 << 20) - 1)), AdviceWanted ? 1f : 0f];   // each part exact in float32
-        Values.AllReduce(agree, WireType.Float32, ReduceOp.Max);
+        Values.AllReduce(agree, ReduceOp.Max);
         if (crossProcess)
         {
             StartAdvice(agree[4] > 0f);
@@ -730,10 +730,10 @@ internal partial class GradientReduction : SyncCore
         }
 
         Span<float> probe = [0f];
-        Values.AllReduce(probe, WireType.Float32);
+        Values.AllReduce(probe);
         var simulated = Values.SimulatedTime;
         long wall = Stopwatch.GetTimestamp();
-        Values.AllReduce(probe, WireType.Float32);
+        Values.AllReduce(probe);
         var probeWall = Stopwatch.GetElapsedTime(wall);
         double latency = Seconds(Values.SimulatedTime - simulated, probeWall);
 
@@ -744,7 +744,7 @@ internal partial class GradientReduction : SyncCore
         bool known = MessageCosts.TryGetValue(key, out float kept);
         float messageCost = Options.MessageCost is { } cost ? (float)cost.TotalSeconds : !onClock ? 0f : known ? kept : (float)probeWall.TotalSeconds;
         Span<float> figures = [onClock ? -1f : (float)backward, (float)latency, (float)bucketSeconds, messageCost];
-        Values.AllReduce(figures, WireType.Float32, ReduceOp.Max);
+        Values.AllReduce(figures, ReduceOp.Max);
         if (onClock && Options.MessageCost is null && !known)
         {
             MessageCosts.TryAdd(key, figures[3]);

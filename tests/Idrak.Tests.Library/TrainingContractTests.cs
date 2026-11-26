@@ -17,8 +17,8 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] TrainingContractGroup =
     [
-        ("training contracts: an optimizer that keeps state is an IStatefulOptimizer (SGD, Adam, AdamW, 8-bit AdamW, grouped, host) and one that keeps none is not, RequireState naming it; a state entry's parameter is read from its name as a span (\"m.1\", a group's \"group1.velocity.0\", a host optimizer's \"1.m.0\"), allocating nothing", OptimizerStateContract),
-        ("training contracts: Adam's fused clipping and update holds for a subclass (Step is sealed: its update is Adam's), its values Adam's and AdamW's bit for bit; 8-bit AdamW scales the gradients as its step reads them (IScaledGradientStep), so clipping leaves them as they are", AdamFusedForSubclass),
+        ("training contracts: an optimizer that keeps state is an IStatefulOptimizer (SGD, Adam, AdamW, grouped, host) and one that keeps none is not, RequireState naming it; a state entry's parameter is read from its name as a span (\"m.1\", a group's \"group1.velocity.0\", a host optimizer's \"1.m.0\"), allocating nothing", OptimizerStateContract),
+        ("training contracts: Adam's fused clipping and update holds for a subclass (Step is sealed: its update is Adam's), its values Adam's and AdamW's bit for bit", AdamFusedForSubclass),
         ("training contracts: a scheduler sets the first rate when made, with nothing for a derived class to call (ILearningRateScheduler); a schedule kind makes one from a request over the optimizer it is given (ILearningRateSchedule.Create) and refuses a bad setting before (Check)", SchedulerContract),
         ("training contracts: the trainer's loss and metrics are ILoss and IMetric, and one's own give the losses and metrics the function forms give, bit for bit; a DataLoader is an IShardableBatchSource (seeded unless it shuffles without a seed; steps shared over a sample source, not over a stream; each rank's share of an epoch by position)", TrainerContracts),
         ("training contracts: the engine hosts any IEngineModel (one written without the EngineModel base) and disposes it; a module is an ITensorOwner whose MoveTo moves what Parameters and Buffers list", EngineAndTensorOwner),
@@ -105,22 +105,6 @@ internal abstract partial class Tests
         Check(Train(ps => new CountingAdam(ps, 0.01f)).SequenceEqual(Train(ps => new Adam(ps, 0.01f))), "a subclass of Adam: Adam's values, bit for bit");
         Check(Train(ps => new CountingAdam(ps, 0.01f, weightDecay: 0.01f, decoupled: true)).SequenceEqual(Train(ps => new AdamW(ps, 0.01f, weightDecay: 0.01f))),
             "a subclass with decoupled decay: AdamW's values, bit for bit");
-
-        // 8-bit AdamW scales the gradients as its step reads them: clipping leaves them and sets the factor.
-        using var w = Tensor.Persistent([.. Enumerable.Range(0, 64).Select(i => i / 8f)], [64], device, requiresGrad: true);
-        using var eightBit = new AdamW8Bit([w]);
-        using (var scope = new TensorScope())
-        {
-            w.Square().Sum().Backward();
-        }
-
-        float[] gradients = w.Grad!.ToArray();
-        double norm = eightBit.ClipGradientNorm(0.1f);
-        float scale = ((IScaledGradientStep)eightBit).GradientScale;
-        Check(norm > 0.1 && w.Grad!.ToArray().SequenceEqual(gradients) && scale == (float)(0.1 / norm),
-            $"clipping 8-bit AdamW's gradients (norm {norm:G4}) leaves them and gives its step the factor {scale:G4}");
-        eightBit.Step();
-        Check(((IScaledGradientStep)eightBit).GradientScale == 1f, "the step takes the factor and resets it to 1");
     }
 
     internal static void SchedulerContract(Device device)

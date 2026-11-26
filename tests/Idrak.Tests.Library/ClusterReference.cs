@@ -118,7 +118,7 @@ internal sealed class NaiveReferenceCollectives(ITransport transport, Device dev
     public static IReadOnlyList<ICollectives> Connect(int world, TimeSpan timeout, Device device, bool skipReduce = false) =>
         [.. MemoryTransport.Connect(world, timeout).Select(t => new NaiveReferenceCollectives(t, device, skipReduce))];
 
-    public void AllReduce(Storage buffer, int count, ReduceOp op, WireType wire = WireType.Float32)
+    public void AllReduce(Storage buffer, int count, ReduceOp op)
     {
         var values = Download(buffer, count);
 

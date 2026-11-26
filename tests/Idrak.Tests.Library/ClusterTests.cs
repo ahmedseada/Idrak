@@ -22,7 +22,7 @@ internal abstract partial class Tests
         ("cluster: the kit's TransportSuite passes on the reference in-memory transport and fails one that corrupts messages", ClusterTransportSuite),
         ("cluster: the kit's CollectivesSuite passes on the reference naive collectives over buffers on the device, and fails collectives that do not reduce", ClusterCollectivesSuite),
         ("cluster: the network telemetry events reach the console, the metrics recorder and the JSON lines log, at the network level only", ClusterTelemetry),
-        ("cluster: ddp fixture agrees with single (losses, step 1 gradients, weights and moments within 1e-5; bf16 within its measured tolerance; every file as the manifest hashes it)", ClusterDdpFixture),
+        ("cluster: ddp fixture agrees with single (losses, step 1 gradients, weights and moments within 1e-5; every file as the manifest hashes it)", ClusterDdpFixture),
     ];
 
     internal static string ClusterData(string relative) => TestData(Path.Combine("cluster", relative));
@@ -63,7 +63,7 @@ internal abstract partial class Tests
             return;
         }
 
-        var header = new WireHeader(WireMessageKind.Chunk, 3, -7, 123_456u, 9u, 11u, WireElement.BFloat16, ReduceOp.Max, 0xA5A5, 65_537u);
+        var header = new WireHeader(WireMessageKind.Chunk, 3, -7, 123_456u, 9u, 11u, WireElement.Float32, ReduceOp.Max, 0xA5A5, 65_537u);
         var bytes = new byte[WireFormat.HeaderBytes + 4];
         WireFormat.WriteHeader(bytes, header);
         Check(bytes.AsSpan(0, 4).SequenceEqual("IDRK"u8) && bytes[4] == 1 && bytes[5] == 0, $"the header starts with IDRK and version 1: {Convert.ToHexString(bytes, 0, 8)}");
@@ -102,11 +102,11 @@ internal abstract partial class Tests
             ["IDRAK_COORDINATOR"] = "192.168.1.10:29500", ["IDRAK_CLUSTER_TRANSPORT"] = "tcp", ["IDRAK_CLUSTER_SELECTOR"] = "mine",
             ["IDRAK_CLUSTER_COLLECTIVE"] = "ring", ["IDRAK_CLUSTER_KEY"] = "a long shared secret of the owner", ["IDRAK_CLUSTER_PORT"] = "29501",
             ["IDRAK_CLUSTER_TIMEOUT"] = "2.5", ["IDRAK_CLUSTER_RETRIES"] = "5", ["IDRAK_CLUSTER_CHUNK_BYTES"] = "4MB", ["IDRAK_CLUSTER_IN_FLIGHT"] = "4",
-            ["IDRAK_CLUSTER_SOCKET_BUFFER"] = "512KiB", ["IDRAK_CLUSTER_BUCKET_BYTES"] = "25MB", ["IDRAK_CLUSTER_WIRE"] = "bf16", ["IDRAK_CLUSTER_TOPK"] = "0.01",
+            ["IDRAK_CLUSTER_SOCKET_BUFFER"] = "512KiB", ["IDRAK_CLUSTER_BUCKET_BYTES"] = "25MB", ["IDRAK_CLUSTER_TOPK"] = "0.01",
             ["IDRAK_CLUSTER_ERROR_FEEDBACK"] = "0", ["IDRAK_CLUSTER_LOCAL_SGD"] = "4", ["IDRAK_CLUSTER_SYNC_WEIGHTS"] = "10", ["IDRAK_CLUSTER_REBALANCE_EVERY"] = "50",
             ["IDRAK_CLUSTER_REBALANCE_STEPS"] = "5", ["IDRAK_CLUSTER_REBALANCE_TOLERANCE"] = "0.25", ["IDRAK_CLUSTER_GRADIENT_SYNC"] = "mine", ["IDRAK_CLUSTER_START"] = "check",
             ["IDRAK_CLUSTER_SHARD"] = "parameters", ["IDRAK_CLUSTER_PLACEMENT"] = "pipeline", ["IDRAK_CLUSTER_MICROBATCHES"] = "8", ["IDRAK_CLUSTER_SCHEDULE"] = "1f1b",
-            ["IDRAK_CLUSTER_SUGGEST_SHARE"] = "0.3", ["IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE"] = "0.002", ["IDRAK_CLUSTER_PROFILES_FILE"] = "profiles.txt",
+            ["IDRAK_CLUSTER_SUGGEST_SHARE"] = "0.3", ["IDRAK_CLUSTER_PROFILES_FILE"] = "profiles.txt",
             ["IDRAK_CLUSTER_SEED"] = "7", ["IDRAK_CLUSTER_MODE"] = "localhost", ["IDRAK_CLUSTER_THROTTLE"] = "off", ["IDRAK_CLUSTER_FAILURES"] = "mixed",
             ["IDRAK_CLUSTER_REPLAY_STEP"] = "12", ["IDRAK_CLUSTER_CLOCK"] = "simulated",
             // C3: the carving device, the event log's file and whether it records transfers.
@@ -127,7 +127,7 @@ internal abstract partial class Tests
             ["IDRAK_CLUSTER_PIPELINE_MEMORY_TOLERANCE"] = "0.25", ["IDRAK_CLUSTER_STAGE_LAYERS"] = "3, 5,2",
             // C8: the chunk measurement's probe, the measured sizes' file, the event log's flush interval.
             ["IDRAK_CLUSTER_CHUNK_PROBE"] = "1MB", ["IDRAK_CLUSTER_TUNING_FILE"] = "sizes.txt", ["IDRAK_CLUSTER_EVENT_LOG_FLUSH"] = "4",
-            // C8c: the cluster advisor's measurement on or off, the warm steps it measures and its bf16 slice.
+            // C8c: the cluster advisor's measurement on or off, the warm steps it measures and its slice.
             ["IDRAK_CLUSTER_SUGGEST"] = "0", ["IDRAK_CLUSTER_SUGGEST_STEPS"] = "5", ["IDRAK_CLUSTER_SUGGEST_SLICE"] = "1024",
             // Plan 27, R7: how the ranks agree on a stop, how often the boundary's own exchange runs, how long an asker waits.
             ["IDRAK_CLUSTER_STOP"] = "all-reduce", ["IDRAK_CLUSTER_STOP_EVERY"] = "4", ["IDRAK_CLUSTER_STOP_WAIT"] = "30",
@@ -148,15 +148,14 @@ internal abstract partial class Tests
         var all = ClusterOptions.From(n => good.GetValueOrDefault(n), null);
         Check(all is { RebalanceSteps: 5, RebalanceTolerance: 0.25, GradientSync: "mine", GradientSyncName: "mine", StartingState: StartingState.Check, Overlap: false, Compression: "top-k" } && all.MessageCost == TimeSpan.FromSeconds(0.00005),
             $"the data-parallel settings parsed: {all}");
-        Check(defaults is { GradientSyncName: "all-reduce", CompressionName: "none", Overlap: true } && new ClusterOptions { LocalSgdEvery = 4 }.GradientSyncName == "local-sgd"
-              && new ClusterOptions { Wire = WireType.BFloat16 }.CompressionName == "bf16" && new ClusterOptions { TopK = 0.1 }.CompressionName == "top-k",
-            "unset, the synchronisation follows IDRAK_CLUSTER_LOCAL_SGD and the compression IDRAK_CLUSTER_TOPK and IDRAK_CLUSTER_WIRE");
+        Check(defaults is { GradientSyncName: "all-reduce", CompressionName: "none", Overlap: true } && new ClusterOptions { LocalSgdEvery = 4 }.GradientSyncName == "local-sgd" && new ClusterOptions { TopK = 0.1 }.CompressionName == "top-k",
+            "unset, the synchronisation follows IDRAK_CLUSTER_LOCAL_SGD and the compression IDRAK_CLUSTER_TOPK");
         Check(all is { Device: "cuda:1", RunId: "run-7", Parent: 4242, SharedMemoryBytes: 1L << 20, SharedMemoryFolder: "rings" } && all.RetryDelay == TimeSpan.FromSeconds(0.25),
             $"the C5 settings parsed: {all}");
         Check(all is { ReceiveBytes: 1L << 20, AsyncStaging: false, DeviceCollectives: false, DeviceActivations: false, DirectWake: false, OwnTensorsOnly: false, StreamedSave: false, GatherBytes: 64L << 20, SharedMemorySpin: { } spin } && spin == TimeSpan.FromSeconds(0.0001)
               && all.SharedMemoryCheck == TimeSpan.FromSeconds(2) && new ClusterOptions { Shard = ShardMode.Optimizer }.GradientSyncName == "sharded",
             $"the C6 settings parsed, and a shard picks the sharded synchronisation: {all}");
-        Check(all is { Rank: 2, WorldSize: 4, Wire: WireType.BFloat16, Shard: ShardMode.Parameters, ChunkBytes: 4L << 20, SocketBufferBytes: 512L << 10, BucketBytes: 25L << 20,
+        Check(all is { Rank: 2, WorldSize: 4, Shard: ShardMode.Parameters, ChunkBytes: 4L << 20, SocketBufferBytes: 512L << 10, BucketBytes: 25L << 20,
                   TopK: 0.01, ErrorFeedback: false, LocalSgdEvery: 4, Simulation: { Seed: 7, Mode: SimulationMode.Localhost, Throttle: false, Failures: "mixed", ReplayStep: 12, Clock: ThroughputClock.Simulated,
                       CarveFrom: "cpu", EventLog: "run.events", LogTransfers: false, ReleaseDevices: false } }
               && all.Timeout == TimeSpan.FromSeconds(2.5) && all.Key is not null,
@@ -168,7 +167,7 @@ internal abstract partial class Tests
         Check(!all.ToString().Contains("owner", StringComparison.Ordinal) && all.ToString().Contains("(secret)", StringComparison.Ordinal), "the key never in ToString");
         foreach (var (name, value, expected) in new[]
                  {
-                     ("IDRAK_RANK", "-1", "0 or more"), ("IDRAK_CLUSTER_WIRE", "fp8", "f32 or bf16"), ("IDRAK_CLUSTER_CHUNK_BYTES", "4QB", "size"),
+                     ("IDRAK_RANK", "-1", "0 or more"), ("IDRAK_CLUSTER_CHUNK_BYTES", "4QB", "size"),
                      ("IDRAK_CLUSTER_KEY", "short", "16"), ("IDRAK_CLUSTER_TOPK", "2", "0 to 1"), ("IDRAK_CLUSTER_MODE", "cloud", "in-process or localhost"),
                      ("IDRAK_CLUSTER_PORT", "70000", "0 to 65535"), ("IDRAK_CLUSTER_SHARD", "3", "none, optimizer"),
                      ("IDRAK_CLUSTER_START", "copy", "broadcast or check"), ("IDRAK_CLUSTER_REBALANCE_TOLERANCE", "-1", "0 or more"),
@@ -527,10 +526,6 @@ internal abstract partial class Tests
             Check(d <= 1e-5, $"{file}: ddp and single differ by {d:G3}");
         }
 
-        // The bf16 wire moves the results, by about what its 8 bits of mantissa allow (the README's measured tolerance).
-        double grads = Largest(ReadTensors(ClusterData("bf16/grads-step1.safetensors")), ReadTensors(ClusterData("ddp/grads-step1.safetensors")), "bf16 grads");
-        double weights = Largest(ReadTensors(ClusterData("bf16/weights-step3.safetensors")), ReadTensors(ClusterData("ddp/weights-step3.safetensors")), "bf16 weights");
-        Check(grads is > 0 and <= 1e-3 && weights is > 0 and <= 5e-4, $"bf16 against ddp: gradients {grads:G3}, weights {weights:G3}");
         Check(File.ReadAllText(ClusterData("README.md"), Encoding.UTF8).Contains("How the C# tests read it", StringComparison.Ordinal), "the fixture's README says how the tests read it");
     }
 }

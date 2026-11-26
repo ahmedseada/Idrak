@@ -15,8 +15,7 @@ namespace Idrak.PluginTests;
 
 /// <summary>
 /// Plug-ins written with Idrak's public API alone, as an outside package writes them: an optimizer (<see cref="Lion"/>),
-/// an operation with its own backward step, a network-builder step and an ONNX import operator built on it, a packed
-/// weight format (<see cref="RoundedWeight"/>) and a key/value cache format (<see cref="ScaledLayout"/>). The test runner
+/// an operation with its own backward step, a network-builder step and an ONNX import operator built on it and an ONNX import operator built on it. The test runner
 /// in tests/Idrak.Tests runs <see cref="All"/> on every device; a failed check throws.
 /// </summary>
 public static class PluginTests
@@ -27,12 +26,11 @@ public static class PluginTests
         ("outside plug-in: Idrak grants this assembly no internal access", NoInternalAccess),
         ("outside plug-in: a Lion optimizer makes the reference update and trains a linear model; as a kind registered in OptimizerKinds from outside, it is made by name, passes the optimizer suite and unregisters", LionTrains),
         ("outside plug-in: softplus through Autograd.Function matches finite differences, registers as a network step, trains with Lion and imports from ONNX", SoftplusStep),
-        ("outside plug-in: a key/value cache format generates the float32 cache's greedy text", CacheFormat),
         ("outside plug-in: a sample source computed when read trains a classifier, to the weights of its in-memory copy", DataPluginTests.SourceTrains),
         ("outside plug-in: a batch source making tensors itself trains a linear model through Trainer.Fit", DataPluginTests.BatchSourceTrains),
         ("outside plug-in: a message part kind of its own (audio) registers in ChatParts, passes the testing kit, round-trips through the chat JSON and is refused by a text-only model", ChatPartPluginTests.AudioKind),
         ("outside plug-in: a vision family of its own (a trivial encoder with a token count per image, its own prompt format and attention rule) registers in VisionFamilies, passes the testing kit and answers a prompt with two images through the public chat API; unregistered, its checkpoint is refused naming the registry", VisionFamilyPluginTests.OutsideFamily),
-        ("outside plug-in: an image classifier family of its own (a tiny ResNet from safetensors, torchvision's names, its own residual block) registers in ImageModelFamilies, matches PyTorch's pixel values and logits with the fc weight kept as stored bfloat16, classifies through Predictor and RegionClassifier and passes the testing kit; unregistered, its checkpoint is refused naming the registry", ImageFamilyPluginTests.TinyResNet),
+        ("outside plug-in: an image classifier family of its own (a tiny ResNet from safetensors, torchvision's names, its own residual block) registers in ImageModelFamilies, matches PyTorch's pixel values and logits, classifies through Predictor and RegionClassifier and passes the testing kit; unregistered, its checkpoint is refused naming the registry", ImageFamilyPluginTests.TinyResNet),
         ("outside plug-in: an image detector family of its own (a grid detector from ONNX) with its own decoder in DetectionDecoders matches PyTorch's outputs and its decoded, suppressed boxes, from the folder and the bare .onnx file, and passes the testing kit; unregistered, the checkpoint and the decoder are refused naming their registries", ImageFamilyPluginTests.GridDetector),
         ("outside plug-in: a plain-loop device on the public device API (its own backend, storage and provider) passes the conformance kit and a stress run", ReferenceDeviceConforms),
         ("outside plug-in: a document format and writer of its own register in DocumentFormats and DocumentWriters, write a file by its extension and open it by its first bytes (from the file, a stream and memory), pass the document format and writer suites, and unregister; an unknown name is refused naming the registered ones", DocumentPluginTests.RegistersAndConforms),
@@ -185,27 +183,6 @@ public static class PluginTests
             NetworkOps.Unregister(SoftplusStepName);
             OnnxImportOps.Unregister(SoftplusOperator);
         }
-    }
-
-    private static void CacheFormat(Device device)
-    {
-        var layout = new ScaledLayout();
-        KeyValueLayouts.Register(layout);
-        Check(KeyValueLayouts.Get(ScaledLayout.FormatName) == layout, "registered");
-        var tokenizer = new CharTokenizer("abcdefghijklmnopqrstuvwxyz .,");
-        var random = new Random(4);
-        using var model = new Sequential
-        {
-            new Embedding(tokenizer.VocabularySize, 16, device, random),
-            new PositionalEncoding(32, 16, device),
-            new TransformerEncoderLayer(16, 2, dropout: 0f, causal: true, device: device, random: random),
-            new LayerNorm(16, device: device),
-            new Linear(16, tokenizer.VocabularySize, device: device, random: random),
-        };
-        var options = new GenerationOptions { Temperature = 0f, TopK = 1, RepeatPenalty = 1f, NumPredict = 10 };
-        string expected = new TextGenerator(model, tokenizer, 32) { KeepCache = false }.Generate("abc", options).Text;
-        string actual = new TextGenerator(model, tokenizer, 32) { KeepCache = false, CacheLayout = layout }.Generate("abc", options).Text;
-        Check(actual == expected && layout.Writes > 0, $"with the format '{actual}', float32 cache '{expected}'");
     }
 
     // Full-batch training; the first and the last loss.

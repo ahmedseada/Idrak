@@ -37,7 +37,7 @@ phone needs and runs `idrak doctor --android`.
 idrak doctor                                   # the runtime, every backend, each device, the caches, disk, environment
 idrak dev                                      # the devices: memory, compute units, lanes, kernel width, matrix units
 idrak pull Qwen/Qwen3-0.6B                     # into the cache, with progress and resume
-idrak alias set qwen Qwen/Qwen3-0.6B -w int8 -k int8
+idrak alias set qwen Qwen/Qwen3-0.6B
 idrak c qwen -d vulkan:0 -s "Answer briefly."  # chat on the Vulkan GPU
 cat notes.txt | idrak r qwen "Summarize in three bullets"
 idrak s qwen -p 8080                           # the chat API and the OpenAI-style API on one port
@@ -46,7 +46,7 @@ idrak b qwen --save laptop                     # tokens per second, kept to comp
 
 `idrak help` lists every command by group, `idrak help COMMAND` (or `idrak COMMAND --help`) shows one command's
 arguments, options, examples, limits and the environment variables that affect it, and `idrak help topics` lists the
-concept pages (devices, formats, models, precision, plugins, config, env, exit codes).
+concept pages (devices, formats, models, plugins, config, env, exit codes).
 
 ## How every command works
 
@@ -54,12 +54,7 @@ Model arguments are the same everywhere: a Hugging Face id (`owner/name`), a mod
 GGUF file (`owner/name:TAG`, `owner/name/FILE.gguf`), a `.ikm` package where the command reads one, or an alias from
 the config. A model in the cache is used without asking the network (and its last use shows in `idrak list`); one
 that is not is downloaded into the cache with a progress line, or, with `--offline`, is an error that names
-`idrak pull`. `-w, --weights` picks the weight format (int8, int4, bf16 or any registered packed format),
-`--head-weights` the output head's own format (bf16 beside int8 or int4 keeps the checkpoint's next-token scores and,
-for tied embeddings, one vocabulary table: less memory than an int8 or int4 head, a little slower per token), `-k,
---kv` the KV cache format (default `auto`: the run's element type) and `--dtype` the element type the run computes in
-(default `auto`: bfloat16 where the GPU computes it natively, else float16, else float32; `float32` keeps the results as
-before).
+`idrak pull`.
 
 Common options (every command):
 
@@ -78,7 +73,6 @@ Common options (every command):
 | `--timeout DURATION` | Give up after a time (`30s`, `5m`, `1h30m`): downloads, server calls, long runs |
 | `--seed N` | One seed for sampling, shuffling and initialization |
 | `--threads N` | CPU threads |
-| `--packed-cache on\|off\|DIR` | Whether a load keeps its int8 and int4 weights between loads and reads them back instead of quantizing again, and where (default on, `packed` in the cache folder; `IDRAK_PACKED_CACHE`, `IDRAK_PACKED_CACHE_DIR`); an entry is made again when its checkpoint file changes |
 | `--color auto\|always\|never`, `--plain` | Colour control (`NO_COLOR` still wins); no Unicode or progress characters |
 | `--log FILE` | Also write every line, verbose ones included, to a file |
 | `--profile` | Profile the command as it runs (also `IDRAK_PROFILE=1`): it runs as it would without the flag, and when it ends (normally, by an error or by Ctrl+C) one report says where its time and memory went: wall and processor time, the managed heap and its collections, device memory, the kernel choices the device measured (by operation), host fallbacks (by operation), and the prompt passes (their pieces), decoding chunks and other stages of reading answers. Written to the error stream, so the output and `--json` stay as they are; `IDRAK_PROFILE_OUT` appends it to a file (`test-output\profile.txt`), `IDRAK_PROFILE_FORMAT` picks table, markdown, csv or json, `IDRAK_PROFILE_PROBES` the probes (the intrusive ones, `operations,kernels,stages,timings`, only when named: their cost is then in the times) |
@@ -167,7 +161,7 @@ cat notes.txt | idrak run qwen "Summarize in three bullets"
 idrak run qwen "Extract the name and age: Sara is 31." --schema person.json --json
 idrak run ocr --image scan.jpg --grayscale "Extract the text." -j -o page.json   # -o: the answer as a UTF-8 file
 idrak batch qwen -i prompts.jsonl -o answers.jsonl                   # resumable after an interruption
-idrak compare qwen qwen --weights-b int4 "Explain recursion" --seed 1
+idrak compare qwen qwen "Explain recursion" --seed 1
 idrak tokenize qwen --chat "Hello" --count
 idrak tokenize ./bert-base-uncased "Hello, World!" --pair "Second" --special --offsets   # type ids, offsets
 idrak agent qwen "Add a test for Parse" --workspace ./src
@@ -275,7 +269,7 @@ answer is in `choices[0].message.content`. With `stream` = `true` Postman shows 
 route works the same way with Body → raw → JSON.
 
 ```bash
-idrak serve ocr=your-org/your-ocr-model -d cuda:0 -w bf16 --grayscale
+idrak serve ocr=your-org/your-ocr-model -d cuda:0 --grayscale
 curl http://127.0.0.1:7317/v1/chat/upload -F image=@scan.jpg -F "prompt=Extract the text." -F max_tokens=2048 -F temperature=0
 curl http://127.0.0.1:7317/v1/chat/completions -H "Content-Type: application/json" -d '{"model": "ocr", "temperature": 0,
   "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,'"$(base64 -w0 scan.jpg)"'"}},
@@ -298,20 +292,17 @@ The model cache: what `pull` downloads is what loading reads (Hugging Face model
 | `idrak alias list` (`alias`, `alias ls`) | The model aliases in the config |
 | `idrak alias rm` | Remove a model alias from the config |
 | `idrak memory` | Memory per weight and KV format at a context length, against each device's memory |
-| `idrak quantize` | Pack a model's weights (int8, int4, bf16 or any registered format): size and a quick perplexity check |
 | `idrak merge` | Merge a LoRA or DoRA adapter into the base weights |
 | `idrak inspect` (`i`) | Tensor names, shapes, types and metadata of a GGUF, safetensors or .ikm file |
 | `idrak verify` | Check a cached model's files: sizes, hashes where the hub gives them, readable tensors |
-| `idrak convert` | Convert between GGUF and Hugging Face folders (safetensors bf16, f16, f32) |
+| `idrak convert` | Convert between GGUF and Hugging Face folders |
 | `idrak diff` | Which tensors differ between two checkpoints, and by how much |
 | `idrak families` | Supported model families and what each supports (windows, soft-capping, RoPE scalings, experts, GGUF) |
 
 ```bash
-idrak pull Qwen/Qwen3-0.6B-GGUF:Q8_0           # one GGUF file of a repository
 idrak ls --sort size
 idrak show Qwen/Qwen3-0.6B
-idrak memory Qwen/Qwen3-8B --kv int8           # what fits on which device
-idrak quantize Qwen/Qwen3-0.6B -w int4 -o ./qwen-int4
+idrak memory Qwen/Qwen3-8B                     # what fits on which device
 idrak merge Qwen/Qwen3-0.6B ./run/adapter -o ./qwen-tuned
 idrak rm Qwen/Qwen3-0.6B --dry-run
 ```
@@ -391,14 +382,14 @@ Fine-tuning language models (`tune`) and training networks from the builder's JS
 
 ```bash
 idrak tune init -b Qwen/Qwen3-0.6B --data chats.jsonl && idrak tune --config tune.json
-idrak tune train qwen chats.jsonl -o adapters/chat -w int4
+idrak tune train qwen chats.jsonl -o adapters/chat
 idrak train network.json --data houses.csv -t price -o houses.ikm
 idrak train cnn.json --data ./shapes -d vulkan:0    # a folder of class folders of images
 idrak predict houses.ikm -i new-houses.csv -o priced.csv
 idrak predict -P MyFamilies.dll ./detector street/*.jpg --threshold 0.4 -o boxes.csv
 idrak train -P MyFamilies.dll ./detector --data ./coco/train.json --eval ./coco/val.json --augment "flip" --metric coco
 idrak runs list && idrak runs show NAME && idrak resume NAME --epochs 20
-idrak distill --teacher Qwen/Qwen3-8B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data chats.jsonl --alpha 0.8 -o adapters/distilled
+idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl --alpha 0.8 -o adapters/distilled
 idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --algorithm grpo --group 8 -o runs/math
 idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --algorithm grpo --group 8 --iterations 20 -o runs/rl-demo
 idrak cluster sim --topology two.json -- reinforce Qwen/Qwen3-0.6B --data math.jsonl --algorithm grpo --shards 4 -o runs/math2
@@ -419,9 +410,7 @@ voc) and `--eval`; a fine-tuned model's weights go to an .ikw that `idrak predic
 #### Fine-tuning with `idrak tune`
 
 `idrak tune` trains LoRA and DoRA adapters for any model the library loads (Hugging Face ids, folders, .gguf
-files, aliases) on any data `idrak data` reads, then evaluates, chats with and exports them. The base can stay float32 or
-bfloat16, or be frozen in the library's int4 or int8 (`-w int4`, `-w int8`): QLoRA-style, a frozen quantized base under
-the adapters, but not QLoRA's NF4 with double quantization. Nothing in it is specific
+files, aliases) on any data `idrak data` reads, then evaluates, chats with and exports them. Nothing in it is specific
 to a model family or an application: a project that needs a tuned model runs it with its data instead of writing its
 own tuner. Its commands are `train`, `evaluate`, `chat`, `export`, `download` and `info`; `idrak help tune` lists
 every option.
@@ -456,18 +445,15 @@ idrak tune export adapters/qa -o merged
 - **Long conversations.** A conversation longer than `--max-length` keeps its whole answer: the user message before it
   is shortened (its start kept) rather than the answer cut.
 - **Progress.** The steps done, still to do and in total, the epoch and loss, elapsed time and ETA on the progress
-  line; notable events (graph recording, FP8 checks, evaluation losses) print above it. Ctrl+C stops after the current
+  line; notable events (graph recording, evaluation losses) print above it. Ctrl+C stops after the current
   step and saves the adapter so far.
 - **Output.** The adapter in the PEFT format, and `idrak-tuning.json`: the base model as named on the command line,
   the system prompt and the maximum length. Any program can then load the folder (`TuningManifest.Read(folder)
   .LoadModel(folder, device)`), and every `idrak tune` command accepts the adapter folder in place of the model.
-- **Speed.** Sequence packing, graph replay of the training step where the backend records graphs, fused LoRA products
-  on matrix units (a frozen bfloat16 or 4-bit base read as stored in both directions), the optimizer over every adapter
-  matrix in three passes; `--fp8` for the frozen base's forward products (checked against bfloat16 first), `-w int4` /
-  `-w int8` for a frozen int4 or int8 base (QLoRA-style, not NF4). `train --time-steps` times a few steps per kernel instead of training.
+- **Speed.** Sequence packing, graph replay of the training step where the backend records graphs, fused LoRA products,
+  the optimizer over every adapter matrix in three passes. `train --time-steps` times a few steps per kernel instead of training.
 - **Memory.** Results no backward step reads are released during the forward pass. The activations' ladder, each rung
-  at a small cost: feed-forward activations recomputed in the backward pass (`--recompute`), then activations held as
-  bfloat16 between the passes (`--bf16-activations`), then activation checkpointing (`--checkpointing`, a third more
+  at a small cost: feed-forward activations recomputed in the backward pass (`--recompute`), then activation checkpointing (`--checkpointing`, a third more
   compute); the flags start a run at that rung. Before the first step of each batch shape the tuner estimates each
   rung's device memory from the model's dimensions and the batch, and starts at the first that fits what the device
   reports free, saying so once (`activations: checkpointing from the start (estimated … without, … with, … free …)`);
@@ -637,7 +623,7 @@ idrak b --devices cpu --warmup 5s --settle 2   # kernels with a longer, stricter
 idrak bench documents --save laptop            # the documents bench on the samples and the large set
 idrak b documents --sets ./reports --cases open,text-lines,text-parallel --compare laptop
 idrak eval qwen held-out.jsonl --limit 100
-idrak score qwen wiki.txt -w int4
+idrak score qwen wiki.txt
 ```
 
 ### Design
@@ -682,7 +668,7 @@ Project templates, the library's tests, ONNX, the generated kernels and telemetr
 idrak new plugin MyFormat
 idrak test --filter "cli" -d cpu
 idrak onnx check model.onnx -d vulkan:0
-idrak vlm check ./gemma-ocr --reference ref -d cuda:0 -w bf16        # ref: python tools/vlm/compare_real.py ... --out ref
+idrak vlm check ./gemma-ocr --reference ref -d cuda:0                # ref: python tools/vlm/compare_real.py ... --out ref
 idrak kernels -d hip:0 --source device                               # HIP's operations on its GCN kernels, and their state
 idrak kernels dump gcn -o test-output/kernels                         # gcn/virtual/NAME.s and gcn/TARGET/NAME.s
 idrak trace -o train.jsonl --levels training,batches -- train network.json --data houses.csv
@@ -773,15 +759,11 @@ stored by `idrak login`, not here. The most used:
 | Variable | Meaning |
 |---|---|
 | `IDRAK_CACHE` | The cache folder (`--cache` wins) |
-| `IDRAK_PACKED_CACHE`, `IDRAK_PACKED_CACHE_DIR` | Whether int8 and int4 weights are kept between loads (default on; `0` or `off`: quantized on every load) and their folder (default `packed` in the cache folder); `--packed-cache` wins |
-| `IDRAK_KEEP_PACKED` | Whether weights stored in a format of their own (GGUF block formats such as q4_k, F8 or I8 with scales) stay in it in memory, about the file's size, where the device multiplies it (default on; `0` or `off`: expanded to float32 at load; the same results either way). The load says `weights kept packed: …` or `weights expanded: …` |
 | `IDRAK_WEIGHT_MAPPING` | Whether a decoder's weights are read in place from the checkpoint's file mapping: `map` (default: a split model's CPU layers and lazily built layers read float32 weights, and formats kept as stored, where the file's pages lie, so the system's page cache holds them once; the same results) or `copy` (every weight copied into memory, as before). The load says `weights mapped: …` |
-| `IDRAK_DEFAULT_DTYPE` | The element type a run computes in on each device: `auto` (default: what the device computes natively as its backend reports it, bfloat16, else float16, else float32), `float32` (results as before), `bfloat16` (`bf16`) or `float16` (`f16`). A 16-bit run multiplies in its type with float32 sums and chooses its weights among the 16-bit and smaller formats; the load says `element type: bfloat16 on cuda:0 (picked by auto: …)` or `(selected by the user (--dtype))` for each device. `--dtype` (run, serve, ui, tune, pretrain, bench) wins |
-| `IDRAK_KV_CACHE_TYPE` | The KV cache format when `--kv` names none: `auto` (default: the run's element type, a bfloat16 cache for a bfloat16 run), `float32`, `bfloat16`, `int8` or a registered format |
 | `IDRAK_CONFIG`, `IDRAK_CONFIG_PROFILE` | The config file and the profile in use |
 | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP` | Backends not looked for |
 | `IDRAK_VULKAN_DEFAULT` | A Vulkan GPU may be the default device |
-| `IDRAK_MATMUL`, `IDRAK_OFFLOAD`, `IDRAK_LOOKUP_TABLES` | Matrix product precision over the run's element type (bf16, fp16, fp8, fp32); spilling to system memory; where a token table lives (auto, host, device) |
+| `IDRAK_OFFLOAD`, `IDRAK_LOOKUP_TABLES` | Spilling to system memory; where a token table lives (auto, host, device) |
 | `IDRAK_GPU_CHUNK_MB`, `IDRAK_GPU_STACK_BYTES` | The chunks long-lived GPU blocks share (0: off); each GPU thread's stack |
 | `IDRAK_CPU_THREADS`, `IDRAK_CPU_MEMORY_LIMIT_MB`, `IDRAK_GPU_MEMORY_LIMIT_MB` | The most CPU threads (default every core) and the most MiB of tensor memory on the CPU and on each GPU (default unlimited) |
 | `IDRAK_GPU_MEMORY_RESERVE_MB`, `IDRAK_OFFLOAD_RETURN_HEADROOM_MB`, `IDRAK_WORKSPACE_SHARE` | MiB kept free on a GPU for the display (default a sixteenth); MiB kept free when offloaded tensors return (an eighth); the share of free memory one operation's working buffers may take (0.5) |

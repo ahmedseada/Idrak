@@ -72,11 +72,10 @@ internal sealed class HierarchicalCollectives : HostCollectives
 
     private int[] Mine => _nodeRanks[_node];
 
-    protected override void AllReduceHost(Span<float> values, ReduceOp op, WireType wire)
+    protected override void AllReduceHost(Span<float> values, ReduceOp op)
     {
-        var travel = op == ReduceOp.Sum ? wire : WireType.Float32;
         int length = values.Length, local = Mine.Length, nodes = Nodes;
-        RingScatter(values, Mine, _position, s => Offset(length, local, s), s => Size(length, local, s), op, travel, IntraScatterTag);
+        RingScatter(values, Mine, _position, s => Offset(length, local, s), s => Size(length, local, s), op, IntraScatterTag);
         if (nodes > 1)
         {
             foreach (var column in PlanFor(length, 0).Columns)
@@ -88,7 +87,7 @@ internal sealed class HierarchicalCollectives : HostCollectives
 
                 int span = column.End - column.Start;
                 var shard = values.Slice(column.Start, span);
-                RingScatter(shard, column.Members, _node, s => Offset(span, nodes, s), s => Size(span, nodes, s), op, travel, CrossScatterTag);
+                RingScatter(shard, column.Members, _node, s => Offset(span, nodes, s), s => Size(span, nodes, s), op, CrossScatterTag);
                 RingGather(shard, column.Members, _node, s => Offset(span, nodes, s), s => Size(span, nodes, s), CrossGatherTag);
             }
         }
@@ -99,7 +98,7 @@ internal sealed class HierarchicalCollectives : HostCollectives
     protected override void ReduceScatterHost(Span<float> values, int count, ReduceOp op)
     {
         int total = values.Length, local = Mine.Length;
-        RingScatter(values, Mine, _position, s => Offset(total, local, s), s => Size(total, local, s), op, WireType.Float32, IntraScatterTag);
+        RingScatter(values, Mine, _position, s => Offset(total, local, s), s => Size(total, local, s), op, IntraScatterTag);
         var plan = PlanFor(total, count);
         if (Nodes > 1)
         {
@@ -108,8 +107,7 @@ internal sealed class HierarchicalCollectives : HostCollectives
                 if (column.Owners[_node] == _position)
                 {
                     int start = column.Start, span = column.End - start;
-                    RingScatter(values.Slice(start, span), column.Members, _node, n => Piece(start, span, count, n).Offset, n => Piece(start, span, count, n).Size, op,
-                        WireType.Float32, CrossScatterTag);
+                    RingScatter(values.Slice(start, span), column.Members, _node, n => Piece(start, span, count, n).Offset, n => Piece(start, span, count, n).Size, op, CrossScatterTag);
                 }
             }
         }
@@ -149,12 +147,12 @@ internal sealed class HierarchicalCollectives : HostCollectives
             int place = Wrap(_node - rootNode, nodes);
             if (place > 0)
             {
-                Receive(Leader(Wrap(_node - 1, nodes)), values, CrossChainTag, WireType.Float32);
+                Receive(Leader(Wrap(_node - 1, nodes)), values, CrossChainTag);
             }
 
             if (place < nodes - 1)
             {
-                Send(Leader(Wrap(_node + 1, nodes)), values, CrossChainTag, WireType.Float32);
+                Send(Leader(Wrap(_node + 1, nodes)), values, CrossChainTag);
             }
         }
 
@@ -168,12 +166,12 @@ internal sealed class HierarchicalCollectives : HostCollectives
         int k = Wrap(_position - Array.IndexOf(mine, leader), local);   // this rank's place in its node's chain
         if (k > 0)
         {
-            Receive(mine[Wrap(_position - 1, local)], values, IntraChainTag, WireType.Float32);
+            Receive(mine[Wrap(_position - 1, local)], values, IntraChainTag);
         }
 
         if (k < local - 1)
         {
-            Send(mine[Wrap(_position + 1, local)], values, IntraChainTag, WireType.Float32);
+            Send(mine[Wrap(_position + 1, local)], values, IntraChainTag);
         }
     }
 
@@ -196,11 +194,11 @@ internal sealed class HierarchicalCollectives : HostCollectives
                     int sender = toOwners ? target : owner, receiver = toOwners ? owner : target;
                     if (Rank == sender)
                     {
-                        Send(receiver, piece, DeliverTag, WireType.Float32);
+                        Send(receiver, piece, DeliverTag);
                     }
                     else if (Rank == receiver)
                     {
-                        Receive(sender, piece, DeliverTag, WireType.Float32);
+                        Receive(sender, piece, DeliverTag);
                     }
                 }
 

@@ -23,7 +23,7 @@ internal abstract partial class Tests
         ("vision tuning contracts: TuningImages parses the command line's transforms, options and grayscale, checks options against a family's keys, saves tuning_images.json and reads it back equal; a bad file is refused naming it", TuningImagesRoundTrip),
         ("vision tuning contracts: cer and wer on known strings (English, Arabic with and without its marks, NFC, a character outside the basic plane, case), corpus sums, options checked; the edit distance takes memory of the shorter text only and equals the row-by-row table (random sequences across 64-element blocks and past 512 symbols, edge cases, characters outside the basic plane); an app's metric registers and an unknown one names the registry", TuningMetricValues),
         ("vision tuning contracts: the memory and disk feature caches pass the kit's suite; the memory budget is measured and the least recently used goes first; disk entries are safetensors files that outlive the cache, a file under another key is a miss; an unknown cache names the registry", FeatureCacheRoundTrips),
-        ("vision tuning contracts: the tiny Gemma 3 (plug-in) offers its projector and tower: features from the tower's output equal the encoder's, gradients reach the projector (finite differences), the tower and the pixels; bfloat16 weights and another family's encoder are refused", VisionTuningPartGemma3),
+        ("vision tuning contracts: the tiny Gemma 3 (plug-in) offers its projector and tower: features from the tower's output equal the encoder's, gradients reach the projector (finite differences), the tower and the pixels; another family's encoder is refused", VisionTuningPartGemma3),
         ("vision tuning contracts: the tiny LLaVA (outside plug-in) offers its projector only (features equal the encoder's, gradients by finite differences); asking for its tower fails naming the parts offered; a family without IVisionTuningPart trains the language model only", VisionTuningPartLlava),
     ];
 
@@ -587,12 +587,7 @@ internal abstract partial class Tests
         Check(input.Grad is { } pixelGrad && pixelGrad.ToArray().Any(v => v != 0f) && pixelGrad.ToArray().All(float.IsFinite), "gradients reach the pixels");
         Check(towerParameters.Count(p => p.Grad is { } g && g.ToArray().Any(v => v != 0f)) >= towerParameters.Count / 2, "gradients reach the tower's weights");
 
-        // Refusals: bfloat16 weights, another family's encoder, a part not offered.
-        using (var packed = vision.CreateEncoder(new VisionEncoderOptions { Device = device }))
-        {
-            Check(Failure<InvalidOperationException>(() => tuning.Parameters(packed, "projector")).Message.Contains("EncoderWeights.Float32", StringComparison.Ordinal), "bfloat16 weights do not train");
-        }
-
+        // Refusals: another family's encoder, a part not offered.
         Check(Failure<NotSupportedException>(() => tuning.Parameters(encoder, "decoder")).Message.Contains("it offers: projector, tower", StringComparison.Ordinal), "a part not offered");
         Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         using var llava = PretrainedModel.Load(LlavaData("tiny-llava"), new PretrainedOptions { Device = device });

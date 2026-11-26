@@ -45,9 +45,9 @@ internal sealed class HostValues(ICollectives collectives) : IDisposable
     }
 
     /// <summary>Sums <paramref name="values"/> across the ranks in place.</summary>
-    public void AllReduce(Span<float> values, WireType wire, ReduceOp op = ReduceOp.Sum)
+    public void AllReduce(Span<float> values, ReduceOp op = ReduceOp.Sum)
     {
-        if (values.IsEmpty || _host?.TryAllReduce(values, op, wire) == true)
+        if (values.IsEmpty || _host?.TryAllReduce(values, op) == true)
         {
             return;
         }
@@ -55,7 +55,7 @@ internal sealed class HostValues(ICollectives collectives) : IDisposable
         var scratch = Scratch(values.Length);
         var backend = collectives.Device.Backend;
         backend.Upload(values, scratch.Storage);
-        collectives.AllReduce(scratch.Storage, values.Length, op, wire);
+        collectives.AllReduce(scratch.Storage, values.Length, op);
         backend.DownloadRange(scratch.Storage, 0, values);
     }
 
@@ -95,14 +95,14 @@ internal sealed class HostValues(ICollectives collectives) : IDisposable
     /// Reduces <paramref name="values"/> so this rank's piece (pieces of <paramref name="counts"/> values in rank order) holds
     /// the sum; through the device, every value is summed (each piece complete everywhere).
     /// </summary>
-    public void ReduceScatter(Span<float> values, ReadOnlySpan<int> counts, WireType wire)
+    public void ReduceScatter(Span<float> values, ReadOnlySpan<int> counts)
     {
-        if (values.IsEmpty || _pieces?.TryReduceScatter(values, counts, ReduceOp.Sum, wire) == true)
+        if (values.IsEmpty || _pieces?.TryReduceScatter(values, counts, ReduceOp.Sum) == true)
         {
             return;
         }
 
-        AllReduce(values, wire);
+        AllReduce(values);
     }
 
     /// <summary>Every rank's piece of <paramref name="values"/> (pieces of <paramref name="counts"/> values in rank order) on every rank.</summary>

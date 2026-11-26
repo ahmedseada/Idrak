@@ -35,7 +35,7 @@ internal abstract partial class HostCollectives
         long most = Array.MaxLength / 2;
         long kept = ClusterCache.FindTuning(ChunkKind, key, options.TuningFile) is { Value: > 0 and var value } && BitOperations.IsPow2(value) && value <= most ? value : 0;
         Span<float> agree = [kept, -kept];                          // powers of two: exact in float32
-        AllReduceHost(agree, ReduceOp.Max, WireType.Float32);
+        AllReduceHost(agree, ReduceOp.Max);
         if (agree[0] > 0 && agree[0] == -agree[1])
         {
             return (long)agree[0];                                  // every rank kept the same size
@@ -61,11 +61,11 @@ internal abstract partial class HostCollectives
             {
                 _chunkBytes = candidates[i];
                 values.Clear();
-                AllReduceHost(values, ReduceOp.Sum, WireType.Float32);   // warm: buffers, the pipes' first use
+                AllReduceHost(values, ReduceOp.Sum);   // warm: buffers, the pipes' first use
                 for (int r = 0; r < runs.Length; r++)
                 {
                     long start = Stopwatch.GetTimestamp();
-                    AllReduceHost(values, ReduceOp.Sum, WireType.Float32);
+                    AllReduceHost(values, ReduceOp.Sum);
                     runs[r] = Stopwatch.GetElapsedTime(start).TotalSeconds;
                 }
 
@@ -74,7 +74,7 @@ internal abstract partial class HostCollectives
             }
 
             _chunkBytes = most;                                     // the agreement below in one message
-            AllReduceHost(times, ReduceOp.Max, WireType.Float32);
+            AllReduceHost(times, ReduceOp.Max);
         }
         finally
         {

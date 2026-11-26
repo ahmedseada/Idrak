@@ -17,7 +17,6 @@ position. Tensors carry transformers' names (linear weights `[out, in]`; the hea
 | `ddp/adamw/` | the same with AdamW (rate 1e-3, betas 0.9 and 0.95, epsilon 1e-8, weight decay 0.1, no clipping): the weights and the moments (`NAME.exp_avg`, `NAME.exp_avg_sq`) after three steps |
 | `ddp/adamw-folded/` | the same AdamW with both bias corrections folded into the step size and epsilon added to the raw moments, as Idrak's AdamW computed it before it took torch's update (plan 36, C11; kept for the record, no test reads it) (plan 19's `adamw-folded`, the class reused from `make_tiny_pretrain.py`): the weights after three steps |
 | `single/` | the same three steps in one process on all eight windows at once (batch 8): `single.json` (losses), `grads-step1`, `weights-step3`, `adamw/`, `adamw-folded/`, laid out as `ddp/` |
-| `bf16/` | the SGD run of `ddp/` again with each rank's gradients rounded to bfloat16 (round to nearest even) before the all-reduce, the sum done in float32 and then divided by 2 (a DDP communication hook): `bf16.json` (losses per rank and their mean; `vs_ddp`: the largest differences against `ddp/`), `grads-step1`, `weights-step3` |
 | `manifest.json` | the versions, the sources' SHA-256, each tensor file's names, dtypes and shapes, and every file's size and SHA-256 |
 
 The script asserts that both ranks hold the same gradients, weights and moments bit for bit after every run.
@@ -35,10 +34,6 @@ The script asserts that both ranks hold the same gradients, weights and moments 
 AdamW turns the last-bit differences of a batch of 8 against two of 4 into larger weight differences where a second
 moment is small (`model.layers.1.self_attn.o_proj.weight`); they stay inside 1e-5.
 
-`bf16/` against `ddp/` (measured, not asserted): **losses 1.5e-4, gradients at step 1 5.9e-4 (1.3e-3 of the largest
-gradient, 0.44; in `model.norm.weight`), weights after three SGD steps 1.6e-4**. A bf16 wire keeps 8 bits of mantissa, so
-its gradients are only good to about 2⁻⁹ of their size; these numbers are the tolerance a run over a bf16 wire is held to.
-
 ## How the C# tests read it
 
 - `"cluster: ddp fixture agrees with single"`: reads both folders' files and re-checks what the script asserts: the
@@ -46,8 +41,7 @@ its gradients are only good to about 2⁻⁹ of their size; these numbers are th
 - `"cluster: data parallel 2 ranks on sim matches the ddp fixture"` (later, C1 onward): Idrak's `Trainer` with two
   ranks on the `sim` transport, the same windows per rank, matches `ddp/`: every gradient at step 1 within 1e-4 of the
   largest, the losses (per rank and their mean) and the weights after three steps within 1e-5; AdamW is held to
-  `ddp/adamw/` (torch's own update, which Idrak's AdamW computes). A run with a bf16 wire is held to
-  `bf16/` within the tolerances above.
+  `ddp/adamw/` (torch's own update, which Idrak's AdamW computes).
 
 ## Regenerate
 

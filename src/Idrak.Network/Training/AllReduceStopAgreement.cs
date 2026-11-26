@@ -68,7 +68,7 @@ internal sealed class AllReduceStopAgreement : StopAgreement, ICarriedStopAgreem
         }
 
         Span<float> flag = [Contribution];
-        _values.AllReduce(flag, WireType.Float32);
+        _values.AllReduce(flag);
         Exchanges++;
         return (int)flag[0];
     }

@@ -21,7 +21,7 @@ namespace Idrak.PluginTests;
 /// <list type="bullet">
 /// <item><see cref="TinyResNetFamily"/>: a ResNet-style classifier read from safetensors and config.json with torchvision's
 /// tensor names, its layers built here (basic residual blocks are this assembly's own module), the weights read one tensor at
-/// a time, the fc weight kept as bfloat16 as stored;</item>
+/// a time;</item>
 /// <item><see cref="GridDetectorFamily"/>: an anchor-free grid detector read from ONNX through Idrak's importer, with its own
 /// decoder (<see cref="GridDecoder"/>, registered in <see cref="DetectionDecoders"/>) and the library's non-maximum
 /// suppression.</item>
@@ -42,8 +42,7 @@ public static class ImageFamilyPluginTests
     private static readonly string[] ImageNames = ["a.png", "b.png", "c.png"];
 
     /// <summary>
-    /// The classifier family: refused unregistered; registered, it loads (pixel values and logits as PyTorch's, the fc weight
-    /// as bfloat16), classifies through a predictor and a region classifier, and passes the testing kit.
+    /// The classifier family: refused unregistered; registered, it loads (pixel values and logits as PyTorch's), classifies through a predictor and a region classifier, and passes the testing kit.
     /// </summary>
     public static void TinyResNet(Device device)
     {
@@ -63,8 +62,6 @@ public static class ImageFamilyPluginTests
                   && model.InputShape!.SequenceEqual([3, 32, 32]) && model.Preprocessor is { ShortestEdge: 36, CenterCrop: true, Resampling: ImageResampling.Bicubic },
                 $"the description: {model.Task}, [{string.Join(", ", model.Labels ?? [])}], [{string.Join(", ", model.InputShape ?? [])}]");
             var fc = model.Network.Children().OfType<Linear>().Single();
-            Check(fc.BFloat16 is not null, "the fc weight, stored as bfloat16, stays bfloat16");
-            Check(model.Notes.Any(n => n.Contains("float32", StringComparison.Ordinal)), $"the notes say what was widened: {string.Join("; ", model.Notes)}");
 
             for (int i = 0; i < images.Count; i++)
             {
@@ -86,18 +83,6 @@ public static class ImageFamilyPluginTests
                 int best = Array.IndexOf(expected, expected.Max());
                 Check(predictions[i].Index == best && predictions[i].Class == model.Labels![best] && MathF.Abs(predictions[i].Scores.Sum(s => s.Score) - 1f) < 1e-5f,
                     $"{ImageNames[i]}: classified as {predictions[i].Class}, PyTorch's best is {model.Labels![best]}");
-            }
-
-            // Float32 weights throughout: the same values, so the same logits.
-            using (var wide = ImageModels.Load(folder, options))
-            using (var wideOutputs = wide.Outputs().Build())
-            {
-                Check(wide.Network.Children().OfType<Linear>().Single().BFloat16 is null, "Float32 asked for: the fc weight is float32");
-                var wideLogits = wideOutputs.Predict(images);
-                for (int i = 0; i < images.Count; i++)
-                {
-                    CheckClose(logits[i], wideLogits[i], 1e-5f, $"{ImageNames[i]}: float32 weights");
-                }
             }
 
             // The region classifier frames regions in the model's square input, rescaled and normalized as its preprocessing.
@@ -358,7 +343,7 @@ public sealed class TinyResNetFamily : IImageModelFamily
             }
 
             layers.Add(new GlobalAveragePool2d());
-            layers.Add(StoredWeights.Linear(tensors, "fc", checkpoint.Options.Weights, device));
+            layers.Add(StoredWeights.Linear(tensors, "fc", device));
         }
         catch
         {

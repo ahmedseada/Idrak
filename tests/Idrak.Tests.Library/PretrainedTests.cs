@@ -15,7 +15,7 @@ internal abstract partial class Tests
     [
         ("pretrained: a special token sampled mid-reply is left out of the text (stream and batch), the end-of-turn marker still ends it, the ids stay as sampled; SkipSpecialTokens false writes it", SpecialTokensLeftOutOfText),
         ("pretrained: a model's recommended sampling (generation_config.json) is read, carried by its generator and chat model, and laid under explicit values (explicit, then the model's, then the defaults; greedy; out-of-range values left out)", RecommendedSamplingIsRead),
-        ("pretrained: a Hugging Face-layout checkpoint loads through the registry and matches DecoderSpec; int8; custom architectures", PretrainedCheckpoint),
+        ("pretrained: a Hugging Face-layout checkpoint loads through the registry and matches DecoderSpec; custom architectures", PretrainedCheckpoint),
         ("pretrained: byte-level and SentencePiece-style BPE tokenizers (merges, special tokens, byte fallback, round trips)", BpeTokenizers),
         ("pretrained: text holding half of a character encodes it as U+FFFD, also through Unicode normalization", LoneSurrogatesEncode),
     ];
@@ -40,7 +40,7 @@ internal abstract partial class Tests
     }
 
     // Writes config.json and weights as Hugging Face checkpoints store them: PyTorch names, Linear weights [out, in].
-    internal static void WriteCheckpoint(string folder, DecoderSpec spec, RandomWeights weights, string architecture, SafeTensorType type, bool sharded)
+    internal static void WriteCheckpoint(string folder, DecoderSpec spec, RandomWeights weights, string architecture, bool sharded)
     {
         var config = new JsonObject
         {
@@ -63,7 +63,7 @@ internal abstract partial class Tests
         tensors.Add(("model.layers.0.self_attn.rotary_emb.inv_freq", [2], [1f, 0.5f]));   // present in some checkpoints; ignored
         if (!sharded)
         {
-            SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors, type);
+            SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors);
             return;
         }
 
@@ -72,7 +72,7 @@ internal abstract partial class Tests
         {
             string file = $"model-0000{part + 1}-of-00002.safetensors";
             var share = tensors.Where((_, i) => i % 2 == part).ToList();
-            SafeTensorsWriter.Write(Path.Combine(folder, file), share, type);
+            SafeTensorsWriter.Write(Path.Combine(folder, file), share);
             foreach (var (name, _, _) in share)
             {
                 map[name] = file;
@@ -126,32 +126,19 @@ internal abstract partial class Tests
         int[] ids = [2, 9, 14, 3, 7];
         using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device);
         var expected = reference.Predict(input).ToArray();
-        foreach (var (type, sharded) in new[] { (SafeTensorType.F32, false), (SafeTensorType.F32, true), (SafeTensorType.BF16, false) })
+        foreach (bool sharded in new[] { false, true })
         {
             string folder = TempFolder();
             try
             {
-                WriteCheckpoint(folder, spec, weights, "Qwen3ForCausalLM", type, sharded);
+                WriteCheckpoint(folder, spec, weights, "Qwen3ForCausalLM", sharded);
                 using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
                 Check(model.Spec == spec with { NormEpsilon = spec.NormEpsilon, QkNorm = true }, $"spec read from config.json: {model.Spec}");
                 Check(model.Notes.Count == 0, string.Join("; ", model.Notes));
-                float tolerance = type == SafeTensorType.F32 ? 1e-4f : 0.05f * expected.Max(MathF.Abs);
                 var loaded = model.Network.Predict(input).ToArray();
-                AssertClose(expected, loaded, tolerance, $"{type}{(sharded ? " sharded" : "")}");
-                if (type == SafeTensorType.BF16)
+                AssertClose(expected, loaded, 1e-4f, sharded ? "sharded" : "one file");
+                if (!sharded)
                 {
-                    // bfloat16 weights from a bfloat16 checkpoint are the checkpoint's values exactly.
-                    using var half = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-                    Check(half.Network.Descendants().OfType<Linear>().All(l => l.BFloat16 is not null), "bf16 projections");
-                    AssertClose(loaded, half.Network.Predict(input).ToArray(), 1e-4f, "bf16 weights from a BF16 checkpoint");
-                }
-
-                if (type == SafeTensorType.F32 && !sharded)
-                {
-                    using var int8 = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, MaxPositions = 16 });
-                    Check(int8.Network.Descendants().OfType<Linear>().All(l => l.Int8 is not null) && int8.MaxPositions == 16, "int8, 16 positions");
-                    AssertClose(expected, int8.Network.Predict(input).ToArray(), 0.05f * expected.Max(MathF.Abs), "int8 checkpoint");
-
                     // A family registered by the application: same naming, a different spec (no q/k norm, so those weights go unused).
                     PretrainedArchitectures.Register("TestNoQkNormForCausalLM", PretrainedFamilies.CommonArchitecture((c, s, notes) => s));
                     using var custom = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Architecture = "TestNoQkNormForCausalLM" });
@@ -173,29 +160,6 @@ internal abstract partial class Tests
         {
             Check(ex.Message.Contains("Register"), ex.Message);
         }
-    }
-
-    // Writes the 16-bit value `bits` over element `index` of the stored bfloat16 tensor `name`.
-    internal static void PokeBFloat16(string folder, string name, int index, ushort bits)
-    {
-        string file;
-        long offset;
-        using (var reader = SafeTensorsReader.Open(folder))
-        {
-            var info = reader.Tensors[name];
-            (file, offset) = (info.File, info.Offset + 2L * index);
-        }
-
-        using var stream = new FileStream(file, FileMode.Open, FileAccess.Write);
-        stream.Position = offset;
-        stream.Write([(byte)bits, (byte)(bits >> 8)]);
-    }
-
-    // A source that only reads float32 values: IWeightSource's default ReadBFloat16 rounds them, as every packed bfloat16
-    // weight was made before it read stored bits.
-    internal sealed class FloatOnlyWeights(IWeightSource inner) : IWeightSource
-    {
-        public float[]? Read(string name, IReadOnlyList<int> shape) => inner.Read(name, shape);
     }
 
     internal static void BpeTokenizers(Device device)

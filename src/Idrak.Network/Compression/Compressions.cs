@@ -15,11 +15,11 @@ internal sealed class PlainCompression : IGradientCompression
     public string Summary => "every gradient value travels as float32";
 
     public IGradientCompressor Create(ICollectives collectives, IReadOnlyList<Tensor> parameters, ClusterOptions options) =>
-        new DenseCompressor(Name, collectives, WireType.Float32);
+        new DenseCompressor(Name, collectives);
 }
 
-/// <summary>A bucket weighted, then all-reduced on a wire type: the plain compression.</summary>
-internal sealed class DenseCompressor(string name, ICollectives collectives, WireType wire) : IGradientCompressor
+/// <summary>A bucket weighted, then all-reduced: the plain compression.</summary>
+internal sealed class DenseCompressor(string name, ICollectives collectives) : IGradientCompressor
 {
     private readonly HostValues _values = new(collectives);
 
@@ -28,7 +28,7 @@ internal sealed class DenseCompressor(string name, ICollectives collectives, Wir
     public void Reduce(Span<float> values, float weight, ReadOnlySpan<GradientPiece> pieces)
     {
         Scale(values, weight);
-        _values.AllReduce(values, wire);
+        _values.AllReduce(values);
     }
 
     public void Dispose() => _values.Dispose();

@@ -365,7 +365,7 @@ internal abstract partial class DesktopTests : Tests
 
         public TimeSpan SimulatedTime => _host.SimulatedTime;
 
-        public void AllReduce(Storage buffer, int count, ReduceOp op, WireType wire = WireType.Float32) => inner.AllReduce(buffer, count, op, wire);
+        public void AllReduce(Storage buffer, int count, ReduceOp op) => inner.AllReduce(buffer, count, op);
 
         public void AllGather(Storage input, int count, Storage output) => inner.AllGather(input, count, output);
 
@@ -375,7 +375,7 @@ internal abstract partial class DesktopTests : Tests
 
         public void Barrier() => inner.Barrier();
 
-        public bool TryAllReduce(Span<float> values, ReduceOp op, WireType wire) => _host.TryAllReduce(values, op, wire);
+        public bool TryAllReduce(Span<float> values, ReduceOp op) => _host.TryAllReduce(values, op);
 
         public bool TryAllGather(Span<float> all, int count) => _host.TryAllGather(all, count);
 

@@ -206,7 +206,7 @@ internal abstract class SyncCore : IGradientSync
     {
         if (World > 1 && Present && values.Length > 0)
         {
-            Values.AllReduce(values, WireType.Float32);
+            Values.AllReduce(values);
         }
     }
 
@@ -333,7 +333,7 @@ internal abstract class SyncCore : IGradientSync
     {
         var rates = new float[World];
         rates[Collectives.Rank] = _measuredTokens > 0 && _measuredSeconds > 0 ? (float)(_measuredTokens / _measuredSeconds) : 0f;
-        Values.AllReduce(rates, WireType.Float32);
+        Values.AllReduce(rates);
         (_measuredTokens, _measuredSeconds) = (0, 0);
         _nextExchange = Options.RebalanceEvery > 0 ? StepsInGroup + Options.RebalanceEvery : long.MaxValue;
         float slowest = rates.Min(), fastest = rates.Max();

@@ -42,10 +42,6 @@ internal abstract partial class Tests
             Check(ex.Message.Contains("CheckpointFormats.Register", StringComparison.Ordinal), ex.Message);
         }
 
-        Check(new[] { 0, 1, 2, 3, 6, 7, 8, 10, 11, 12, 13, 14, 20, 23, 30 }.All(GgufTypes.Ids.Contains), $"types: {string.Join(", ", GgufTypes.Ids)}");
-        var q8 = GgufTypes.Get(8);
-        Check(q8.Name == "Q8_0" && q8.BlockValues == 32 && q8.BlockBytes == 34 && GgufFile.BlockSize(14) == (256, 210) && GgufFile.TypeName(15) == "Q8_K",
-            "Q8_0 and Q6_K blocks; names of types not registered");
         // The GGUF families are Idrak.Text.Plugins' (the runner registers them, as the tool does); the library has none.
         // Gemma's (gemma, gemma2, gemma3) are its plug-in's since plan 26's leftover round L1.
         string[] ggufFamilies = ["llama", "qwen2", "qwen3", "qwen2moe", "qwen3moe", "gemma", "gemma2", "gemma3"];
@@ -257,8 +253,7 @@ internal abstract partial class Tests
         using var stream = File.OpenRead(source);
         foreach (var info in file.Tensors.Values)
         {
-            var (values, bytes) = GgufFile.BlockSize(info.Type);
-            var data = new byte[info.Count / values * bytes];
+            var data = new byte[info.Count * sizeof(float)];
             stream.Position = info.Offset;
             stream.ReadExactly(data);
             tensors.Add((info.Name, info.Type, info.Dimensions, data));
@@ -396,8 +391,7 @@ internal abstract partial class Tests
         using var stream = File.OpenRead(source);
         foreach (var info in file.Tensors.Values)
         {
-            var (values, bytes) = GgufFile.BlockSize(info.Type);
-            var data = new byte[info.Count / values * bytes];
+            var data = new byte[info.Count * sizeof(float)];
             stream.Position = info.Offset;
             stream.ReadExactly(data);
             tensors.Add((info.Name, info.Type, info.Dimensions, data));

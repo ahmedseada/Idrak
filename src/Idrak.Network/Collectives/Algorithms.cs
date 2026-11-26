@@ -17,13 +17,12 @@ internal sealed class NaiveCollectives(ITransport transport, Device device, Clus
 
     public override string Name => "naive";
 
-    protected override void AllReduceHost(Span<float> values, ReduceOp op, WireType wire)
+    protected override void AllReduceHost(Span<float> values, ReduceOp op)
     {
-        var travel = op == ReduceOp.Sum ? wire : WireType.Float32;
         if (Rank != 0)
         {
-            Send(0, values, ToRoot, travel);
-            Receive(0, values, FromRoot, WireType.Float32);
+            Send(0, values, ToRoot);
+            Receive(0, values, FromRoot);
             return;
         }
 
@@ -32,7 +31,7 @@ internal sealed class NaiveCollectives(ITransport transport, Device device, Clus
         {
             for (int r = 1; r < WorldSize; r++)
             {
-                Receive(r, other.AsSpan(0, values.Length), ToRoot, travel);
+                Receive(r, other.AsSpan(0, values.Length), ToRoot);
                 Combine(values, other.AsSpan(0, values.Length), op);
             }
         }
@@ -43,7 +42,7 @@ internal sealed class NaiveCollectives(ITransport transport, Device device, Clus
 
         for (int r = 1; r < WorldSize; r++)
         {
-            Send(r, values, FromRoot, WireType.Float32);
+            Send(r, values, FromRoot);
         }
     }
 
@@ -51,29 +50,29 @@ internal sealed class NaiveCollectives(ITransport transport, Device device, Clus
     {
         if (Rank != 0)
         {
-            Send(0, all.Slice(Rank * count, count), ToRoot, WireType.Float32);
-            Receive(0, all, FromRoot, WireType.Float32);
+            Send(0, all.Slice(Rank * count, count), ToRoot);
+            Receive(0, all, FromRoot);
             return;
         }
 
         for (int r = 1; r < WorldSize; r++)
         {
-            Receive(r, all.Slice(r * count, count), ToRoot, WireType.Float32);
+            Receive(r, all.Slice(r * count, count), ToRoot);
         }
 
         for (int r = 1; r < WorldSize; r++)
         {
-            Send(r, all, FromRoot, WireType.Float32);
+            Send(r, all, FromRoot);
         }
     }
 
-    protected override void ReduceScatterHost(Span<float> values, int count, ReduceOp op) => AllReduceHost(values, op, WireType.Float32);
+    protected override void ReduceScatterHost(Span<float> values, int count, ReduceOp op) => AllReduceHost(values, op);
 
     protected override void BroadcastHost(Span<float> values, int root)
     {
         if (Rank != root)
         {
-            Receive(root, values, FromRoot, WireType.Float32);
+            Receive(root, values, FromRoot);
             return;
         }
 
@@ -81,7 +80,7 @@ internal sealed class NaiveCollectives(ITransport transport, Device device, Clus
         {
             if (r != root)
             {
-                Send(r, values, FromRoot, WireType.Float32);
+                Send(r, values, FromRoot);
             }
         }
     }
@@ -111,26 +110,25 @@ internal sealed class RingCollectives(ITransport transport, Device device, Clust
 
     private int Previous => (Rank - 1 + WorldSize) % WorldSize;
 
-    protected override void AllReduceHost(Span<float> values, ReduceOp op, WireType wire)
+    protected override void AllReduceHost(Span<float> values, ReduceOp op)
     {
-        var travel = op == ReduceOp.Sum ? wire : WireType.Float32;
         int world = WorldSize, slice = values.Length / world, extra = values.Length % world;
         int Offset(int s) => (s * slice) + Math.Min(s, extra);
         int Size(int s) => slice + (s < extra ? 1 : 0);
-        RingScatter(values, _ring, Rank, Offset, Size, op, travel, ScatterTag);
+        RingScatter(values, _ring, Rank, Offset, Size, op, ScatterTag);
         RingGather(values, _ring, Rank, Offset, Size, GatherTag);
     }
 
     protected override void AllGatherHost(Span<float> all, int count) => RingGather(all, _ring, Rank, s => s * count, _ => count, GatherTag);
 
     protected override void ReduceScatterHost(Span<float> values, int count, ReduceOp op) =>
-        RingScatter(values, _ring, Rank, s => s * count, _ => count, op, WireType.Float32, ScatterTag);
+        RingScatter(values, _ring, Rank, s => s * count, _ => count, op, ScatterTag);
 
     // Pieces of each rank's own size (a sharded bucket): the same ring, each piece ending at its rank.
-    protected override void ReduceScatterPiecesHost(Span<float> values, int[] counts, ReduceOp op, WireType wire)
+    protected override void ReduceScatterPiecesHost(Span<float> values, int[] counts, ReduceOp op)
     {
         var starts = Starts(counts);
-        RingScatter(values, _ring, Rank, s => starts[s], s => counts[s], op, wire, ScatterTag);
+        RingScatter(values, _ring, Rank, s => starts[s], s => counts[s], op, ScatterTag);
     }
 
     protected override void AllGatherPiecesHost(Span<float> values, int[] counts)
@@ -179,16 +177,16 @@ internal sealed class RingCollectives(ITransport transport, Device device, Clust
 
         if (Rank == root)
         {
-            Send(Next, values, BroadcastTag, WireType.Float32);
+            Send(Next, values, BroadcastTag);
         }
         else if (Next == root)
         {
-            Receive(Previous, values, BroadcastTag, WireType.Float32);
+            Receive(Previous, values, BroadcastTag);
         }
         else
         {
-            Receive(Previous, values, BroadcastTag, WireType.Float32);
-            Send(Next, values, BroadcastTag, WireType.Float32);
+            Receive(Previous, values, BroadcastTag);
+            Send(Next, values, BroadcastTag);
         }
     }
 }

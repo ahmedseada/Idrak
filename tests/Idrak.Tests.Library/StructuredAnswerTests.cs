@@ -315,60 +315,6 @@ internal abstract partial class Tests
         Check(reading.DoneReason is "length" or "stop" or "repetition" && reading.Truncated == (reading.DoneReason == "length"),
             $"done reason {reading.DoneReason}, truncated {reading.Truncated}");
     }
-    // The precision each layer's forward pass ran under, by phase: -1 before the generator made its sampler (the vision
-    // encoder), 0 from then to its first sample (the prompt's pass), then the decoding step's number.
-    internal sealed class LayerPrecisions : ITelemetryHook
-    {
-        public int Phase = -1;
-
-        public List<(int Phase, MatMulPrecision Precision)> Seen { get; } = [];
-
-        public TelemetryLevel Levels => TelemetryLevel.Layers;
-
-        public void OnLayerForward(in LayerForward e)
-        {
-            lock (Seen)
-            {
-                Seen.Add((Phase, MixedPrecision.Current));
-            }
-        }
-    }
-
-    // A sampler that moves LayerPrecisions' phase: made (the prompt's pass follows), then each sample (a decoding step follows).
-    internal sealed class PhaseSampler : ITokenSampler
-    {
-        private readonly ITokenSampler _inner;
-        private readonly LayerPrecisions _phases;
-
-        public PhaseSampler(ITokenSampler inner, LayerPrecisions phases)
-        {
-            (_inner, _phases) = (inner, phases);
-            phases.Phase = 0;
-        }
-
-        public int Rows => _inner.Rows;
-
-        public int Vocabulary => _inner.Vocabulary;
-
-        public Tensor Ids => _inner.Ids;
-
-        public bool Recordable => _inner.Recordable;
-
-        public void Sample(Tensor logits)
-        {
-            _inner.Sample(logits);
-            _phases.Phase++;
-        }
-
-        public void SetHistory(IReadOnlyList<int> tokens) => _inner.SetHistory(tokens);
-
-        public void Reset() => _inner.Reset();
-
-        public SampledToken[][] Read(int fromStep, int toStep) => _inner.Read(fromStep, toStep);
-
-        public void Dispose() => _inner.Dispose();
-    }
-
     internal static void ImageReaderBatchFits(Device device)
     {
         RegisterGemma3Vision();

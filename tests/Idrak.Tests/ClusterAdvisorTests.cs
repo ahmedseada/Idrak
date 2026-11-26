@@ -13,19 +13,18 @@ using Idrak.Layers;
 using Idrak.Training;
 
 // Plan 23, phase C8c (decision 4): the "cluster" setting advisor. A data-parallel run's gradient synchronisation measures
-// its first warm steps (the network's share of a step, a gradient slice reduced over a float32 and a bfloat16 wire) while
-// someone listens for suggestions, and rank 0 asks the advisors once; the "cluster" advisor suggests a bf16 wire, gradient
+// its first warm steps (the network's share of a step) while
+// someone listens for suggestions, and rank 0 asks the advisors once; the "cluster" advisor suggests gradient
 // accumulation, local SGD, top-k, the bucket size and the hierarchical collective by those figures, never applying one.
 // The conditions (ClusterSettingAdvisor): nothing at or under IDRAK_CLUSTER_SUGGEST_SHARE; hierarchical where ring runs
-// over several nodes of several ranks; bf16 where the buckets travel uncompressed and the slice's error is within
-// IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE; accumulation and local SGD by the factor A = ceil(E'(1-T)/(T·C)) (E' the exposed
-// network time, halved where bf16 is suggested, C the step's compute, T the share) where E'/(C+E') is still above T, and
+// over several nodes of several ranks; accumulation and local SGD by the factor A = ceil(E'(1-T)/(T·C)) (E' the exposed
+// network time, C the step's compute, T the share) where E'/(C+E') is still above T, and
 // top-k with the share T·C/((1-T)·E·W) beside them; a bucket size where one pinned bucket holds every gradient.
 internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterAdvisorGroup =
     [
-        ("cluster: advisor on a slow link (ethernet-1g, a model whose all-reduce is most of the step) suggests --wire bf16 once within the default tolerance (bf16's rounding step), with the network's share and the measured bf16 error in its reason, and accumulation, local SGD and top-k where bf16 alone leaves the share above the threshold", ClusterAdvisorSlowLink),
+        ("cluster: advisor on a slow link (ethernet-1g, a model whose all-reduce is most of the step) suggests accumulation, local SGD and top-k where the share is above the threshold", ClusterAdvisorSlowLink),
         ("cluster: advisor on a fast link (a same-device link declared at 1 PB/s) suggests nothing: the network's share is under IDRAK_CLUSTER_SUGGEST_SHARE", ClusterAdvisorFastLink),
         ("cluster: advisor ring over two nodes of two ranks suggests the hierarchical collective; one bucket pinned for every gradient gets a bucket size that lets the network go during the backward pass", ClusterAdvisorHierarchicalAndBuckets),
         ("cluster: advisor the run's losses and weights are the same bit for bit with the advisor on and off; nothing is measured without a listener when it is unset or off, and on it adds its two slice collectives once", ClusterAdvisorChangesNothing),
@@ -106,12 +105,11 @@ internal abstract partial class DesktopTests : Tests
 
     private static string Describe(ClusterStepMeasure m) => string.Create(CultureInfo.InvariantCulture,
         $"share {m.Share:P1} (exposed {m.Exposed.TotalMilliseconds:F3} ms of a {m.Step.TotalMilliseconds:F3} ms step, network {m.Network.TotalMilliseconds:F3} ms, backward {m.Backward.TotalMilliseconds:F3} ms), "
-        + $"{m.GradientBytes / 1024.0:F0} KiB in {m.Buckets} bucket(s) of {m.BucketBytes / 1024.0:F0} KiB, {m.Steps} warm steps, {m.WorldSize} ranks on {m.Nodes} node(s), "
-        + $"bf16 error {(m.BFloat16Error is { } e ? e.ToString("G3", CultureInfo.InvariantCulture) : "-")} on {m.SliceValues} values");
+        + $"{m.GradientBytes / 1024.0:F0} KiB in {m.Buckets} bucket(s) of {m.BucketBytes / 1024.0:F0} KiB, {m.Steps} warm steps, {m.WorldSize} ranks on {m.Nodes} node(s)");
 
     private static void ClusterAdvisorSlowLink(Device device)
     {
-        var options = AdvisorOptions();                                   // the default tolerance: bfloat16's rounding step, 2^-7
+        var options = AdvisorOptions();
         var (seen, _) = AdvisorRun(NodesOf([1, 1], device.ToString(), "ethernet-1g"), options);
         Check(seen.Measures.Count == 1, $"rank 0 asked the advisors once: {seen.Measures.Count} measurement(s)");
         var m = seen.Measures[0];
@@ -121,28 +119,21 @@ internal abstract partial class DesktopTests : Tests
             Console.WriteLine($"    suggested {s.Setting} = {s.Value}: {s.Reason}");
         }
 
-        Check(m.Simulated && m.Steps == options.SuggestSteps && m.Share > options.SuggestShare && m.BFloat16Error is > 0,
-            $"the first warm steps measured on the virtual clock, the network above the threshold, bf16's error measured: {Describe(m)}");
+        Check(m.Simulated && m.Steps == options.SuggestSteps && m.Share > options.SuggestShare,
+            $"the first warm steps measured on the virtual clock, the network above the threshold: {Describe(m)}");
         var cluster = seen.Cluster;
         Check(cluster.Select(s => (s.Setting, s.Value)).Distinct().Count() == cluster.Count && cluster.All(s => s.Device.Length > 0),
             $"each suggestion once: {string.Join(", ", cluster.Select(s => $"{s.Setting}={s.Value}"))}");
-        var wire = cluster.Where(s => s.Setting == "ClusterOptions.Wire").ToList();
-        string error = m.BFloat16Error!.Value.ToString("G3", CultureInfo.InvariantCulture);
-        Check(wire.Count == 1 && wire[0].Value == "bf16" && wire[0].Reason.Contains(AdvicePct(m.Share), StringComparison.Ordinal) && wire[0].Reason.Contains(error, StringComparison.Ordinal)
-              && wire[0].Reason.Contains("--wire bf16", StringComparison.Ordinal),
-            $"--wire bf16 suggested once with the share {AdvicePct(m.Share)} and the error {error} in its reason: {string.Join(" | ", wire.Select(s => s.Reason))}");
-
-        // With bf16's half the bytes the share may still be above the threshold: then accumulation, local SGD and top-k.
-        double exposed = m.Exposed.TotalSeconds / 2, compute = m.Compute.TotalSeconds, threshold = options.SuggestShare;
+        double exposed = m.Exposed.TotalSeconds, compute = m.Compute.TotalSeconds, threshold = options.SuggestShare;
         bool still = compute > 0 && exposed / (compute + exposed) > threshold;
         int factor = still ? Math.Max(2, (int)Math.Ceiling(exposed * (1 - threshold) / (threshold * compute))) : 0;
         var accumulate = cluster.FirstOrDefault(s => s.Setting == "GradientAccumulation");
         var localSgd = cluster.FirstOrDefault(s => s.Setting == "ClusterOptions.LocalSgdEvery");
         var topk = cluster.FirstOrDefault(s => s.Setting == "ClusterOptions.TopK");
         string f = factor.ToString(CultureInfo.InvariantCulture);
-        Check(still ? accumulate.Value == f && localSgd.Value == f && topk.Value is { Length: > 0 } && accumulate.Reason.Contains("with bf16", StringComparison.Ordinal)
+        Check(still ? accumulate.Value == f && localSgd.Value == f && topk.Value is { Length: > 0 }
                     : accumulate.Setting is null && localSgd.Setting is null && topk.Setting is null,
-            $"accumulation and local SGD by {f} and top-k {(still ? "suggested" : "not suggested")} (with bf16 the share is {AdvicePct(exposed / (compute + exposed))}): "
+            $"accumulation and local SGD by {f} and top-k {(still ? "suggested" : "not suggested")} (the share is {AdvicePct(exposed / (compute + exposed))}): "
             + $"{accumulate.Value}, {localSgd.Value}, {topk.Value}");
         Check(cluster.All(s => s.Setting is not ("ClusterOptions.Collective" or "ClusterOptions.BucketBytes")),
             "no hierarchical suggestion for nodes of one rank, no bucket size where it was measured");

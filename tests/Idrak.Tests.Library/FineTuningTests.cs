@@ -22,16 +22,15 @@ internal abstract partial class Tests
         ("scoring: log-probabilities of chosen tokens computed on the device match a log-softmax of the full logits (chunked, repeated rows)", TokenLogProbabilities),
         ("scoring: a cached forward pass without autograd frees each layer's intermediate results (only the cache and the output stay)", CachedForwardFreesLayers),
         ("scoring: given answers to chat prompts are scored as the model's own full forward pass scores them, each prompt run once from a cache or with every answer, whatever the batching; long messages are shortened to fit", AnswerScoring),
-        ("fine-tuning: the gated activation reads and writes bfloat16 words as packing and unpacking around the float kernels would (SiLU, GELU, ReLU, odd sizes)", PackedGatedActivation),
         ("fine-tuning: releasing results no backward step reads, and recomputing feed-forward activations, give the same loss and gradients with less memory (RoPE, biases, q/k norms, post norms, parallel blocks, layer norms, dropout)", ReleasedActivations),
         ("fine-tuning: checkpointing is off by default and turns on (the step run again) when a step runs out of memory; a lighter setting that fits is timed against checkpointing and the faster kept", AutomaticCheckpointing),
         ("fine-tuning: when the first step's bytes per position say the largest batch will not fit, recomputed feed-forward activations are on before any step fails; with room nothing changes", FirstRungFromMeasuredBytes),
-        ("fine-tuning: the activation estimate per rung grows with rows × positions and falls down the ladder (held, recomputed feed-forward, also bfloat16, checkpointing); a rung round-trips through the stop state", ActivationEstimatePerRung),
+        ("fine-tuning: the activation estimate per rung grows with rows × positions and falls down the ladder (held, recomputed feed-forward, checkpointing); a rung round-trips through the stop state", ActivationEstimatePerRung),
         ("fine-tuning: with the activation estimate the first step starts at the rung that fits a small device (no out-of-memory step-down); with it off the ladder steps down; a resumed session starts at the saved rung", ActivationEstimateFirstRung),
         ("fine-tuning: a model tuned in place goes back as found: a loaded adapter leaves the base frozen (a session over it trains the adapter alone), RemoveAdapters frees every adapter and its gradients and the model scores as its base again; BatchTokensThatFit halves the batch until the estimate fits the device's room, never below one sequence", AdaptersInPlace),
         ("models: a Hugging Face model id is downloaded (only the files the library reads, sharded weights) into the cache with its bytes of total told, loads with its tensors read of total told, and works offline", ModelDownload),
         ("models: offline, a model id takes the newest finished download, never a folder a pull left unfinished (its pull marker, or a partial file); a download that fails keeps its marker", OfflineSkipsUnfinished),
-        ("fine-tuning: agent transcripts through the chat template, assistant-only tokens, LoRA and QLoRA training, PEFT adapters, merged export", AgentFineTuning),
+        ("fine-tuning: agent transcripts through the chat template, assistant-only tokens, LoRA training, PEFT adapters, merged export", AgentFineTuning),
         ("fine-tuning: a conversation too long for the maximum length keeps its whole answer (the user message is shortened, its start kept); an answer longer than the budget alone gives the end cut at once; rows encode on all cores in order", LongMessageKeepsAnswer),
         ("fine-tuning: an adapter folder's manifest round-trips, names a local base model by its full path, and loads the model with the adapter merged", ManifestRoundTrip),
         ("fine-tuning options: AdamW and cosine given explicitly match the default; another optimizer's recorded steps match its ordinary ones; an optimizer that cannot be recorded runs ordinary steps; the built-in schedules", OptimizerAndSchedule),
@@ -40,8 +39,8 @@ internal abstract partial class Tests
         ("fine-tuning options: DPO, conservative DPO, ORPO and SimPO match their formulas for fixed log-probabilities (and DPO its gradient)", PreferenceFormulas),
         ("fine-tuning options: DPO (reference: adapters disabled), ORPO and SimPO lower their loss on preference pairs; DPO starts at log 2; disabled adapters give the base model", PreferenceTraining),
         ("fine-tuning options: preference rows in TRL's layouts read as one shape; only the answers train", PreferenceRows),
-        ("fine-tuning options: a DoRA layer (float and 4-bit bases) gives the reference output and magnitude gradient; merging keeps the output", DoraLayer),
-        ("fine-tuning options: DoRA adapters start as the identity, train, round-trip through the PEFT files (use_dora, magnitude vectors), merge while loading and export; DoRA over a 4-bit base", DoraTraining),
+        ("fine-tuning options: a DoRA layer gives the reference output and magnitude gradient; merging keeps the output", DoraLayer),
+        ("fine-tuning options: DoRA adapters start as the identity, train, round-trip through the PEFT files (use_dora, magnitude vectors), merge while loading and export", DoraTraining),
         ("fine-tuning options: PEFT adapters with another peft_type, unsupported options or tensors for layers not adapted are refused; use_rslora scales by alpha / sqrt(r)", PeftConfigChecks),
     ];
 
@@ -149,7 +148,7 @@ internal abstract partial class Tests
         {
             var tokens = Enumerable.Range(0, 3 * 11).Select(_ => (float)r.Next(spec.Vocabulary)).ToArray();
             var weights = Enumerable.Range(0, 3 * 11 * spec.Vocabulary).Select(_ => (float)(r.NextDouble() * 2 - 1)).ToArray();
-            (float Loss, float[] Gradients, long Held) Run(bool release, bool recompute, bool compress = false)
+            (float Loss, float[] Gradients, long Held) Run(bool release, bool recompute)
             {
                 bool previous = ActivationMemory.ReleaseUnused;
                 ActivationMemory.ReleaseUnused = release;
@@ -165,7 +164,6 @@ internal abstract partial class Tests
                     model.Train();
                     using var scope = new TensorScope();
                     using var recomputing = recompute ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null;
-                    using var compressing = compress ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
                     // Tensors other tests left to the garbage collector free their memory when finalized; let that happen
                     // now, not between the two readings (it made "held" negative whenever a collection fell in between).
                     GC.Collect();
@@ -194,14 +192,6 @@ internal abstract partial class Tests
 
             Check(released.Held < kept.Held, $"{name}: releasing holds less after the forward pass ({released.Held:N0} vs {kept.Held:N0} bytes)");
 
-            // Held as bfloat16 between the passes: the same loss (computed before), gradients within bfloat16's rounding,
-            // less memory still; also with the feed-forward activations recomputed from compressed gate and up.
-            foreach (var (what, run) in new[] { ("bfloat16", Run(true, false, compress: true)), ("bfloat16, recomputed", Run(true, true, compress: true)) })
-            {
-                AssertClose([kept.Loss], [run.Loss], 1e-5f, $"{name}, {what}: loss");
-                CloseByNorm(kept.Gradients, run.Gradients, 2e-2f, $"{name}, {what}: adapter gradients");
-                Check(run.Held < released.Held, $"{name}, {what}: holds less than released alone ({run.Held:N0} vs {released.Held:N0} bytes)");
-            }
             Check(spec.Gated == false || recomputed.Held < released.Held, $"{name}: recomputing holds less still ({recomputed.Held:N0} vs {released.Held:N0} bytes)");
         }
     }
@@ -238,10 +228,6 @@ internal abstract partial class Tests
             var single = new AnswerScorer(model, maxLength: 96) { PromptsPerPass = 1 }.LogLikelihoods(prompts, answers);
             var bounded = new AnswerScorer(model, maxLength: 96) { PositionsPerPass = 1 }.LogLikelihoods(prompts, answers);   // one prompt a pass
             var unshared = new AnswerScorer(model, maxLength: 96) { SharePrompts = false }.LogLikelihoods(prompts, answers);
-            // With the default precision (bfloat16 tensor cores where the GPU has them), each prompt runs once.
-            bool mustShare = device.Type == DeviceType.Cpu || spec.HeadDim == 64 && MixedPrecision.TensorCoresUnavailable(device) is null;
-            Check(scorer.SharesPrompts || !mustShare, $"head size {spec.HeadDim}: each prompt runs once for all its answers ({scorer.EffectivePrecision})");
-            using var precision = MixedPrecision.Use(scorer.EffectivePrecision);                  // the reference at the same precision
 
             // The same values from the whole network's logits over each (fitted prompt, answer) sequence alone.
             for (int p = 0; p < prompts.Length; p++)
@@ -398,85 +384,6 @@ internal abstract partial class Tests
         Check(Losses.TokenLogProbabilities(hidden, head.Forward, [], []).Length == 0, "no rows, no values");
     }
 
-    internal static void PackedGatedActivation(Device device)
-    {
-        var r = new Random(52);
-        float[] Values(int n) => [.. Enumerable.Range(0, n).Select(_ => (float)(r.NextDouble() * 6 - 3))];
-        foreach (int n in new[] { 1, 7, 1000, 4097 })
-        {
-            for (int kind = 0; kind < 3; kind++)
-            {
-                using var scope = new TensorScope();
-                var gate = Tensor.From(Values(n), [n], device);
-                var up = Tensor.From(Values(n), [n], device);
-                var backend = gate.Backend;
-                int words = (n + 1) / 2;
-                float[] Unpacked(Tensor packed)
-                {
-                    var values = Tensor.Zeros([n], device);
-                    backend.BFloat16Dequantize(packed.Storage, values.Storage, 1, n);
-                    return values.ToArray();
-                }
-
-                Tensor Packed(Tensor values)
-                {
-                    var packed = Tensor.Zeros([words], device);
-                    backend.PackBFloat16(values.Storage, packed.Storage, n);
-                    return packed;
-                }
-
-                // Forward: y from the floats, gate, up and y packed in the same pass.
-                var expected = Tensor.Zeros([n], device);
-                backend.GatedActivation(gate.Storage, up.Storage, expected.Storage, n, kind);
-                var (y, pg, pu, py) = (Tensor.Zeros([n], device), Tensor.Zeros([words], device), Tensor.Zeros([words], device), Tensor.Zeros([words], device));
-                backend.GatedActivationPacked(gate.Storage, up.Storage, pg.Storage, pu.Storage, y.Storage, py.Storage, n, kind, 2 | 4 | 8);
-                string what = $"n {n}, kind {kind}";
-                AssertClose(expected.ToArray(), y.ToArray(), 1e-5f, $"{what}: y");
-                AssertClose(Unpacked(Packed(gate)), Unpacked(pg), 0f, $"{what}: packed gate");
-                AssertClose(Unpacked(Packed(up)), Unpacked(pu), 0f, $"{what}: packed up");
-                AssertClose(Unpacked(Packed(expected)), Unpacked(py), 1e-2f, $"{what}: packed y");
-
-                // Recomputed from the words: as the float kernel over the unpacked values.
-                var (g16, u16) = (Tensor.From(Unpacked(pg), [n], device), Tensor.From(Unpacked(pu), [n], device));
-                backend.GatedActivation(g16.Storage, u16.Storage, expected.Storage, n, kind);
-                var recomputed = Tensor.Zeros([n], device);
-                backend.GatedActivationPacked(recomputed.Storage, recomputed.Storage, pg.Storage, pu.Storage, recomputed.Storage, recomputed.Storage, n, kind, 1 | 4);
-                AssertClose(expected.ToArray(), recomputed.ToArray(), 1e-5f, $"{what}: recomputed");
-
-                // Backward from the words, accumulating (flags: gate, up, both).
-                for (int flags = 1; flags <= 3; flags++)
-                {
-                    var dy = Tensor.From(Values(n), [n], device);
-                    var start = Values(n);
-                    var (dg, du) = (Tensor.From(start, [n], device), Tensor.From(start, [n], device));
-                    var (eg, eu) = (Tensor.From(start, [n], device), Tensor.From(start, [n], device));
-                    backend.GatedActivationBackward(g16.Storage, u16.Storage, dy.Storage, eg.Storage, eu.Storage, n, kind, flags);
-                    backend.GatedActivationBackwardPacked(pg.Storage, pu.Storage, dy.Storage, dg.Storage, du.Storage, n, kind, flags);
-                    AssertClose(eg.ToArray(), dg.ToArray(), 1e-5f, $"{what}, flags {flags}: dgate");
-                    AssertClose(eu.ToArray(), du.ToArray(), 1e-5f, $"{what}, flags {flags}: dup");
-
-                    // The first gradient written over whatever the buffers hold (flags 4 and 8), float and packed kernels.
-                    int written = flags | 4 | 8;
-                    var nan = Enumerable.Repeat(float.NaN, n).ToArray();
-                    var (zg, zu) = (Tensor.Zeros([n], device), Tensor.Zeros([n], device));
-                    backend.GatedActivationBackward(g16.Storage, u16.Storage, dy.Storage, zg.Storage, zu.Storage, n, kind, flags);
-                    var (wg, wu) = (Tensor.From(nan, [n], device), Tensor.From(nan, [n], device));
-                    backend.GatedActivationBackward(g16.Storage, u16.Storage, dy.Storage, wg.Storage, wu.Storage, n, kind, written);
-                    var (pwg, pwu) = (Tensor.From(nan, [n], device), Tensor.From(nan, [n], device));
-                    backend.GatedActivationBackwardPacked(pg.Storage, pu.Storage, dy.Storage, pwg.Storage, pwu.Storage, n, kind, written);
-                    foreach (var (expectedWritten, actual, part) in new[] { (zg, wg, "dgate"), (zu, wu, "dup"), (zg, pwg, "packed dgate"), (zu, pwu, "packed dup") })
-                    {
-                        bool used = part.EndsWith("dgate") ? (flags & 1) != 0 : (flags & 2) != 0;
-                        if (used)
-                        {
-                            AssertClose(expectedWritten.ToArray(), actual.ToArray(), 1e-5f, $"{what}, flags {written}: {part} written");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     internal static void AutomaticCheckpointing(Device device)
     {
         if (device.Type != DeviceType.Cpu)
@@ -540,7 +447,7 @@ internal abstract partial class Tests
             var roomy = Train(null, null);
             Check(roomy.Done && !roomy.Trace.Contains("checkpointing is on"), "with room, training runs without checkpointing");
 
-            // A budget where recomputing the feed-forward activations (or also holding them as bfloat16) fits: that
+            // A budget where recomputing the feed-forward activations fits: that
             // setting and checkpointing are each timed, and training finishes with one of them.
             var plain = Enumerable.Range(1, 32).Select(i => budget!.Value + ((long)i << 23)).First(b => Train(false, b).Done);
             var lighter = Enumerable.Range(1, 15).Select(i => plain - (plain - budget!.Value) * i / 16)
@@ -642,7 +549,7 @@ internal abstract partial class Tests
             Rope = new RopeSettings(10000f), NormEpsilon = 1e-6f, QkNorm = true, TieEmbeddings = true,
         };
         var capabilities = device.Backend.Capabilities;
-        ActivationRung[] ladder = [new(false, false, false), new(true, false, false), new(true, true, false), new(true, true, true)];
+        ActivationRung[] ladder = [new(false, false), new(true, false), new(true, true)];
         long Bytes(int rows, int length, ActivationRung rung) => ActivationEstimate.Bytes(spec, capabilities, rows, length, rung, 512);
         for (int i = 0; i < ladder.Length; i++)
         {
@@ -1253,15 +1160,9 @@ internal abstract partial class Tests
             using (var merged = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, MergeAdapter = adapter }))
             {
                 float loss = FineTuner.Evaluate(merged, sequences);
-                Check(loss < before * 0.5f, $"int8 weights with the adapter merged while loading: {loss:F3}");
+                Check(loss < before * 0.5f, $"the adapter merged while loading: {loss:F3}");
             }
 
-            // QLoRA: adapters on a 4-bit base also learn.
-            using var quantized = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-            float q0 = FineTuner.Evaluate(quantized, sequences);
-            FineTuner.Train(quantized, sequences, sequences, options with { Epochs = 25 });
-            float q1 = FineTuner.Evaluate(quantized, sequences);
-            Check(q1 < q0 * 0.6f, $"QLoRA loss {q0:F3} → {q1:F3}");
             Check(progress.Count > 0 && progress[^1].Step == progress[^1].TotalSteps && progress.All(p => float.IsFinite(p.Loss)), "progress reports");
         }
         finally
@@ -1330,43 +1231,6 @@ internal abstract partial class Tests
         AssertClose(expectedHidden, rowsHidden, 1e-4f, "hidden gradient, trained rows only");
         AssertClose(expectedAdapter, rowsAdapter, 1e-4f, "adapter gradient, trained rows only");
 
-        // A frozen matrix used through a transposed bfloat16 copy: the product of x and the table rounded to bfloat16 (as the
-        // tensor cores round it), and the input gradient through the table as stored.
-        var tableValues = Random(Vocabulary * Dim);
-        static float Round(float v)
-        {
-            int bits = BitConverter.SingleToInt32Bits(v);
-            bits = (bits + 0x7FFF + ((bits >> 16) & 1)) & unchecked((int)0xFFFF0000);
-            return BitConverter.Int32BitsToSingle(bits);
-        }
-
-        float[] Tied(bool cached, out float[] inputGrad)
-        {
-            using var scope = new TensorScope();
-            var table = Tensor.From(tableValues, [Vocabulary, Dim], device);
-            var x = Tensor.From(hiddenValues, [Rows, Dim], device, requiresGrad: true);
-            if (cached)
-            {
-                using var transposed = BFloat16Weight.FromValues([.. Enumerable.Range(0, Dim * Vocabulary).Select(i => tableValues[i % Vocabulary * Dim + i / Vocabulary])], Dim, Vocabulary, device);
-                var y = Tensor.MatMulFrozenTransposed(x, table, transposed);
-                (y * y).Sum().Backward();
-                inputGrad = x.Grad!.ToArray();
-                return y.ToArray();
-            }
-
-            // Reference: y with the rounded table, dx = 2y · E with the table as stored.
-            var rounded = Tensor.From([.. tableValues.Select(Round)], [Vocabulary, Dim], device);
-            using (Autograd.NoGrad())
-            {
-                var y = x.MatMul(rounded, transposeB: true);
-                inputGrad = (y * 2f).MatMul(table).ToArray();
-                return y.ToArray();
-            }
-        }
-
-        AssertClose(Tied(false, out var plainGrad), Tied(true, out var cachedGrad), 1e-4f, "frozen transposed product (bfloat16 copy)");
-        AssertClose(plainGrad, cachedGrad, 1e-3f, "frozen transposed product: input gradient");
-
         // The fused LoRA term: same output and gradients (input, A, B, base weight) as product + x·A·B·scale.
         var w0 = Random(Dim * Vocabulary);
         var a0 = Random(Dim * 3);
@@ -1393,22 +1257,6 @@ internal abstract partial class Tests
         }
     }
 
-    // actual (from a batched, packed or ragged path) against exact (float32, the plain path): on the CPU within 1e-3; on
-    // CUDA within three times the error bfloat16 itself gives the plain path (reduced, its own error), at least 1e-2. A wrong
-    // position, mask or start gives errors of order one; rounding differences stay near the plain path's own.
-    internal static void WithinPrecision(float[] exact, float[] reduced, float[] actual, Device device, string what)
-    {
-        if (device.Type != DeviceType.Cuda)
-        {
-            CloseByNorm(exact, actual, 1e-3f, what);
-            return;
-        }
-
-        float own = RelativeError(exact, reduced);
-        float error = RelativeError(exact, actual);
-        Check(error <= Math.Max(1e-2f, 3f * own), $"{what}: relative error {error:G3} against float32; bfloat16 alone gives {own:G3}");
-    }
-
     internal static double Norm(float[] values) => Math.Sqrt(values.Sum(v => (double)v * v));
 
     internal static float RelativeError(float[] expected, float[] actual)
@@ -1423,7 +1271,7 @@ internal abstract partial class Tests
         return (float)Math.Sqrt(difference / Math.Max(norm, 1e-30));
     }
 
-    // ‖expected - actual‖ ≤ tolerance · ‖expected‖ (products in bfloat16 differ element by element, not overall).
+    // ‖expected - actual‖ ≤ tolerance · ‖expected‖.
     internal static void CloseByNorm(float[] expected, float[] actual, float tolerance, string what)
     {
         Check(expected.Length == actual.Length, $"{what}: length {actual.Length}, expected {expected.Length}");

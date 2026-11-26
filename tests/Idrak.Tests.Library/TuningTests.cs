@@ -687,37 +687,20 @@ internal abstract partial class Tests
 
         const int rows = 8, capacity = 1024, dim = 64;
         var r = new Random(5);
-        float[] Words(int n, KeyValueFormat format) => [.. Enumerable.Range(0, n).Select(_ => format switch
-        {
-            KeyValueFormat.Float32 => r.NextSingle() * 2 - 1,
-            KeyValueFormat.BFloat16 => BitConverter.Int32BitsToSingle((int)((BitConverter.SingleToUInt32Bits(r.NextSingle() - 0.5f) >> 16)
-                | (BitConverter.SingleToUInt32Bits(r.NextSingle() - 0.5f) & 0xFFFF0000u))),
-            _ => BitConverter.Int32BitsToSingle(r.Next() & 0x7F7F7F7F),
-        })];
+        float[] Words(int n) => [.. Enumerable.Range(0, n).Select(_ => r.NextSingle() * 2 - 1)];
         int? splits = CudaBackend.DecodeSplits, chunk = CudaBackend.DecodeMinChunk;
         try
         {
-            foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
             {
-                using var cache = new KeyValueCache(rows, capacity, dim, device, format);
-                device.Backend.Upload(Words(cache.Keys.Size, format), cache.Keys.Storage);
-                device.Backend.Upload(Words(cache.Values.Size, format), cache.Values.Storage);
-                if (format == KeyValueFormat.Int8)
-                {
-                    device.Backend.Upload([.. Enumerable.Repeat(0.01f, cache.KeyScales!.Size)], cache.KeyScales.Storage);
-                    device.Backend.Upload([.. Enumerable.Repeat(0.01f, cache.ValueScales!.Size)], cache.ValueScales.Storage);
-                }
+                using var cache = new KeyValueCache(rows, capacity, dim, device, KeyValueFormat.Float32);
+                device.Backend.Upload(Words(cache.Keys.Size), cache.Keys.Storage);
+                device.Backend.Upload(Words(cache.Values.Size), cache.Values.Storage);
 
                 using var q = Tensor.From([.. Enumerable.Range(0, rows * 2 * dim).Select(_ => r.NextSingle() - 0.5f)], [rows, 2, dim], device);
                 float[] Attend(int length)
                 {
                     using var position = Tensor.From([length - 1f], [1], device);
-                    using var y = format switch
-                    {
-                        KeyValueFormat.Float32 => Tensor.AttentionDecode(q, cache, position, 1, 0.125f),
-                        KeyValueFormat.Int8 => Tensor.AttentionInt8(q, cache, position, 1, 0.125f, tiled: false),
-                        _ => Tensor.AttentionBFloat16(q, cache, position, 1, 0.125f, tiled: false),
-                    };
+                    using var y = Tensor.AttentionDecode(q, cache, position, 1, 0.125f);
                     return y.ToArray();
                 }
 
@@ -730,7 +713,7 @@ internal abstract partial class Tests
                         foreach (int least in new[] { 1, 8, 64, 512 })
                         {
                             (CudaBackend.DecodeSplits, CudaBackend.DecodeMinChunk) = (s, least);
-                            AssertClose(one, Attend(length), 1e-4f * Math.Max(1f, one.Max(Math.Abs)), $"{format}, {length} positions, {s} splits, at least {least} per block");
+                            AssertClose(one, Attend(length), 1e-4f * Math.Max(1f, one.Max(Math.Abs)), $"{length} positions, {s} splits, at least {least} per block");
                         }
                     }
                 }

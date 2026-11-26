@@ -80,7 +80,6 @@ internal static class ShardOwners
 internal partial class GradientReduction
 {
     private readonly ShardMode _mode;
-    private readonly WireType _wire;
     private readonly bool[] _had = [];                        // whether each parameter had a gradient when its bucket was taken
     private readonly bool[] _hadKnown = [];
     private readonly int[] _gatheredParts = [];               // buckets of each parameter taken this step
@@ -98,7 +97,7 @@ internal partial class GradientReduction
     /// <summary>The values of the parameters this rank owns.</summary>
     internal long OwnedValues => _owners is null ? 0 : Enumerable.Range(0, Parameters.Count).Where(i => _owners[i] == Collectives.Rank).Sum(i => (long)Parameters[i].Size);
 
-    private WireType CheckSharded(ClusterOptions options)
+    private void CheckSharded(ClusterOptions options)
     {
         if (HostGradients is not null)
         {
@@ -111,12 +110,11 @@ internal partial class GradientReduction
             throw new ArgumentException("Local SGD (IDRAK_CLUSTER_LOCAL_SGD) steps every rank's whole weights; it does not shard (unset IDRAK_CLUSTER_SHARD).", nameof(options));
         }
 
-        return options.CompressionName.ToLowerInvariant() switch
+        if (!options.CompressionName.Equals("none", StringComparison.OrdinalIgnoreCase))
         {
-            "none" => WireType.Float32,
-            var other => throw new ArgumentException($"A sharded run reduce-scatters its buckets as float32; the compression '{other}' is not one "
-                                                     + "(IDRAK_CLUSTER_COMPRESSION=none).", nameof(options)),
-        };
+            throw new ArgumentException($"A sharded run reduce-scatters its buckets as float32; the compression '{options.CompressionName}' is not one "
+                                        + "(IDRAK_CLUSTER_COMPRESSION=none).", nameof(options));
+        }
     }
 
     protected override void Began(bool present)
@@ -297,7 +295,7 @@ internal partial class GradientReduction
         }
 
         Span<float> sum = [squares];
-        Values.AllReduce(sum, WireType.Float32);
+        Values.AllReduce(sum);
         return Math.Sqrt(sum[0]);
     }
 

@@ -11,11 +11,8 @@ namespace Idrak.Networking.Collectives;
 /// </summary>
 internal static class WireValues
 {
-    /// <summary>The bytes a value takes on <paramref name="wire"/>.</summary>
-    public static int BytesPerValue(WireType wire) => sizeof(float);
-
-    /// <summary>Writes <paramref name="values"/> into <paramref name="bytes"/> as <paramref name="wire"/>; returns the bytes written.</summary>
-    public static int Encode(ReadOnlySpan<float> values, Span<byte> bytes, WireType wire)
+    /// <summary>Writes <paramref name="values"/> into <paramref name="bytes"/>; returns the bytes written.</summary>
+    public static int Encode(ReadOnlySpan<float> values, Span<byte> bytes)
     {
         int length = values.Length * sizeof(float);
         if (BitConverter.IsLittleEndian)
@@ -33,8 +30,8 @@ internal static class WireValues
         return length;
     }
 
-    /// <summary>Reads <paramref name="values"/>.Length values of <paramref name="wire"/> from <paramref name="bytes"/>.</summary>
-    public static void Decode(ReadOnlySpan<byte> bytes, Span<float> values, WireType wire)
+    /// <summary>Reads <paramref name="values"/>.Length values from <paramref name="bytes"/>.</summary>
+    public static void Decode(ReadOnlySpan<byte> bytes, Span<float> values)
     {
         if (BitConverter.IsLittleEndian)
         {

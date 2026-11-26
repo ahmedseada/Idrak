@@ -312,7 +312,7 @@ internal abstract partial class Tests
             devices.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1 ? "pcie" : null, null);
 
     // Equal splits (no speed measured), so a rerun splits alike.
-    internal static ClusterOptions DpOptions(WireType wire = WireType.Float32) => new() { RebalanceSteps = 0, Wire = wire, Timeout = TimeSpan.FromSeconds(300) };
+    internal static ClusterOptions DpOptions() => new() { RebalanceSteps = 0, Timeout = TimeSpan.FromSeconds(300) };
 
     // Runs `work` on every rank of an in-process cluster and returns each rank's result, failing with every rank's error.
     internal static T[] DpRun<T>(IClusterTopology topology, ClusterOptions options, Func<ClusterRank, T> work)

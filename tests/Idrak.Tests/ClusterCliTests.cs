@@ -340,7 +340,7 @@ internal abstract partial class DesktopTests : Tests
                 {
                     using var collectives = Collectives.Get("ring").Create(transports[r], Device.Cpu, new ClusterContext(topology, r, options));
                     var values = Enumerable.Range(0, 1000).Select(i => (float)(i + r)).ToArray();
-                    Check(((IHostValueCollectives)collectives).TryAllReduce(values, ReduceOp.Sum, WireType.Float32) && values[10] == 21f, "the all-reduce sums");
+                    Check(((IHostValueCollectives)collectives).TryAllReduce(values, ReduceOp.Sum) && values[10] == 21f, "the all-reduce sums");
                     chunks[r] = ((HostCollectives)collectives).ChunkBytes;
                 }, TaskCreationOptions.LongRunning)).ToArray();
                 try
@@ -407,7 +407,7 @@ internal abstract partial class DesktopTests : Tests
                 {
                     rank.BeginStep(step);
                     Array.Fill(values, rank.Rank + 1);
-                    host.TryAllReduce(values, ReduceOp.Sum, WireType.Float32);
+                    host.TryAllReduce(values, ReduceOp.Sum);
                     if (look && step == 3)
                     {
                         var seen = EventLog.Load(path);                    // the run is still going

@@ -156,7 +156,7 @@ internal abstract partial class DesktopTests : Tests
 
             // The flag summed in a collective the ranks make anyway (as the gradient header carries it).
             Span<float> carried = [stop.Contribution];
-            Check(((IHostValueCollectives)rank.Collectives).TryAllReduce(carried, ReduceOp.Sum, WireType.Float32), "the simulated ranks take host values");
+            Check(((IHostValueCollectives)rank.Collectives).TryAllReduce(carried, ReduceOp.Sum), "the simulated ranks take host values");
             stop.Carried(carried[0]);
             bool agreed = stop.Agree(7);
             return (Exchanged: exchanged, After: stop.Exchanges, Agreed: agreed);

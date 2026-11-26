@@ -490,14 +490,9 @@ internal abstract partial class Tests
         float[] w = Values(In * Out, 0.3f), bias = Values(Out, 0.1f), a = Values(In * Rank, 0.4f), b = Values(Rank * Out, 0.4f), x = Values(Rows * In, 1f);
         float[] m = [.. Enumerable.Range(0, Out).Select(_ => 0.5f + random.NextSingle())], c = Values(Rows * Out, 1f);
 
-        foreach (bool int4 in new[] { false, true })
         {
             using var scope = new TensorScope();
             var layer = Linear.FromWeights(Tensor.Persistent(w, [In, Out], device, requiresGrad: false), Tensor.Persistent(bias, [Out], device, requiresGrad: false));
-            if (int4)
-            {
-                layer.QuantizeInt4();
-            }
 
             float[] dense = layer.WeightValues();                        // the weights as the layer holds them
             var dora = new DoraAdapter(Tensor.Persistent(a, [In, Rank], device, requiresGrad: true), Tensor.Persistent(b, [Rank, Out], device, requiresGrad: true),
@@ -550,20 +545,17 @@ internal abstract partial class Tests
                 }
             }
 
-            string kind = int4 ? "4-bit base" : "float base";
+            string kind = "float base";
             CloseByNorm(expected, y.ToArray(), 2e-3f, $"DoRA output, {kind}");
             CloseByNorm(magnitudeGradient, dora.Magnitude.Grad!.ToArray(), 2e-3f, $"DoRA magnitude gradient, {kind}");
             Check(dora.A.Grad!.ToArray().Any(v => v != 0f) && dora.B.Grad!.ToArray().Any(v => v != 0f), $"A and B receive gradients, {kind}");
-            if (!int4)
+            float[] adapted;
+            using (Autograd.NoGrad())
             {
-                float[] adapted;
-                using (Autograd.NoGrad())
-                {
-                    adapted = layer.Forward(input).ToArray();
-                    layer.MergeAdapter();
-                    Check(layer.Adapter is null, "merged: no adapter");
-                    CloseByNorm(adapted, layer.Forward(input).ToArray(), 1e-5f, "merged DoRA weight gives the adapted output");
-                }
+                adapted = layer.Forward(input).ToArray();
+                layer.MergeAdapter();
+                Check(layer.Adapter is null, "merged: no adapter");
+                CloseByNorm(adapted, layer.Forward(input).ToArray(), 1e-5f, "merged DoRA weight gives the adapted output");
             }
         }
     }
@@ -612,12 +604,6 @@ internal abstract partial class Tests
                 AssertClose([after], [FineTuner.Evaluate(merged, sequences)], 1e-3f, "loss of the merged DoRA export");
             }
 
-            // QLoRA with DoRA: a 4-bit base trains too.
-            using var quantized = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-            float q0 = FineTuner.Evaluate(quantized, sequences);
-            FineTuner.Train(quantized, sequences, null, new FineTuningOptions { Rank = 4, Alpha = 8, LearningRate = 1e-2f, Epochs = 6, BatchTokens = 512, Dora = true });
-            float q1 = FineTuner.Evaluate(quantized, sequences);
-            Check(q1 < q0 * 0.95f, $"DoRA on a 4-bit base: loss {q0:F4} → {q1:F4}");
         }
         finally
         {
