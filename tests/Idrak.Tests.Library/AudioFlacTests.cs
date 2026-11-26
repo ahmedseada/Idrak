@@ -15,10 +15,10 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] AudioFlacGroup =
     [
         ("audio codecs: flac: every FLAC of the fixture (libFLAC's levels 0, 5 and 8, 8, 16 and 24 bits, stereo pairs, 44.1 kHz, constant and verbatim subframes, wasted bits) decodes to its integers exactly; its header is read from the first bytes", d => { CpuOnly(d); AudioFlacFixture(); }),
-        ("audio codecs: flac: a file cut inside a frame keeps its whole frames (refused with KeepCutEnd off), a flipped byte is refused naming the CRC and the file, an ID3v2 tag before the stream is skipped, a stream that does not say its length decodes the same, and one frame per task gives the samples of many", d => { CpuOnly(d); AudioFlacDamaged(); }),
+        ("audio codecs: flac: a file cut inside a frame keeps its whole frames (refused with KeepCutEnd off), a flipped byte is refused naming the CRC, an ID3v2 tag before the stream is skipped, a stream that does not say its length decodes the same, and one frame per task gives the samples of many", d => { CpuOnly(d); AudioFlacDamaged(); }),
         ("audio codecs: flac: the test's writer (fixed orders 0 to 4, independent, left/side, side/right and mid/side channels, fixed and variable block sizes, 8 to 32 bits, a short last frame) round-trips exactly through the decoder", d => { CpuOnly(d); AudioFlacRoundTrips(); }),
-        ("audio codecs: flac: ten minutes decode into one block (the samples' bytes allocated, no more), the registry names flac from the library, and the codec suite passes on the fixture; the decode's speed", d => { CpuOnly(d); AudioFlacLongAndSuite(); }),
-        ("audio codecs: flac: md5: every libFLAC file of the fixture holds an MD5 and its decoded samples hash to it with FlacOptions.VerifyMd5 on (off by default: it costs more than the decode; IDRAK_FLAC_VERIFY_MD5=1 turns it on); a wrong MD5 is refused naming the file and both hashes, and decodes with the check off; ten minutes decoded with and without the check (printed)", d => { CpuOnly(d); AudioFlacMd5(); }),
+        ("audio codecs: flac: ten minutes decode into one block (the samples' bytes allocated, no more), and the codec suite passes on the fixture; the decode's speed", d => { CpuOnly(d); AudioFlacLongAndSuite(); }),
+        ("audio codecs: flac: md5: every libFLAC file of the fixture holds an MD5 and its decoded samples hash to it with FlacOptions.VerifyMd5 on (off by default: it costs more than the decode; IDRAK_FLAC_VERIFY_MD5=1 turns it on); a wrong MD5 is refused naming both hashes, and decodes with the check off; ten minutes decoded with and without the check (printed)", d => { CpuOnly(d); AudioFlacMd5(); }),
     ];
 
     internal static (string Name, JsonObject Entry)[] FlacFixtureFiles()
@@ -29,38 +29,39 @@ internal abstract partial class Tests
 
     internal static void AudioFlacFixture()
     {
+        var flac = new FlacCodec();
         foreach (var (name, entry) in FlacFixtureFiles())
         {
-            string path = AudioData($"flac/{name}.flac");
+            byte[] bytes = File.ReadAllBytes(AudioData($"flac/{name}.flac"));
             int rate = (int)entry["rate"]!, channels = (int)entry["channels"]!, samples = (int)entry["samples"]!, bits = (int)entry["bits"]!;
-            var info = AudioCodecs.ReadInfo(path);
+            var info = flac.ReadInfo(bytes);
             Check(info is { } i && i.SampleRate == rate && i.Channels == channels && i.Samples == samples && i.BitsPerSample == bits && !i.IsFloat && i.Format == "flac",
                 $"{name}: the header says {info}, the fixture {channels} x {samples} at {rate} Hz, {bits} bits");
-            var audio = AudioCodecs.Decode(path);
+            var audio = flac.Decode(bytes);
             Check(audio.SampleRate == rate && audio.Channels == channels && audio.Length == samples, $"{name}: decoded {audio.Channels} x {audio.Length} at {audio.SampleRate} Hz");
             var expected = ReadNpyFloat32(AudioData($"flac/{name}.npy"));
             Check(expected.AsSpan().SequenceEqual(audio.Samples), $"{name}: the samples decode exactly (first difference at {expected.AsSpan().CommonPrefixLength(audio.Samples)} of {expected.Length})");
-            Check(AudioCodecs.CanDecode(path) && AudioCodecs.ReadInfo(File.ReadAllBytes(path)) == info, $"{name}: CanDecode and the in-memory header");
         }
 
         // The same signal as the WAV fixture's 16-bit file: the two formats give the same samples.
-        Check(AudioCodecs.Decode(AudioData("flac/pcm16.flac")).Samples.AsSpan().SequenceEqual(AudioCodecs.Decode(AudioData("wav/pcm16.wav")).Samples), "pcm16.flac and pcm16.wav hold the same samples");
-        Check(AudioCodecs.Load(AudioData("flac/stereo16.flac"), channels: 1).Channels == 1, "Load mixes a FLAC to one channel");
+        Check(flac.Decode(File.ReadAllBytes(AudioData("flac/pcm16.flac"))).Samples.AsSpan().SequenceEqual(new WavCodec().Decode(File.ReadAllBytes(AudioData("wav/pcm16.wav"))).Samples),
+            "pcm16.flac and pcm16.wav hold the same samples");
     }
 
     internal static void AudioFlacDamaged()
     {
         var whole = ReadNpyFloat32(AudioData("flac/pcm16.npy"));
+        var flac = new FlacCodec();
 
         // Cut inside a frame: the whole frames before the cut, or refused when asked.
-        var cut = AudioCodecs.Decode(AudioData("flac/bad-truncated.flac"));
+        var cut = flac.Decode(File.ReadAllBytes(AudioData("flac/bad-truncated.flac")));
         Check(cut.Length > 0 && cut.Length < whole.Length && whole.AsSpan(0, cut.Length).SequenceEqual(cut.Samples),
             $"a cut file gives its first {cut.Length} of {whole.Length} samples, as the whole file has them");
         var strict = new FlacCodec(new FlacOptions { KeepCutEnd = false });
         ThrowsNaming<InvalidDataException>(() => strict.Decode(File.ReadAllBytes(AudioData("flac/bad-truncated.flac"))), "a cut file with KeepCutEnd off", "cut");
 
-        // A flipped byte in the first frame's data: refused naming its CRC and the file.
-        ThrowsNaming<InvalidDataException>(() => AudioCodecs.Decode(AudioData("flac/bad-crc.flac")), "a damaged frame", "CRC-16", "bad-crc.flac", "frame 0");
+        // A flipped byte in the first frame's data: refused naming its CRC.
+        ThrowsNaming<InvalidDataException>(() => flac.Decode(File.ReadAllBytes(AudioData("flac/bad-crc.flac"))), "a damaged frame", "CRC-16", "frame 0");
 
         // An ID3v2 tag (with a 300-byte body) before the stream.
         byte[] file = File.ReadAllBytes(AudioData("flac/pcm16.flac"));
@@ -70,13 +71,13 @@ internal abstract partial class Tests
         tagged[8] = 300 >> 7;
         tagged[9] = 300 & 0x7F;
         file.CopyTo(tagged, 310);
-        Check(AudioCodecs.ReadInfo(tagged) is { Format: "flac", Samples: 24000 } && AudioCodecs.Decode(tagged).Samples.AsSpan().SequenceEqual(whole), "an ID3v2 tag before the stream is skipped");
+        Check(flac.ReadInfo(tagged) is { Format: "flac", Samples: 24000 } && flac.Decode(tagged).Samples.AsSpan().SequenceEqual(whole), "an ID3v2 tag before the stream is skipped");
 
         // The stream info's sample count zeroed (a stream written before its length was known).
         var unknown = (byte[])file.Clone();
         unknown[21] &= 0xF0;
         unknown.AsSpan(22, 4).Clear();
-        Check(AudioCodecs.ReadInfo(unknown) is { Samples: -1 } && AudioCodecs.Decode(unknown).Samples.AsSpan().SequenceEqual(whole), "a stream that does not say its length decodes the same");
+        Check(flac.ReadInfo(unknown) is { Samples: -1 } && flac.Decode(unknown).Samples.AsSpan().SequenceEqual(whole), "a stream that does not say its length decodes the same");
 
         // One frame per worker task and all frames in one task give the same samples.
         foreach (string name in new[] { "stereo16", "mixed16", "rate44k" })
@@ -145,9 +146,6 @@ internal abstract partial class Tests
 
     internal static void AudioFlacLongAndSuite()
     {
-        Check(AudioCodecs.Names.Contains("flac") && AudioCodecs.Extensions.Contains(".flac") && AudioCodecs.Origin("flac") == Overrides.Library && AudioCodecs.Get("flac") is FlacCodec,
-            $"the registry names flac from the library: {string.Join(", ", AudioCodecs.Names)}");
-
         // Ten minutes of 16-bit mono (a tone and noise) through the test's writer, decoded warm.
         const int Rate = 16000;
         int length = Rate * 60 * 10;
@@ -159,7 +157,7 @@ internal abstract partial class Tests
         }
 
         byte[] file = TestFlacWriter.Write([ints], Rate, 16, 4096, 2, 0, variable: false);
-        var codec = AudioCodecs.Get("flac");
+        var codec = new FlacCodec();
         codec.Decode(file);                                                     // warm: the pooled copy and the scratch blocks
         long before = GC.GetTotalAllocatedBytes(precise: true);
         var watch = Stopwatch.StartNew();
@@ -202,29 +200,18 @@ internal abstract partial class Tests
         Check(withMd5 >= 3, $"only {withMd5} fixture files hold an MD5: the check is not exercised");
         Check(new FlacOptions().VerifyMd5 is null, "VerifyMd5 is not set by default (the variable decides, else off)");
 
-        // A wrong MD5 (one bit of the stream info's flipped): refused naming the file and both hashes; decoded with the option off.
+        // A wrong MD5 (one bit of the stream info's flipped): refused naming both hashes; decoded with the option off.
         byte[] file = File.ReadAllBytes(AudioData("flac/pcm16.flac"));
         string expected = Convert.ToHexStringLower(file.AsSpan(26, 16));
         file[30] ^= 0x01;
         string wrong = Convert.ToHexStringLower(file.AsSpan(26, 16));
-        string folder = Path.Combine(Path.GetTempPath(), "idrak-flac-md5-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(folder);
-        try
-        {
-            string path = Path.Combine(folder, "wrong-md5.flac");
-            File.WriteAllBytes(path, file);
-            WithEnvironment(new Dictionary<string, string?> { [FlacOptions.VerifyMd5Variable] = "1" }, () =>
-                ThrowsNaming<InvalidDataException>(() => AudioCodecs.Decode(path), "a wrong MD5 with IDRAK_FLAC_VERIFY_MD5=1", "wrong-md5.flac", "MD5", expected, wrong, "VerifyMd5"));
-            ThrowsNaming<InvalidDataException>(() => new FlacCodec(new FlacOptions { VerifyMd5 = true }).Decode(file), "a wrong MD5 with VerifyMd5 on", expected, wrong);
-            WithEnvironment(new Dictionary<string, string?> { [FlacOptions.VerifyMd5Variable] = null }, () =>
-                Check(AudioCodecs.Decode(path).Length == 24000, "by default (the variable unset) the MD5 is not checked"));
-            Check(new FlacCodec(new FlacOptions { VerifyMd5 = false }).Decode(file).Samples.AsSpan().SequenceEqual(ReadNpyFloat32(AudioData("flac/pcm16.npy"))),
-                "with VerifyMd5 off the samples decode as before");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
+        WithEnvironment(new Dictionary<string, string?> { [FlacOptions.VerifyMd5Variable] = "1" }, () =>
+            ThrowsNaming<InvalidDataException>(() => new FlacCodec().Decode(file), "a wrong MD5 with IDRAK_FLAC_VERIFY_MD5=1", "MD5", expected, wrong, "VerifyMd5"));
+        ThrowsNaming<InvalidDataException>(() => new FlacCodec(new FlacOptions { VerifyMd5 = true }).Decode(file), "a wrong MD5 with VerifyMd5 on", expected, wrong);
+        WithEnvironment(new Dictionary<string, string?> { [FlacOptions.VerifyMd5Variable] = null }, () =>
+            Check(new FlacCodec().Decode(file).Length == 24000, "by default (the variable unset) the MD5 is not checked"));
+        Check(new FlacCodec(new FlacOptions { VerifyMd5 = false }).Decode(file).Samples.AsSpan().SequenceEqual(ReadNpyFloat32(AudioData("flac/pcm16.npy"))),
+            "with VerifyMd5 off the samples decode as before");
 
         // Its cost: ten minutes of 16-bit mono with its MD5 written in, decoded warm with and without the check.
         const int Rate = 16000;

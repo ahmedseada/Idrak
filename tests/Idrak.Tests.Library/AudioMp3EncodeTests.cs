@@ -17,7 +17,7 @@ internal abstract partial class Tests
     [
         ("audio codecs: mp3 encode: tones, chirps and noise at every rate (MPEG-1 32, 44.1, 48 kHz; MPEG-2 16, 22.05, 24 kHz), mono and stereo, at the lowest, the default and the highest bit rate decode through the library's decoder to whole frames covering the sound and the 1057-sample delay, constant frames of the bit rate, and a tone's SNR after the delay above its floor (128 kbit/s 44.1 kHz stereo and 64 kbit/s 16 kHz mono: 40 dB); the WAV fixture's signals too", d => { CpuOnly(d); Mp3EncodeRoundTrip(); }),
         ("audio codecs: mp3 encode: the ffmpeg-checked fixture (mp3enc: all six rates, joint, plain and mixed-down stereo, 32 to 320 kbit/s, the three qualities) is what the encoder writes now, byte for byte, and the library decodes it to ffmpeg's lengths, SNR and block RMS", d => { CpuOnly(d); Mp3EncodeFixture(); }),
-        ("audio codecs: mp3 encode: AudioEncoders.Save writes .mp3 with the library's encoder; bit rates, sample rates, channels and the lowpass are checked against what MPEG takes (the message names the allowed ones); defaults, resampling, the mono mix and the IDRAK_MP3_* variables; the encoder's declared parameters set by key (AudioEncodeOptions.Parameters) give the bytes of the same options, an undeclared key refused by name (WAV declares none)", d => { CpuOnly(d); Mp3EncodeRegistryAndOptions(); }),
+        ("audio codecs: mp3 encode: a WAV's options change no byte the encoder writes; bit rates, sample rates, channels and the lowpass are checked against what MPEG takes (the message names the allowed ones); defaults, resampling, the mono mix and the IDRAK_MP3_* variables; a key given through AudioEncodeOptions.Parameters is refused by name, by MP3 and by WAV", d => { CpuOnly(d); Mp3EncodeRegistryAndOptions(); }),
         ("audio codecs: mp3 encode: the same input gives the same bytes, in parallel and in order for every frames-per-task; three minutes of 44.1 kHz stereo and a minute of 16 kHz mono encode at the speed reported with little memory", d => { CpuOnly(d); Mp3EncodeDeterminismAndSpeed(); }),
     ];
 
@@ -177,7 +177,7 @@ internal abstract partial class Tests
         // 16 kHz, the nearest rate MP3 has (the floors are 6 to 10 dB under what the encoder reached).
         foreach (var (wav, floor) in new[] { ("pcm16", 25.0), ("stereo16", 30.0), ("rate44k", 14.0), ("rate8k", 30.0), ("float32", 25.0), ("extensible16", 30.0) })
         {
-            var source = AudioCodecs.Decode(AudioData($"wav/{wav}.wav"));
+            var source = new WavCodec().Decode(File.ReadAllBytes(AudioData($"wav/{wav}.wav")));
             var decoded = codec.Decode(new Mp3Encoder().Encode(source));
             var expected = decoded.SampleRate == source.SampleRate ? source : Resampler.Resample(source, decoded.SampleRate);
             double snr = Mp3Snr(expected, decoded);
@@ -190,7 +190,7 @@ internal abstract partial class Tests
     // another rate, its first samples only (all exact), as tools/audio/make_mp3_encoder_fixture.cs takes them.
     internal static AudioData Mp3FixtureSignal(JsonObject entry)
     {
-        var audio = AudioCodecs.Decode(AudioData($"wav/{(string)entry["wav"]!}.wav"));
+        var audio = new WavCodec().Decode(File.ReadAllBytes(AudioData($"wav/{(string)entry["wav"]!}.wav")));
         int take = (int)entry["take"]!, rate = (int)entry["rate"]!;
         if (take > 0)
         {
@@ -277,29 +277,12 @@ internal abstract partial class Tests
 
     internal static void Mp3EncodeRegistryAndOptions()
     {
-        string folder = Path.Combine(Path.GetTempPath(), $"idrak-mp3enc-{Environment.ProcessId}");
         var tone = Mp3Tone(44100, 2, 44100);
-        string path = Path.Combine(folder, "tone.mp3");
-        try
-        {
-            {
-                Check(AudioEncoders.For(path) is Mp3Encoder && AudioEncoders.Get("MP3") is Mp3Encoder && AudioEncoders.Extensions.Contains(".mp3"),
-                    $"the library's encoder writes .mp3: {string.Join(", ", AudioEncoders.Names)}");
-                AudioEncoders.Save(path, tone, new AudioEncodeOptions { BitsPerSample = 24 });   // a WAV's options: MP3 has no sample format and ignores them
-                byte[] saved = File.ReadAllBytes(path);
-                Check(saved.AsSpan().SequenceEqual(new Mp3Encoder().Encode(tone)), "AudioEncoders.Save writes the encoder's bytes");
-                var read = AudioCodecs.Decode(path);
-                Check(read.Channels == 2 && read.SampleRate == 44100 && Mp3Snr(tone, read) > 40, $"the saved file reads back through AudioCodecs: {read.Channels} x {read.Length}, SNR {Mp3Snr(tone, read):F1} dB");
-                Check(Mp3FrameProblem(saved, 44100, 2, 128, out _, out _) is null, "44.1 kHz stereo is 128 kbit/s unless set");
-            }
-        }
-        finally
-        {
-            if (Directory.Exists(folder))
-            {
-                Directory.Delete(folder, recursive: true);
-            }
-        }
+        byte[] encoded = new Mp3Encoder().Encode(tone, new AudioEncodeOptions { BitsPerSample = 24 });   // a WAV's options: MP3 has no sample format and ignores them
+        Check(encoded.AsSpan().SequenceEqual(new Mp3Encoder().Encode(tone)), "a WAV's options change no byte the encoder writes");
+        var read = new Mp3Codec().Decode(encoded);
+        Check(read.Channels == 2 && read.SampleRate == 44100 && Mp3Snr(tone, read) > 40, $"the encoded tone reads back: {read.Channels} x {read.Length}, SNR {Mp3Snr(tone, read):F1} dB");
+        Check(Mp3FrameProblem(encoded, 44100, 2, 128, out _, out _) is null, "44.1 kHz stereo is 128 kbit/s unless set");
 
         // Options checked against what MPEG takes, the message naming what it does take.
         var mono16 = Mp3Tone(16000, 1, 16000);
@@ -315,20 +298,11 @@ internal abstract partial class Tests
         Check(new Mp3Codec().Decode(new Mp3Encoder(new Mp3EncodeOptions { ChannelMode = Mp3ChannelMode.Mono }).Encode(three)).Channels == 1, "three channels mixed down with Mono");
         ThrowsNaming<ArgumentException>(() => Mp3EncodeOptions.Bitrates(8000), "the bit rates of 8 kHz", "not 8000");
 
-        // The encoder's declared parameters (IAudioEncoder.Parameters), set by key over its own options: the same bytes as
-        // the same options given to the constructor; a key it does not declare refused, naming it.
-        var keyed = new Dictionary<string, string>(StringComparer.Ordinal) { ["bitrate"] = "64", ["channels"] = "Mono", ["quality"] = "fast", ["frames_per_task"] = "0" };
-        var given = new Mp3EncodeOptions { Bitrate = 64, ChannelMode = Mp3ChannelMode.Mono, Quality = Mp3Quality.Fast, FramesPerTask = 0 };
-        Check(new Mp3Encoder(new Mp3EncodeOptions()).Encode(tone, new AudioEncodeOptions { Parameters = keyed }).AsSpan().SequenceEqual(new Mp3Encoder(given).Encode(tone)),
-            "parameters by key encode as the same options given");
-        Check(AudioEncoders.Get("mp3").Parameters.Keys.SetEquals(["bitrate", "rate", "channels", "quality", "lowpass", "frames_per_task"]),
-            $"the registered mp3 encoder declares its keys: {string.Join(", ", AudioEncoders.Get("mp3").Parameters.Keys)}");
+        // A key given through AudioEncodeOptions.Parameters: refused, naming it (the encoders take their options from their constructors).
         ThrowsNaming<ArgumentException>(() => new Mp3Encoder().Encode(tone, new AudioEncodeOptions { Parameters = new Dictionary<string, string> { ["vbr"] = "1" } }),
-            "an undeclared key", "vbr");
-        ThrowsNaming<ArgumentException>(() => new Mp3Encoder().Encode(tone, new AudioEncodeOptions { Parameters = new Dictionary<string, string> { ["quality"] = "best" } }),
-            "a value the key does not take", "fast, standard, high");
+            "a key given to MP3", "vbr");
         ThrowsNaming<ArgumentException>(() => new WavEncoder().Encode(tone, new AudioEncodeOptions { Parameters = new Dictionary<string, string> { ["bitrate"] = "64" } }),
-            "a key WAV does not declare", "bitrate");
+            "a key given to WAV", "bitrate");
 
         // Defaults: 64 kbit/s for 16 kHz mono, 96 for MPEG-2 stereo; the nearest rate MP3 has; the rate asked for.
         Check(Mp3FrameProblem(new Mp3Encoder().Encode(mono16), 16000, 1, 64, out _, out _) is null, "16 kHz mono is 64 kbit/s unless set");
