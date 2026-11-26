@@ -116,7 +116,7 @@ internal abstract partial class Tests
     }
 
     // The pinned bits of CpuOneResult's outputs (see there): any change to the CPU's arithmetic changes them, on purpose only.
-    private const string CpuOneResultBits = "4DADF671C4E39E78";
+    private const string CpuOneResultBits = "21953D092DF51A40";
 
     internal static void CpuOneResult(Device device)
     {

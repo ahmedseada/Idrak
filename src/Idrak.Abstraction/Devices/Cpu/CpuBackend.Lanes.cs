@@ -1742,31 +1742,121 @@ internal sealed partial class CpuBackend
         {
             ProductRoutes.Chose("cpu", ShapeName(product.Description, m, n, k), $"{LaneName(best)} (the only candidate)");
         }
+        else if (KeptLane(product, m, n, k, count) is { } kept)
+        {
+            best = kept;
+        }
         else if (CpuTuning.Autotune)
         {
-            var times = new double[count];
-            int at = 0;
-            best = product.Candidate(0);
-            for (int c = 1; c < count; c++)
-            {
-                int holder = best, challenger = product.Candidate(c);
-                var (a, b) = Faster.Time(() => product.Run(holder), () => product.Run(challenger));
-                times[at] = a;
-                times[c] = b;
-                if (b < a)
-                {
-                    (best, at) = (challenger, c);
-                }
-            }
-
+            // Every candidate timed alike (CpuChoices.RoundTimes: warmed once, then rounds in the same order, each one's
+            // median), none timed against a holder and none given a head start; the lowest kept for the machine.
+            var each = new ChoiceRuns<TC>(product);
+            var times = CpuChoices.RoundTimes(ref each, count);
+            best = product.Candidate(CpuChoices.Lowest(times));
             ProductRoutes.Chose("cpu", ShapeName(product.Description, m, n, k),
                 string.Create(System.Globalization.CultureInfo.InvariantCulture,
                     $"{LaneName(best)} ({string.Join(", ", Enumerable.Range(0, count).Select(i => $"{LaneShortName(product.Candidate(i))} {times[i]:0.###} ms"))})"));
+            CpuChoices.Keep(LaneFileKey(product, m, n, k), best.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         StoredLanes[ShapeOf(product, m, n, k)] = best;
         return best;
     }
+
+    // A product's candidates as RoundTimes runs them.
+    private struct ChoiceRuns<TC>(TC product) : CpuChoices.ICandidates where TC : struct, ILaneChoice
+    {
+        private TC _product = product;
+
+        public void Run(int index) => _product.Run(_product.Candidate(index));
+    }
+
+    // The machine's kept lane for the shape (CpuChoices), where it is among the candidates.
+    private static int? KeptLane<TC>(in TC product, int m, int n, int k, int count) where TC : struct, ILaneChoice
+    {
+        if (!CpuChoices.TryGet(LaneFileKey(product, m, n, k), out var kept)
+            || !int.TryParse(kept, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int lane))
+        {
+            return null;
+        }
+
+        for (int c = 0; c < count; c++)
+        {
+            if (product.Candidate(c) == lane)
+            {
+                return lane;
+            }
+        }
+
+        return null;
+    }
+
+    // A shape's key in the machine's kept choices: the description's fingerprint (from its fields alone), the vector paths
+    // allowed, the rows' class, n and k.
+    private static string LaneFileKey<TC>(in TC product, int m, int n, int k) where TC : struct, ILaneChoice
+    {
+        var (_, vectors, rows, _, _) = ShapeOf(product, m, n, k);
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"described {DescriptionFingerprint(product.Description)} {rows}x{k}->{n} {vectors}");
+    }
+
+    // A description's fingerprint: SHA-256 of its fields as text (each list's items, never a type's name), 16 hex digits.
+    private static string DescriptionFingerprint(TypeDescription d) => s_fingerprints.GetValue(d, static x =>
+    {
+        var text = new System.Text.StringBuilder();
+        static void Number(System.Text.StringBuilder t, NumberType n)
+        {
+            t.Append(System.Globalization.CultureInfo.InvariantCulture, $"[{n.Bits} {n.Kind} {n.Signed} {n.Exponent} {n.Mantissa} {n.ExponentBias} {n.Subnormals} {n.Specials} {n.Width}");
+            foreach (double v in n.Table ?? [])
+            {
+                t.Append(' ').Append(BitConverter.DoubleToInt64Bits(v));
+            }
+
+            t.Append(']');
+        }
+
+        static void Scales(System.Text.StringBuilder t, IReadOnlyList<BlockScale>? scales)
+        {
+            foreach (var s in scales ?? [])
+            {
+                Number(t, s.Type);
+                t.Append(System.Globalization.CultureInfo.InvariantCulture, $" {s.Values} {s.Offset} {BitConverter.DoubleToInt64Bits(s.Bias)}");
+                foreach (var pieces in s.Pieces ?? [])
+                {
+                    t.Append(" (");
+                    foreach (var piece in pieces)
+                    {
+                        t.Append(System.Globalization.CultureInfo.InvariantCulture, $"{piece.Offset}.{piece.Shift}.{piece.Bits} ");
+                    }
+
+                    t.Append(')');
+                }
+
+                t.Append(';');
+            }
+        }
+
+        text.Append(System.Globalization.CultureInfo.InvariantCulture, $"{x.Values} {x.Bytes} {BitConverter.DoubleToInt64Bits(x.CodeOffset)} {x.MinsAdded} {x.Group} {x.GroupBytes} ");
+        Number(text, x.Code);
+        foreach (var plane in x.Planes)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture, $" <{plane.Offset} {plane.Bits} {plane.Group} {plane.Stride} {plane.Stream} {plane.Radix}");
+            foreach (var place in plane.Places ?? [])
+            {
+                text.Append(System.Globalization.CultureInfo.InvariantCulture, $" {place.Byte}.{place.Shift}");
+            }
+
+            text.Append('>');
+        }
+
+        text.Append(" scales ");
+        Scales(text, x.Scales);
+        text.Append(" mins ");
+        Scales(text, x.Mins);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text.ToString())))[..16];
+    });
+
+    private static readonly ConditionalWeakTable<TypeDescription, string> s_fingerprints = new();
 
     // A weight's candidates as a choice of lanes (Chosen): the described lane by the portable instructions and by each
     // instruction set the CPU has that its plan takes, the 128-bit twins among them for 4 rows of x or more
@@ -2570,6 +2660,11 @@ internal sealed partial class CpuBackend
         private Vector256<int>* fLeft;
         private int* fShiftOne;
         private int* fLeftOne;
+
+        // Per group of the period and factor, whether every lane reads the same bits (a level of the block's or the group's
+        // own: a super-scale): then read once by scalar loads and broadcast, no gather; per piece its mask as a number.
+        private byte* fUniform;
+        private int* fMaskOne;
         private int[] scalarBlock = [], scalarIndex = [];
 
         // The factors a chunk takes (the scales, then the minimums; a codebook's vector factors are not among them).
@@ -3764,6 +3859,24 @@ internal sealed partial class CpuBackend
                 }
             }
 
+            fUniform = Pin<byte>(groups * factors);
+            fMaskOne = Pin<int>(groups * factors * pieces);
+            for (int g = 0; g < groups; g++)
+            {
+                for (int f = 0; f < factors; f++)
+                {
+                    bool same = reads[f] != FactorRead.Scalar;
+                    for (int q = 0; q < pieces; q++)
+                    {
+                        int i = (g * factors + f) * pieces + q;
+                        fMaskOne[i] = fMask[i].ToScalar();
+                        same &= One(new ReadOnlySpan<int>(fOffset + 8 * i, 8)) >= 0 && fShiftOne[i] >= 0 && fLeftOne[i] >= 0 && fMask[i] == Vector256.Create(fMaskOne[i]);
+                    }
+
+                    fUniform[g * factors + f] = (byte)(same ? 1 : 0);
+                }
+            }
+
             if (factors == 1 && scaleFactors == 1 && factorPieces[0] == 1 && factorBias[0] == 0f)
             {
                 oneScale = reads[0] switch
@@ -4430,7 +4543,8 @@ internal sealed partial class CpuBackend
             {
                 // One scale: its field gathered and read with the unit folded in (a 16-bit float's constants as vectors made
                 // once a plan, or a table of its numbers times the unit), no loop over factors.
-                var bits = Shifted<TI>(TI.Gather(period, fOffset + 8 * gp), gp);
+                var bits = fUniform[gp] != 0 ? Vector256.Create((int)(Unsafe.ReadUnaligned<uint>(period + fOffset[8 * gp]) >> fShiftOne[gp]))
+                    : Shifted<TI>(TI.Gather(period, fOffset + 8 * gp), gp);
                 var one = OneScale == 1 ? oneHalf.Of(bits) : TI.Gather(oneTable, bits & fMask[gp]);
                 scale = valid < 8 ? one & GroupMask(valid).AsSingle() : one;
                 min = default;
@@ -4494,12 +4608,27 @@ internal sealed partial class CpuBackend
         private Vector256<float> Read<TI>(byte* period, int gp, int f) where TI : struct, IInstructions
         {
             int at = (gp * factors + f) * pieces;
-            var bits = Shifted<TI>(TI.Gather(period, fOffset + 8 * at), at) & fMask[at];
-            for (int q = 1; q < factorPieces[f]; q++)
+            Vector256<int> bits;
+            if (fUniform[gp * factors + f] != 0)
             {
-                var piece = (Shifted<TI>(TI.Gather(period, fOffset + 8 * (at + q)), at + q) & fMask[at + q]).AsUInt32();
-                int one = fLeftOne[at + q];
-                bits |= (TI.ShiftsByLane || one < 0 ? TI.ShiftLeft(piece, fLeft[at + q].AsUInt32()) : Vector256.ShiftLeft(piece, one)).AsInt32();
+                // Every lane's the same bits: its pieces read once and broadcast.
+                uint value = 0;
+                for (int q = 0, i = at; q < factorPieces[f]; q++, i++)
+                {
+                    value |= (Unsafe.ReadUnaligned<uint>(period + fOffset[8 * i]) >> fShiftOne[i] & (uint)fMaskOne[i]) << fLeftOne[i];
+                }
+
+                bits = Vector256.Create((int)value);
+            }
+            else
+            {
+                bits = Shifted<TI>(TI.Gather(period, fOffset + 8 * at), at) & fMask[at];
+                for (int q = 1; q < factorPieces[f]; q++)
+                {
+                    var piece = (Shifted<TI>(TI.Gather(period, fOffset + 8 * (at + q)), at + q) & fMask[at + q]).AsUInt32();
+                    int one = fLeftOne[at + q];
+                    bits |= (TI.ShiftsByLane || one < 0 ? TI.ShiftLeft(piece, fLeft[at + q].AsUInt32()) : Vector256.ShiftLeft(piece, one)).AsInt32();
+                }
             }
 
             float bias = factorBias[f];

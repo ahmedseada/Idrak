@@ -69,12 +69,13 @@ internal sealed partial class CpuBackend : Backend, IMemoryReport
         }
     }
 
-    // The CPU's limits: its described lane takes the rows of x it measures fastest at each shape; it has no attention kernel.
+    // The CPU's limits: its described lane takes the rows of x it measures fastest at each shape; its attention reads any head size.
     public override BackendCapabilities Capabilities { get; } = new()
     {
         FewRows = CpuTuning.FewRows,
-        DecodeAttentionHeadDim = 0,
-        TiledAttentionHeadDim = 0,
+        DecodeAttentionHeadDim = int.MaxValue,
+        TiledAttentionHeadDim = int.MaxValue,
+        StridedInputs = StridedInputSet(),
     };
 
     public override string Kind => "cpu";
