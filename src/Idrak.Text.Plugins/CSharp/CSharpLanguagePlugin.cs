@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Abstraction.Plugins;
 using Idrak.Data.Abstractions;
 using Idrak.Text.Abstractions;
 
@@ -13,15 +12,15 @@ namespace Idrak.Text.Plugins.CSharp;
 /// <c>dotnet</c>, its build and test runner, by default (as every language's defaults, the build and test runners only;
 /// <c>CodingToolOptions.Commands</c> or IDRAK_AGENT_COMMANDS name others); the agent checks its work with
 /// <c>dotnet build</c> and <c>dotnet test</c>; <c>bin</c>, <c>obj</c> and <c>.vs</c> are skipped; a coding task that
-/// names no commands restores, builds and tests with dotnet. It also registers the C# task families of
-/// <c>idrak data code</c> into <see cref="TaskFamilies"/>: "method-body" and "test-subject" (<see cref="CSharpTaskFamilies"/>).
+/// names no commands restores, builds and tests with dotnet. The C# task families of <c>idrak data code</c> are
+/// <see cref="CSharpTaskFamilies"/>' "method-body" and "test-subject".
 /// </summary>
 public static class CSharpLanguagePlugin
 {
     /// <summary>The language's name in <see cref="CodingLanguages"/>: "csharp".</summary>
     public const string LanguageName = "csharp";
 
-    /// <summary>The profile the plug-in registers.</summary>
+    /// <summary>The language's profile.</summary>
     public static ICodingLanguage Language { get; } = new CodingLanguage(LanguageName, "C# (.NET): dotnet restores, builds and tests a solution or project")
     {
         Markers = ["*.sln", "*.slnx", "*.csproj"],
@@ -37,26 +36,4 @@ public static class CSharpLanguagePlugin
         DefaultSetup = ["dotnet restore"],
         DefaultVerify = ["dotnet build --no-restore", "dotnet test --no-build"],
     };
-
-    /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("csharp-language"; listed in <see cref="TextPlugins.All"/>).</summary>
-    public static IIdrakPlugin Plugin { get; } = new CSharpLanguageRegistration();
-
-    /// <summary>Whether the language is registered.</summary>
-    public static bool IsRegistered => Plugin.IsRegistered;
-
-    /// <summary>Registers the language (through <see cref="IdrakPlugins"/>); once: calling it again changes nothing.</summary>
-    public static void Register() => IdrakPlugins.Register(Plugin);
-
-    /// <summary>Unregisters the language, leaving <see cref="CodingLanguages"/> as <see cref="Register"/> found it.</summary>
-    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
-
-    private sealed class CSharpLanguageRegistration() : IdrakPlugin("csharp-language")
-    {
-        protected override void RegisterParts()
-        {
-            Part(() => CodingLanguages.Register(Language), () => CodingLanguages.Unregister(LanguageName));
-            Part(() => TaskFamilies.Register(CSharpTaskFamilies.MethodBody), () => TaskFamilies.Unregister(CSharpTaskFamilies.MethodBodyName));
-            Part(() => TaskFamilies.Register(CSharpTaskFamilies.TestSubject), () => TaskFamilies.Unregister(CSharpTaskFamilies.TestSubjectName));
-        }
-    }
 }

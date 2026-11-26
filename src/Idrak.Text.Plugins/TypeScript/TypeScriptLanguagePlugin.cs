@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Abstraction.Plugins;
 using Idrak.Text.Abstractions;
 
 namespace Idrak.Text.Plugins.TypeScript;
@@ -55,25 +54,4 @@ public static class TypeScriptLanguagePlugin
         DefaultSetup = ["npm install"],
         DefaultVerify = ["npm run build", "npm test -- --watch=false"],
     };
-
-    /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("typescript-language"; listed in <see cref="TextPlugins.All"/>).</summary>
-    public static IIdrakPlugin Plugin { get; } = new TypeScriptLanguageRegistration();
-
-    /// <summary>Whether the languages are registered.</summary>
-    public static bool IsRegistered => Plugin.IsRegistered;
-
-    /// <summary>Registers TypeScript, then Angular (through <see cref="IdrakPlugins"/>); once: calling it again changes nothing.</summary>
-    public static void Register() => IdrakPlugins.Register(Plugin);
-
-    /// <summary>Unregisters them, leaving <see cref="CodingLanguages"/> as <see cref="Register"/> found it.</summary>
-    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
-
-    private sealed class TypeScriptLanguageRegistration() : IdrakPlugin("typescript-language")
-    {
-        protected override void RegisterParts()
-        {
-            Part(() => CodingLanguages.Register(TypeScript), () => CodingLanguages.Unregister(TypeScriptName));
-            Part(() => CodingLanguages.Register(Angular), () => CodingLanguages.Unregister(AngularName));
-        }
-    }
 }

@@ -228,14 +228,20 @@ internal static class T5Layers
         return Dense(store, name, sizes.Width, sizes.Vocabulary, device);      // [vocabulary, width] stored: read transposed
     }
 
-    // A stack's position bias: its first block's relative_attention_bias.weight [buckets, heads] as the library's "bucketed" kind.
+    // A stack's position bias: its first block's relative_attention_bias.weight [buckets, heads] in the library's bucketed
+    // bias, made directly (the position biases' registry is gone).
     private static IAttentionPositionBias Bias(ITensorStore store, string stack, Sizes sizes, bool bidirectional, Device device)
     {
         string name = $"{stack}.block.0.layer.0.SelfAttention.relative_attention_bias.weight";
         var table = Checked(store, name, [sizes.Buckets, sizes.Heads], transposed: false);
-        var settings = new JsonObject { ["num_buckets"] = sizes.Buckets, ["max_distance"] = sizes.MaxDistance, ["bidirectional"] = bidirectional };
-        return AttentionPositionBiases.Create(BucketedPositionBias.KindName, new PositionBiasRequest(sizes.Heads, settings, device, 0,
-            (part, _) => part == "table" ? table : null));
+        var bias = new BucketedPositionBias(sizes.Heads, sizes.Buckets, sizes.MaxDistance, bidirectional, device, new Random(0));
+        if (table.Length != bias.Table.Size)
+        {
+            throw new InvalidDataException($"The position bias's table has {table.Length} values; [{bias.Buckets}, {sizes.Heads}] is {bias.Table.Size}.");
+        }
+
+        bias.Table.CopyFrom(table);
+        return bias;
     }
 
     // q, k and v side by side, [width, 3 · inner] (each read transposed from Hugging Face's [inner, width]), no biases.

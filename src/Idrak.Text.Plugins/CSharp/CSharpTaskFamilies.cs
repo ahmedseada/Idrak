@@ -38,7 +38,7 @@ public sealed record CSharpTaskOptions
 }
 
 /// <summary>
-/// The C# task families of the plug-in (plan 36), registered into <see cref="TaskFamilies"/> with the language
+/// The C# task families of the plug-in (plan 36), registered into <c>TaskFamilies</c> with the language
 /// (<see cref="CSharpLanguagePlugin"/>): "method-body" (<see cref="MethodBody"/>) and "test-subject" (<see cref="TestSubject"/>).
 /// Both read C# as Roslyn syntax trees (<c>Microsoft.CodeAnalysis.CSharp</c>, each file parsed once for both families;
 /// syntax only, no compilation or semantic model) and take the tests that reach a method from the tests' own code: a test

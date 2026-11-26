@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Abstraction.Plugins;
 using Idrak.Text.Abstractions;
 
 namespace Idrak.Text.Plugins.Python;
@@ -17,27 +16,10 @@ public static class PythonLanguagePlugin
     /// <summary>The language's name in <see cref="CodingLanguages"/>: "python".</summary>
     public const string LanguageName = "python";
 
-    /// <summary>The profile the plug-in registers.</summary>
+    /// <summary>The language's profile.</summary>
     public static ICodingLanguage Language { get; } = new CodingLanguage(LanguageName, "Python: its caches and virtual environment skipped (no commands)")
     {
         Markers = ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile"],
         IgnoredDirectories = ["__pycache__", ".venv"],
     };
-
-    /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("python-language"; listed in <see cref="TextPlugins.All"/>).</summary>
-    public static IIdrakPlugin Plugin { get; } = new PythonLanguageRegistration();
-
-    /// <summary>Whether the language is registered.</summary>
-    public static bool IsRegistered => Plugin.IsRegistered;
-
-    /// <summary>Registers the language (through <see cref="IdrakPlugins"/>); once: calling it again changes nothing.</summary>
-    public static void Register() => IdrakPlugins.Register(Plugin);
-
-    /// <summary>Unregisters the language, leaving <see cref="CodingLanguages"/> as <see cref="Register"/> found it.</summary>
-    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
-
-    private sealed class PythonLanguageRegistration() : IdrakPlugin("python-language")
-    {
-        protected override void RegisterParts() => Part(() => CodingLanguages.Register(Language), () => CodingLanguages.Unregister(LanguageName));
-    }
 }
