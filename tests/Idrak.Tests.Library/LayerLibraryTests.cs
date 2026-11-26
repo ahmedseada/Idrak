@@ -20,7 +20,7 @@ internal abstract partial class Tests
         ("layers: StoredLayers reads a store's convolutions, transposed convolutions, linears, norms and 1 × 1 projections under their stored names (trainable: every tensor a parameter listed in Trained, a weight norm kept as gain and direction); WaveNet, ResidualCouplingBlock (forward then reverse the identity within 1e-5, with and without a speaker) and PosteriorEncoder (means at noise 0) built from it; a batch with masks equals the sequences alone", AudioLayersFromStored),
         ("layers: HifiGanGenerator decodes long latents in pieces with context equal to one pass within 1e-5 and halves a piece the device refuses; HifiGanDiscriminators created from a seed give a score and a map per layer per discriminator, save and reload bit for bit under VITS's names, and refuse sound that is not [B, L]; the GAN losses equal plain loops", HifiGanLayers),
         ("layers: VisionTransformerEncoder built from a store of every tensor Expected names gives [images, patches, dim], its Tensors round-trip the store bit for bit (q, k, v split from the fused projection), Load takes the names given and sets the values, the checkpointed pass equals the plain one, a wrong shape and an unknown activation are refused; PatchGrid.AveragePool equals a loop", VisionTransformerFromStored),
-        ("layers: HifiGanVocoder reads transformers' root-level HiFi-GAN names (conv_pre, upsampler, resblocks, conv_post, mean, scale) from a store and from a saved folder, standardizes the log-mel and gives frames · hop samples equal to the generator's; registered under a name Vocoders.Create gives it back; another mel count and disagreeing lists are refused", HifiGanVocoderFromStored),
+        ("layers: HifiGanVocoder reads transformers' root-level HiFi-GAN names (conv_pre, upsampler, resblocks, conv_post, mean, scale) from a store and from a saved folder, standardizes the log-mel and gives frames · hop samples equal to the generator's; another mel count and disagreeing lists are refused", HifiGanVocoderFromStored),
         ("layers: ConvolutionalFeedForward (odd and even kernels, the activations by name) equals the convolutions written out and gives each sequence of a padded batch what it gets alone; ElementwiseAffineFlow forward then Reverse is the identity with the log-determinant Σ log scale · positions; Tensor.Indices holds integers exactly", FeedForwardAndAffine),
         ("layers: RelativePositionAttention with window 0 equals scaled-dot-product attention from the same projections within 1e-5, zero relative embeddings change nothing, the trained path (embeddings as parameters) equals the speaking path and gives them gradients; MonotonicAlignment finds the best monotonic path and its durations; DifferentiableLogMel equals the host STFT's log-mel within 1e-4", AttentionAlignmentAndMel),
     ];
@@ -748,7 +748,7 @@ internal abstract partial class Tests
             AssertClose(direct, vocoder.Synthesize(logMel, device).Samples, 1e-5f, "decoded in pieces of 10 frames");
         }
 
-        // The same checkpoint saved as a folder and read back through the checkpoint formats, then registered by name.
+        // The same checkpoint saved as a folder and read back through the checkpoint formats.
         string folder = TempFolder("hifigan-vocoder");
         try
         {
@@ -757,17 +757,6 @@ internal abstract partial class Tests
             using var loaded = HifiGanVocoder.Load(folder, device);
             Check(loaded.Normalizes && loaded.Config.Hop == 4, loaded.ToString());
             AssertClose(sound.Samples, loaded.Synthesize(logMel, device).Samples, 1e-6f, "the folder's vocoder gives the store's samples");
-            HifiGanVocoder.RegisterFolder(folder, "hifigan-test", device);
-            try
-            {
-                var created = Vocoders.Create("hifigan-test");
-                Check(created.Mels == 4 && created.SampleRate == 800 && ReferenceEquals(created, Vocoders.Create("hifigan-test")), "registered under a name, read once");
-                Check(Vocoders.Names.Contains("hifigan-test"), "listed");
-            }
-            finally
-            {
-                Vocoders.Unregister("hifigan-test");
-            }
 
             ThrowsNaming<ArgumentException>(() => loaded.Synthesize(Tensor.From(new float[Frames * 5], [Frames, 5], Device.Cpu), device), "[frames, 4]");
             ThrowsNaming<InvalidDataException>(() => (config with { UpsampleKernelSizes = [4] }).Checked(), "pair up");

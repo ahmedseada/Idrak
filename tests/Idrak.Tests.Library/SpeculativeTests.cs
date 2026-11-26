@@ -29,7 +29,7 @@ internal abstract partial class Tests
         var spec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 96,
-            Rope = new RopeSettings(500f, null, false, null),
+            Rope = new RopeSettings(500f, null, false),
         };
         var target = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 3 });
         var draft = (spec with { Layers = 1, Vocabulary = tokenizer.VocabularySize + vocabularyPad }).Build(null, new DecoderBuildOptions { Device = device, Seed = 11 });
@@ -140,7 +140,7 @@ internal abstract partial class Tests
         var spec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = 8, Layers = 1, Heads = 2, KvHeads = 1, HeadDim = 4, FfDim = 12, MaxPositions = 16,
-            Rope = new RopeSettings(500f, null, false, null),
+            Rope = new RopeSettings(500f, null, false),
         };
         using var targetModel = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 21 });
         using var draftModel = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 22 });
@@ -416,7 +416,7 @@ internal abstract partial class Tests
         var spec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = dim, Layers = layers, Heads = 8, KvHeads = 4, HeadDim = dim / 8, FfDim = dim * 3, MaxPositions = 512,
-            Rope = new RopeSettings(10000f, null, false, null),
+            Rope = new RopeSettings(10000f, null, false),
         };
         var target = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 31 });
         var draft = (spec with { Layers = 1 }).Build(null, new DecoderBuildOptions { Device = device, Seed = 32 });

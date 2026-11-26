@@ -30,13 +30,14 @@ internal abstract partial class Tests
         const int W = 37, H = 23;
         var random = new Random(41);
         var page = new ImageData([.. Enumerable.Range(0, 3 * W * H).Select(_ => random.Next(256) / 255f)], 3, H, W);
-        var pipeline = ImageTransformPipeline.Parse("grayscale,max_width=16,contrast=1.5");
+        static ImageData Card(ImageData image) => PillowImageOps.Contrast(PillowImageOps.ScaleDown(ChatImageDecoder.Grayscale(image), 16, 0), 1.5);
+        var png = new PngEncoder();
         var preprocessor = new ImagePreprocessor { Height = 8, Width = 8, Resampling = ImageResampling.Bilinear, Mean = [0.5f, 0.5f, 0.5f], Std = [0.5f, 0.5f, 0.5f] };
-        foreach (var (name, file) in new[] { ("jpeg", JpegEncoder.Encode(page, quality: 90)), ("png", ImageEncoders.Get("png").Encode(page)) })
+        foreach (var (name, file) in new[] { ("jpeg", JpegEncoder.Encode(page, quality: 90)), ("png", png.Encode(page)) })
         {
             var decoded = ChatImageDecoder.Decode(file);
             Check(decoded.TryGetPlanes(out var planes, out var levels) && planes.Length == 3 && levels.Length == 256, $"{name}: decoded as 8-bit planes");
-            var seen = pipeline.Apply(decoded);
+            var seen = Card(decoded);
             Check(seen.TryGetPlanes(out var seenPlanes, out _) && seenPlanes.Length == 1 && decoded.TryGetPlanes(out _, out _), $"{name}: the card's steps keep 8 bits");
             var crop = ImagePreprocessor.ToBytes(decoded, grayscale: false);
             Check(crop.Length == 3 && crop[0].AsSpan().SequenceEqual(planes[0].Span), $"{name}: the bytes of an 8-bit image are its planes");
@@ -44,9 +45,9 @@ internal abstract partial class Tests
             // The same results as an image of the same floats, through the transforms, the preprocessor and the encoders.
             var bytes = planes.Select(p => p.ToArray()).ToArray();
             var floats = new ImageData([.. Enumerable.Range(0, 3 * W * H).Select(i => levels.Span[bytes[i / (W * H)][i % (W * H)]])], 3, H, W);
-            Check(pipeline.Apply(floats).Pixels.SequenceEqual(pipeline.Apply(ChatImageDecoder.Decode(file)).Pixels), $"{name}: the transforms give what they give from floats");
+            Check(Card(floats).Pixels.SequenceEqual(Card(ChatImageDecoder.Decode(file)).Pixels), $"{name}: the transforms give what they give from floats");
             Check(preprocessor.Pixels(floats).SequenceEqual(preprocessor.Pixels(ChatImageDecoder.Decode(file))), $"{name}: the preprocessor's values as from floats");
-            Check(ImageEncoders.Get("png").Encode(floats).SequenceEqual(ImageEncoders.Get("png").Encode(ChatImageDecoder.Decode(file))), $"{name}: the same PNG as from floats");
+            Check(png.Encode(floats).SequenceEqual(png.Encode(ChatImageDecoder.Decode(file))), $"{name}: the same PNG as from floats");
 
             // The floats: the planes through their table; reading them ends the 8-bit view (the array is the caller's).
             var values = decoded.Pixels;
@@ -85,7 +86,7 @@ internal abstract partial class Tests
             ("image-444.jpg", "decoded-image-444.npy"), ("image-gray.jpg", "decoded-image-gray.npy"),
         })
         {
-            var image = ImageCodecs.Decode(Path.Combine(root, file));
+            var image = new JpegCodec().Decode(File.ReadAllBytes(Path.Combine(root, file)));
             var expected = NpyData(Path.Combine(reference, npy));                       // [H, W, C] or [H, W]
             int c = image.Channels, size = image.Height * image.Width;
             Check(expected.Length == c * size && image.Width == 100 && image.Height == 75, $"{file}: {c} x {image.Height} x {image.Width}");
@@ -129,19 +130,18 @@ internal abstract partial class Tests
 
     internal static void JpegMatchesPillow(Device device)
     {
-        Check(ImageCodecs.Names.SequenceEqual(["png", "jpeg", "bmp", "netpbm"]) && ImageCodecs.Origin("jpeg") == Overrides.Library,
-            $"the built-in codecs: {string.Join(", ", ImageCodecs.Names)}");
-        Check(ImageCodecs.CanDecode("scan.JPG") && ImageCodecs.CanDecode("a.jpeg"), "JPEG extensions");
+        var jpeg = new JpegCodec();
         var files = Directory.GetFiles(JpegFixtures, "*.jpg").Order().ToList();
         Check(files.Count == 21, $"{files.Count} JPEG fixtures");
         foreach (string file in files)
         {
             string name = Path.GetFileNameWithoutExtension(file);
             string reference = Path.ChangeExtension(file, File.Exists(Path.ChangeExtension(file, ".pgm")) ? ".pgm" : ".ppm");
-            var expected = ImageCodecs.Decode(reference);
-            var info = ImageCodecs.ReadInfo(file);
+            var expected = new NetpbmCodec().Decode(File.ReadAllBytes(reference));
+            byte[] bytes = File.ReadAllBytes(file);
+            var info = jpeg.ReadInfo(bytes);
             Check(info == new ImageInfo(expected.Width, expected.Height, expected.Channels, "jpeg"), $"{name}: header {info}");
-            var actual = ImageCodecs.Decode(file);
+            var actual = jpeg.Decode(bytes);
             Check(actual.Channels == expected.Channels && actual.Height == expected.Height && actual.Width == expected.Width,
                 $"{name}: {actual.Channels} x {actual.Height} x {actual.Width}, Pillow {expected.Channels} x {expected.Height} x {expected.Width}");
             int worst = 0;
@@ -156,7 +156,7 @@ internal abstract partial class Tests
 
     internal static void JpegRefusals(Device device)
     {
-        var jpeg = ImageCodecs.Get("jpeg");
+        var jpeg = new JpegCodec();
         byte[] baseline = File.ReadAllBytes(Path.Combine(JpegFixtures, "baseline-420.jpg"));
         int sof = baseline.AsSpan().IndexOf([(byte)0xFF, (byte)0xC0]);
         byte[] With(int at, byte value)
@@ -186,22 +186,6 @@ internal abstract partial class Tests
         Refused(With(sof + 1, 0xC3), "lossless", "a lossless frame");
         Refused(With(sof + 1, 0xC5), "hierarchical", "a hierarchical frame");
 
-        string twelve = Path.Combine(Path.GetTempPath(), $"idrak-jpeg-{Guid.NewGuid():N}.jpg");
-        File.WriteAllBytes(twelve, With(sof + 4, 12));
-        try
-        {
-            ImageCodecs.Decode(twelve);
-            Check(false, "the registry decoded a 12-bit file");
-        }
-        catch (NotSupportedException e)
-        {
-            Check(e.Message.StartsWith(twelve, StringComparison.Ordinal), $"the file is named: {e.Message}");
-        }
-        finally
-        {
-            File.Delete(twelve);
-        }
-
         // Extended sequential (SOF1) at 8 bits is baseline with more tables allowed: it decodes the same.
         var extended = jpeg.Decode(With(sof + 1, 0xC1));
         Check(extended.Pixels.SequenceEqual(jpeg.Decode(baseline).Pixels), "SOF1 at 8 bits");
@@ -214,7 +198,7 @@ internal abstract partial class Tests
         Check(jpeg.ReadInfo("\x89PNG"u8) is null && jpeg.ReadInfo(baseline) == new ImageInfo(45, 37, 3, "jpeg"), "sniffing");
 
         // A frame header after the first 64 KiB (long APPn segments, as EXIF thumbnails and ICC profiles make): the
-        // registry reads the whole file for its size.
+        // codec finds it in the whole file.
         string padded = Path.Combine(Path.GetTempPath(), $"idrak-jpeg-{Guid.NewGuid():N}.jpg");
         try
         {
@@ -231,8 +215,8 @@ internal abstract partial class Tests
                 stream.Write(baseline.AsSpan(2));
             }
 
-            Check(ImageCodecs.ReadInfo(padded) == new ImageInfo(45, 37, 3, "jpeg"), "a frame header past 64 KiB");
-            Check(ImageCodecs.Decode(padded).Pixels.SequenceEqual(jpeg.Decode(baseline).Pixels), "the same pixels after long segments");
+            Check(jpeg.ReadInfo(File.ReadAllBytes(padded)) == new ImageInfo(45, 37, 3, "jpeg"), "a frame header past 64 KiB");
+            Check(jpeg.Decode(File.ReadAllBytes(padded)).Pixels.SequenceEqual(jpeg.Decode(baseline).Pixels), "the same pixels after long segments");
         }
         finally
         {

@@ -16,7 +16,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] LayerContractGroup =
     [
-        ("layer contracts: the library's types declare the contracts its type checks became (linear layers adapt, pack, tie, name and stage their weights; embeddings, norms and position tables name theirs; attention layers say what their caches hold and which batching they run; position encodings, routed and boundary layers, decoder blocks, position limits and owned position biases; LoRA and DoRA in peft's layout; the scalers a package stores; the topology file, measured links and live failures), and a tied layer names no weights", LayerContractsDeclared),
+        ("layer contracts: the library's types declare the contracts its type checks became (linear layers adapt, tie, name and stage their weights; embeddings, norms and position tables name theirs; attention layers say what their caches hold and which batching they run; position encodings, routed and boundary layers, decoder blocks, position limits and owned position biases; LoRA and DoRA in peft's layout; the scalers a package stores; the topology file, measured links and live failures), and a tied layer names no weights", LayerContractsDeclared),
         ("layer contracts: a recurrent cell of one's own (IRecurrentCell) runs in RecurrentModule's loop: its gates size the weights, its initial bias and its steps give the hand-computed outputs; the LSTM's and GRU's cells are fused, and a GRU keeps its candidate bias apart as its cell asks (IScaledHiddenBiasCell)", RecurrentCellOfOnesOwn),
         ("layer contracts: a linear layer of one's own (IAdaptableLinear) takes LoRA from AddLora by its name, trains through the adapter, merges it with MergeLora and lifts it off with DisableAdapters; the adapter's peft view (IPeftAdapter) keeps its tensors when rescaled", AdaptableLinearOfOnesOwn),
     ];
@@ -24,7 +24,7 @@ internal abstract partial class Tests
     internal static void LayerContractsDeclared(Device device)
     {
         var linear = new Linear(4, 3, device: device, random: new Random(1));
-        Check(linear is IAdaptableLinear and IPackableLinear and ITiedWeights and INamedWeights and IOffloadableLayer, "Linear adapts, packs, ties, names and stages its weights");
+        Check(linear is IAdaptableLinear and ITiedWeights and INamedWeights and IOffloadableLayer, "Linear adapts, ties, names and stages its weights");
         Check(((INamedWeights)linear).NamedWeights().Select(w => w.Name).SequenceEqual(["weight", "bias"]), "a Linear names its weight and bias");
         var embedding = new Embedding(10, 4, device, new Random(2));
         var tied = Linear.Tied(embedding);
@@ -53,7 +53,7 @@ internal abstract partial class Tests
         Check(StandardScaler.Fit(rows, 2) is ISavableScaler { EntryKind: Idrak.Inference.PackageEntryKind.StandardScaler }
               && MinMaxScaler.Fit(rows, 2) is ISavableScaler { EntryKind: Idrak.Inference.PackageEntryKind.MinMaxScaler }, "the scalers store themselves under their entry kinds");
         Check(typeof(IOverridingTopology).IsAssignableFrom(typeof(ClusterTopology)) && typeof(ISavableTopology).IsAssignableFrom(typeof(ClusterTopology)), "the topology file has overrides and writes itself");
-        Check(LinkProfiles.Find(ClusterTopology.SameDevice) is IDeviceMeasuredLink && LinkProfiles.Find("ethernet-1g") is not IDeviceMeasuredLink, "only the measured links are measured on a device");
+        Check(typeof(IDeviceMeasuredLink).IsAssignableFrom(typeof(MeasuredLink)) && !typeof(IDeviceMeasuredLink).IsAssignableFrom(typeof(LinkProfile)), "only the measured links are measured on a device");
         Check(new LiveFailures() is ILiveFailureModel { Pending: 0 }, "the live failures are a live model");
     }
 

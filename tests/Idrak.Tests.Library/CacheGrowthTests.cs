@@ -37,7 +37,7 @@ internal abstract partial class Tests
         var spec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
-            Rope = new RopeSettings(500f, null, false, null),
+            Rope = new RopeSettings(500f, null, false),
         };
         using var model = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 3 });
         model.Eval();
@@ -103,7 +103,7 @@ internal abstract partial class Tests
         var spec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = 32, Layers = 28, Heads = 2, KvHeads = 2, HeadDim = 128, FfDim = 32, MaxPositions = Window,
-            Rope = new RopeSettings(1_000_000f, null, false, null),
+            Rope = new RopeSettings(1_000_000f, null, false),
         };
         using var model = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 2 });
         model.Eval();

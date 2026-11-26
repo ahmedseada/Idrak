@@ -2,14 +2,12 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak;
-using Idrak.Abstraction.Operations;
 using Idrak.Datasets.Abstractions;
 using Idrak.Generation;
 using Idrak.Inference;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
 using Idrak.Optimizers;
-using Idrak.Text.Plugins.Llama;
 
 // Decoder-only language models described by DecoderSpec, checked against a plain-loop reference implementation.
 internal abstract partial class Tests
@@ -104,84 +102,6 @@ internal abstract partial class Tests
                 var separate = heads.RmsNormAffine(headGain, 1e-6f, 0f).Rope(tcos, tsin, positions, half, interleaved).ToArray();
                 var fused = heads.RmsNormRope(headGain, 1e-6f, 0f, tcos, tsin, positions, half, interleaved).ToArray();
                 AssertClose(separate, fused, 1e-5f, $"fused norm + rope, half {half}, interleaved {interleaved}");
-            }
-        }
-    }
-
-    // Fails at the first element whose bits differ.
-    internal static void ExpectBits(float[] expected, float[] actual, string what)
-    {
-        if (SameBits(expected, actual, what) is { } problem)
-        {
-            Check(false, problem + " (bit for bit)");
-        }
-    }
-
-    // The int8 decoding kernel as it ran one query row at a time, for each variant: each score the bytes' dot product times
-    // the key's scale and the scale, the softmax terms, each value's bytes added with its weight times its scale.
-    internal static float[][] Int8Reference(float[] q, KeyValueCache cache, int heads, int rowsPerHead, int steps, int position, int capacity, int dim, float scale,
-        AttentionVariant[] variants)
-    {
-        int stride = (dim + 3) / 4 * 4;
-        var kb = System.Runtime.InteropServices.MemoryMarshal.Cast<float, sbyte>(cache.Keys.ToArray()).ToArray();
-        var vb = System.Runtime.InteropServices.MemoryMarshal.Cast<float, sbyte>(cache.Values.ToArray()).ToArray();
-        float[] ks = cache.KeyScales!.ToArray(), vs = cache.ValueScales!.ToArray();
-        var results = new float[variants.Length][];
-        for (int v = 0; v < variants.Length; v++)
-        {
-            var variant = variants[v];
-            var y = results[v] = new float[heads * rowsPerHead * dim];
-            var scores = new float[capacity];
-            for (int row = 0; row < heads * rowsPerHead; row++)
-            {
-                int h = row / rowsPerHead, end = Math.Min(position + row % rowsPerHead % steps, capacity - 1) + 1, begin = variant.Start(end), count = end - begin;
-                var query = q.AsSpan(row * dim, dim);
-                float max = float.NegativeInfinity;
-                for (int c = 0; c < count; c++)
-                {
-                    scores[c] = variant.Cap(DotBytes(query, kb.AsSpan((h * capacity + begin + c) * stride, dim)) * ks[h * capacity + begin + c] * scale);
-                    max = MathF.Max(max, scores[c]);
-                }
-
-                float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
-                var output = y.AsSpan(row * dim, dim);
-                for (int c = 0; c < count; c++)
-                {
-                    AddBytes(output, vb.AsSpan((h * capacity + begin + c) * stride, dim), scores[c] / sum * vs[h * capacity + begin + c]);
-                }
-            }
-        }
-
-        return results;
-
-        // Σ a[j] · q[j] in the CPU's fixed lanes, plainly (plan 37, P0): product j rounded and added onto lane j mod 16 in
-        // order, then lane i += lane i + 8, + 4, + 2, + 1.
-        static float DotBytes(ReadOnlySpan<float> a, ReadOnlySpan<sbyte> q)
-        {
-            Span<float> lanes = stackalloc float[16];
-            lanes.Clear();
-            for (int j = 0; j < q.Length; j++)
-            {
-                lanes[j % 16] += a[j] * q[j];
-            }
-
-            for (int width = 8; width > 0; width /= 2)
-            {
-                for (int i = 0; i < width; i++)
-                {
-                    lanes[i] += lanes[i + width];
-                }
-            }
-
-            return lanes[0];
-        }
-
-        // acc[j] += scale · q[j] (one product, one sum per element).
-        static void AddBytes(Span<float> acc, ReadOnlySpan<sbyte> q, float scale)
-        {
-            for (int j = 0; j < q.Length; j++)
-            {
-                acc[j] += scale * q[j];
             }
         }
     }
@@ -512,11 +432,7 @@ internal abstract partial class Tests
             {
                 TieEmbeddings = true, EmbeddingScale = 4f, NormOffset = 1f, Rope = new RopeSettings(100f, RotaryDim: 4, Interleaved: true),
             }),
-            ("post-norms, GELU, llama3 rope scaling", SmallSpec with
-            {
-                PostNorms = true, Activation = FeedForwardActivation.Gelu,
-                Rope = new RopeSettings(500f, Scaling: LlamaRopeScaling.Create(8, 1, 4, 8)),
-            }),
+            ("post-norms, GELU", SmallSpec with { PostNorms = true, Activation = FeedForwardActivation.Gelu }),
             ("parallel, layer norm, plain feed-forward, all biases", SmallSpec with
             {
                 ParallelBlocks = true, Norm = DecoderNorm.Layer, Gated = false, QkvBias = true, OutputBias = true, FeedForwardBias = true,
@@ -556,44 +472,6 @@ internal abstract partial class Tests
         Check(false, $"{what} must be refused");
     }
 
-    // One decoding step of a sandwich block (norms after attention and the feed-forward): where the device has the fused
-    // kernels, each block's output and down projections run with the norm after them, the residual addition and the next
-    // norm as one operation (two a block); on CUDA one launch each, so the step runs no norm kernel of its own but the
-    // first block's (four a block before: the norm after each projection, then the addition with the next norm).
-    internal static void SandwichStep(Sequential model, Device device, DecoderSpec spec, int[] ids, string label)
-    {
-        model.Eval();
-        using var context = new DecodingContext(device, 1, 256);
-        using (Autograd.NoGrad())
-        {
-            using (var prompt = Tensor.From([.. ids.Take(4).Select(i => (float)i)], [1, 4], device))
-            using (var first = Tensor.From([(float)ids[4]], [1, 1], device))
-            {
-                model.ForwardCached(prompt, context).Dispose();
-                model.ForwardCached(first, context).Dispose();               // the products' split counts measured
-            }
-
-            using var next = Tensor.From([(float)ids[5]], [1, 1], device);
-            long fused, norms, adds;
-            using (var trace = Kernels.Trace(device.Backend))
-            {
-                model.ForwardCached(next, context).Dispose();
-                device.Synchronize();
-                (fused, norms, adds) = (trace.Calls(Ops.PackedMatMulNormAddRmsNorm), trace.Calls(Ops.RmsNormAffine), trace.Calls(Ops.AddRmsNormAffine));
-            }
-
-            // A down projection that reads the activation itself (int4) keeps its own product, its norm and the addition.
-            bool downFuses = model.Descendants().OfType<FeedForward>().First().DownFusable;
-            int expected = device.Backend.FusedKernels ? (downFuses ? 2 : 1) * spec.Layers : 0;
-            Check(fused == expected, $"{label}: {fused} projections with their norm, addition and next norm in a step (expected {expected})");
-            if (device.Type == DeviceType.Cuda)
-            {
-                var (norm, add) = downFuses ? (1, 0) : (1 + spec.Layers, spec.Layers);
-                Check(norms == norm && adds == add, $"{label}: {norms} RmsNormAffine and {adds} AddRmsNormAffine launches in a step (expected {norm} and {add}: the norms after the output and down projections and the additions with the next norms run inside those projections)");
-            }
-        }
-    }
-
     internal static void DecoderLoraAndPackage(Device device)
     {
         var spec = SmallSpec;
@@ -622,7 +500,7 @@ internal abstract partial class Tests
         model.Eval();
 
         Check(DecoderSpec.FromJson(spec.ToJson()) == spec with { }, "JSON round trip");
-        var withRope = spec with { Rope = new RopeSettings(1e6f, 4, true, RopeScaling.Linear(2)) };
+        var withRope = spec with { Rope = new RopeSettings(1e6f, 4, true) };
         Check(DecoderSpec.FromJson(withRope.ToJson()).Rope == withRope.Rope, "rope settings round trip");
 
         string path = Path.Combine(Path.GetTempPath(), $"ns-{Guid.NewGuid():N}.ikm");

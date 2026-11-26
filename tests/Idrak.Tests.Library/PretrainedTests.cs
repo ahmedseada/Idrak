@@ -8,14 +8,14 @@ using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 
-// Pretrained models: checkpoints written here in the Hugging Face layout, read back through the architecture registry.
+// Pretrained models: special tokens and the recommended sampling of a reply, the tokenizers; checkpoints written here in
+// the Hugging Face layout (WriteCheckpoint).
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] Pretrained =
     [
         ("pretrained: a special token sampled mid-reply is left out of the text (stream and batch), the end-of-turn marker still ends it, the ids stay as sampled; SkipSpecialTokens false writes it", SpecialTokensLeftOutOfText),
         ("pretrained: a model's recommended sampling (generation_config.json) is read, carried by its generator and chat model, and laid under explicit values (explicit, then the model's, then the defaults; greedy; out-of-range values left out)", RecommendedSamplingIsRead),
-        ("pretrained: a Hugging Face-layout checkpoint loads through the registry and matches DecoderSpec; custom architectures", PretrainedCheckpoint),
         ("pretrained: byte-level and SentencePiece-style BPE tokenizers (merges, special tokens, byte fallback, round trips)", BpeTokenizers),
         ("pretrained: text holding half of a character encodes it as U+FFFD, also through Unicode normalization", LoneSurrogatesEncode),
     ];
@@ -116,50 +116,6 @@ internal abstract partial class Tests
         }
 
         return result;
-    }
-
-    internal static void PretrainedCheckpoint(Device device)
-    {
-        var spec = SmallSpec with { QkNorm = true };
-        var weights = new RandomWeights(70);
-        using var reference = spec.Build(weights, new DecoderBuildOptions { Device = device });
-        int[] ids = [2, 9, 14, 3, 7];
-        using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device);
-        var expected = reference.Predict(input).ToArray();
-        foreach (bool sharded in new[] { false, true })
-        {
-            string folder = TempFolder();
-            try
-            {
-                WriteCheckpoint(folder, spec, weights, "Qwen3ForCausalLM", sharded);
-                using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-                Check(model.Spec == spec with { NormEpsilon = spec.NormEpsilon, QkNorm = true }, $"spec read from config.json: {model.Spec}");
-                Check(model.Notes.Count == 0, string.Join("; ", model.Notes));
-                var loaded = model.Network.Predict(input).ToArray();
-                AssertClose(expected, loaded, 1e-4f, sharded ? "sharded" : "one file");
-                if (!sharded)
-                {
-                    // A family registered by the application: same naming, a different spec (no q/k norm, so those weights go unused).
-                    PretrainedArchitectures.Register("TestNoQkNormForCausalLM", PretrainedFamilies.CommonArchitecture((c, s, notes) => s));
-                    using var custom = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Architecture = "TestNoQkNormForCausalLM" });
-                    Check(!custom.Spec.QkNorm && custom.Notes.Any(n => n.Contains("not used")), "a custom registration reports unused q/k norm weights");
-                }
-            }
-            finally
-            {
-                Directory.Delete(folder, recursive: true);
-            }
-        }
-
-        try
-        {
-            PretrainedArchitectures.Get("NoSuchModelForCausalLM");
-            Check(false, "unknown architectures are rejected");
-        }
-        catch (NotSupportedException ex)
-        {
-            Check(ex.Message.Contains("Register"), ex.Message);
-        }
     }
 
     internal static void BpeTokenizers(Device device)

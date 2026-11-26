@@ -49,7 +49,7 @@ internal abstract partial class Tests
         var spec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
-            Rope = new RopeSettings(500f, null, false, null),
+            Rope = new RopeSettings(500f, null, false),
         };
         using var decoder = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 7 });
         var options = new GenerationOptions { Seed = 1, NumPredict = 12, Temperature = 0.8f, TopK = 0, RepeatPenalty = 1.1f, RepeatStop = 0, NumCtx = 64, ReturnTokens = true };
@@ -93,7 +93,7 @@ internal abstract partial class Tests
         var spec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
-            Rope = new RopeSettings(500f, null, false, null),
+            Rope = new RopeSettings(500f, null, false),
         };
         using var decoder = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 3 });
         var generator = new TextGenerator(decoder, tokenizer, 64) { KeepCache = false };
@@ -162,7 +162,7 @@ internal abstract partial class Tests
         var plainSpec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
-            QkNorm = true, Rope = new RopeSettings(500f, null, false, null),
+            QkNorm = true, Rope = new RopeSettings(500f, null, false),
         };
         using var decoder = plainSpec.Build(null, new DecoderBuildOptions { Device = device, Seed = 3 });
         using var windowed = (plainSpec with { SlidingWindow = 6, SlidingWindowLayers = [true, false] }).Build(null, new DecoderBuildOptions { Device = device, Seed = 8 });
@@ -252,7 +252,7 @@ internal abstract partial class Tests
         var spec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 96,
-            Rope = new RopeSettings(500f, null, false, null), SlidingWindow = 6, SlidingWindowLayers = [true, false],
+            Rope = new RopeSettings(500f, null, false), SlidingWindow = 6, SlidingWindowLayers = [true, false],
         };
         using var model = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 8 });
         var options = new GenerationOptions { Seed = 4, NumPredict = 60, Temperature = 0.9f, TopK = 8, RepeatPenalty = 1f, ChunkSize = 7, NumCtx = 96 };
@@ -305,7 +305,7 @@ internal abstract partial class Tests
         var spec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
-            QkNorm = true, Rope = new RopeSettings(500f, null, false, null), SlidingWindow = 8, SlidingWindowLayers = [true, false],
+            QkNorm = true, Rope = new RopeSettings(500f, null, false), SlidingWindow = 8, SlidingWindowLayers = [true, false],
         };
         using var decoder = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 3 });
         using var _ = tiny;
@@ -588,7 +588,7 @@ internal abstract partial class Tests
         var spec = new DecoderSpec
         {
             Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
-            QkNorm = true, Rope = new RopeSettings(500f, null, false, null),
+            QkNorm = true, Rope = new RopeSettings(500f, null, false),
         };
         using var decoder = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 3 });
         using var _ = tiny;
