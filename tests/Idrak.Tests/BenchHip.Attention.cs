@@ -70,19 +70,6 @@ internal abstract partial class DesktopTests
             BenchFinishes(form => BenchOperation(b, $"decoding, float32 cache, {shape}{form}", decoding, HipBackend.Cost("attention_decode_f32"),
                 () => hip.AttentionDecode(q, keys, values, last, y, Heads, 1, 1, capacity, Dim, Scale)), both: splits > 1);
 
-            // The packed caches written from the float32 one on the device (every position, as a prompt would).
-            Storage keys16 = on.Random(Heads * capacity * (Dim / 2)), values16 = on.Random(Heads * capacity * (Dim / 2));
-            hip.KeyValueWriteBFloat16(keys, keys16, start, Heads, capacity, capacity, Dim);
-            hip.KeyValueWriteBFloat16(values, values16, start, Heads, capacity, capacity, Dim);
-            BenchFinishes(form => BenchOperation(b, $"decoding, bfloat16 cache, {shape}{form}", decoding, HipBackend.Cost("attention_decode_bf16"),
-                () => hip.AttentionBFloat16(q, keys16, values16, last, y, Heads, 1, 1, capacity, Dim, Scale, tiled: false)), both: splits > 1);
-            Storage keys8 = on.Random(Heads * capacity * (Dim / 4)), values8 = on.Random(Heads * capacity * (Dim / 4));
-            Storage keyScales = on.Random(Heads * capacity), valueScales = on.Random(Heads * capacity);
-            hip.KeyValueWriteInt8(keys, keys8, keyScales, start, Heads, capacity, capacity, Dim);
-            hip.KeyValueWriteInt8(values, values8, valueScales, start, Heads, capacity, capacity, Dim);
-            BenchFinishes(form => BenchOperation(b, $"decoding, int8 cache, {shape}{form}", decoding, HipBackend.Cost("attention_decode_int8"),
-                () => hip.AttentionInt8(q, keys8, values8, keyScales, valueScales, last, y, Heads, 1, 1, capacity, Dim, Scale, tiled: false)), both: splits > 1);
-
             // A prompt over itself: each row sees the positions up to its own (causal), with the log-sum-exp.
             Storage qp = on.Random(Heads * prompt * Dim), yp = on.Random(Heads * prompt * Dim), lse = on.Random(Heads * prompt);
             long causal = (long)Heads * prompt * (prompt + 1) / 2 * Dim;
@@ -92,13 +79,6 @@ internal abstract partial class DesktopTests
             Storage starts = on.Of(new float[prompt]), ends = on.Of([.. Enumerable.Range(1, prompt).Select(i => (float)i)]);
             BenchOperation(b, string.Create(CultureInfo.InvariantCulture, $"attention over key ranges, {Heads} heads over {KvHeads}, {prompt} rows (causal), head {Dim}"), causal,
                 HipBackend.Cost("attention_spans_f32"), () => hip.AttentionSpans(qp, keysS, valuesS, starts, ends, yp, lse, Heads, KvHeads, Heads, prompt, prompt, Dim, Scale));
-
-            // The int8 cache's composed path: its scores, then its weighted values.
-            Storage scores = on.Random(Heads * capacity), weights = on.Random(Heads * capacity, 0f, 1f / capacity);
-            BenchOperation(b, $"int8 cache scores, {shape}", decoding, HipBackend.Cost("attn_scores_int8"),
-                () => hip.AttentionScoresInt8(q, keys8, keyScales, scores, Heads, 1, capacity, Dim));
-            BenchOperation(b, $"int8 cache weighted values, {shape}", decoding, HipBackend.Cost("attn_context_int8"),
-                () => hip.AttentionContextInt8(weights, values8, valueScales, y, Heads, 1, capacity, Dim));
         }
 
         long host = Idrak.Abstraction.Operations.Kernels.HostCalls(hip) - before;
@@ -121,28 +101,18 @@ internal abstract partial class DesktopTests
         using (var on = new BenchStorages(hip, new Random(8)))
         {
             Storage source = on.Random(Heads * Steps * Dim), at = on.Of([capacity - Steps]);
-            Storage cache = on.Random(Heads * capacity * Dim), cache16 = on.Random(Heads * capacity * (Dim / 2)), cache8 = on.Random(Heads * capacity * (Dim / 4));
-            Storage scales = on.Random(Heads * capacity), mask = on.Random(Steps * capacity);
+            Storage cache = on.Random(Heads * capacity * Dim), mask = on.Random(Steps * capacity);
             long written = (long)Heads * Steps * Dim;
             string steps = string.Create(CultureInfo.InvariantCulture, $"{Heads} heads x {Steps} steps, head {Dim}");
             BenchOperation(b, $"cache write, float32, {steps}", written, HipBackend.Cost("kv_write_f32"), () => hip.KeyValueWrite(source, cache, at, Heads, Steps, capacity, Dim));
-            BenchOperation(b, $"cache write, bfloat16, {steps}", written, HipBackend.Cost("kv_write_bf16"),
-                () => hip.KeyValueWriteBFloat16(source, cache16, at, Heads, Steps, capacity, Dim));
-            BenchOperation(b, $"cache write, int8, {steps}", written, HipBackend.Cost("kv_write_int8"),
-                () => hip.KeyValueWriteInt8(source, cache8, scales, at, Heads, Steps, capacity, Dim));
             BenchOperation(b, string.Create(CultureInfo.InvariantCulture, $"decoder mask {Steps}x{capacity}"), (long)Steps * capacity, HipBackend.Cost("decoder_mask_f32"),
                 () => hip.DecoderMask(at, mask, Steps, capacity));
 
             var random = new Random(9);
             Storage ids = on.Of([.. Enumerable.Range(0, Count).Select(_ => (float)random.Next(vocabulary))]);
-            Storage table = on.Random(vocabulary * Width), table16 = on.Random(vocabulary * (Width / 2)), gathered = on.Random(Count * Width);
+            Storage table = on.Random(vocabulary * Width), gathered = on.Random(Count * Width);
             string gather = string.Create(CultureInfo.InvariantCulture, $"{Count} of {vocabulary} rows of {Width}");
             BenchOperation(b, $"gather, float32, {gather}", (long)Count * Width, HipBackend.Cost("gather_f32"), () => hip.Gather(table, ids, gathered, Count, Width, vocabulary));
-            BenchOperation(b, $"gather, bfloat16, {gather}", (long)Count * Width, HipBackend.Cost("gather_bf16_f32"),
-                () => hip.GatherBFloat16(table16, ids, gathered, Count, Width, vocabulary));
-            int columnsDim = Math.Max(1, vocabulary * (Width / 2) / ((vocabulary + 1) / 2));
-            BenchOperation(b, string.Create(CultureInfo.InvariantCulture, $"gather of columns, bfloat16, {Count} of {vocabulary} columns of {columnsDim}"), (long)Count * columnsDim,
-                HipBackend.Cost("gather_bf16_cols_f32"), () => hip.GatherBFloat16Columns(table16, ids, gathered, Count, Math.Min(columnsDim, Width), vocabulary));
 
             Storage x = on.Random(rows * cols), z = on.Random(rows * cols);
             long n = (long)rows * cols;

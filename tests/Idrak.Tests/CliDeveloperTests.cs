@@ -214,16 +214,15 @@ internal abstract partial class DesktopTests : Tests
     {
         string name = device.ToString();
         var json = DevJson("kernels", "-d", name, "-j");
-        var operations = json["operations"]!.AsArray().Select(o => (Name: (string)o!["name"]!, Kernel: (string)o!["kernel"]!, Fallback: (string)o!["fallback"]!, Plugin: (bool)o!["plugin"]!)).ToList();
+        var operations = json["operations"]!.AsArray().Select(o => (Name: (string)o!["name"]!, Kernel: (string)o!["kernel"]!, Fallback: (string)o!["fallback"]!)).ToList();
         var counts = json["counts"]!.AsObject();
-        int all = Ops.All.Count + PluginOperations.All.Count;
+        int all = Ops.All.Count;
         Check((string?)json["device"] == name && (string?)json["kind"] == device.Backend.Kind && operations.Count == all
               && counts.Sum(c => (int)c.Value!) == all, $"every operation once: {operations.Count} of {all}");
         var chain = Kernels.Chain(device.Backend);
         Check(operations.Select((o, i) => o.Name == chain[i].Operation.Name && o.Kernel == chain[i].Source.ToString().ToLowerInvariant()
-                                         && o.Fallback == chain[i].Operation.Fallback.ToString().ToLowerInvariant() && o.Plugin == chain[i].Operation.IsPlugin).All(x => x), "the dispatcher's chain");
-        Check(operations.Single(o => o.Name == "MatMulMany").Fallback == "composed" && operations.Single(o => o.Name == "Softmax").Fallback == "host"
-              && operations.Single(o => o.Name == "GemmStrided").Fallback == "none", "fallbacks");
+                                         && o.Fallback == chain[i].Operation.Fallback.ToString().ToLowerInvariant()).All(x => x), "the dispatcher's chain");
+        Check(operations.Single(o => o.Name == "MatMulMany").Fallback == "composed" && operations.Single(o => o.Name == "Softmax").Fallback == "host", "fallbacks");
         if (device.Type == DeviceType.Cpu)
         {
             Check(operations.Single(o => o.Name == "Fill").Kernel == "device" && (int)counts["host"]! == 0, "the CPU runs its own kernels");
@@ -240,33 +239,6 @@ internal abstract partial class DesktopTests : Tests
             Check(new[] { "RmsNorm", "Softmax", "LayerNormBackward", "LogSoftmaxTopK", "Unary", "Binary", "Axpy" }.All(op => operations.Single(o => o.Name == op).Kernel == "device"),
                 "HIP runs the row and element-wise operations on its own kernels");
         }
-
-        // A kernel registered for the device's kind shows; --source keeps only the operations of one kind.
-        OperationKernels.Softmax softmax = (b, x, y, rows, cols, log) => b.SoftmaxKernel(x, y, rows, cols, log);
-        using (Kernels.Register(Ops.Softmax, device.Backend.Kind, softmax))
-        {
-            var registered = DevJson("kernels", "-d", name, "--source", "registered", "-j")["operations"]!.AsArray();
-            Check(registered.Count == 1 && (string?)registered[0]!["name"] == "Softmax" && (string?)registered[0]!["kernel"] == "registered", $"registered: {registered.ToJsonString()}");
-            var (code, output, _) = DevRun("kernels", "-d", name);
-            Check(code == 0 && output.StartsWith($"Kernels on {name} (", StringComparison.Ordinal) && output.Contains("1 registered", StringComparison.Ordinal)
-                  && output.Split('\n').Any(l => l.StartsWith("Softmax ", StringComparison.Ordinal) && l.Contains("registered", StringComparison.Ordinal)), $"text listing:\n{output}");
-        }
-
-        Check(DevJson("kernels", "-d", name, "--source", "registered", "-j")["operations"]!.AsArray().Count == 0, "removed again");
-
-        // The kernels of the outside plug-ins (tests/Idrak.PluginTests): "plug-in" rows, registered on the CPU, Vulkan and
-        // CUDA (HIP takes them through the host fallback: plug-ins ship no HIP kernels until GcnKernel lands).
-        using (Idrak.PluginTests.PluginKernels.Install())
-        {
-            var rows = DevJson("kernels", "-d", name, "-j")["operations"]!.AsArray()
-                .Where(o => (bool)o!["plugin"]!).ToDictionary(o => (string)o!["name"]!, o => (string)o!["kernel"]!);
-            bool own = device.Backend.Kind is "cpu" or "vulkan" or "cuda";
-            Check(rows.GetValueOrDefault("Outside.UnpackPairs") == (own ? "registered" : "host") && rows.GetValueOrDefault("Outside.ScaleRows") == (own ? "registered" : "composed")
-                  && rows.GetValueOrDefault("Outside.Softplus") == (device.Type == DeviceType.Cpu ? "registered" : "composed"), $"plug-in rows: {string.Join(", ", rows)}");
-            var (code, output, _) = DevRun("kernels", "-d", name, "--source", "registered");
-            Check(code == 0 && output.Split('\n').Any(l => l.StartsWith("Outside.ScaleRows ", StringComparison.Ordinal) && l.TrimEnd().EndsWith("plug-in", StringComparison.Ordinal)) == own,
-                $"text listing:\n{output}");
-        }
         Check(DevRun("kernels", "-d", name, "--source", "gpu").Code == 2 && DevRun("kernels", "-d", name, "--source", "1").Code == 2
               && DevRun("kernels", "Softmax").Code == 2, "an unknown source or an argument exits with 2");
     }
@@ -280,7 +252,7 @@ internal abstract partial class DesktopTests : Tests
             var json = DevJson("kernels", "dump", "-o", folder, "-j");
             var files = json["files"]!.AsArray().Select(f => (Kind: (string)f!["kind"]!, Path: (string)f!["path"]!, Bytes: (long)f!["bytes"]!)).ToList();
             Check(files.All(f => File.Exists(f.Path) && new FileInfo(f.Path).Length == f.Bytes && f.Bytes > 0), "every file exists and is not empty");
-            Check(files.Count(f => f.Kind == "ptx") == 2 && File.ReadAllText(Path.Combine(folder, "idrak.ptx")).Contains(".entry", StringComparison.Ordinal), "PTX with its entries");
+            Check(files.Count(f => f.Kind == "ptx") == 1 && File.ReadAllText(Path.Combine(folder, "idrak.ptx")).Contains(".entry", StringComparison.Ordinal), "PTX with its entries");
             Check(files.Count(f => f.Path.EndsWith(".spv", StringComparison.Ordinal)) > 20 && File.Exists(Path.Combine(folder, "spirv", "kernels.txt")), "SPIR-V modules and their contracts");
             var spv = File.ReadAllBytes(files.First(f => f.Path.EndsWith(".spv", StringComparison.Ordinal)).Path);
             Check(BitConverter.ToUInt32(spv, 0) == 0x07230203, "a SPIR-V module starts with the magic number");
@@ -295,7 +267,7 @@ internal abstract partial class DesktopTests : Tests
                 $"the physical form for {target}: registers allocated, waits placed");
             string only = Path.Combine(folder, "only");
             var (code, output, _) = DevRun("kernels", "dump", "ptx", "-o", only);
-            Check(code == 0 && output.StartsWith("ptx", StringComparison.Ordinal) && Directory.GetFiles(only).Length == 2, $"one kind: {output}");
+            Check(code == 0 && output.StartsWith("ptx", StringComparison.Ordinal) && Directory.GetFiles(only).Length == 1, $"one kind: {output}");
             string chosen = Path.Combine(folder, "chosen");
             (code, output, _) = DevRun("kernels", "dump", "gcn", "--target", "gfx908", "-o", chosen);
             Check(code == 0 && output.StartsWith("gcn", StringComparison.Ordinal) && File.Exists(Path.Combine(chosen, "gcn", "gfx908", "softmax_f32.s"))

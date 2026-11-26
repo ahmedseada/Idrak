@@ -96,7 +96,7 @@ internal abstract partial class DesktopTests : Tests
                   && (double)json["settings"]!["warmup"]!["budget_ms"]! == 2000 && (int)json["settings"]!["warmup"]!["rounds"]! == 3,
                 $"the timing method and the default warm-up are recorded: {json["settings"]?.ToJsonString()}");
             var results = json["results"]!.AsArray();
-            Check(results.Count == 4 + 6 + 6, $"4 matmul, 6 gemv and 6 attention results, got {results.Count}");
+            Check(results.Count == 4 + 6, $"4 matmul and 6 attention results, got {results.Count}");
             foreach (var r in results)
             {
                 Check(r!["name"] is not null && (double)r["value"]! > 0 && r["unit"] is not null, $"result {r.ToJsonString()}");
@@ -105,10 +105,6 @@ internal abstract partial class DesktopTests : Tests
                 Check((double?)r["cold_jit_ms"] >= 0 && (long?)r["cold_jit_methods"] >= 0,
                     $"each kernel result has the JIT's share of its first call (ms and methods): {r.ToJsonString()}");
             }
-
-            var gemv = IdrakJson(cache, "b", "--small", "-n", "1", "--kernels", "gemv", "--warmup", "0", "-d", device.ToString());
-            Check(gemv["results"]!.AsArray().Count == 2 && gemv["results"]!.AsArray().All(r => ((string)r!["name"]!).StartsWith("gemv int8")), gemv.ToJsonString());
-            Check(gemv["results"]!.AsArray().All(r => (int)r!["warmup_calls"]! == 0 && (bool)r["settled"]! == false), $"--warmup 0: no warm-up beyond the cold call: {gemv.ToJsonString()}");
 
             JsonObject? capped = null;
             WithEnvironment(new Dictionary<string, string?> { [BenchSettle.CallsVariable] = "3" },

@@ -10,14 +10,14 @@ using Idrak.Cli.Commands.Run;
 using Idrak.Cli.Shared;
 
 // Plan 31, P4: the audio pipeline on the command line, run in-process on the fixture's sound as the audio CLI tests do:
-// idrak audio processors and audio process, transcribe --audio-clean (files and --live), --clean taking a pipeline in
+// idrak audio process, transcribe --audio-clean (files and --live), --clean taking a pipeline in
 // data audio (the old stage names keeping their files), and SpeechTrainingOptions.Processing through JSON, checkpoints
 // and the feature cache.
 internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] AudioProcessingCliGroup =
     [
-        ("audio processing: cli: audio processors lists every registered processor with live or whole recording (normalize's live alternative agc), its summary and each parameter (key, kind, range and unit, default, help), -j the same as JSON; a name lists one, an unknown name is refused naming the registered ones; the help of both commands, their Arabic summaries, 'idrak audio' naming its subcommands and IDRAK_AUDIO_CLEAN in transcribe's environment", d => { CpuOnly(d); AudioProcessingCliList(); }),
+        ("audio processing: cli: audio process's help and Arabic summary, 'idrak audio' naming its subcommand and IDRAK_AUDIO_CLEAN in transcribe's environment", d => { CpuOnly(d); AudioProcessingCliList(); }),
         ("audio processing: cli: audio process on a stereo fixture WAV writes the samples of AudioPipeline.Parse(P).Apply(decoded) within the WAV's 16-bit rounding, the same file in blocks (--block-seconds), from a JSON array and from @FILE; -j names the steps and the real-time factor; an unknown processor is refused naming the registered ones, a missing --pipeline and a missing file naming them", d => { CpuOnly(d); AudioProcessingCliProcess(); }),
         ("audio processing: cli: transcribe FILE --audio-clean gives the text of the cleaned sound (IDRAK_AUDIO_CLEAN the same, none turning it off), --live FILE --audio-clean the text of --live on the file cleaned first; --live refuses normalize naming agc (from the option and from the variable)", AudioProcessingCliTranscribe),
         ("audio processing: cli: data audio --clean with the old stage names and --clean-settings writes the files AudioCleaners wrote before, with pipeline text the pipeline's (its text in -j), and refuses --clean-settings beside a pipeline and an unknown processor naming the registered ones; which values are the old stages", d => { CpuOnly(d); AudioProcessingCliDataAudio(); }),
@@ -40,45 +40,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static void AudioProcessingCliList()
     {
-        var (code, output, error) = AudioCli("audio", "processors");
-        Check(code == 0, $"audio processors: exit {code}\n{error}");
-        foreach (string name in AudioProcessors.Names)
-        {
-            Check(output.Contains($"{name} (", StringComparison.Ordinal), $"audio processors lists {name}: {output}");
-        }
-
-        Check(output.Contains("normalize (", StringComparison.Ordinal) && output.Contains("whole recording; live: agc", StringComparison.Ordinal)
-              && output.Contains("quantile", StringComparison.Ordinal) && output.Contains("=VALUE", StringComparison.Ordinal) && output.Contains("Hz", StringComparison.Ordinal),
-            $"the live alternative, an option, the value and a unit: {output}");
-
-        var json = AudioCliJson("audio", "processors");
-        var rows = json["processors"]!.AsArray();
-        Check(rows.Count == AudioProcessors.Names.Count && rows.Select(r => (string?)r!["name"]).SequenceEqual(AudioProcessors.Names), $"-j lists every processor in order: {rows.Count}");
-        var normalize = rows.First(r => (string?)r!["name"] == "normalize")!;
-        Check((bool?)normalize["live"] == false && (string?)normalize["live_alternative"] == "agc" && (string?)normalize["origin"] == Overrides.Library, $"normalize: {normalize}");
-        var denoise = rows.First(r => (string?)r!["name"] == "denoise")!["parameters"]!.AsArray();
-        Check(denoise.Select(p => (string?)p!["key"]).SequenceEqual(AudioProcessors.Get("denoise").Parameters.Select(p => p.Key)), $"denoise's parameters: {denoise}");
-        foreach (var processor in AudioProcessors.Names.Select(n => AudioProcessors.Get(n)))
-        {
-            var row = rows.First(r => (string?)r!["name"] == processor.Name)!;
-            var parameters = row["parameters"]!.AsArray();
-            Check((bool?)row["live"] == processor.Live && (string?)row["summary"] == processor.Summary && parameters.Count == processor.Parameters.Count, $"{processor.Name}: {row}");
-            for (int i = 0; i < parameters.Count; i++)
-            {
-                var p = processor.Parameters[i];
-                var given = parameters[i]!;
-                Check((string?)given["key"] == p.Key && (string?)given["kind"] == p.Input.ToString().ToLowerInvariant() && (string?)given["range"] == p.Range
-                      && (string?)given["unit"] == p.Unit && (string?)given["default"] == p.Default && (string?)given["help"] == p.Help && (double?)given["min"] == p.Min && (double?)given["max"] == p.Max,
-                    $"{processor.Name}'s parameter {i}: {given}");
-            }
-        }
-
-        var one = AudioCliJson("audio", "processors", "agc");
-        Check(one["processors"]!.AsArray().Count == 1 && (string?)one["processors"]![0]!["name"] == "agc", $"one processor: {one}");
-        var unknown = AudioCli("audio", "processors", "vacuum");
-        Check(unknown.Code == 2 && unknown.Err.Contains("vacuum", StringComparison.Ordinal) && unknown.Err.Contains("highpass", StringComparison.Ordinal), $"an unknown name: {unknown.Err}");
-
-        foreach (string name in new[] { "audio process", "audio processors" })
+        foreach (string name in new[] { "audio process" })
         {
             var (helpCode, help, _) = AudioCli([.. name.Split(' '), "--help"]);
             Check(helpCode == 0 && help.Contains("\nExamples:\n", StringComparison.Ordinal) && help.Contains($"idrak {name}", StringComparison.Ordinal)
@@ -87,7 +49,7 @@ internal abstract partial class DesktopTests : Tests
         }
 
         var (group, _, groupError) = AudioCli("audio");
-        Check(group == 2 && groupError.Contains("idrak audio process", StringComparison.Ordinal) && groupError.Contains("idrak audio processors", StringComparison.Ordinal), $"'idrak audio': {groupError}");
+        Check(group == 2 && groupError.Contains("idrak audio process", StringComparison.Ordinal), $"'idrak audio': {groupError}");
         Check(Help.For(CommandTable.All.First(c => c.Name == "transcribe")).Contains(AudioFiles.AudioCleanVariable, StringComparison.Ordinal)
               && EnvironmentVariables.All.Any(v => v.Name == AudioFiles.AudioCleanVariable), "IDRAK_AUDIO_CLEAN in the table and transcribe's help");
         foreach (string name in new[] { "transcribe", "speak", "data audio", "voice train" })
@@ -250,7 +212,6 @@ internal abstract partial class DesktopTests : Tests
         ThrowsNaming<ArgumentException>(() => SpeechTrainingOptions.FromJson(new JsonObject { ["processing"] = "highpass=80, vacuum" }), "an unknown processor", "vacuum");
 
         string root = TempFolder("processing-cli-training");
-        VitsPlugin.Register();
         try
         {
             var (transcripts, _) = ToneSpeech(Path.Combine(root, "data"), 6, 43, maxLetters: 4);
@@ -285,7 +246,6 @@ internal abstract partial class DesktopTests : Tests
         }
         finally
         {
-            VitsPlugin.Unregister();
             Directory.Delete(root, recursive: true);
         }
     }

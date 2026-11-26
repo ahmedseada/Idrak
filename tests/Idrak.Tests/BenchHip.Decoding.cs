@@ -7,9 +7,8 @@ using Idrak.Gpu.Hip;
 // --bench-hip decoding (plan 35, G5a): HIP's decoding operations on their GCN kernels, each timed cold (its first call)
 // apart from warm (BenchOperation), with GB/s and GFLOP/s from the tables of GcnKernels.Decoding.cs, .Products.cs and
 // .Pointwise.cs (HipBackend.Cost, HipBackend.ProductCost), ending with the host fallbacks the section took (none expected).
-// Sizes follow the large buffer (from the memory the device reports), never a card's: a layer of k ≤ 4,096 inputs and
-// 4,096 outputs for the fused products (1 and 8 rows, int8, int4 and bfloat16), a cache of up to 4,096 positions of 32
-// heads of 128 for the rows' attention, packed sequences of up to 512 positions, a vocabulary within a quarter of it
+// Sizes follow the large buffer (from the memory the device reports), never a card's: a cache of up to 4,096 positions of
+// 32 heads of 128 for the rows' attention, packed sequences of up to 512 positions, a vocabulary within a quarter of it
 // (the sampler's three paths over it: greedy rows, top-k 40 through the candidates, top-p over the whole row), float32
 // products of one input within a third of it.
 internal abstract partial class DesktopTests
@@ -46,67 +45,10 @@ internal abstract partial class DesktopTests
         var random = new Random(9);
         using (var on = new BenchStorages(hip, random))
         {
-            // Packed weights of random bits: small integers for int8 and int4, halves near 1 for bfloat16.
-            Storage Packed(long words, bool halves)
-            {
-                var values = new float[Math.Max(1, words)];
-                var bits = System.Runtime.InteropServices.MemoryMarshal.Cast<float, uint>(values.AsSpan());
-                for (int i = 0; i < bits.Length; i++)
-                {
-                    bits[i] = halves ? 0x3F803F80u ^ (uint)random.Next(0, 0x007F007F) : (uint)random.Next();
-                }
-
-                return on.Of(values);
-            }
-
             int k = (int)Math.Clamp(b.LargeElements / 4096L, 256, 4096) / 64 * 64, n = 4096;
-            Storage x = on.Random(8 * k), up = on.Random(8 * k), y = on.Random(8 * n), y2 = on.Random(8 * n), y3 = on.Random(8 * n), hidden = on.Random(8 * n);
-            Storage residual = on.Random(8 * n), sum = on.Random(8 * n), normalized = on.Random(8 * n), gain = on.Random(n), bias = on.Random(n);
-            foreach (var format in new[] { PackedFormat.Int8, PackedFormat.Int4, PackedFormat.BFloat16 })
-            {
-                var weights = format switch { PackedFormat.Int8 => GcnKernels.PackedWeights.Int8, PackedFormat.Int4 => GcnKernels.PackedWeights.Int4, _ => GcnKernels.PackedWeights.BFloat16 };
-                int perWord = GcnKernels.ColumnsPerWord(weights);
-                long words = (n + perWord - 1) / perWord;
-                Storage w1 = Packed(k * words, format == PackedFormat.BFloat16), w2 = Packed(k * words, format == PackedFormat.BFloat16);
-                Storage? scales = format == PackedFormat.BFloat16 ? null : on.Random(format == PackedFormat.Int4 ? (k + 31) / 32 * 8 * (int)words : n, 0.001f, 0.01f);
-                string name = format switch { PackedFormat.Int8 => "int8", PackedFormat.Int4 => "int4", _ => "bf16" };
-                foreach (int m in new[] { 1, 8 })
-                {
-                    // Each fused product with each finish (IDRAK_HIP_FINISH): its last block (one launch) and a second launch.
-                    var cost = HipBackend.ProductCost($"{name}_gemv_f32", m, n, k);
-                    void Plain()
-                    {
-                        switch (format)
-                        {
-                            case PackedFormat.Int8:
-                                hip.Int8MatMul(x, w1, scales!, y, m, n, k);
-                                break;
-                            case PackedFormat.Int4:
-                                hip.Int4MatMul(x, w1, scales!, y, m, n, k);
-                                break;
-                            default:
-                                hip.BFloat16MatMul(x, w1, y, m, n, k);
-                                break;
-                        }
-                    }
+            Storage x = on.Random(8 * k), y = on.Random(8 * n), y2 = on.Random(8 * n), y3 = on.Random(8 * n), bias = on.Random(n);
 
-                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} plain {m}x{k}->{n}{form}"), cost, Plain));
-                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} gated (SiLU) {m}x{k}->{n}{form}"), cost,
-                        () => hip.PackedMatMulGated(format, 0, x, up, w1, scales, y, m, n, k)));
-                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} with residual and norm {m}x{k}->{n}{form}"), cost,
-                        () => hip.PackedMatMulAddRmsNorm(format, x, w1, scales, y, m, n, k, residual, sum, gain, normalized, 1e-6f, 0f)));
-                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} norm, residual and norm {m}x{k}->{n}{form}"), cost,
-                        () => hip.PackedMatMulNormAddRmsNorm(format, x, w1, scales, y, m, n, k, gain, 1e-6f, 0f, residual, sum, gain, normalized, 1e-6f, 0f)));
-                    var three = HipBackend.ProductCost($"{name}_gemv_f32", m, 3 * n, k);
-                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} three products of one input {m}x{k}->3x{n}{form}"), three,
-                        () => hip.PackedMatMulMany(format, x, m, k, [(w1, scales, bias, y, n), (w2, scales, null, y2, n), (w1, scales, null, y3, n)])));
-                    var two = HipBackend.ProductCost($"{name}_gemv_f32", m, 2 * n, k);
-                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} gate/up pair (SiLU) {m}x{k}->2x{n}{form}"), two,
-                        () => hip.PackedMatMulGatedPair(format, 0, x, m, k, [(w1, scales, null, y, n), (w2, scales, null, y2, n)], hidden)));
-                }
-            }
-
-            // Attention over rows of different lengths (a float32 and a bfloat16 cache) and over packed sequences.
+            // Attention over rows of different lengths (a float32 cache) and over packed sequences.
             const int Heads = 32, Dim = 128;
             const float Scale = 0.088f;
             int capacity = (int)Math.Clamp(b.LargeElements / (8L * Heads * Dim), 256, 4096);
@@ -116,9 +58,6 @@ internal abstract partial class DesktopTests
             string shape = string.Create(CultureInfo.InvariantCulture, $"{Heads} heads x {capacity} positions, head {Dim}, 4 rows of different starts");
             BenchOperation(b, $"attention over rows, float32 cache, {shape}", decoding, HipBackend.Cost("attention_rows_f32"),
                 () => hip.AttentionRows(q, keys, values, last, output, starts, Heads, Heads / 4, 1, 1, capacity, Dim, Scale));
-            Storage keys16 = on.Random(Heads * capacity * (Dim / 2)), values16 = on.Random(Heads * capacity * (Dim / 2));
-            BenchOperation(b, $"attention over rows, bfloat16 cache, {shape}", decoding, HipBackend.Cost("attention_rows_bf16"),
-                () => hip.AttentionRowsBFloat16(q, keys16, values16, last, output, starts, Heads, Heads / 4, 1, 1, capacity, Dim, Scale));
             int steps = Math.Min(capacity, 512);
             Storage qs = on.Random(Heads * steps * Dim), ks = on.Random(Heads * steps * Dim), vs = on.Random(Heads * steps * Dim), ys = on.Random(Heads * steps * Dim);
             Storage lse = on.Random(Heads * steps), segmentStarts = on.Of([.. Enumerable.Range(0, steps).Select(i => (float)(i / 128 * 128))]);
@@ -153,7 +92,7 @@ internal abstract partial class DesktopTests
             BenchOperation(b, $"RMS norm and rotary embedding, {ropeShape}", (long)ropeRows * Dim, HipBackend.Cost("rms_norm_rope_f32"),
                 () => hip.RmsNormRope(heads, headGain, cos, sin, positions, rotated, ropeRows, Dim, 1e-6f, 0f, ropeHeads, 8, half, false));
 
-            // G5a's rest: queries and keys normalized and rotated in one launch, the attention heads into a bfloat16 cache.
+            // G5a's rest: queries and keys normalized and rotated in one launch, the attention heads into a float32 cache.
             const int KvHeads = 8;
             int keyRows = 8 * KvHeads;
             Storage keyHeads = on.Random(keyRows * Dim), keyRotated = on.Random(keyRows * Dim), values8 = on.Random(keyRows * Dim);
@@ -161,11 +100,11 @@ internal abstract partial class DesktopTests
                 HipBackend.Cost("rms_norm_rope2_f32"),
                 () => hip.RmsNormRopePair(heads, headGain, rotated, ropeRows, 1e-6f, 0f, ropeHeads, keyHeads, headGain, keyRotated, keyRows, 1e-6f, 0f, KvHeads, cos, sin, positions,
                     Dim, 8, half, false));
-            Storage cacheKeys = on.Random(KvHeads * capacity * Dim / 2), cacheValues = on.Random(KvHeads * capacity * Dim / 2), cacheStart = on.Of([capacity - 8]);
-            BenchOperation(b, $"queries, keys and values into the attention layouts and a bfloat16 cache, 8 steps x {ropeHeads} + 2 x {KvHeads} heads, head {Dim}",
+            Storage cacheKeys = on.Random(KvHeads * capacity * Dim), cacheValues = on.Random(KvHeads * capacity * Dim), cacheStart = on.Of([capacity - 8]);
+            BenchOperation(b, $"queries, keys and values into the attention layouts and a float32 cache, 8 steps x {ropeHeads} + 2 x {KvHeads} heads, head {Dim}",
                 (long)(ropeRows + 2 * keyRows) * Dim, HipBackend.Cost("norm_rope_heads_f32"),
                 () => hip.NormRopeHeads(heads, keyHeads, values8, 1, 8, ropeHeads, KvHeads, Dim, headGain, 1e-6f, 0f, headGain, 1e-6f, 0f, cos, sin, positions, half, false,
-                    rotated, cacheKeys, cacheValues, cacheStart, capacity, Dim, true));
+                    rotated, cacheKeys, cacheValues, cacheStart, capacity, Dim));
 
             // Float32 products of one input (MatMulMany: gemv_multi_f32), 1 and 8 rows.
             int floatColumns = (int)Math.Clamp(b.LargeElements / (3L * k), 256, 4096);

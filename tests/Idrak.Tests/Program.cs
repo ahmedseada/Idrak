@@ -153,19 +153,9 @@ if (args is ["--bench-dispatch"])
 if (args is ["--dump-ptx", var ptxPath])
 {
     File.WriteAllText(ptxPath, PtxKernels.Source);
-    File.WriteAllText(Path.ChangeExtension(ptxPath, ".tensorcore.ptx"), PtxKernels.TensorCoreSource);
     for (int d = 8; d <= PtxKernels.SpanMaxDim; d += d < PtxKernels.FlashMaxDim ? 8 : 16)   // the span modules, one per padded head size
     {
         File.WriteAllText(Path.ChangeExtension(ptxPath, $".spans_f32_d{d}.ptx"), PtxKernels.SpanFloatModule(d).Source);
-        if (d % 16 == 0 && d <= PtxKernels.FlashMaxDim)
-        {
-            File.WriteAllText(Path.ChangeExtension(ptxPath, $".spans_tc_d{d}.ptx"), PtxKernels.SpanTensorModule(d).Source);
-        }
-
-        if (d <= PtxKernels.FlashMaxDim)
-        {
-            File.WriteAllText(Path.ChangeExtension(ptxPath, $".spans_tcp_d{d}.ptx"), PtxKernels.SpanPipelinedModule(d).Source);
-        }
     }
 
     File.WriteAllText(Path.ChangeExtension(ptxPath, ".spans_bwd_wide.ptx"), PtxKernels.SpanBackwardWideModule().Source);
@@ -197,8 +187,7 @@ if (args is ["--list"])
 string runHeader = $"Idrak tests: {System.Runtime.InteropServices.RuntimeInformation.OSDescription} "
                    + $"({System.Runtime.InteropServices.RuntimeInformation.OSArchitecture}), {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}";
 
-// Every device: the CPU and each GPU found (IDRAK_DEVICES=cpu,cuda:1,vulkan:0 … to choose, including devices not
-// listed by default, such as a software Vulkan driver), since the library runs on any of them.
+// Every device Device lists (the CPU), unless IDRAK_DEVICES names its own.
 List<Device>? devices = Environment.GetEnvironmentVariable("IDRAK_DEVICES") is { Length: > 0 } chosen
     ? [.. chosen.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Device.Parse).Distinct()]
     : null;

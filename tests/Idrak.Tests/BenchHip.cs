@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.Globalization;
 using Idrak.Diagnostics;
 using Idrak.Gpu.Hip;
-using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 
 // dotnet run -c Release --project tests/Idrak.Tests -- --bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes|decoding|training|convolution …]
 //
@@ -26,22 +25,15 @@ using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 //            GcnKernels.Rows.cs's table (HipBackend.Cost), and a check that none took the host fallback
 //   pointwise each element-wise operation on its kernel over the large buffer: the first call apart from the warm ones,
 //            GB/s and GFLOP/s from GcnKernels.Pointwise.cs's table, none through the host fallback
-//   products the float32 product (nn, nt, tn, tt; a batch; with a bias), the few-row float32 products, the packed few-row
-//            products (int8, int4, bfloat16, float16; 1, 4 and 8 rows; the leftover-8.10 shapes int8 1 x 3072 -> 1024 and
-//            int4 1 x 1024 -> 32000), more int8 rows, the expansions and bfloat16 packing: the first call apart from the
-//            warm ones, GB/s and GFLOP/s from GcnKernels.Products.cs's table (HipBackend.ProductCost, Cost), the k splits
-//            each packed product took (IDRAK_HIP_GEMV_SPLITS forces them), then each packed shape's variants (G6a): 4 and 8
-//            rows of k a step (IDRAK_HIP_GEMV_DEPTH) with every k split count, the fastest named against the default; none
+//   products the float32 product (nn, nt, tn, tt; a batch; with a bias) and the few-row float32 products: the first call
+//            apart from the warm ones, GB/s and GFLOP/s from GcnKernels.Products.cs's table (HipBackend.ProductCost); none
 //            through the host fallback
-//   attention decoding over float32, bfloat16 and int8 caches (one row a head, the cache's positions split), the tiled
-//            form with the log-sum-exp, attention over causal key ranges with grouped heads, and the int8 cache's scores
-//            and weighted values (BenchHip.Attention.cs): cold apart from warm, GB/s and GFLOP/s from
-//            GcnKernels.Attention.cs's table, none through the host fallback
-//   shapes   the cache writes (float32, bfloat16, int8), the decoder mask, the gathers, a permute and the adding strided
-//            copy over the large buffer (BenchHip.Attention.cs): cold apart from warm, none through the host fallback
-//   decoding the fused packed products (gated, of one input, a gate/up pair, with the residual addition and norms; int8,
-//            int4, bfloat16; 1 and 8 rows), attention over rows of different lengths and over packed sequences, the rows
-//            of decoding (arg-max, class match, the residual add with its norm, rotary embedding alone and after the norm,
+//   attention decoding over a float32 cache (one row a head, the cache's positions split), the tiled form with the
+//            log-sum-exp and attention over causal key ranges with grouped heads (BenchHip.Attention.cs): cold apart from
+//            warm, GB/s and GFLOP/s from GcnKernels.Attention.cs's table, none through the host fallback
+//   shapes   the cache write, the decoder mask, the gather, a permute and the adding strided copy over the large buffer
+//            (BenchHip.Attention.cs): cold apart from warm, none through the host fallback
+//   decoding attention over rows of different lengths and over packed sequences, the rows of decoding (arg-max, class match, the residual add with its norm, rotary embedding alone and after the norm,
 //            of queries and keys together and of the attention heads into a cache, penalties, one-hot, the history, the
 //            sampler's three paths), float32 products of one input and the element-wise operations with parameters
 //            (BenchHip.Decoding.cs):
@@ -125,10 +117,10 @@ internal abstract partial class DesktopTests
         new("fill", "fill bandwidth: GCN's fill_f32 beside the runtime's memset, each result checked", BenchHipFill),
         new("rows", "the kernel set (assembled cold, then from the cache warm) and each row operation on its GCN kernel (cold and warm, GB/s, GFLOP/s)", BenchHipRows),
         new("pointwise", "each element-wise operation on its GCN kernel over the large buffer (cold and warm, GB/s, GFLOP/s)", BenchHipPointwise),
-        new("products", "the float32, few-row and packed few-row products, the expansions and bfloat16 packing on their GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipProducts),
-        new("attention", "decoding over float32, bfloat16 and int8 caches, the tiled form and attention over key ranges on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipAttention),
-        new("shapes", "the cache writes, the decoder mask, the gathers, a permute and the adding strided copy on the GCN kernels (cold and warm, GB/s)", BenchHipShapes),
-        new("decoding", "the fused packed products, the float32 products of one input, attention over rows and packed sequences, the rows of decoding (the norm and rotation of the heads, the sampler) and the element-wise operations with parameters on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipDecoding),
+        new("products", "the float32 and few-row products on their GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipProducts),
+        new("attention", "decoding over a float32 cache, the tiled form and attention over key ranges on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipAttention),
+        new("shapes", "the cache write, the decoder mask, the gather, a permute and the adding strided copy on the GCN kernels (cold and warm, GB/s)", BenchHipShapes),
+        new("decoding", "the float32 products of one input, attention over rows and packed sequences, the rows of decoding (the norm and rotation of the heads, the sampler) and the element-wise operations with parameters on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipDecoding),
         new("training", "the backward passes, the optimizers, the sums and the attention gradients on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipTraining),
         new("convolution", "the patches, the composed and depthwise convolutions, pooling, interpolation, CTC and the recurrent steps on the GCN kernels (cold and warm, GB/s, GFLOP/s)",
             BenchHipConvolution),
@@ -528,22 +520,6 @@ internal abstract partial class DesktopTests
             return s;
         }
 
-        // Packed weights of random bits: small integers for int8 and int4, the high halves of floats for bfloat16 and float16.
-        Storage Packed(long words, bool halves)
-        {
-            var values = new float[Math.Max(1, words)];
-            var bits = System.Runtime.InteropServices.MemoryMarshal.Cast<float, uint>(values.AsSpan());
-            for (int i = 0; i < bits.Length; i++)
-            {
-                bits[i] = halves ? 0x3C003C00u ^ (uint)random.Next(0, 0x03FF03FF) : (uint)random.Next();
-            }
-
-            var s = hip.Allocate(values.Length, zeroed: false);
-            owned.Add(s);
-            hip.Upload(values, s);
-            return s;
-        }
-
         long before = Idrak.Abstraction.Operations.Kernels.HostCalls(hip);
         try
         {
@@ -562,7 +538,7 @@ internal abstract partial class DesktopTests
             BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"matmul_nt {quarter}x{quarter}x{side} batch 16"), HipBackend.ProductCost("matmul_f32", quarter, quarter, side, batch: 16),
                 () => hip.BatchedMatMul(a, w, c, 16, quarter, quarter, side, false, true, 0f));
 
-            // Few rows (decoding) through the float32 kernels and the packed ones.
+            // Few rows (decoding) through the float32 kernels.
             int k = (int)Math.Clamp(b.LargeElements / 4096L, 256, 4096) / 64 * 64, n = 4096;
             Storage weights = On((long)k * n), x = On(8L * Math.Max(k, 3072)), y = On(8L * 32000);
             foreach (int m in new[] { 1, 8 })
@@ -573,104 +549,6 @@ internal abstract partial class DesktopTests
                     () => hip.MatMul(x, weights, y, m, k, n, false, true, 0f));
             }
 
-            (GcnWeights Format, int K, int N)[] shapes =
-            [
-                (GcnWeights.Int8, 3072, 1024), (GcnWeights.Int8, k, n), (GcnWeights.Int4, 1024, 32000), (GcnWeights.Int4, k, n), (GcnWeights.BFloat16, k, n), (GcnWeights.Float16, k, n),
-            ];
-            // Each packed shape on the kernel the settings pick (IDRAK_HIP_GEMV_DEPTH, IDRAK_HIP_GEMV_SPLITS: the row the
-            // run takes), then G6a's variants: each depth of k a step (4, G4a's; 8, the _k8 kernels) with each k split
-            // count from 1 to min(64, k / 64), the fastest named against the default (depth 4, the formula's splits). All
-            // give the same bits for a split count (GcnProductsDepths); the owner sets the faster one.
-            var (keptDepth, keptSplits) = (HipBackend.ForcedGemvDepth, HipBackend.ForcedGemvSplits);
-            int Formula(long words, int kk) => HipBackend.GemvSplitCount(hip.DeviceLimits.ComputeUnits, (int)((words + 63) / 64), kk);
-            try
-            {
-                foreach (var (format, kk, nn) in shapes)
-                {
-                    int perWord = GcnKernels.ColumnsPerWord(format);
-                    long words = (nn + perWord - 1) / perWord;
-                    Storage packed = Packed(kk * words, format is GcnWeights.BFloat16 or GcnWeights.Float16);
-                    Storage scales = On(format == GcnWeights.Int4 ? (kk + 31) / 32 * 8 * words : nn);
-                    foreach (int m in new[] { 1, 4, 8 })
-                    {
-                        Action run = format switch
-                        {
-                            GcnWeights.Int8 => () => hip.Int8MatMul(x, packed, scales, y, m, nn, kk),
-                            GcnWeights.Int4 => () => hip.Int4MatMul(x, packed, scales, y, m, nn, kk),
-                            GcnWeights.BFloat16 => () => hip.BFloat16MatMul(x, packed, y, m, nn, kk),
-                            _ => () => hip.Float16MatMul(x, packed, y, m, nn, kk),
-                        };
-
-                        (HipBackend.ForcedGemvDepth, HipBackend.ForcedGemvSplits) = (keptDepth, keptSplits);
-                        string kernel = GcnKernels.PackedGemvKernel(format, m, keptDepth ?? GcnKernels.PackedGemvDefaultDepth);
-                        int splits = HipBackend.GemvSplitCount(hip.DeviceLimits.ComputeUnits, (int)((words + 63) / 64), kk, keptSplits);
-                        BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{kernel} {m}x{kk}->{nn} ({(keptDepth is null && keptSplits is null ? "as measured (G7a; the first call measures)" : $"about {splits} splits")})"),
-                            HipBackend.ProductCost(kernel, m, nn, kk, splits), run);
-
-                        int standard = Formula(words, kk), most = Math.Max(1, Math.Min(64, kk / 64));
-                        double current = double.NaN, best = double.PositiveInfinity;
-                        string bestName = "";
-                        foreach (int depth in GcnKernels.PackedGemvDepths)
-                        {
-                            for (int count = 1; count <= most; count *= 2)
-                            {
-                                (HipBackend.ForcedGemvDepth, HipBackend.ForcedGemvSplits) = (depth, count);
-                                string variant = GcnKernels.PackedGemvKernel(format, m, depth);
-                                double warm = BenchProduct(b, string.Create(CultureInfo.InvariantCulture,
-                                        $"  {variant} {m}x{kk}->{nn}, depth {depth}, {count} split{(count > 1 ? "s" : "")}{(depth == GcnKernels.PackedGemvDefaultDepth && count == standard ? " (the default)" : "")}"),
-                                    HipBackend.ProductCost(variant, m, nn, kk, count), run);
-                                if (depth == GcnKernels.PackedGemvDefaultDepth && count == standard)
-                                {
-                                    current = warm;
-                                }
-
-                                if (warm < best)
-                                {
-                                    (best, bestName) = (warm, string.Create(CultureInfo.InvariantCulture, $"depth {depth}, {count} split{(count > 1 ? "s" : "")}"));
-                                }
-                            }
-                        }
-
-                        b.Row(string.Create(CultureInfo.InvariantCulture, $"  fastest for {format} {m}x{kk}->{nn}"),
-                            string.Create(CultureInfo.InvariantCulture,
-                                $"{bestName}: {best:F1} µs; the default (depth 4, {standard} splits): {current:F1} µs ({current / best:F2}x) (IDRAK_HIP_GEMV_DEPTH, IDRAK_HIP_GEMV_SPLITS)"));
-                    }
-                }
-            }
-            finally
-            {
-                (HipBackend.ForcedGemvDepth, HipBackend.ForcedGemvSplits) = (keptDepth, keptSplits);
-            }
-
-            int rows = 64;
-            {
-                long words = (n + 3) / 4;
-                Storage packed = Packed(k * words, false), scales = On(n), many = On((long)rows * k), output = On((long)rows * n);
-                BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"int8_matmul_f32 {rows}x{k}->{n}"), HipBackend.ProductCost("int8_matmul_f32", rows, n, k),
-                    () => hip.Int8MatMul(many, packed, scales, output, rows, n, k));
-            }
-
-            // The expansions over k x n weights, and bfloat16 packing over the large buffer.
-            Storage expanded = On((long)k * n);
-            foreach (var format in new[] { GcnWeights.Int8, GcnWeights.Int4, GcnWeights.BFloat16, GcnWeights.Float16 })
-            {
-                int perWord = GcnKernels.ColumnsPerWord(format);
-                long words = (n + perWord - 1) / perWord;
-                Storage packed = Packed(k * words, format is GcnWeights.BFloat16 or GcnWeights.Float16);
-                Storage scales = On(format == GcnWeights.Int4 ? (k + 31) / 32 * 8 * words : n);
-                string kernel = GcnKernels.DequantKernel(format);
-                Action run = format switch
-                {
-                    GcnWeights.Int8 => () => hip.Int8Dequantize(packed, scales, expanded, k, n),
-                    GcnWeights.Int4 => () => hip.Int4Dequantize(packed, scales, expanded, k, n),
-                    GcnWeights.BFloat16 => () => hip.BFloat16Dequantize(packed, expanded, k, n),
-                    _ => () => hip.Float16Dequantize(packed, expanded, k, n),
-                };
-                BenchOperation(b, string.Create(CultureInfo.InvariantCulture, $"{kernel} {k}x{n}"), (long)k * n, HipBackend.Cost(kernel), run);
-            }
-
-            Storage source = On(b.LargeElements), target = On(b.LargeElements / 2);
-            BenchOperation(b, $"bf16_pack_f32 {b.LargeText}", b.LargeElements, HipBackend.Cost("bf16_pack_f32"), () => hip.PackBFloat16(source, target, b.LargeElements));
             long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(hip) - before;
             b.Row("  (measured choices, G7a)", $"{hip.Tuning.Count} kept for this device, in {hip.Tuning.File ?? "no file (IDRAK_AUTOTUNE=0 or IDRAK_TUNING_CACHE=0)"}");
             b.Row("  (host fallbacks during the section)", fallbacks == 0 ? "none: every operation ran on its kernel" : $"{fallbacks} (SHOULD BE NONE)");
