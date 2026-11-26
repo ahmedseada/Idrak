@@ -12,7 +12,7 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // max + ln sum where asked. The cached decode, the tiled prompt and the key ranges share it, each giving its rows' key
 // ranges; the gradients recompute the weights, never store them, each key/value head's gradients added by one thread in
 // row order.
-internal sealed unsafe partial class CpuBackend
+internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IRowAttentionBackend
 {
     // y = Σ_c e_c · v_c over keys [start, end) of a head (scores into `scores`), divided by Σ e_c; its log-sum-exp returned
     // (-∞ for an empty range, whose row gets zeros).
@@ -100,14 +100,14 @@ internal sealed unsafe partial class CpuBackend
         fixed (float* pq = V(q), pk = V(keys), pv = V(values), pp = D(position), py = V(y), pl = logSumExp is null ? null : V(logSumExp))
         {
             long start = IndicesOf(position, pp)[0];
-            var kernel = new CausalRows(pq, pk, pv, py, pl, (int)start, rowsPerHead, Math.Max(1, steps), capacity, dim, scale, variant, rows);
+            var kernel = new CausalRows(pq, pk, pv, py, pl, (int)start, rowsPerHead, Math.Max(1, steps), capacity, dim, scale, variant, rows, default, false, 1);
             Rows(operation, kernel, rows, dim * Math.Min(capacity, (int)start + Math.Max(1, steps)), 2);
         }
     }
 
     // Row h · rowsPerHead + i sees cached positions up to position + i mod steps (from its window's first).
     private struct CausalRows(float* q, float* keys, float* values, float* y, float* lse, int position, int rowsPerHead, int steps, int capacity, int dim,
-        float scale, AttentionVariant variant, int rows) : IRowKernel
+        float scale, AttentionVariant variant, int rows, Indices starts, bool started, int headsPerRow) : IRowKernel
     {
         private float* _y = y, _lse = lse;
 
@@ -115,6 +115,10 @@ internal sealed unsafe partial class CpuBackend
         {
             int h = row / rowsPerHead, i = row % rowsPerHead;
             int end = Math.Min(capacity, position + i % steps + 1), start = variant.Start(end);
+            if (started)
+            {
+                start = (int)Math.Clamp(Math.Max(start, starts[(long)(h / headsPerRow) * steps + i % steps]), 0, Math.Max(0, end));
+            }
             var scores = ScoresBuffer(Math.Max(1, end - start));
             fixed (float* ps = scores)
             {
@@ -202,7 +206,7 @@ internal sealed unsafe partial class CpuBackend
             pdk = V(dkeys), pdv = V(dvalues))
         {
             var kernel = new BackwardHeads(pq, pk, pv, po, pl, pdo, pdq, pdk, pdv, IndicesOf(starts, ps), IndicesOf(ends, pe), heads, Math.Max(1, kvHeads),
-                Math.Max(1, headsPerTable), rows, keyRows, 0, dim, scale, variant, spans: true);
+                Math.Max(1, headsPerTable), rows, keyRows, 0, dim, scale, variant, mode: 1);
             Rows("AttentionSpansBackward", kernel, Math.Max(1, kvHeads), heads / Math.Max(1, kvHeads) * rows * dim * Math.Max(1, keyRows), 4);
         }
     }
@@ -218,7 +222,7 @@ internal sealed unsafe partial class CpuBackend
         fixed (float* pq = V(q), pk = V(keys), pv = V(values), po = V(output), pl = V(logSumExp), pdo = V(dOutput), pdq = V(dq), pdk = V(dkeys), pdv = V(dvalues))
         {
             var kernel = new BackwardHeads(pq, pk, pv, po, pl, pdo, pdq, pdk, pdv, default, default, heads, heads, 1, rowsPerHead, capacity, Math.Max(1, steps),
-                dim, scale, variant, spans: false);
+                dim, scale, variant, mode: 0);
             Rows("AttentionTiledBackward", kernel, heads, rowsPerHead * dim * Math.Max(1, steps), 4);
         }
     }
@@ -227,7 +231,7 @@ internal sealed unsafe partial class CpuBackend
     // the variant's window), each adding to dq its own row and to dkeys and dvalues the head's.
     private struct BackwardHeads(float* q, float* keys, float* values, float* output, float* lse, float* dOutput, float* dq, float* dkeys, float* dvalues,
         Indices starts, Indices ends, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int steps, int dim, float scale,
-        AttentionVariant variant, bool spans) : IRowKernel
+        AttentionVariant variant, int mode) : IRowKernel
     {
         private float* _dq = dq, _dk = dkeys, _dv = dvalues;
 
@@ -240,7 +244,7 @@ internal sealed unsafe partial class CpuBackend
                 for (int i = 0; i < rows; i++)
                 {
                     int start, end;
-                    if (spans)
+                    if (mode == 1)
                     {
                         (start, end) = SpanOf(starts, ends, (long)(h / headsPerTable) * rows + i, keyRows);
                     }
@@ -248,6 +252,10 @@ internal sealed unsafe partial class CpuBackend
                     {
                         end = Math.Min(keyRows, i % steps + 1);
                         start = variant.Start(end);
+                        if (mode == 2)
+                        {
+                            start = (int)Math.Clamp(Math.Max(start, starts[(long)(h / headsPerTable) * steps + i % steps]), 0, end);
+                        }
                     }
 
                     if (end <= start)
@@ -300,6 +308,70 @@ internal sealed unsafe partial class CpuBackend
             var toK = new WeightedMap(q, dk + (long)c * dim, ds);
             RowMap<TV, TF, WeightedMap>(ref toK, dim);
         }
+    }
+
+    // ------------------------------------------------------------------ packed sequences and rows of different lengths
+
+    public bool SupportsSegmented(int dim, AttentionVariant variant) => true;
+
+    public bool SupportsRows(int dim, AttentionVariant variant) => true;
+
+    bool ISegmentedAttentionBackend.AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads,
+        int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    {
+        if (heads <= 0 || rowsPerHead <= 0 || dim <= 0)
+        {
+            return true;
+        }
+
+        fixed (float* pq = V(q), pk = V(keys), pv = V(values), ps = D(starts), py = V(y), pl = logSumExp is null ? null : V(logSumExp))
+        {
+            var plain = variant with { Merged = 0 };
+            var kernel = new CausalRows(pq, pk, pv, py, pl, 0, rowsPerHead, Math.Max(1, steps), steps, dim, scale, plain, heads * rowsPerHead, IndicesOf(starts, ps),
+                true, Math.Max(1, headsPerRow));
+            Rows("AttentionSegmented", kernel, heads * rowsPerHead, dim * Math.Max(1, steps), 2);
+        }
+
+        return true;
+    }
+
+    bool ISegmentedAttentionBackend.AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys,
+        Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    {
+        if (heads <= 0 || rowsPerHead <= 0 || dim <= 0)
+        {
+            return true;
+        }
+
+        fixed (float* pq = V(q), pk = V(keys), pv = V(values), po = V(output), pl = V(logSumExp), pdo = V(dOutput), pdq = V(dq), pdk = V(dkeys), pdv = V(dvalues),
+            ps = D(starts))
+        {
+            var kernel = new BackwardHeads(pq, pk, pv, po, pl, pdo, pdq, pdk, pdv, IndicesOf(starts, ps), default, heads, heads, Math.Max(1, headsPerRow), rowsPerHead,
+                steps, Math.Max(1, steps), dim, scale, variant, mode: 2);
+            Rows("AttentionSegmentedBackward", kernel, heads, rowsPerHead * dim * Math.Max(1, steps), 4);
+        }
+
+        return true;
+    }
+
+    bool IRowAttentionBackend.AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead,
+        int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        int rows = heads * rowsPerHead;
+        if (rows <= 0 || dim <= 0)
+        {
+            return true;
+        }
+
+        fixed (float* pq = V(q), pk = V(keys), pv = V(values), pp = D(position), py = V(y), ps = D(starts))
+        {
+            long start = IndicesOf(position, pp)[0];
+            var kernel = new CausalRows(pq, pk, pv, py, null, (int)start, rowsPerHead, Math.Max(1, steps), capacity, dim, scale, variant, rows, IndicesOf(starts, ps),
+                true, Math.Max(1, headsPerRow));
+            Rows("AttentionRows", kernel, rows, dim * Math.Min(capacity, (int)start + Math.Max(1, steps)), 2);
+        }
+
+        return true;
     }
 
     // ------------------------------------------------------------------ the cache and its mask

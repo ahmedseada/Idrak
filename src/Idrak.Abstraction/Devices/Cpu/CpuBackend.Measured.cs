@@ -46,6 +46,14 @@ internal sealed partial class CpuBackend
 
     private static readonly ConcurrentDictionary<LanesKey, Lanes> s_lanesChosen = new();
 
+    /// <summary>Forgets every measured choice of this process (the widths and the described lane's), so the next call measures or reads the machine's file again (tests).</summary>
+    internal static void ForgetChoices()
+    {
+        s_lanesChosen.Clear();
+        StoredLanes.Clear();
+        CpuChoices.Forget();
+    }
+
     // The class of a size: its power of two rounded up (0 for 0 and 1).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static int SizeClass(long n) => n <= 1 ? 0 : 64 - BitOperations.LeadingZeroCount((ulong)(n - 1));

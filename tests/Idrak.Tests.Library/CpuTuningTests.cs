@@ -17,10 +17,81 @@ internal abstract partial class Tests
         ("cpu tuning: the machine's report parses", CpuTuningCache),
         ("cpu tuning: the CPU's memory is the system's (/proc/meminfo, the lowest cgroup v1 or v2 limit above the process with its usage less inactive file cache) where the runtime's figure is its heap budget (Mono), held to the runtime's heap limit where it has one (CoreCLR: unchanged), the runtime's where the system reports none; both listed, labelled", CpuSystemMemory),
         ("cpu tuning: the cores are named by their groups from /proc/cpuinfo and cpufreq (part numbers and highest frequencies, raw; the system's name where given; x86's model name as before)", CpuCoreGroups),
+        ("cpu tuning: the measured choices are timed alike (every candidate warmed once, then the same rounds in the same order) and kept per machine (a file of its own, its identity the processor, threads and instruction sets) under the vector paths setting: a scalar choice never taken under auto, nor auto's under scalar; IDRAK_TUNING_CACHE=0 keeps none", CpuChoicesKept),
         ("cpu tuning: the vector paths (IDRAK_CPU_VECTORS auto, native, portable, scalar) parse; portable 128-bit vectors where the runtime reports no NEON; the description says what runs", CpuVectorPathsChosen),
         ("cpu tuning: one result on every CPU (plan 37, P0 and P0b): exp, log, the sigmoids, GELU, softmax, log-softmax, sin, cos and pow with their gradients, layer norm, batch statistics over short runs in chunks, the gated activations, few-row products, the sums past one chunk, the sampler's weights and the host's double functions (PortableMath) hash to the pinned bits (the same with DOTNET_EnableAVX512=0, DOTNET_EnableAVX2=0, DOTNET_EnableHWIntrinsic=0 and IDRAK_CPU_VECTORS=scalar, portable or native)", CpuOneResult),
         ("cpu tuning: the portable math (plan 37, P0b): the CPU's float sin and cos lanes give their scalar form's bits and are within an ulp of MathF's over [-1e4, 1e4]; PortableMath's sin, cos, tan, atan, atan2, tanh, pow, log2 and log10 are within a few ulp of Math's, with its special cases; integer powers, log2 of powers of two and log10 of powers of ten exact", CpuPortableMath),
     ];
+
+    // RoundTimes' runs counted per candidate.
+    private struct CountedRuns : CpuChoices.ICandidates
+    {
+        public int[] Runs;
+
+        public readonly void Run(int index) => Runs[index]++;
+    }
+
+    internal static void CpuChoicesKept(Device device)
+    {
+        if (device.Backend is not CpuBackend || !FirstRun(nameof(CpuChoicesKept)))
+        {
+            return;
+        }
+
+        var counted = new CountedRuns { Runs = new int[3] };
+        var times = CpuChoices.RoundTimes(ref counted, 3);
+        Check(times.Length == 3 && counted.Runs[0] == counted.Runs[1] && counted.Runs[1] == counted.Runs[2] && counted.Runs[0] >= 10,
+            $"every candidate run alike: {string.Join(", ", counted.Runs)} runs");
+
+        string folder = Path.Combine(Path.GetTempPath(), "idrak-cpu-choices-" + Guid.NewGuid().ToString("N"));
+        string? setting = Environment.GetEnvironmentVariable("IDRAK_TUNING_CACHE");
+        var vectors = ComputeResources.CpuVectors;
+        bool autotune = CpuTuning.Autotune;
+        try
+        {
+            Environment.SetEnvironmentVariable("IDRAK_TUNING_CACHE", folder);
+            CpuTuning.Autotune = true;
+            string file = CpuChoices.FilePath ?? throw new Exception("no file under a folder setting");
+            Check(file.StartsWith(Path.Combine(folder, "cpu"), StringComparison.Ordinal), $"the machine's file {file} lies in the folder set");
+            string[] Lines() => File.Exists(file) ? File.ReadAllLines(file) : [];
+            void Measure(CpuVectorPaths paths)
+            {
+                ComputeResources.CpuVectors = paths;
+                CpuBackend.ForgetChoices();
+                using var x = Tensor.From([.. Enumerable.Range(0, 3001).Select(i => i * 0.001f)], [3001], device);
+                using var y = x.Exp();
+                GC.KeepAlive(y.ToArray());
+            }
+
+            Measure(CpuVectorPaths.Automatic);
+            var lines = Lines();
+            Check(lines.Length >= 3 && lines[1] == CpuChoices.Identity, $"the file names the machine ({CpuChoices.Identity}): {string.Join(" | ", lines.Take(2))}");
+            Check(lines.Any(l => l.StartsWith("lanes Unary Exp 2^12x2^0 Automatic\t", StringComparison.Ordinal)), "auto's choice kept under auto");
+            Measure(CpuVectorPaths.Scalar);
+            lines = Lines();
+            Check(ProductRoutes.Choices.TryGetValue("cpu: Unary Exp 2^12x2^0", out var chosen) && chosen.StartsWith("one float at a time (the only candidate)", StringComparison.Ordinal),
+                $"under scalar one float at a time, the only candidate (nothing measured): {chosen}");
+            Check(!lines.Any(l => l.Contains(" Scalar\t", StringComparison.Ordinal) && l.Contains("Exp", StringComparison.Ordinal)), "nothing measured under scalar is kept");
+            Check(lines.Any(l => l.StartsWith("lanes Unary Exp 2^12x2^0 Automatic\t", StringComparison.Ordinal)), "auto's choice still there");
+
+            Environment.SetEnvironmentVariable("IDRAK_TUNING_CACHE", "0");
+            Check(CpuChoices.FilePath is null, "IDRAK_TUNING_CACHE=0 keeps no file");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("IDRAK_TUNING_CACHE", setting);
+            ComputeResources.CpuVectors = vectors;
+            CpuTuning.Autotune = autotune;
+            CpuBackend.ForgetChoices();
+            try
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
 
     internal static void CpuPortableMath(Device device)
     {
