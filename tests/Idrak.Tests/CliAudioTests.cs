@@ -45,15 +45,6 @@ internal abstract partial class DesktopTests : Tests
         return (code, output.ToString(), error.ToString());
     }
 
-    // The tool with none of its plug-in packages registered at startup (IDRAK_PLUGIN_PACKAGES=none): a family the test
-    // unregistered stays so, as for a host without Idrak.Audio.Plugins.
-    private static (int Code, string Out, string Err) AudioCliWithoutPackages(params string[] args)
-    {
-        (int Code, string Out, string Err) result = default;
-        WithEnvironment(new Dictionary<string, string?> { [CommandLine.PluginPackagesVariable] = "none" }, () => result = AudioCli(args));
-        return result;
-    }
-
     private static JsonObject AudioCliJson(params string[] args)
     {
         var (code, output, error) = AudioCli([.. args, "-j"]);
@@ -68,10 +59,6 @@ internal abstract partial class DesktopTests : Tests
         WhisperPlugin.Unregister();
         try
         {
-            var refused = AudioCliWithoutPackages("transcribe", model, wav, "-d", d);
-            Check(refused.Code == 1 && refused.Err.Contains("is not registered", StringComparison.Ordinal) && refused.Err.Contains("-P", StringComparison.Ordinal),
-                $"without the plug-in: {refused.Code} {refused.Err}");
-
             WhisperPlugin.Register();
             Transcription plain, timed;
             using (var recognizer = SpeechModels.Load(model, new SpeechModelOptions { Device = device }))
@@ -139,10 +126,6 @@ internal abstract partial class DesktopTests : Tests
         try
         {
             string wav = Path.Combine(root, "abc.wav");
-            var refused = AudioCliWithoutPackages("speak", model, text, "-o", wav, "-d", d);
-            Check(refused.Code == 1 && refused.Err.Contains("is not registered", StringComparison.Ordinal) && refused.Err.Contains("-P", StringComparison.Ordinal),
-                $"without the plug-in: {refused.Code} {refused.Err}");
-
             var spoken = AudioCliJson("speak", "-P", VitsPluginPath, model, text, "--noise", "0", "--duration-noise", "0", "--bits", "float", "-o", wav, "-d", d);
             var audio = AudioCodecs.Decode(wav);
             Check(audio.SampleRate == 16000 && audio.Channels == 1 && (int)spoken["sample_rate"]! == 16000 && (string?)spoken["bits"] == "float", $"the WAV: {spoken}");

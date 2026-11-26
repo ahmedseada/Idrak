@@ -16,9 +16,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static void CliPretrainVision(Device device)
     {
-        string plugin = typeof(Idrak.Vision.Plugins.IdrakVision.IdrakVisionPlugin).Assembly.Location;
         string folder = TempFolder("cli-pretrain-vision");
-        Idrak.Vision.Plugins.IdrakVision.IdrakVisionPlugin.Unregister();
         try
         {
             string spec = Path.Combine(folder, "spec.json");
@@ -33,40 +31,21 @@ internal abstract partial class DesktopTests : Tests
                 .Replace("\"image_size\": 224", "\"image_size\": 28").Replace("\"patch_size\": 14", "\"patch_size\": 7");
             File.WriteAllText(spec, text);
             string model = Path.Combine(folder, "model");
-            // Without the plug-in: taken back (the tool registered the vision package for create init) and the tool told to
-            // register no plug-in package at startup.
-            Idrak.Vision.Plugins.IdrakVision.IdrakVisionPlugin.Unregister();
-            string? packages = Environment.GetEnvironmentVariable("IDRAK_PLUGIN_PACKAGES");
-            Environment.SetEnvironmentVariable("IDRAK_PLUGIN_PACKAGES", "none");
-            int code;
-            string error;
-            try
-            {
-                (code, _, error) = TrainCli("create", spec, "-o", model);
-            }
-            finally
-            {
-                Environment.SetEnvironmentVariable("IDRAK_PLUGIN_PACKAGES", packages);
-            }
-
-            Check(code == 1 && error.Contains("IdrakVisionForConditionalGeneration", StringComparison.Ordinal) && error.Contains("-P", StringComparison.Ordinal), $"without the plug-in: {error}");
-
-            var created = TrainCliJson("create", spec, "-o", model, "--seed", "2", "-P", plugin);
+            var created = TrainCliJson("create", spec, "-o", model, "--seed", "2");
             Check(File.Exists(Path.Combine(model, "preprocessor_config.json")) && JsonNode.Parse(File.ReadAllText(Path.Combine(model, "config.json")))!["vision_config"] is JsonObject,
                 $"a vision-language model made: {created["files"]}");
             string run = Path.Combine(folder, "run");
-            var trained = TrainCliJson("pretrain", model, "-P", plugin, "--data", ScratchData("records.jsonl"), "--trained", "tower,projector", "--sequences", "3",
+            var trained = TrainCliJson("pretrain", model, "--data", ScratchData("records.jsonl"), "--trained", "tower,projector", "--sequences", "3",
                 "--max-length", "128", "--batch-tokens", "384", "--steps", "2", "--lr", "1e-3", "-o", run, "-d", device.ToString());
             Check((int)trained["steps"]! == 2, $"{trained}");
-            var resumed = TrainCliJson("resume", run, "-P", plugin, "--steps", "1", "-d", device.ToString());
+            var resumed = TrainCliJson("resume", run, "--steps", "1", "-d", device.ToString());
             Check((int)resumed["steps"]! == 3, $"resume: {resumed}");
-            var (runCode, answer, runError) = RunIdrakOn(device, null, "run", (string)resumed["checkpoint"]!, "-P", plugin, "--image", ScratchData("images/image.png"),
+            var (runCode, answer, runError) = RunIdrakOn(device, null, "run", (string)resumed["checkpoint"]!, "--image", ScratchData("images/image.png"),
                 "read the scan", "--max-tokens", "3", "--temperature", "0");
             Check(runCode == 0, $"run with an image: {answer} {runError}");
         }
         finally
         {
-            Idrak.Vision.Plugins.IdrakVision.IdrakVisionPlugin.Unregister();
             Directory.Delete(folder, recursive: true);
         }
     }

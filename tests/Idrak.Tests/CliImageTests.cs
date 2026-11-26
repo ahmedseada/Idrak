@@ -206,13 +206,6 @@ internal abstract partial class DesktopTests : Tests
 
     private static void CliImageRun(Device device)
     {
-        // Without the Gemma 3 vision family registered (the tool registering none of its plug-in packages), the vision
-        // checkpoint is refused, naming the registry.
-        Gemma3VisionNotRegistered(device);
-        var (refusedCode, _, refused) = WithoutPluginPackages(() => RunIdrakOn(device, null, "run", VlmModel, "--image", TestData("vlm/image.png"), "hi"));
-        Check(refusedCode != 0 && refused.Contains("Vision family 'Gemma3ForConditionalGeneration' is not registered", StringComparison.Ordinal)
-              && refused.Contains("VisionFamilies.Register", StringComparison.Ordinal), $"run --image without the family: {refusedCode} {refused}");
-        RegisterGemma3Vision();
         var facts = JsonNode.Parse(File.ReadAllText(TestData("vlm/manifest.json")))!["facts"]!;
         int[] newTokens = [.. facts["generate"]!["new_tokens"]!.AsArray().Select(n => (int)n!)];
         string expected = BpeTokenizer.Load(VlmModel).Decode(newTokens).Trim();

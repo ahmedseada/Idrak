@@ -149,7 +149,6 @@ internal abstract partial class DesktopTests : Tests
         info.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
         info.Environment["DOTNET_NOLOGO"] = "1";
         info.Environment["IDRAK_CACHE"] = cache;
-        info.Environment.Remove("IDRAK_PLUGIN_PACKAGES");
         using var process = System.Diagnostics.Process.Start(info)!;
         process.StandardInput.Write(input ?? "");
         process.StandardInput.Close();

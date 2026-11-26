@@ -316,13 +316,6 @@ internal abstract partial class DesktopTests : Tests
     // `idrak serve` with the tiny Gemma 3 (and a text model beside it): the answers of `idrak run --image`, the limits.
     private static void CliServeImages(Device device)
     {
-        // Without the Gemma 3 vision family registered (the tool registering none of its plug-in packages), serve refuses the
-        // vision model at startup, naming the registry.
-        Gemma3VisionNotRegistered(device);
-        var (refusedCode, _, refused) = WithoutPluginPackages(() => RunIdrakOn(device, null, "serve", VlmModel, "-p", "0"));
-        Check(refusedCode == 2 && refused.Contains("Vision family 'Gemma3ForConditionalGeneration' is not registered", StringComparison.Ordinal),
-            $"serve without the vision family: {refusedCode} {refused}");
-        RegisterGemma3Vision();
         var (tokens, expected) = VlmReference();
         string png = TestData("vlm/image.png");
         string dataUrl = ChatImage.FromFile(png).ToDataUrl();

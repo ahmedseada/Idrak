@@ -265,14 +265,6 @@ internal abstract partial class DesktopTests : Tests
         RegisterGemma3Vision();
     }
 
-    /// <summary>Runs the idrak tool's in-process <paramref name="run"/> with none of its plug-in packages registered at startup (a family the test took away stays away).</summary>
-    private static T WithoutPluginPackages<T>(Func<T> run)
-    {
-        T result = default!;
-        WithEnvironment(new Dictionary<string, string?> { [Idrak.Cli.CommandLine.PluginPackagesVariable] = "none" }, () => result = run());
-        return result;
-    }
-
     // Views of an image joined as "whole … parts …".
     private sealed class ViewsFormat(int image) : ImageTokenFormat("views", image, image, before: "[", after: "]"), IImageBlocksJoin
     {

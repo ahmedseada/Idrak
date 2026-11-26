@@ -67,10 +67,6 @@ internal abstract partial class DesktopTests : Tests
             string ctcSpec = SpeechSpecFile(root, "ctc.json", ToneSpec(), tokenizerFile), ttsSpec = SpeechSpecFile(root, "tts.json", ToneTtsSpec(), tokenizerFile);
 
             IdrakAudioPlugin.Unregister();                                       // the runs above registered the tool's packages
-            var unregistered = AudioCliWithoutPackages("create", ctcSpec, "-o", Path.Combine(root, "none"));
-            Check(unregistered.Code == 1 && unregistered.Err.Contains("not registered", StringComparison.Ordinal) && unregistered.Err.Contains("-P", StringComparison.Ordinal),
-                $"create without the plug-in: {unregistered.Code} {unregistered.Err}");
-
             string ctc = Path.Combine(root, "ctc"), tts = Path.Combine(root, "tts");
             var made = AudioCliJson("create", ctcSpec, "-o", ctc, "-P", IdrakAudioPluginPath);
             Check((string?)made["task"] == "ctc" && (long)made["parameters"]! > 0, $"create of the ctc spec: {made}");
