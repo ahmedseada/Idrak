@@ -39,8 +39,6 @@ internal sealed class ProfileCommand : Command
         "past the last cached one over the last position only. Timings with draining are slower than normal decoding;\n" +
         "compare their shares, and use 'idrak bench' for speed.\n\n" +
         "Options:\n" +
-        "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format\n" +
-        "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
         "  -k, --kv FORMAT       the key/value cache format\n" +
         "      --context N       the context length; --adapter DIR: merge an adapter first\n" +
         "      --prompt-tokens N tokens in the cache before the step, or the prompt pass's length (default 128)\n" +
@@ -51,9 +49,9 @@ internal sealed class ProfileCommand : Command
         "      --stages N        with --cluster: the pipeline's stages (one per rank)\n" +
         "      --steps N         the decoding steps timed: a step profile's median (default 5), or with --cluster (default 4)\n\n" +
         "Examples:\n" +
-        "  idrak profile org/model -d vulkan:0 -w int8\n" +
+        "  idrak profile org/model -d vulkan:0\n" +
         "  idrak profile mymodel --prompt-tokens 1000 -j\n" +
-        "  idrak profile org/model -d cpu -w bf16 --pass prompt --prompt-tokens 512\n" +
+        "  idrak profile org/model -d cpu --pass prompt --prompt-tokens 512\n" +
         "  idrak profile my-model --cluster two.json --steps 8";
 
     public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, "--prompt-tokens", "--top", "--cluster", "--stages", "--steps", "--pass"];
@@ -148,7 +146,6 @@ internal sealed class ProfileCommand : Command
             var passMs = new double[timedPasses];
             var process = Process.GetCurrentProcess();
             double cpuMs = 0, wallMs = 0;
-            string products = "";
             for (int run = 0; run < timedPasses; run++)
             {
                 GC.Collect();
@@ -175,7 +172,6 @@ internal sealed class ProfileCommand : Command
                     network.ForwardCached(PassInput(), PassContext(), network.Count, (i, x) =>
                     {
                         LayerEnds();
-                        products = MixedPrecision.Current.ToString();             // what the network's pass multiplies in
                         (current, allocated, collections) = (i, GC.GetTotalAllocatedBytes(), Collections());
                         watch.Restart();
                         return x;
@@ -232,7 +228,11 @@ internal sealed class ProfileCommand : Command
         context.Write(string.Create(CultureInfo.InvariantCulture, $"{(promptPass ? "pass" : "step")} {stepMs:F2} ms ({timedText}, each after a collection) with each layer drained "
             + $"({layerTotal:F2} ms in the layers{(promptPass ? "" : ", each layer's median")}), {layers.Sum(l => l.AllocatedMiB):F1} MiB allocated{(promptPass ? "" : " a step")}, "
             + $"{layers.Sum(l => l.Collections)} collections{(promptPass ? "" : $" in the {timedPasses} steps")}, {cores:F1} of {Environment.ProcessorCount} cores busy on average"));
-        context.Write($"products in {products}, as the network runs them{(promptPass ? "; the layers past the last cached one over the last position only, as generation runs a prompt" : "")}");
+        if (promptPass)
+        {
+            context.Write("the layers past the last cached one over the last position only, as generation runs a prompt");
+        }
+
         var memory = ComputeResources.GetMemoryUsage(device);
         context.Write(string.Create(CultureInfo.InvariantCulture,
             $"{device}: {memory.InUse / 1e9:F2} GB in use{(memory.Offloaded > 0 ? $", {memory.Offloaded / 1e9:F2} GB of tensors in system memory (offloaded)" : "")}\n"));
@@ -266,7 +266,6 @@ internal sealed class ProfileCommand : Command
             ["prompt_tokens"] = promptTokens,
             ["pass"] = promptPass ? "prompt" : "step",
             ["steps"] = timedPasses,
-            ["precision"] = products,
             ["last_position_only"] = true,
             ["step_ms"] = stepMs,
             ["cores_busy"] = cores,

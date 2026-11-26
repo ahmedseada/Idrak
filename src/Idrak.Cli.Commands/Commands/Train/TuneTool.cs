@@ -19,8 +19,7 @@ using Idrak.Abstraction.Generation;
 namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
-/// The fine-tuning tool: LoRA and DoRA adapters (over a float, bfloat16, or frozen int4 or int8 base: QLoRA-style, not
-/// NF4 with double quantization) on any dataset, preference losses, evaluation, chat, export,
+/// The fine-tuning tool: LoRA and DoRA adapters on any dataset, preference losses, evaluation, chat, export,
 /// downloads and model information, run by <c>idrak tune</c> (<see cref="TuneCommand"/>, which turns idrak's options
 /// into these). <see cref="Parse"/> reads the arguments (an <see cref="ArgumentException"/> or
 /// <see cref="FormatException"/> for a bad one) and <see cref="Execute"/> runs the command.
@@ -28,8 +27,7 @@ namespace Idrak.Cli.Commands.Train;
 internal sealed class TuneTool(ToolConsole console)
 {
     public const string Usage = """
-        Fine-tune pretrained language models (LoRA, also over a frozen int4 or int8 base: QLoRA-style, not NF4) on any
-        dataset, evaluate, chat and export.
+        Fine-tune pretrained language models (LoRA) on any dataset, evaluate, chat and export.
 
           idrak tune train <model> <data…> --out <dir>    tune adapters on the data and write them (PEFT format) with
                                                           idrak-tuning.json (base model, system prompt, max length)
@@ -58,14 +56,13 @@ internal sealed class TuneTool(ToolConsole console)
                    run's checkpoint-STEP: its adapters, optimizer state and step), --checkpointing | --no-checkpointing
                    (default: off, turned on if a step runs out of device memory even with --recompute), --recompute (recompute the
                    feed-forward activations in the backward pass: a fifth less activation memory for one kernel per block;
-                   default: turned on first when a step runs out of device memory), --bf16-activations (hold the activations
-                   as bfloat16 between the passes: half their memory; default: turned on second), --no-activation-estimate
+                   default: turned on first when a step runs out of device memory), --no-activation-estimate
                    (start from these settings and step down only when a step runs out of device memory; default: each
                    batch shape starts at the rung its estimated memory fits, IDRAK_ACTIVATION_ESTIMATE), --no-packing,
-                   --no-graphs, --fp8 (the frozen base's forward products in FP8, checked against bfloat16 first),
+                   --no-graphs,
                    --adapter DIR (continue training an adapter), --time-steps (time a few steps instead of training),
                    --cpu-optimizer (the optimizer's update on the CPU, its state in system memory),
-                   --optimizer adamw|adam|adamw8bit|sgd, --weight-decay 0, --momentum 0.9 (sgd),
+                   --optimizer adamw|adam|sgd, --weight-decay 0, --momentum 0.9 (sgd),
                    --schedule cosine|linear|constant|wsd, --warmup 0.03 (fraction of the steps), --min-lr 0, --decay 0.2 (wsd),
                    --loss sft|dpo|orpo|simpo (dpo, orpo, simpo: preference rows with prompt, chosen and rejected), --beta B
                    (dpo 0.1, orpo's lambda 0.1, simpo 2), --margin G (simpo 1), --adapter-type lora|dora
@@ -91,10 +88,8 @@ internal sealed class TuneTool(ToolConsole console)
                    taken, nothing generated; auto: the distinct answers in the data; accuracy and recall per answer)
         Chat:      --system S, --max-new N, --temperature T (0: greedy)
         Model:     --cuda | --gpu | --cpu | --device cuda:N | vulkan:N (default: the best GPU found, else the CPU; any CUDA
-                   GPU works, the faster kernels load where the GPU has them), --int8 | --int4 | --bf16 (base weights), --context N,
-                   --kv8 | --kv16 | --kv FORMAT (float32, int8, bfloat16), --no-think, --offload, --gpu-memory GiB,
-                   --dtype auto | float32 | bf16 | f16 (the element type the products compute in: auto, the default, what the GPU
-                   computes natively, said per device; IDRAK_DEFAULT_DTYPE), --matmul fp32|bf16|fp8 (the products' precision over it),
+                   GPU works, the faster kernels load where the GPU has them), --context N,
+                   --kv FORMAT, --no-think, --offload, --gpu-memory GiB,
                    --device-layers N | auto (chat and evaluate of a model larger than the GPU: N layers on it, the rest computed by
                    the CPU from system memory; training keeps every layer on the device, --offload staging what does not fit),
                    --moe-experts resident | offload | auto (chat and evaluate of a mixture-of-experts model: offload keeps the
@@ -109,17 +104,17 @@ internal sealed class TuneTool(ToolConsole console)
     [
         "--device", "--kv", "--context", "--out", "--eval", "--adapter", "--rank", "--alpha", "--lr", "--epochs", "--max-length", "--batch-tokens",
         "--accumulate", "--save-every", "--eval-every", "--targets", "--optimizer", "--weight-decay", "--momentum", "--schedule", "--warmup",
-        "--min-lr", "--decay", "--loss", "--beta", "--margin", "--adapter-type", "--gpu-memory", "--matmul", "--samples", "--batch", "--max-new",
+        "--min-lr", "--decay", "--loss", "--beta", "--margin", "--adapter-type", "--gpu-memory", "--samples", "--batch", "--max-new",
         "--metric", "--choices", "--temperature", "--eval-fraction", "--system", "--kind", "--max-rows", "--seed", "--min-chars", "--max-chars",
         "--balance", "--data-format", "--images", "--image-transform", "--vision", "--vision-option", "--parts", "--feature-cache", "--metric-every",
-        "--metric-samples", "--audio", "--audio-prompt", "--resume-from", "--device-layers", "--moe-experts", "--dtype",
+        "--metric-samples", "--audio", "--audio-prompt", "--resume-from", "--device-layers", "--moe-experts",
     ];
 
     /// <summary>The flags.</summary>
     public static readonly string[] Flags =
     [
-        "--cuda", "--gpu", "--cpu", "--int8", "--bf16", "--int4", "--kv8", "--kv16", "--no-think", "--no-checkpointing", "--checkpointing",
-        "--recompute", "--bf16-activations", "--no-activation-estimate", "--no-packing", "--no-graphs", "--fp8", "--time-steps", "--offload", "--cpu-optimizer",
+        "--cuda", "--gpu", "--cpu", "--no-think", "--no-checkpointing", "--checkpointing",
+        "--recompute", "--no-activation-estimate", "--no-packing", "--no-graphs", "--time-steps", "--offload", "--cpu-optimizer",
         "--no-shuffle", "--no-dedup", "--mix", "--train-projector", "--grayscale",
     ];
 
@@ -132,33 +127,32 @@ internal sealed class TuneTool(ToolConsole console)
     public static readonly string[] SessionValueOptions =
     [
         "--rank", "--alpha", "--lr", "--max-length", "--batch-tokens", "--accumulate", "--targets", "--optimizer", "--weight-decay", "--momentum", "--schedule",
-        "--warmup", "--min-lr", "--decay", "--adapter-type", "--adapter", "--context", "--matmul", "--gpu-memory", "--dtype",
+        "--warmup", "--min-lr", "--decay", "--adapter-type", "--adapter", "--context", "--gpu-memory",
     ];
 
-    /// <summary>The flags of train that set up a fine-tuning session (the activations' memory, the packing, FP8, the optimizer's place, offloading).</summary>
+    /// <summary>The flags of train that set up a fine-tuning session (the activations' memory, the packing, the optimizer's place, offloading).</summary>
     public static readonly string[] SessionFlags =
-        ["--no-packing", "--checkpointing", "--no-checkpointing", "--recompute", "--bf16-activations", "--no-activation-estimate", "--no-graphs", "--fp8", "--cpu-optimizer",
+        ["--no-packing", "--checkpointing", "--no-checkpointing", "--recompute", "--no-activation-estimate", "--no-graphs", "--cpu-optimizer",
             "--offload"];
 
     private readonly TextWriter _out = console.Out;
     private readonly TextWriter _error = console.Error;
     private readonly List<string> positional = [];
     private IKeyValueLayout? kvLayout;
-    private bool int8, bf16, int4, kv8, kv16, noThink, profileTraining, offload;
+    private bool noThink, profileTraining, offload;
     private bool shuffleRows = true, dedupRows = true, mixByWeight;
     private int context = 4096, samples = 100, maxNew = 512, evaluationBatch = 8, seed, minChars, maxChars;
     private long maxRows;
     private long? gpuMemoryLimit;
     private int balance;
     private double evalFraction;
-    private string? output, evalFile, adapterFolder, systemPrompt, choices, deviceLayers, moeExperts, dtype;
+    private string? output, evalFile, adapterFolder, systemPrompt, choices, deviceLayers, moeExperts;
     private float? temperature;
     private string metric = ChatEvaluation.Auto;
 
     // The library's answer metrics: with auto, what --metric names for the answers of held-out rows (ChatEvaluation).
     private static readonly string[] AnswerMetrics = [TuningMetrics.NumberMatch, TuningMetrics.ExactMatch, TuningMetrics.ContainsMatch, TuningMetrics.WordF1];
     private RowKind rowKind = RowKind.Auto;
-    private MatMulPrecision? matmul;
     private FineTuningOptions tuning = new();
     private string optimizerName = "adamw", scheduleName = "cosine", lossName = "sft", adapterType = "lora";
     private float weightDecay, momentum = 0.9f, decayFraction = 0.2f;
@@ -232,11 +226,6 @@ internal sealed class TuneTool(ToolConsole console)
                     };
                     break;
                 case "--cpu": device = Device.Cpu; break;
-                case "--int8": int8 = true; break;
-                case "--bf16": bf16 = true; break;
-                case "--int4": int4 = true; break;
-                case "--kv8": kv8 = true; break;
-                case "--kv16": kv16 = true; break;
                 case "--kv":
                     string kvName = Next();
                     kvLayout = KeyValueLayouts.Names.Contains(kvName, StringComparer.OrdinalIgnoreCase) ? KeyValueLayouts.Get(kvName)
@@ -261,16 +250,13 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--no-checkpointing": tuning = tuning with { Checkpointing = false }; break;
                 case "--checkpointing": tuning = tuning with { Checkpointing = true }; break;
                 case "--recompute": tuning = tuning with { RecomputeFeedForward = true }; break;
-                case "--bf16-activations": tuning = tuning with { BFloat16Activations = true }; break;
                 case "--no-activation-estimate": tuning = tuning with { EstimateActivations = false }; break;
                 case "--no-packing": tuning = tuning with { Packing = false }; break;
                 case "--no-graphs": tuning = tuning with { CudaGraphs = false }; break;
-                case "--fp8": tuning = tuning with { Float8 = true }; break;
                 case "--time-steps": profileTraining = true; break;
                 case "--offload": offload = true; break;
                 case "--device-layers": deviceLayers = Next(); break;
                 case "--moe-experts": moeExperts = Next(); break;
-                case "--dtype": dtype = Next(); break;
                 case "--cpu-optimizer": tuning = tuning with { HostOptimizer = true }; break;
                 case "--optimizer": optimizerName = Next().ToLowerInvariant(); break;
                 case "--weight-decay": weightDecay = NextFloat(); break;
@@ -284,15 +270,6 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--margin": margin = NextFloat(); break;
                 case "--adapter-type": adapterType = Next().ToLowerInvariant(); break;
                 case "--gpu-memory": gpuMemoryLimit = (long)(double.Parse(Next(), CultureInfo.InvariantCulture) * (1L << 30)); break;
-                case "--matmul":
-                    matmul = Next() switch
-                    {
-                        "fp32" or "float32" => MatMulPrecision.Float32,
-                        "bf16" or "bfloat16" => MatMulPrecision.BFloat16,
-                        "fp8" or "float8" => MatMulPrecision.Float8,
-                        var other => throw new ArgumentException($"--matmul {other}: use fp32, bf16 or fp8."),
-                    };
-                    break;
                 case "--samples": samples = NextInt(); break;
                 case "--batch": evaluationBatch = NextInt(); break;
                 case "--max-new": maxNew = NextInt(); break;
@@ -414,12 +391,12 @@ internal sealed class TuneTool(ToolConsole console)
     {
         // The settings the tool changes for the whole process, put back afterwards (idrak runs it in-process). The ranks of
         // a simulated cluster run it at once in one process: the first in keeps the settings as they were and the last out
-        // puts them back, so a rank never takes another rank's bfloat16 for the process's own and leaves it on.
+        // puts them back, so a rank never takes another rank's settings for the process's own and leaves them on.
         lock (ProcessSettingsGate)
         {
             if (s_running++ == 0)
             {
-                s_saved = (MixedPrecision.Chosen, Device.Default, ComputeResources.OffloadToHostMemory, ComputeResources.GpuMemoryLimit);
+                s_saved = (Device.Default, ComputeResources.OffloadToHostMemory, ComputeResources.GpuMemoryLimit);
             }
         }
 
@@ -443,7 +420,7 @@ internal sealed class TuneTool(ToolConsole console)
             {
                 if (--s_running == 0)
                 {
-                    (MixedPrecision.Chosen, Device.Default) = (s_saved.Precision, s_saved.Device);
+                    Device.Default = s_saved.Device;
                     (ComputeResources.OffloadToHostMemory, ComputeResources.GpuMemoryLimit) = (s_saved.Offload, s_saved.Limit);
                 }
             }
@@ -453,7 +430,7 @@ internal sealed class TuneTool(ToolConsole console)
     // The process-wide settings as they were before the first of the runs under way (Execute).
     private static readonly Lock ProcessSettingsGate = new();
     private static int s_running;
-    private static (MatMulPrecision? Precision, Device Device, bool Offload, long? Limit) s_saved;
+    private static (Device Device, bool Offload, long? Limit) s_saved;
 
     private int Run()
     {
@@ -467,14 +444,11 @@ internal sealed class TuneTool(ToolConsole console)
             tuning = tuning with { Cluster = rank.Collectives, ClusterOptions = rank.Context.Options };
         }
 
-        // The products in the run's element type (plan 37, T2: --dtype, IDRAK_DEFAULT_DTYPE, else auto: bfloat16 tensor cores
-        // where the device computes them, float32 sums), forward and backward, unless --matmul names a precision.
-        MixedPrecision.Default = matmul ?? MixedPrecision.For(ElementTypes.Choose(dtype, "--dtype", device).Type);
         if (Cluster.ClusterSession.Current is null)
         {
             Device.Default = device;
         }
-        cacheLayout = kvLayout ?? KeyValueLayouts.For(kv8 ? KeyValueFormat.Int8 : kv16 ? KeyValueFormat.BFloat16 : KeyValueFormat.Float32);
+        cacheLayout = kvLayout ?? KeyValueLayouts.For(KeyValueFormat.Float32);
         downloads = console.CreateDownloader();
 
         // <model> may be an adapter folder from train: its base model, with the adapter (and its system prompt as the default).
@@ -502,12 +476,6 @@ internal sealed class TuneTool(ToolConsole console)
                     return Chat();
                 case "export":
                 {
-                    if (int8 || int4 || bf16)
-                    {
-                        _error.WriteLine("export merges into float weights: leave out --int8, --int4 and --bf16.");
-                        return 1;
-                    }
-
                     if (adapterFolder is null)
                     {
                         _error.WriteLine("export needs an adapter: an adapter folder as <model>, or --adapter DIR.");
@@ -516,7 +484,7 @@ internal sealed class TuneTool(ToolConsole console)
 
                     using var model = Load(merge: false);
                     model.SaveHuggingFace(output!);
-                    _out.WriteLine($"merged model written to {output} (bfloat16 safetensors, config and tokenizer files)");
+                    _out.WriteLine($"merged model written to {output} (safetensors, config and tokenizer files)");
                     return 0;
                 }
 
@@ -1476,22 +1444,15 @@ internal sealed class TuneTool(ToolConsole console)
         bool training = positional.Count > 0 && positional[0] == "train";
         var model = PretrainedModel.Load(folder, new PretrainedOptions
         {
-            Device = device, Int8 = int8, BFloat16 = bf16, Int4 = int4, MaxPositions = context, MergeAdapter = merge ? adapterFolder : null,
+            Device = device, MaxPositions = context, MergeAdapter = merge ? adapterFolder : null,
             WeightPlacement = training ? offload ? Idrak.Models.Abstractions.WeightPlacements.Stream : Idrak.Models.Abstractions.WeightPlacements.AllOnDevice : null,
             DeviceLayers = training ? null : Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(deviceLayers, "--device-layers"),
             // Training moves no expert between memories: every expert stays resident (plan 37, R1).
             ExpertPlacement = training ? Idrak.Models.Abstractions.ExpertPlacements.Resident : moeExperts,
-            ElementType = dtype,
-            ElementTypeSource = "--dtype",
         });
-        _out.WriteLine($"loaded {model.Config["architectures"]?[0]} from {folder} in {watch.Elapsed.TotalSeconds:F1} s on {device}{(int8 ? ", int8 weights" : int4 ? ", int4 weights" : bf16 ? ", bf16 weights" : "")}");
+        _out.WriteLine($"loaded {model.Config["architectures"]?[0]} from {folder} in {watch.Elapsed.TotalSeconds:F1} s on {device}");
         _out.WriteLine($"  {model.Spec.ParameterCount / 1e6:F0}M parameters, {model.Spec.Layers} layers, dim {model.Spec.Dim}, heads {model.Spec.Heads}/{model.Spec.KvHeads}, "
                        + $"vocabulary {model.Spec.Vocabulary}, context {model.MaxPositions}");
-        foreach (var type in model.DeviceElementTypes)
-        {
-            _out.WriteLine($"  {type}");                              // the type per device and how it was chosen (plan 37, T2)
-        }
-
         foreach (var note in model.Notes)
         {
             _out.WriteLine($"  note: {note}");

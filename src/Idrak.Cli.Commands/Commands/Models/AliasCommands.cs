@@ -6,8 +6,8 @@ using System.Text.Json.Nodes;
 namespace Idrak.Cli.Commands;
 
 /// <summary>
-/// <c>idrak alias set NAME MODEL [-w F] [-k F]</c>: a short name for a model and its settings, kept in the config's
-/// "aliases" object ({"qwen": {"model": "Qwen/Qwen3-0.6B", "weights": "int8", "kv": "int8"}}, and "grayscale": true for a
+/// <c>idrak alias set NAME MODEL [-k F]</c>: a short name for a model and its settings, kept in the config's
+/// "aliases" object ({"qwen": {"model": "Qwen/Qwen3-0.6B"}}, and "grayscale": true for a
 /// vision-language model that reads its images in grey) that every model argument reads (Shared/ModelChoices.cs).
 /// </summary>
 internal sealed class AliasSetCommand : Command
@@ -17,15 +17,14 @@ internal sealed class AliasSetCommand : Command
     public override string Summary => "Give a model (and its weight and KV formats) a short name, kept in the config";
 
     public override string Usage => """
-        NAME MODEL [-w FORMAT] [-k FORMAT] [--grayscale] [--image-transform P] [--vision-option K=V]
+        NAME MODEL [-k FORMAT] [--grayscale] [--image-transform P] [--vision-option K=V]
 
         Arguments:
           NAME   the short name (letters, digits, '.', '-', '_')
           MODEL  a Hugging Face id, a folder, a .gguf file
 
         Options:
-          -w, --weights F  the weight format to load it with (int8, int4, bf16 or a registered packed format)
-          -k, --kv F       the KV cache format (int8, bfloat16 or a registered one)
+          -k, --kv F       the KV cache format
               --grayscale  turn images to grayscale before the model reads them (run and chat --image), for
                            vision-language models fine-tuned on grey scans
               --image-transform P  image transforms run on every image first, in order (kept as "image_transforms";
@@ -33,17 +32,17 @@ internal sealed class AliasSetCommand : Command
               --vision-option K=V  an option of a vision-language model's family for its images (repeatable;
                            kept as "vision_options"; the family checks the keys when the model loads)
 
-        Options given to a command override the alias's (idrak chat qwen -w int4).
+        Options given to a command override the alias's.
 
         Examples:
-          idrak alias set qwen Qwen/Qwen3-0.6B -w int8 -k int8
+          idrak alias set qwen Qwen/Qwen3-0.6B
           idrak c qwen
-          idrak alias set ocr your-org/your-ocr-model -w int8 --grayscale
+          idrak alias set ocr your-org/your-ocr-model --grayscale
           idrak alias set ocr-crops your-org/your-ocr-model --grayscale --vision-option do_pan_and_scan=true
           idrak alias set ocr-card your-org/your-ocr-model --image-transform grayscale,max_width=1024,contrast=1.5
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--weights", "--kv", Shared.ModelChoices.VisionOption, Shared.ModelChoices.ImageTransformOption];
+    public override IReadOnlyCollection<string> ValueOptions => ["--kv", Shared.ModelChoices.VisionOption, Shared.ModelChoices.ImageTransformOption];
 
     public override IReadOnlyCollection<string> Flags => ["--grayscale"];
 
@@ -65,11 +64,6 @@ internal sealed class AliasSetCommand : Command
         var aliases = (JsonObject?)context.Config.Object("aliases")?.DeepClone() ?? [];
         bool replaced = aliases.ContainsKey(name);
         var entry = new JsonObject { ["model"] = model };
-        if (context.Option("--weights") is { } weights)
-        {
-            entry["weights"] = weights;
-        }
-
         if (context.Option("--kv") is { } kv)
         {
             entry["kv"] = kv;
@@ -124,12 +118,12 @@ internal sealed class AliasListCommand : Command
         var aliases = context.Config.Object("aliases") ?? [];
         if (aliases.Count == 0)
         {
-            context.Write($"No aliases in {context.Config.Path}. Add one: idrak alias set qwen Qwen/Qwen3-0.6B -w int8");
+            context.Write($"No aliases in {context.Config.Path}. Add one: idrak alias set qwen Qwen/Qwen3-0.6B");
         }
         else
         {
-            context.Table(["Alias", "Model", "Weights", "KV"], aliases.Select(a => (IReadOnlyList<string>)[a.Key, (string?)a.Value?["model"] ?? "?",
-                (string?)a.Value?["weights"] ?? "-", (string?)a.Value?["kv"] ?? "-"]));
+            context.Table(["Alias", "Model", "KV"], aliases.Select(a => (IReadOnlyList<string>)[a.Key, (string?)a.Value?["model"] ?? "?",
+                (string?)a.Value?["kv"] ?? "-"]));
         }
 
         context.WriteJson(new JsonObject { ["config"] = context.Config.Path, ["aliases"] = aliases.DeepClone() });
@@ -137,7 +131,7 @@ internal sealed class AliasListCommand : Command
     }
 
     internal static string Describe(JsonObject alias) =>
-        (string?)alias["model"] + ((string?)alias["weights"] is { } w ? $" -w {w}" : "") + ((string?)alias["kv"] is { } k ? $" -k {k}" : "")
+        (string?)alias["model"] + ((string?)alias["kv"] is { } k ? $" -k {k}" : "")
         + (alias["grayscale"] is JsonValue g && g.TryGetValue(out bool grey) && grey ? " --grayscale" : "")
         + (alias["image_transforms"] is JsonValue t && t.TryGetValue(out string? pipeline) ? $" --image-transform {pipeline}" : "")
         + (alias["vision_options"] is JsonObject vision ? string.Concat(vision.Select(o => $" --vision-option {o.Key}={(o.Value is JsonValue v && v.TryGetValue(out string? text) ? text : o.Value?.ToJsonString())}")) : "");

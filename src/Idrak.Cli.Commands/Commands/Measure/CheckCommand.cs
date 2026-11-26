@@ -31,8 +31,6 @@ internal sealed class CheckCommand : Command
         "or a packed cache only the top token is required. Exit code 1 when anything differs.\n\n" +
         "Options:\n" +
         "      --reference FILE  the reference JSON (required)\n" +
-        "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format\n" +
-        "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
         "  -k, --kv FORMAT       the key/value cache format\n" +
         "      --context N       the context length; --adapter DIR: merge an adapter (default: the reference's)\n\n" +
         "Examples:\n" +
@@ -59,18 +57,8 @@ internal sealed class CheckCommand : Command
             choice = choice with { Adapter = adapter };
         }
 
-        // The reference's logits are float32: products stay float32 unless the weights are packed anyway.
-        var precision = MixedPrecision.Chosen;
-        MixedPrecision.Default = MatMulPrecision.Float32;
-        try
-        {
-            using var model = ModelChoices.Load(context, choice);
-            return Check(context, model, choice, reference);
-        }
-        finally
-        {
-            MixedPrecision.Chosen = precision;
-        }
+        using var model = ModelChoices.Load(context, choice);
+        return Check(context, model, choice, reference);
     }
 
     private static int Check(CommandContext context, PretrainedModel model, ModelChoices.ModelChoice choice, JsonObject reference)
@@ -79,8 +67,7 @@ internal sealed class CheckCommand : Command
         var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer.");
         string TokenOf(int id) => tokenizer is IPretrainedTokenizer pretrained ? pretrained.TokenOf(id) : id.ToString(CultureInfo.InvariantCulture);
         int failures = 0;
-        // --kv, else the cache in the run's type (float32, which check selects unless --dtype names another). The reference
-        // is float32: weights, a run or a cache held in another type match it only to its top token.
+        // --kv. The reference is float32: a cache held in another format matches it only to its top token.
         var cache = ModelChoices.CacheLayout(choice);
         bool approximate = cache.Name != "float32";
 

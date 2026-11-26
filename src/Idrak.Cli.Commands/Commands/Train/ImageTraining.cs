@@ -169,7 +169,7 @@ internal static class ImageTraining
         Module network;
         if (options.Model is { } checkpoint)
         {
-            family = ImageModelFiles.Load(context, checkpoint, null, trainable: true);
+            family = ImageModelFiles.Load(context, checkpoint);
             network = family.Network;
         }
         else

@@ -21,7 +21,7 @@ internal abstract class Command
     /// <summary>Options of this command that take a value (e.g. "--port").</summary>
     public virtual IReadOnlyCollection<string> ValueOptions => [];
 
-    /// <summary>Flags of this command (e.g. "--int8"); any other option is a usage error.</summary>
+    /// <summary>Flags of this command; any other option is a usage error.</summary>
     public virtual IReadOnlyCollection<string> Flags => [];
 
     /// <summary>

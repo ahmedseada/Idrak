@@ -59,15 +59,13 @@ internal sealed class VlmCheckCommand : Command
         "      --vision-option K=V  a vision family option over the reference's (compare_real.py records the processor\n" +
         "                        options it used, such as --pan-and-scan, as \"vision_options\"; repeatable)\n" +
         "      --image-transform P  the image transforms instead of the reference's (the same syntax as run's)\n" +
-        "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (default: auto); the encoder is float32\n" +
-        "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
         "  -k, --kv FORMAT       the KV cache format (default: IDRAK_KV_CACHE_TYPE, else auto: the run's element type)\n" +
         "      --context N       the context window in tokens (default 4096, at most the model's)\n" +
         "      --adapter DIR     merge a LoRA adapter into the weights as they are read\n\n" +
         "Examples:\n" +
         "  python tools/vlm/compare_real.py ./gemma-ocr scan.jpg --grayscale --prompt-file prompt.txt --out ref\n" +
         "  python tools/vlm/compare_real.py ./gemma-ocr scan.jpg --image-transform grayscale,max_width=1024,contrast=1.5 --out rc\n" +
-        "  idrak vlm check ./gemma-ocr --reference ref -d cuda:0 -w bf16\n" +
+        "  idrak vlm check ./gemma-ocr --reference ref -d cuda:0\n" +
         "  idrak vlm check ./gemma-ocr --reference ref -d cpu -j -O report.json";
 
     public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, "--reference", "--image", "--steps", "--tie", "--show", ModelChoices.VisionOption, ModelChoices.ImageTransformOption];
@@ -146,8 +144,7 @@ internal sealed class VlmCheckCommand : Command
         context.Write($"Reference  {folder}: transformers {manifest["versions"]?["transformers"]}, torch {manifest["versions"]?["torch"]}, "
                       + $"{manifest["dtype"]} (vision {manifest["vision_dtype"]}), logits {manifest["logits_dtype"]}, {manifest["image_processor_class"]}, "
                       + $"grayscale {grayscale}, image transforms {(choice.Transforms.IsEmpty ? "none" : choice.Transforms)}, vision options {visionOptions}, {ids.Length} prompt tokens, {generated.Length} generated");
-        context.Write($"Idrak      {choice.Model} on {device}, KV cache {choice.Kv ?? "auto"}, encoder float32, "
-                      + $"matrix products {MixedPrecision.Default}");
+        context.Write($"Idrak      {choice.Model} on {device}, KV cache {choice.Kv ?? "auto"}");
 
         using var noGrad = Autograd.NoGrad();
         using var model = ModelChoices.Load(context, choice);

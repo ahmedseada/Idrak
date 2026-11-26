@@ -214,7 +214,6 @@ internal static class SpeechPretraining
             WeightDecay = Real(context, "--weight-decay", options.WeightDecay),
             MaxGradientNorm = Real(context, "--clip", options.MaxGradientNorm),
             HostOptimizer = context.Flag("--host-optimizer") || options.HostOptimizer,
-            BFloat16Activations = context.Flag("--bf16-activations") ? true : options.BFloat16Activations,
             Checkpointing = Switch("--checkpointing", "--no-checkpointing") ?? options.Checkpointing,
             SaveEvery = context.IntOption("--save-every", options.SaveEvery),
             KeepCheckpoints = context.IntOption("--keep", options.KeepCheckpoints),
@@ -303,11 +302,10 @@ internal static class SpeechPretraining
         {
             try
             {
-                // Training reads and writes float32 weights (a checkpoint's float16 or bfloat16 projections, kept as stored, do
-                // not train); the language and task are those the labels name (Whisper's prompt).
+                // The language and task are those the labels name (Whisper's prompt).
                 var recognizer = SpeechModels.Load(folder, new SpeechModelOptions
                 {
-                    Device = context.Device, Weights = EncoderWeights.Float32, Language = context.Option("--language"), Task = context.Option("--task"),
+                    Device = context.Device, Language = context.Option("--language"), Task = context.Option("--task"),
                 });
                 if (recognizer is ITrainableSpeechModel trainable)
                 {

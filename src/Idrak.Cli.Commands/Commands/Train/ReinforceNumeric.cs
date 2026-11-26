@@ -52,7 +52,7 @@ internal static class ReinforceNumeric
     private static readonly string[] LanguageModelOnly =
     [
         "--base", "--data", "--suite", "--reward", "--rounds", "--sandbox", "--max-new", "--no-think", "--teacher", "--teacher-device", "--teacher-weight",
-        "--divergence", "--beta", "--mix", "--weights",
+        "--divergence", "--beta", "--mix",
         .. TuneTool.SessionValueOptions.Where(o => !SharedSession.Contains(o)), .. TuneTool.SessionFlags,
     ];
 

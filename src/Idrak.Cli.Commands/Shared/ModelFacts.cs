@@ -82,12 +82,12 @@ internal sealed class ModelFacts
         long weightBytes;
         if (local.File is { } gguf)
         {
-            format = ModelCache.GgufFormat(gguf);
+            format = "gguf";
             weightBytes = new FileInfo(gguf).Length;
         }
         else
         {
-            format = ModelCache.SafeTensorsFormat(folder);
+            format = "safetensors";
             weightBytes = Directory.GetFiles(folder, "*.safetensors").Sum(f => new FileInfo(f).Length);
         }
 

@@ -29,7 +29,7 @@ internal static class EnvironmentVariables
     private static readonly string[] OnDevice =
     [
         "doctor", "devices", "version", "report", "init", "chat", "run", "batch", "compare", "complete", "embed", "agent", "serve", "ui",
-        "memory", "quantize", "merge", "convert", "bench", "eval", "score", "profile", "check", "tuning show", "tune", "train", "resume", "predict",
+        "memory", "merge", "convert", "bench", "eval", "score", "profile", "check", "tuning show", "tune", "train", "resume", "predict",
         "distill", "create", "pretrain", "suggest", "explain", "rag index", "rag ask", "rag search", "rag eval", "test", "trace", "demo", "onnx import", "onnx export",
         "onnx check", "vlm check", "transcribe", "speak", "voice add", "data mel",
     ];
@@ -38,7 +38,7 @@ internal static class EnvironmentVariables
     private static readonly string[] Models =
     [
         "pull", "list", "rm", "show", "search", "verify", "convert", "diff", "inspect", "chat", "run", "batch", "compare", "complete", "embed",
-        "tokenize", "template", "agent", "serve", "ui", "memory", "quantize", "merge", "bench", "eval", "score", "profile", "check", "tune",
+        "tokenize", "template", "agent", "serve", "ui", "memory", "merge", "bench", "eval", "score", "profile", "check", "tune",
         "distill", "create", "pretrain", "data stats", "data tokenizer", "data tokens", "rag index", "rag ask", "rag search", "rag eval", "suggest", "vlm check",
         "transcribe", "speak", "voice add",
     ];

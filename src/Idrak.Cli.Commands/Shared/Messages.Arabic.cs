@@ -405,17 +405,15 @@ internal static partial class Messages
         ["Give a model (and its weight and KV formats) a short name, kept in the config"] = "إعطاء نموذج (وصيغ أوزانه وذاكرة KV) اسما مختصرا يحفظ في الإعدادات",
         ["The model aliases in the config"] = "أسماء النماذج المختصرة في الإعدادات",
         ["Remove a model alias from the config"] = "إزالة اسم مختصر لنموذج من الإعدادات",
-        ["Convert between GGUF and Hugging Face folders (safetensors bf16, f16, f32)"] = "التحويل بين GGUF ومجلدات Hugging Face (ملفات safetensors بصيغة bf16 أو f16 أو f32)",
+        ["Convert between GGUF and Hugging Face folders"] = "التحويل بين GGUF ومجلدات Hugging Face",
         ["Which tensors differ between two checkpoints, and by how much"] = "الموترات المختلفة بين نقطتي حفظ، ومقدار الاختلاف",
         ["Supported model families and what each supports (windows, soft-capping, RoPE scalings, experts, GGUF)"] =
             "عائلات النماذج المدعومة وما تدعمه كل منها (النوافذ والتحديد الناعم وتحجيمات RoPE والخبراء و GGUF)",
         ["Tensor names, shapes, types and metadata of a GGUF, safetensors or .ikm file"] = "أسماء الموترات وأشكالها وأنواعها وبياناتها الوصفية في ملف GGUF أو safetensors أو .ikm",
         ["Cached models with sizes, formats and last use"] = "النماذج المخزنة مع أحجامها وصيغها وآخر استخدام",
-        ["Memory per weight and KV format at a context length, against each device's memory"] = "الذاكرة لكل صيغة أوزان وذاكرة KV عند طول سياق، مقابل ذاكرة كل جهاز",
+        ["Memory per KV format at a context length, against each device's memory"] = "الذاكرة لكل صيغة ذاكرة KV عند طول سياق، مقابل ذاكرة كل جهاز",
         ["Merge a LoRA or DoRA adapter into the base weights"] = "دمج محول LoRA أو DoRA في الأوزان الأساسية",
         ["Download a Hugging Face model or a GGUF file into the cache, with progress and resume"] = "تنزيل نموذج من Hugging Face أو ملف GGUF إلى التخزين المؤقت، مع التقدم والاستئناف",
-        ["Pack a model's weights (int8, int4, bf16 or any registered format): size and a quick perplexity check"] =
-            "ضغط أوزان نموذج (int8 أو int4 أو bf16 أو أي صيغة مسجلة): الحجم وفحص سريع للحيرة",
         ["Remove a cached model"] = "إزالة نموذج مخزن",
         ["Search the Hugging Face hub for models Idrak can load"] = "البحث في مستودع Hugging Face عن نماذج تستطيع إدراك تحميلها",
         ["Family, parameters, layers, context, vocabulary, RoPE, windows, chat template, files and license of a model"] =
@@ -477,7 +475,6 @@ internal static partial class Messages
         // idrak bench: the kernel benchmarks' warm-up, cold and warm values.
         ["kernels on {0} ({1}): {2}; the median of {3} timed calls each"] = "النوى على {0} ({1}): {2}؛ القيمة وسيط {3} استدعاءات مقيسة لكل قياس",
         [", small shapes"] = "، بأشكال صغيرة",
-        ["; products of typed weights by the {0} route ({1})"] = "؛ ضرب الأوزان المخزنة بأنواعها بمسار {0} ({1})",
         ["  warm-up: until {0} rounds of at least {1} agree within {2:0.##}% and nothing is compiled, at most {3} or {4} calls; Cold: the first call"] =
             "  الإحماء: حتى تتفق {0} جولات مدة كل منها {1} على الأقل في حدود {2:0.##}% ولا يترجم شيء، بحد أقصى {3} أو {4} استدعاء؛ Cold: الاستدعاء الأول",
         ["    {0} {1} warm, {2} cold{3}; settled after {4} warm-up calls"] = "    دافئ {0} {1}، بارد {2}{3}؛ استقر بعد {4} استدعاء إحماء",

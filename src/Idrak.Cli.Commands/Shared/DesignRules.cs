@@ -582,32 +582,7 @@ internal static class DesignRules
             + $"{median:N0} tokens median, {longest:N0} longest" + (counted ? "" : " (estimated from words)")));
         design.Lines.Add(("Task", dpo ? "preference training (DPO) of the base model" : "chat fine-tune (loss on the assistant's tokens only)"));
 
-        // Memory: the base in bfloat16 (2 bytes per parameter) or 4 bits (about 0.6), plus a fifth for the adapters and
-        // optimizer, plus the activations of one batch with checkpointing (batch tokens × width × layers × 4 bytes).
-        long? memory = DeviceMemory.Total(options.Device);
-        string precision = "bf16";
-        if (model.Parameters is { } p)
-        {
-            double activations = batchTokens * (double)(model.Hidden ?? 1024) * (model.Layers ?? 24) * 4;
-            double bf16 = p * 2 * 1.2 + activations, int4 = p * 0.6 * 1.2 + activations;
-            if (memory is { } m)
-            {
-                precision = bf16 <= 0.8 * m ? "bf16" : "int4";
-                string fits = bf16 <= 0.8 * m ? "bfloat16 base with LoRA fits; a frozen int4 base is not needed"
-                    : int4 <= 0.8 * m ? "bfloat16 does not fit; a frozen int4 base (QLoRA-style, not NF4)" : "even a 4-bit base may not fit: add --offload to the tune run";
-                design.Lines.Add(("Memory", $"{options.Device} offers {Units.Bytes(m)}; the setup needs about {Units.Bytes(precision == "bf16" ? bf16 : int4)} -> {fits}"));
-                if (int4 > 0.8 * m)
-                {
-                    design.Warnings.Add("the model may not fit this device's memory even at 4 bits");
-                }
-            }
-            else
-            {
-                design.Lines.Add(("Memory", $"{options.Device}'s memory is not reported; a bfloat16 base needs about {Units.Bytes(bf16)}, a 4-bit one {Units.Bytes(int4)}"));
-                design.Warnings.Add($"the memory of {options.Device} is unknown: check the bfloat16 / 4-bit choice against the card");
-            }
-        }
-        else
+        if (model.Parameters is null)
         {
             design.Warnings.Add($"'{model.Name}' is not in the local caches: sized without its config and tokenizer (idrak pull {model.Name} first for exact numbers)");
         }
@@ -619,25 +594,15 @@ internal static class DesignRules
             ["rank"] = rank, ["alpha"] = 2 * rank, ["targets"] = targets, ["lr"] = lr, ["schedule"] = "cosine", ["warmup"] = 0.03, ["epochs"] = epochs,
             ["max-length"] = maxLength, ["batch-tokens"] = batchTokens, ["eval-fraction"] = rows >= 200 ? 0.05 : 0.0, ["seed"] = options.Seed,
         };
-        if (precision == "int4")
-        {
-            design.Tune["int4"] = true;
-        }
-        else
-        {
-            design.Tune["bf16"] = true;
-        }
-
         if (dpo)
         {
             design.Tune["beta"] = 0.1;
         }
 
-        design.Lines.Add(("Setup", $"LoRA rank {rank}, alpha {2 * rank} on {targets.Replace(",", "/", StringComparison.Ordinal)} · {(precision == "int4" ? "4-bit" : "bfloat16")} base · packing at {maxLength:N0} tokens"));
+        design.Lines.Add(("Setup", $"LoRA rank {rank}, alpha {2 * rank} on {targets.Replace(",", "/", StringComparison.Ordinal)} · packing at {maxLength:N0} tokens"));
         design.Lines.Add(("Training", $"AdamW {lr:0e0} · cosine with 3% warm-up · {epochs} epoch{(epochs == 1 ? "" : "s")} · {batchTokens:N0} tokens per batch" + (dpo ? " · DPO beta 0.1" : "")));
         design.Why("setup", $"LoRA rank {rank}", "rank 8 under 1,000 rows, 16 under 20,000, 32 above; alpha twice the rank");
         design.Why("setup", $"{maxLength:N0} tokens", "the next power of two at or above the 99th percentile of tokens per row, between 256 and the model's context");
-        design.Why("setup", precision == "int4" ? "frozen int4 base (QLoRA-style, not NF4)" : "bfloat16 base", "bfloat16 when the base (2 bytes per parameter), adapters and one batch fit 80% of the device's memory, else 4 bits");
         design.Why("training", $"{epochs} epochs, learning rate {lr:0e0}", "3 epochs under 1,000 rows, 2 under 10,000, else 1; 2e-4 for fine-tuning, 5e-5 for DPO");
         return design;
     }

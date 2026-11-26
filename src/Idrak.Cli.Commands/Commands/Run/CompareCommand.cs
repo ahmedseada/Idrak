@@ -19,14 +19,12 @@ internal sealed class CompareCommand : Command
 
         Loads each model in turn (one in memory at a time), answers the prompt with the same settings and seed, and
         prints both answers with their speed. MODEL_B may be the same model as MODEL_A with other settings: aliases carry
-        their own --weights and --kv, and --weights-b / --kv-b change B only. The prompt may also come from --input or
+        their own --kv, and --kv-b changes B only. The prompt may also come from --input or
         standard input.
 
         Options:
           -i, --input FILE       read (more of) the prompt from FILE (repeatable)
-          -w, --weights FORMAT   weight format of both (default: auto); --weights-b FORMAT: of B only
-          --head-weights F       the output head's format, of both (bf16 beside int8/int4: the checkpoint's own scores)
-          -k, --kv FORMAT        KV cache format of both (default: each run's type); --kv-b FORMAT: of B only
+          -k, --kv FORMAT        KV cache format of both; --kv-b FORMAT: of B only
               --context N        context window in tokens (default 4096, at most the model's)
               --adapter DIR      merge a LoRA adapter into the weights of both
               --width N          width of the side-by-side text (default 100; 0 prints the answers one after the other)
@@ -34,11 +32,10 @@ internal sealed class CompareCommand : Command
 
         Examples:
           idrak compare Qwen/Qwen3-0.6B Qwen/Qwen3-1.7B "Explain recursion in one paragraph"
-          idrak compare qwen qwen --weights-b int4 "Explain recursion" --seed 1
         """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions.Where(o => o != "--tools"), "--input", "--weights-b", "--kv-b", "--width"];
+        [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions.Where(o => o != "--tools"), "--input", "--kv-b", "--width"];
 
     public override IReadOnlyCollection<string> Flags => GenerationSettings.Flags;
 
@@ -53,7 +50,7 @@ internal sealed class CompareCommand : Command
         settings.Seed ??= 1;                                      // the same draw for both, so differences come from the models
         int width = context.IntOption("--width", 100);
         var choiceB = ModelChoices.Choose(context, b);
-        choiceB = choiceB with { Weights = context.Option("--weights-b") ?? choiceB.Weights, Kv = context.Option("--kv-b") ?? choiceB.Kv };
+        choiceB = choiceB with { Kv = context.Option("--kv-b") ?? choiceB.Kv };
         var results = new List<(string Label, ChatAnswer Answer)>();
         foreach (var (label, name, choice) in new[] { ("A", a, ModelChoices.Choose(context, a)), ("B", b, choiceB) })
         {
@@ -67,7 +64,7 @@ internal sealed class CompareCommand : Command
 
             messages.Add(new ChatMessage("user", prompt));
             var answer = new ChatResponder(loaded.Chat, null).Answer(messages, own, loaded.Context);
-            string title = $"{label}: {choice.Model}{(choice.Weights is { } w ? $" -w {w}" : "")}{(choice.Kv is { } k ? $" -k {k}" : "")}";
+            string title = $"{label}: {choice.Model}{(choice.Kv is { } k ? $" -k {k}" : "")}";
             results.Add((title, answer));
         }
 

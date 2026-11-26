@@ -15,17 +15,13 @@ namespace Idrak.Cli.Commands.Measure;
 /// <summary>
 /// <c>idrak bench [MODEL]</c> (<c>idrak b</c>): with a model, prompt and generation speed in tokens per second, the
 /// matching GFLOP/s and the memory used on the device; without one, the kernel benchmarks (<see cref="KernelBench"/>).
-/// <c>--devices</c> runs the same benchmark on several devices and <c>--matrix</c> across weight and KV formats, in
-/// one table. <c>--save NAME</c> keeps the results under the cache folder and <c>--compare NAME</c> shows the change.
+/// <c>--devices</c> runs the same benchmark on several devices, in one table. <c>--save NAME</c> keeps the results under the cache folder and <c>--compare NAME</c> shows the change.
 /// The kernel benchmarks report each measurement's first call (cold) apart from its warm value, the median of the
 /// timed calls after a warm-up that settles (<see cref="BenchTiming"/>; <c>--warmup</c>, <c>--settle</c> and their
 /// variables).
 /// </summary>
 internal sealed class BenchCommand : Command
 {
-    private static readonly string[] MatrixWeights = ["float32", "int8", "int4", "bf16"];
-    private static readonly string[] MatrixKv = ["float32", "int8", "bfloat16"];
-
     public override string Name => "bench";
 
     public override IReadOnlyCollection<string> Aliases => ["b"];
@@ -40,12 +36,7 @@ internal sealed class BenchCommand : Command
         "calls after a warm-up that runs rounds until the last few agree and the JIT has nothing left to compile.\n" +
         "Documents (reading, drawing, writing, editing, signing) have their own: idrak bench documents.\n\n" +
         "Options:\n" +
-        "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (the model's weights; the gemv kernels)\n" +
-        "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
-        "  -k, --kv FORMAT       the key/value cache format (auto: the run's element type; float32, int8, bfloat16 or a\n" +
-        "                        registered one; IDRAK_KV_CACHE_TYPE)\n" +
-        "      --dtype TYPE      with a model: the element type the run computes in (auto, float32, bf16, f16;\n" +
-        "                        IDRAK_DEFAULT_DTYPE): the load says the type per device and how it was chosen\n" +
+        "  -k, --kv FORMAT       the key/value cache format (IDRAK_KV_CACHE_TYPE)\n" +
         "      --context N       the model's context length\n" +
         "      --adapter DIR     merge a LoRA or DoRA adapter first\n" +
         "      --prompt-tokens N prompt length (default 512, at most the context)\n" +
@@ -68,43 +59,35 @@ internal sealed class BenchCommand : Command
         "      --devices LIST    the same benchmark on several devices in one table: 'all' (every listed device)\n" +
         "                        or names, e.g. cpu,vulkan:0 (instead of --device)\n" +
         "      --draft MODEL     with a model: also time speculative decoding with MODEL drafting (a smaller model of\n" +
-        "                        the same vocabulary, loaded on the same device with the same -w/-k): tokens per second\n" +
+        "                        the same vocabulary, loaded on the same device with the same -k): tokens per second\n" +
         "                        with it (its first run apart, Cold), the share of its tokens kept, and whether the\n" +
         "                        greedy tokens are the same as without it\n" +
         "      --draft-tokens N  with --draft: tokens a round proposes (default 0: adapted to the acceptance)\n" +
-        "      --matrix          with a model: every weight format x KV format in one table (float32, int8, int4, bf16\n" +
-        "                        x float32, int8, bfloat16; or the comma-separated lists given to -w and -k)\n" +
         "      --save NAME       keep the results as NAME under the cache folder (bench/NAME.json)\n" +
         "      --compare NAME    show the change against the results saved as NAME\n\n" +
         "Examples:\n" +
-        "  idrak bench org/model -d vulkan:0 -w int8\n" +
+        "  idrak bench org/model -d vulkan:0\n" +
         "  idrak b mymodel --save laptop && idrak b mymodel --compare laptop\n" +
         "  idrak bench --kernels matmul,gemv -d cuda:0 -j\n" +
         "  idrak bench --devices cpu --warmup 5s --settle 2 -n 30\n" +
         "  idrak b mymodel --devices all\n" +
-        "  idrak b mymodel --matrix -w int8,int4 -d vulkan:0\n" +
-        "  idrak b big-model --draft small-model -d cuda:0 -w int8";
+        "  idrak b big-model --draft small-model -d cuda:0";
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. ModelChoices.ValueOptions, ModelChoices.DtypeOption, "--prompt-tokens", "--tokens", "--num-ctx", "--kernels", "--repeat", "--save", "--compare", "--devices", "--draft", "--draft-tokens", .. WarmupOptions];
+        [.. ModelChoices.ValueOptions, "--prompt-tokens", "--tokens", "--num-ctx", "--kernels", "--repeat", "--save", "--compare", "--devices", "--draft", "--draft-tokens", .. WarmupOptions];
 
     // The kernel benchmarks' warm-up options (BenchSettle).
     private static readonly string[] WarmupOptions = ["--warmup", "--warmup-calls", "--settle", "--settle-rounds", "--warmup-round"];
 
-    public override IReadOnlyCollection<string> Flags => ["--small", "--matrix"];
+    public override IReadOnlyCollection<string> Flags => ["--small"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
         new Dictionary<string, string>(ModelChoices.ShortForms) { ["-n"] = "--repeat" };
 
-    /// <summary>One benchmark run: a device, and with a model its weight and KV formats (null: weights as stored, the cache in the run's type).</summary>
-    private sealed record BenchRun(Device Device, string? Weights, string? Kv)
+    /// <summary>One benchmark run: a device.</summary>
+    private sealed record BenchRun(Device Device)
     {
-        public string Label(bool devices, bool matrix) => string.Join(" ", new[]
-        {
-            devices ? Device.ToString() : null,
-            matrix ? $"w {Weights ?? "float32"}" : null,
-            matrix ? $"kv {Kv ?? "auto"}" : null,
-        }.OfType<string>());
+        public string Label(bool devices) => devices ? Device.ToString() : "";
     }
 
     public override int Run(CommandContext context)
@@ -125,11 +108,6 @@ internal sealed class BenchCommand : Command
             throw new UsageException($"{warmup} sets the kernel benchmarks' warm-up, which run without a model (a model's runs follow one warm-up generation).");
         }
 
-        if (model is null && context.Flag("--matrix"))
-        {
-            throw new UsageException("--matrix compares a model's weight and KV formats; name a model (the kernel benchmarks already time every packed format).");
-        }
-
         if (model is null && (context.Options("--adapter").Count > 0 || context.Option("--context") is not null || context.Option("--kv") is not null
                               || context.Option("--draft") is not null))
         {
@@ -144,7 +122,7 @@ internal sealed class BenchCommand : Command
         string? compareName = context.Option("--compare");
         JsonObject? saved = compareName is null ? null : LoadSaved(context, compareName);
         var runs = Runs(context, model);
-        bool manyDevices = runs.Select(r => r.Device).Distinct().Count() > 1, matrix = context.Flag("--matrix");
+        bool manyDevices = runs.Select(r => r.Device).Distinct().Count() > 1;
         var document = new JsonObject
         {
             ["kind"] = model is null ? "kernels" : "model",
@@ -166,7 +144,7 @@ internal sealed class BenchCommand : Command
         int failed = 0;
         foreach (var run in runs)
         {
-            string label = run.Label(manyDevices, matrix);
+            string label = run.Label(manyDevices);
             var runDocument = new JsonObject { ["device"] = run.Device.ToString() };
             try
             {
@@ -177,7 +155,7 @@ internal sealed class BenchCommand : Command
             }
             catch (Exception e) when (runs.Count > 1 && e is not (UsageException or OutOfMemoryException))
             {
-                // One device or format that cannot run does not stop the others.
+                // One device that cannot run does not stop the others.
                 failed++;
                 runDocument["error"] = e.Message;
                 context.Error($"{(label.Length > 0 ? label : run.Device.ToString())}: {e.Message}");
@@ -202,7 +180,7 @@ internal sealed class BenchCommand : Command
         {
             document["runs"] = runsJson;
             document["results"] = new JsonArray([.. all.Select(p => (JsonNode)ToJson(p.Result, p.Label))]);
-            WritePivot(context, runs.Select(r => r.Label(manyDevices, matrix)).ToList(), all);
+            WritePivot(context, runs.Select(r => r.Label(manyDevices)).ToList(), all);
         }
         else
         {
@@ -237,7 +215,7 @@ internal sealed class BenchCommand : Command
         return failed == runs.Count ? ExitCodes.Failed : ExitCodes.Ok;
     }
 
-    // The devices (--devices or the context's device) times, with --matrix, the weight and KV formats.
+    // The devices (--devices or the context's device).
     private static List<BenchRun> Runs(CommandContext context, string? model)
     {
         List<Device> devices = context.Option("--devices") is not { } list ? [context.Device]
@@ -248,16 +226,7 @@ internal sealed class BenchCommand : Command
             throw new UsageException("--devices needs 'all' or device names, e.g. cpu,vulkan:0.");
         }
 
-        if (model is null || !context.Flag("--matrix"))
-        {
-            return [.. devices.Select(d => new BenchRun(d, null, null))];
-        }
-
-        static List<string> Formats(string? given, string[] fallback) =>
-            given is null ? [.. fallback] : [.. given.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
-        var weights = Formats(context.Option("--weights"), MatrixWeights);
-        var kvs = Formats(context.Option("--kv"), MatrixKv);
-        return [.. from d in devices from w in weights from k in kvs select new BenchRun(d, w, k)];
+        return [.. devices.Select(d => new BenchRun(d))];
     }
 
     private static Device ParseDevice(string name)
@@ -276,11 +245,6 @@ internal sealed class BenchCommand : Command
     private static List<BenchResult> BenchModel(CommandContext context, string name, BenchRun run, JsonObject document)
     {
         var choice = ModelChoices.Choose(context, name);
-        if (context.Flag("--matrix"))
-        {
-            choice = choice with { Weights = run.Weights is "float32" or "f32" ? null : run.Weights, Kv = run.Kv };
-        }
-
         int repeats = Positive(context, "--repeat", 3);
         int tokens = Positive(context, "--tokens", 128);
         var device = run.Device;
@@ -307,7 +271,7 @@ internal sealed class BenchCommand : Command
         var caches = new CacheEvents();
         using var cacheEvents = Telemetry.Subscribe(caches);
 
-        context.Write(string.Create(CultureInfo.InvariantCulture, $"{choice.Model} on {device} ({device.Name}): {model.Spec.ParameterCount / 1e6:F1}M parameters, weights {choice.Weights ?? "as stored"}, KV cache {kv}"));
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{choice.Model} on {device} ({device.Name}): {model.Spec.ParameterCount / 1e6:F1}M parameters, KV cache {kv}"));
         context.Write($"  prompt {promptTokens} tokens, {tokens} generated, {repeats} run(s) after a warm-up");
         generator.Generate(prompt, options with { NumPredict = Math.Min(4, tokens) });     // warm-up: kernels built, choices measured
         var prompts = new List<double>();
@@ -345,7 +309,6 @@ internal sealed class BenchCommand : Command
         double flopsPerToken = 2.0 * model.Spec.ActiveParameterCount;                  // with experts, only those a token goes through
         document["settings"] = new JsonObject
         {
-            ["weights"] = choice.Weights,
             ["kv"] = kv,
             ["prompt_tokens"] = measuredPrompt,
             ["generated_tokens"] = measuredGenerated,
@@ -433,11 +396,6 @@ internal sealed class BenchCommand : Command
         GenerationOptions options, double without, int repeats, int contextLength, JsonObject document)
     {
         var choice = ModelChoices.Choose(context, name);
-        if (context.Flag("--matrix"))
-        {
-            choice = choice with { Weights = run.Weights is "float32" or "f32" ? null : run.Weights, Kv = run.Kv };
-        }
-
         int draftTokens = context.IntOption("--draft-tokens", 0);
         if (draftTokens < 0)
         {
@@ -504,19 +462,15 @@ internal sealed class BenchCommand : Command
         int repeats = Positive(context, "--repeat", 10);
         var settle = Settle(context);
         bool small = context.Flag("--small");
-        IReadOnlyList<string> formats = context.Option("--weights") is { } given
-            ? [.. given.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(f => f.ToLowerInvariant() is "bf16" ? "bfloat16" : f.ToLowerInvariant())]
-            : ["int8", "int4", "bfloat16"];
         var device = run.Device;
         context.Write(Messages.T("kernels on {0} ({1}): {2}; the median of {3} timed calls each", device, device.Name, string.Join(", ", kernels), repeats)
-            + (small ? Messages.T(", small shapes") : "")
-            + Messages.T("; products of typed weights by the {0} route ({1})", ProductRoutes.Current.ToString().ToLowerInvariant(), ProductRoutes.EnvironmentVariable));
+            + (small ? Messages.T(", small shapes") : ""));
         context.Write(Messages.T("  warm-up: until {0} rounds of at least {1} agree within {2:0.##}% and nothing is compiled, at most {3} or {4} calls; Cold: the first call",
             settle.Rounds, Span(settle.Round), settle.Tolerance * 100, Span(settle.Budget), settle.MaxCalls));
         List<BenchResult> results;
         using (var progress = new ProgressLine(context, "kernels"))
         {
-            results = KernelBench.Run(device, kernels, repeats, small, formats, settle, step =>
+            results = KernelBench.Run(device, kernels, repeats, small, settle, step =>
             {
                 progress.Erase();
                 context.Detail($"  {step}");

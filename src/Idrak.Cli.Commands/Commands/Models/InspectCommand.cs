@@ -11,7 +11,7 @@ using Idrak.Models;
 namespace Idrak.Cli.Commands;
 
 /// <summary>
-/// <c>idrak inspect FILE</c> (<c>i</c>): tensor names, shapes, types and metadata of a GGUF file, a safetensors file or
+/// <c>idrak inspect FILE</c> (<c>i</c>): tensor names, shapes and metadata of a GGUF file, a safetensors file or
 /// checkpoint folder, or the entries of an .ikm package.
 /// </summary>
 internal sealed class InspectCommand : Command
@@ -20,7 +20,7 @@ internal sealed class InspectCommand : Command
 
     public override IReadOnlyCollection<string> Aliases => ["i"];
 
-    public override string Summary => "Tensor names, shapes, types and metadata of a GGUF, safetensors or .ikm file";
+    public override string Summary => "Tensor names, shapes and metadata of a GGUF, safetensors or .ikm file";
 
     public override string Usage => """
         FILE [--filter TEXT] [--limit N] [--no-tensors]
@@ -56,7 +56,7 @@ internal sealed class InspectCommand : Command
 
         string? filter = context.Option("--filter");
         bool Wanted(string name) => filter is null || name.Contains(filter, StringComparison.OrdinalIgnoreCase);
-        var tensors = new List<(string Name, int[] Shape, string Type, long Bytes)>();
+        var tensors = new List<(string Name, int[] Shape)>();
         var metadata = new JsonObject();
         string format;
         int? version = null;
@@ -80,18 +80,7 @@ internal sealed class InspectCommand : Command
 
             foreach (var t in file.Tensors.Values)
             {
-                long bytes;
-                try
-                {
-                    var (values, blockBytes) = GgufFile.BlockSize(t.Type, t.Name);
-                    bytes = t.Count / values * blockBytes;
-                }
-                catch (NotSupportedException)
-                {
-                    bytes = 0;
-                }
-
-                tensors.Add((t.Name, t.Shape, GgufFile.TypeName(t.Type), bytes));
+                tensors.Add((t.Name, t.Shape));
             }
         }
         else
@@ -106,28 +95,25 @@ internal sealed class InspectCommand : Command
                 }
             }
 
-            tensors.AddRange(reader.Tensors.Values.Select(t => (t.Name, t.Shape, t.Type.ToString(), t.Length)));
+            tensors.AddRange(reader.Tensors.Values.Select(t => (t.Name, t.Shape)));
         }
 
         var shown = tensors.Where(t => Wanted(t.Name)).ToList();
         long parameters = shown.Sum(t => t.Shape.Aggregate(1L, (a, b) => a * b));
         context.Write($"{path}: {format}{(version is null ? "" : $" version {version}")}, {shown.Count} tensors{(filter is null ? "" : $" matching '{filter}'")}, "
-                      + $"{Units.Count(parameters)} values, {Units.Bytes(shown.Sum(t => t.Bytes))}");
+                      + $"{Units.Count(parameters)} values");
         if (metadata.Count > 0)
         {
             context.Write("");
             context.Table(["Metadata", "Value"], metadata.Select(m => (IReadOnlyList<string>)[m.Key, Short(m.Value)]));
         }
 
-        var types = shown.GroupBy(t => t.Type).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} ×{g.Count()}");
-        context.Write("");
-        context.Write("Types: " + string.Join(", ", types));
         if (!context.Flag("--no-tensors"))
         {
             int limit = context.IntOption("--limit", int.MaxValue);
             context.Write("");
-            context.Table(["Tensor", "Shape", "Type", "Size"],
-                shown.Take(limit).Select(t => (IReadOnlyList<string>)[t.Name, "[" + string.Join(", ", t.Shape) + "]", t.Type, Units.Bytes(t.Bytes)]));
+            context.Table(["Tensor", "Shape"],
+                shown.Take(limit).Select(t => (IReadOnlyList<string>)[t.Name, "[" + string.Join(", ", t.Shape) + "]"]));
             if (shown.Count > limit)
             {
                 context.Write($"... {shown.Count - limit} more (--limit)");
@@ -140,14 +126,11 @@ internal sealed class InspectCommand : Command
             ["format"] = format,
             ["version"] = version,
             ["parameters"] = parameters,
-            ["bytes"] = shown.Sum(t => t.Bytes),
             ["metadata"] = metadata,
             ["tensors"] = new JsonArray([.. shown.Select(t => (JsonNode)new JsonObject
             {
                 ["name"] = t.Name,
                 ["shape"] = new JsonArray([.. t.Shape.Select(d => (JsonNode)d)]),
-                ["type"] = t.Type,
-                ["bytes"] = t.Bytes,
             })]),
         });
         return ExitCodes.Ok;

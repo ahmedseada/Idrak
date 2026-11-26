@@ -81,7 +81,7 @@ internal sealed partial class TranscribeCommand : Command
               --memory-fraction F  the share of the device's free memory a batch of segments may take (default 0.5)
               --no-timestamp-rules  the model's raw timestamp choices (default: the family's rules over them)
               --no-suppress      the model's raw choices (default: the family's lists of tokens never chosen)
-          -k, --kv FORMAT        the decoder's key/value cache: float32 (default), int8 or bf16
+          -k, --kv FORMAT        the decoder's key/value cache
           -o, --out FILE|DIR     write the result: FILE for one input, else a folder of NAME.EXT
               --format F         text (default), json, srt or vtt (also taken from -o FILE's extension)
               --no-warm          with -v, report the cold times only (one file is not transcribed again)
@@ -323,9 +323,7 @@ internal sealed partial class TranscribeCommand : Command
     private static KeyValueFormat Cache(string? text) => text?.ToLowerInvariant() switch
     {
         null or "float32" or "f32" => KeyValueFormat.Float32,
-        "int8" => KeyValueFormat.Int8,
-        "bf16" or "bfloat16" => KeyValueFormat.BFloat16,
-        _ => throw new UsageException($"--kv takes float32, int8 or bf16, not '{text}'."),
+        _ => throw new UsageException($"--kv takes float32, not '{text}'."),
     };
 
     private static string Display(string file) => file == AudioFiles.StandardInputName ? "standard input" : Path.GetFileName(file);

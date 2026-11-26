@@ -56,8 +56,6 @@ internal sealed class PretrainCommand : Command
         Options:
           -C, --config FILE        the run's stages and settings (pretrain.json); the options below then change it
               --tokens FILE        a token file to train on (repeat for several; one stage)
-              --token-type T       the integer type token files store ids in, for files without the record idrak data
-                                   tokens writes beside them: uint16, int32, ... (u16 for short; auto: the record's)
               --data FILE          conversation records to train on (messages or sharegpt JSON Lines; repeat)
               --images DIR|ZIP     where the records' images are
               --audio DIR|ZIP      where the records' sounds are (an audio-language model's records)
@@ -84,7 +82,7 @@ internal sealed class PretrainCommand : Command
               --max-length N       the window and row length in tokens (2048, at most the model's)
               --batch-tokens N     positions per micro-batch (4096)
               --accumulate N       micro-batches per step (1)
-              --optimizer NAME     adamw, adam, adamw8bit or sgd (adamw)
+              --optimizer NAME     adamw, adam or sgd (adamw)
               --weight-decay X     (0.1)
               --clip X             the gradient norm clipped to, 0 for none (1)
               --save-every N       steps between checkpoints (each stage's end only)
@@ -94,9 +92,6 @@ internal sealed class PretrainCommand : Command
               --checkpointing      recompute each block's activations from the start (else measured)
               --no-checkpointing   never
               --recompute          recompute the feed-forward activations from the start
-              --bf16-activations   hold activations as bfloat16 between the passes
-              --dtype TYPE         the element type the products compute in: auto (what the GPU computes natively),
-                                   float32, bf16 or f16 (IDRAK_DEFAULT_DTYPE); the weights stay float32
               --host-optimizer     the optimizer's update on the CPU, its state in system memory
               --no-packing         one sequence a row
               --no-graphs          no recorded step graphs
@@ -132,14 +127,14 @@ internal sealed class PretrainCommand : Command
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
-        "--tokens", "--token-type", "--data", "--images", "--weight", "--steps", "--trained", "--lr", "--min-lr", "--warmup", "--schedule", "--max-length",
+        "--tokens", "--data", "--images", "--weight", "--steps", "--trained", "--lr", "--min-lr", "--warmup", "--schedule", "--max-length",
         "--batch-tokens", "--accumulate", "--optimizer", "--weight-decay", "--clip", "--save-every", "--keep", "--eval", "--eval-every", "--log-every", "--out",
-        "--image-transform", "--vision", "--audio", "--feature-cache", "--sequences", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device", ModelChoices.DtypeOption,
+        "--image-transform", "--vision", "--audio", "--feature-cache", "--sequences", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device",
         .. SpeechPretraining.ValueOptions, "--rank", .. ClusterJoin.Options, .. ClusterJoin.PipelineOptions,
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } =
-        ["--checkpointing", "--no-checkpointing", "--recompute", "--bf16-activations", "--host-optimizer", "--no-packing", "--no-graphs", .. SpeechPretraining.Flags];
+        ["--checkpointing", "--no-checkpointing", "--recompute", "--host-optimizer", "--no-packing", "--no-graphs", .. SpeechPretraining.Flags];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 
@@ -241,10 +236,6 @@ internal sealed class PretrainCommand : Command
             // A rank holding part of the model (a pipeline stage, a parameters shard) reads only its own tensors (plan 23, C8b).
             bool part = rank?.Context.Options is { OwnTensorsOnly: true } cluster && (cluster.Pipelined || cluster.Shard == ShardMode.Parameters);
             model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = device, Deferred = part });
-            foreach (var type in model.DeviceElementTypes)
-            {
-                context.Error(type.ToString());                         // the type per device and how it was chosen (plan 37, T2)
-            }
         }
         catch (NotRegisteredException e)
         {
@@ -288,8 +279,6 @@ internal sealed class PretrainCommand : Command
                 line.Report(resume?.Step ?? 0);
                 try
                 {
-                    // The run's element type for the backward products too (the forward's come from the network; plan 37, T2).
-                    using var precision = MixedPrecision.Prefer(model.Network.Precision);
                     result = Pretrainer.Train(model, options, run, resume, reports, interrupt.Token, context.Verbose ? context.Detail : null);
                 }
                 catch (ClusterRunStoppedException stopped) when (!stopped.Agreed)
@@ -383,15 +372,9 @@ internal sealed class PretrainCommand : Command
         }
 
         var sources = new List<PretrainingSource>();
-        var tokenType = Idrak.Cli.Commands.Data.DataTokensCommand.ParseType("--token-type", context.Option("--token-type"));
-        if (context.Option("--token-type") is not null && context.Options("--tokens").Count == 0 && context.Options("--eval").Count == 0)
-        {
-            throw new UsageException("--token-type applies to --tokens and --eval token files; a --config's sources take \"token_type\".");
-        }
-
         if (context.Options("--tokens") is { Count: > 0 } tokens)
         {
-            sources.Add(new PretrainingSource(PretrainingSources.Tokens, tokens) { Weight = weights.GetValueOrDefault("tokens", 1), TokenType = tokenType });
+            sources.Add(new PretrainingSource(PretrainingSources.Tokens, tokens) { Weight = weights.GetValueOrDefault("tokens", 1) });
         }
 
         if (context.Options("--data") is { Count: > 0 } data)
@@ -443,11 +426,10 @@ internal sealed class PretrainCommand : Command
             EvaluateEvery = context.IntOption("--eval-every", options.EvaluateEvery),
             Evaluation = context.Options("--eval") is { Count: > 0 } eval
                 ? [.. eval.Select(e => new PretrainingSource(e.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase) || e.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
-                    ? PretrainingSources.Records : PretrainingSources.Tokens, [e]) { Images = context.Option("--images"), Audios = context.Option("--audio"), TokenType = tokenType })]
+                    ? PretrainingSources.Records : PretrainingSources.Tokens, [e]) { Images = context.Option("--images"), Audios = context.Option("--audio") })]
                 : options.Evaluation,
             Checkpointing = Switch("--checkpointing", "--no-checkpointing") ?? options.Checkpointing,
             RecomputeFeedForward = context.Flag("--recompute") ? true : options.RecomputeFeedForward,
-            BFloat16Activations = context.Flag("--bf16-activations") ? true : options.BFloat16Activations,
             HostOptimizer = context.Flag("--host-optimizer") || options.HostOptimizer,
             Packing = !context.Flag("--no-packing") && options.Packing,
             CudaGraphs = !context.Flag("--no-graphs") && options.CudaGraphs,
@@ -674,7 +656,7 @@ internal sealed class PretrainInitCommand : Command
               "max_length": 1024,      // window and row length (at most the model's positions)
               "batch_tokens": 8192,    // positions per micro-batch
               "accumulate": 1,         // micro-batches per step
-              "optimizer": "adamw",    // adamw, adam, adamw8bit, sgd
+              "optimizer": "adamw",    // adamw, adam, sgd
               "weight_decay": 0.1,
               "beta1": 0.9,
               "beta2": 0.95,
@@ -684,7 +666,7 @@ internal sealed class PretrainInitCommand : Command
               "eval": [],              // held-out sources, as in "sources"
               "eval_every": 0,
               "seed": 0
-              // checkpointing, recompute and bf16_activations are measured on the device unless set (true or false).
+              // checkpointing and recompute are measured on the device unless set (true or false).
             }
 
             """);

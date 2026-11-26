@@ -31,7 +31,7 @@ internal sealed class SuggestCommand : Command
         "chat rows (conversations or text) or preference rows (chosen and rejected answers). Writes network.json (the\n" +
         "network builder's JSON: Network.FromJson and idrak train read it), train.json and prep.json; with --base, tune.json.\n" +
         "RUN (a run folder, its log.jsonl, or a name from idrak runs list) lists the settings the library suggested while\n" +
-        "the run trained (a cluster run's: a bf16 wire, local SGD, accumulation, buckets, top-k, the collective).\n\n" +
+        "the run trained (a cluster run's: local SGD, accumulation, buckets, top-k, the collective).\n\n" +
         "Options:\n" +
         "  -t, --target COL        the column to predict (default: a column named like a target, else the last one)\n" +
         "      --text COL          a text column: designs a text model (words as tokens)\n" +
@@ -61,7 +61,7 @@ internal sealed class SuggestCommand : Command
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>
     {
-        ["-t"] = "--target", ["-n"] = "--search", ["-e"] = "--explain", ["-b"] = "--base", ["-o"] = "--out", ["-w"] = "--weights", ["-k"] = "--kv",
+        ["-t"] = "--target", ["-n"] = "--search", ["-e"] = "--explain", ["-b"] = "--base", ["-o"] = "--out", ["-k"] = "--kv",
     };
 
     public override int Run(CommandContext context)

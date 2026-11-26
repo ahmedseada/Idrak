@@ -47,7 +47,6 @@ internal sealed class CreateCommand : Command
               --stop TOKEN         another token generation stops at (repeat; </s> when the tokenizer has it)
               --init-std X         the normal draw's deviation of every weight matrix and embedding (0.02); 0 for
                                    Xavier-uniform matrices
-              --dtype T            how the weights are stored: f32 (the default, for training), bf16 or f16
               --vocab-multiple N   a spec without a vocabulary takes the tokenizer's, rounded up to a multiple of N (64)
               --decoder MODEL      start the decoder from this model's weights (a text model pretrained first; its spec
                                    must be SPEC's), the rest drawn
@@ -66,7 +65,7 @@ internal sealed class CreateCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        ["--architecture", "--tokenizer", "--chat-template", "--bos", "--eos", "--pad", "--stop", "--init-std", "--dtype", "--vocab-multiple", "--decoder", "--out"];
+        ["--architecture", "--tokenizer", "--chat-template", "--bos", "--eos", "--pad", "--stop", "--init-std", "--vocab-multiple", "--decoder", "--out"];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--overwrite"];
 
@@ -142,13 +141,6 @@ internal sealed class CreateCommand : Command
         float initStd = context.Option("--init-std") is { } std
             ? float.TryParse(std, NumberStyles.Float, CultureInfo.InvariantCulture, out float v) ? v : throw new UsageException($"--init-std is a number, not '{std}'.")
             : wrapped && (float?)file["init_std"] is float f ? f : 0.02f;
-        var type = (Text("--dtype", "dtype") ?? "f32").ToLowerInvariant() switch
-        {
-            "f32" or "float32" => SafeTensorType.F32,
-            "bf16" or "bfloat16" => SafeTensorType.BF16,
-            "f16" or "float16" => SafeTensorType.F16,
-            var t => throw new UsageException($"--dtype is f32, bf16 or f16, not '{t}'."),
-        };
         int seed = context.Seed ?? (wrapped && (int?)file["seed"] is int fs ? fs : 0);
 
         PretrainedModel model;
@@ -156,7 +148,7 @@ internal sealed class CreateCommand : Command
         {
             model = PretrainedModel.Create(output, spec, architecture, files, new CreateOptions
             {
-                Device = Idrak.Abstraction.Device.Cpu, Seed = seed, InitStd = initStd > 0 ? initStd : null, Type = type, Overwrite = context.Flag("--overwrite"),
+                Device = Idrak.Abstraction.Device.Cpu, Seed = seed, InitStd = initStd > 0 ? initStd : null, Overwrite = context.Flag("--overwrite"),
                 Vision = (JsonObject?)vision?.DeepClone(),
                 Parts = audio is null ? null : new Dictionary<string, JsonObject> { [Idrak.Abstraction.Generation.ChatParts.Audio] = (JsonObject)audio.DeepClone() },
                 Decoder = PathOf("--decoder", "decoder"),
@@ -462,7 +454,6 @@ internal sealed class CreateInitCommand : Command
               // null: ChatML that takes image parts. Or a .jinja file.
               "chat_template": null,
               "init_std": 0.02,
-              "dtype": "f32",
               "seed": 0
             }
 

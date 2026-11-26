@@ -612,7 +612,6 @@ internal sealed class PredictCommand : Command
               --threshold F  detection: the lowest score kept (default 0.25)
               --iou F        detection: a box overlapping a better one of its class by more is dropped (default 0.5)
               --max N        detection: the most boxes per image (default 100)
-              --weights FILE an image model: weights idrak train wrote (.ikw), read over the checkpoint's
               --batch N      an image model: at most N images at once (default: measured on the device; images whose
                              preprocessing gives the same size run together, as many as fit in half its free memory)
 
@@ -629,7 +628,7 @@ internal sealed class PredictCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        ["--input", "--out", "--top", "--decoder", "--threshold", "--iou", "--max", "--weights", "--batch"];
+        ["--input", "--out", "--top", "--decoder", "--threshold", "--iou", "--max", "--batch"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-i"] = "--input", ["-o"] = "--out" };
 
@@ -647,7 +646,7 @@ internal sealed class PredictCommand : Command
 
             try
             {
-                using var imageModel = ImageModelFiles.Load(context, modelPath, context.Option("--weights"), trainable: false);
+                using var imageModel = ImageModelFiles.Load(context, modelPath);
                 return ImagePredict.Run(context, modelPath, imageModel, images);
             }
             catch (NotRegisteredException e)
@@ -661,11 +660,6 @@ internal sealed class PredictCommand : Command
         if (!File.Exists(modelPath))
         {
             throw new UsageException($"{modelPath} not found.");
-        }
-
-        if (context.Option("--weights") is not null)
-        {
-            throw new UsageException("--weights is for an image model read through its family; a package holds its weights.");
         }
 
         using var package = ModelPackage.Open(modelPath);

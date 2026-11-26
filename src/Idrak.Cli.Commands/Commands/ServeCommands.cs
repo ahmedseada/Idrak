@@ -97,10 +97,7 @@ internal sealed class ServeCommand : Command
               --beams N              an encoder-decoder's beam search for every request (default 1: the sampler); a
                                      /v1/completions request or an MCP generate call gives its own as num_beams
               --length-penalty F     the beams' length penalty (default 1: the mean log-probability; 0: the sum)
-          -w, --weights FORMAT       int8, int4, bf16 or a registered packed format
-              --head-weights F       the output head's format beside -w (bf16: the checkpoint's own scores, less
-                                     memory than int8/int4 heads, slower)
-          -k, --kv FORMAT            the KV cache format (float32, int8, bfloat16 or a registered one)
+          -k, --kv FORMAT            the KV cache format
               --context N            the longest context to allocate
               --adapter DIR          merge a LoRA or DoRA adapter into the weights (one tuned on images: its
                                      trained projector and image preparation too)
@@ -110,8 +107,6 @@ internal sealed class ServeCommand : Command
               --moe-experts P        where a mixture-of-experts model's experts live: resident, offload (the most used
                                      on the GPU, the rest in system memory) or auto (the default; IDRAK_MOE_EXPERTS,
                                      IDRAK_MOE_DEVICE_EXPERTS_MB, IDRAK_MOE_COLD)
-              --dtype TYPE           the element type the run computes in: auto (the default, picked per run) or
-                                     float32 (IDRAK_DEFAULT_DTYPE)
         """;
 
     public override string Usage => $"""
@@ -163,14 +158,14 @@ internal sealed class ServeCommand : Command
           idrak serve Qwen/Qwen3-0.6B
           idrak serve qwen -p 11434                      # for clients that expect the chat API on port 11434
           idrak s qwen phi -p 8080 --api-key $KEY        # two models on one port
-          idrak serve tiny=./tiny.gguf -d vulkan:0 -k int8 --keep-alive 30m --cors http://localhost:3000
-          idrak serve ocr=your-org/your-ocr-model -d cuda:0 -w bf16 --grayscale
+          idrak serve tiny=./tiny.gguf -d vulkan:0 --keep-alive 30m --cors http://localhost:3000
+          idrak serve ocr=your-org/your-ocr-model -d cuda:0 --grayscale
           idrak serve ocr --image-transform "grayscale,max_width=1024,contrast=1.5"
           idrak serve qwen --mcp --tools ./MyTools.dll  # an MCP client's configuration starts it this way
           idrak serve qwen --mcp --transport http        # MCP for clients that connect to it (address and token printed)
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, ModelChoices.MoeExpertsOption, ModelChoices.DtypeOption, "--tools", .. McpServeCommand.TransportOptions];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, ModelChoices.MoeExpertsOption, "--tools", .. McpServeCommand.TransportOptions];
 
     public override IReadOnlyCollection<string> Flags => [.. ServeOptions.Flags, "--mcp", .. McpServeCommand.TransportFlags];
 
@@ -220,7 +215,7 @@ internal sealed class UiCommand : Command
           idrak ui qwen -p 8080 --no-browser
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, ModelChoices.DtypeOption];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption];
 
     public override IReadOnlyCollection<string> Flags => [.. ServeOptions.Flags, "--no-browser"];
 

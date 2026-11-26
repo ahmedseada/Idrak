@@ -9,38 +9,33 @@ using Idrak.Layers;
 namespace Idrak.Cli.Commands;
 
 /// <summary>
-/// <c>idrak memory MODEL</c>: the memory a model needs in each weight format and KV cache format at a context length,
-/// against each device's memory. Weight sizes come from the tensors' shapes and the bytes per value each registered
-/// packed format takes (measured by packing a sample), KV sizes from each registered KV layout's row width.
+/// <c>idrak memory MODEL</c>: the memory a model needs in each KV cache format at a context length, against each
+/// device's memory. KV sizes come from each KV layout's row width.
 /// </summary>
 internal sealed class MemoryCommand : Command
 {
     public override string Name => "memory";
 
-    public override string Summary => "Memory per weight and KV format at a context length, against each device's memory";
+    public override string Summary => "Memory per KV format at a context length, against each device's memory";
 
     public override string Usage => """
-        MODEL [-w FORMAT...] [-k FORMAT...] [--context N] [--batch N] [--memory SIZE]
+        MODEL [-k FORMAT...] [--context N] [--batch N] [--memory SIZE]
 
         Arguments:
           MODEL  a cached Hugging Face id, a folder, a .gguf file or an alias
 
         Options:
-          -w, --weights F  weight formats to show (repeatable or comma-separated; default float32 and every registered
-                           packed format: int8, int4, bfloat16, ...)
-          -k, --kv F       KV cache formats (default every registered one: float32, int8, bfloat16, ...)
-          --head-weights F the output head's format beside -w when a loaded model is measured (bf16: the checkpoint's own
-                           scores, less memory than int8/int4 heads)
+          -k, --kv F       KV cache formats (repeatable or comma-separated)
               --context N  the context length (default the model's longest)
               --batch N    sequences decoded together (default 1)
               --memory SIZE also compare with this much memory (e.g. 8G, 512M)
 
-        Projections are counted in the weight format; embeddings and norms in float32. Activations and the runtime add
-        a little more (a few hundred MB), so a total close to a device's memory may still not fit.
+        Activations and the runtime add a little more (a few hundred MB), so a total close to a device's memory may
+        still not fit.
 
         Examples:
           idrak memory Qwen/Qwen3-0.6B
-          idrak memory Qwen/Qwen3-8B -k int8 --context 32768 -d vulkan:0
+          idrak memory Qwen/Qwen3-8B --context 32768 -d vulkan:0
 
         Gap: the library reports a GPU's total memory only when a limit is set (ComputeResources.GpuMemoryLimit); for
         other GPUs pass --memory with the card's memory.
@@ -64,42 +59,19 @@ internal sealed class MemoryCommand : Command
             throw new UsageException("--context and --batch need positive numbers.");
         }
 
-        var weightFormats = List(context.Options("--weights"), alias.Weights, ["float32", .. PackedWeightFormats.Names.Order(StringComparer.Ordinal)]);
         var kvFormats = List(context.Options("--kv"), alias.Kv, [.. KeyValueLayouts.Names]);
-
-        // Projections (2-D weights other than the embeddings) take the weight format; the rest stays float32.
-        long packed = 0, plain = 0;
-        foreach (var (tensor, shape) in facts.Tensors)
-        {
-            long count = shape.Aggregate(1L, (a, b) => a * b);
-            bool projection = shape.Length == 2 && !tensor.Contains("embed", StringComparison.OrdinalIgnoreCase) && !tensor.Contains("wte", StringComparison.Ordinal)
-                              && !tensor.Contains("wpe", StringComparison.Ordinal);
-            if (projection)
-            {
-                packed += count;
-            }
-            else
-            {
-                plain += count;
-            }
-        }
 
         var devices = Devices(context);
         long? given = context.Option("--memory") is { } size ? ParseSize(size) : null;
-        var rows = new List<(string Weights, string Kv, long WeightBytes, long KvBytes)>();
-        foreach (string w in weightFormats)
+        var rows = new List<(string Kv, long KvBytes)>();
+        foreach (string kv in kvFormats)
         {
-            double perValue = BytesPerValue(w);
-            long weightBytes = (long)(packed * perValue) + plain * 4;
-            foreach (string kv in kvFormats)
-            {
-                var layout = KeyValueLayouts.Get(Kv(kv));
-                long perPosition = (long)spec.Layers * spec.KvHeads * 2 * (layout.RowWidth(spec.HeadDim) * 4L + (layout is IScaledLayout ? 4 : 0));
-                rows.Add((w, kv, weightBytes, perPosition * contextLength * batch));
-            }
+            var layout = KeyValueLayouts.Get(kv);
+            long perPosition = (long)spec.Layers * spec.KvHeads * 2 * (layout.RowWidth(spec.HeadDim) * 4L + (layout is IScaledLayout ? 4 : 0));
+            rows.Add((kv, perPosition * contextLength * batch));
         }
 
-        context.Write(string.Create(CultureInfo.InvariantCulture, $"{name}: {Units.Count(facts.Parameters)} parameters ({Units.Count(packed)} in projections), context {contextLength:N0}")
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{name}: {Units.Count(facts.Parameters)} parameters, context {contextLength:N0}")
                       + (batch > 1 ? $" × {batch} sequences" : ""));
         var memoryColumns = devices.Select(d => (Label: d.Name, d.Bytes)).ToList();
         if (given is { } g)
@@ -108,28 +80,23 @@ internal sealed class MemoryCommand : Command
         }
 
         string Fits(long total, long? bytes) => bytes is not { } m ? "?" : total <= m ? $"fits ({Percent(total, m)})" : $"no ({Percent(total, m)})";
-        context.Table(["Weights", "KV", "Weights size", "KV cache", "Total", .. memoryColumns.Select(c => c.Label)],
-            rows.Select(r => (IReadOnlyList<string>)[r.Weights, r.Kv, Units.Bytes(r.WeightBytes), Units.Bytes(r.KvBytes), Units.Bytes(r.WeightBytes + r.KvBytes),
-                .. memoryColumns.Select(c => Fits(r.WeightBytes + r.KvBytes, c.Bytes))]));
+        context.Table(["KV", "KV cache", .. memoryColumns.Select(c => c.Label)],
+            rows.Select(r => (IReadOnlyList<string>)[r.Kv, Units.Bytes(r.KvBytes), .. memoryColumns.Select(c => Fits(r.KvBytes, c.Bytes))]));
         context.Write("Memory: " + string.Join(", ", devices.Select(d => $"{d.Name} {(d.Bytes is { } b ? Units.Bytes(b) : "not reported (pass --memory SIZE)")}")));
 
         context.WriteJson(new JsonObject
         {
             ["model"] = name,
             ["parameters"] = facts.Parameters,
-            ["projectionParameters"] = packed,
             ["context"] = contextLength,
             ["batch"] = batch,
             ["devices"] = new JsonArray([.. devices.Select(d => (JsonNode)new JsonObject { ["device"] = d.Name, ["bytes"] = d.Bytes })]),
             ["memory"] = given,
             ["formats"] = new JsonArray([.. rows.Select(r => (JsonNode)new JsonObject
             {
-                ["weights"] = r.Weights,
                 ["kv"] = r.Kv,
-                ["weightBytes"] = r.WeightBytes,
                 ["kvBytes"] = r.KvBytes,
-                ["totalBytes"] = r.WeightBytes + r.KvBytes,
-                ["fits"] = new JsonObject([.. memoryColumns.Select(c => KeyValuePair.Create(c.Label, c.Bytes is { } m ? (JsonNode?)JsonValue.Create(r.WeightBytes + r.KvBytes <= m) : null))]),
+                ["fits"] = new JsonObject([.. memoryColumns.Select(c => KeyValuePair.Create(c.Label, c.Bytes is { } m ? (JsonNode?)JsonValue.Create(r.KvBytes <= m) : null))]),
             })]),
         });
         return ExitCodes.Ok;
@@ -146,44 +113,6 @@ internal sealed class MemoryCommand : Command
     {
         var asked = given.SelectMany(g => g.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).ToList();
         return asked.Count > 0 ? asked : fromAlias is not null ? [fromAlias] : [.. all];
-    }
-
-    private static string Kv(string name) => name.ToLowerInvariant() switch
-    {
-        "bf16" => "bfloat16",
-        "f32" or "fp32" => "float32",
-        var other => other,
-    };
-
-    /// <summary>Bytes per weight value in <paramref name="format"/>, measured by packing a 256 × 256 sample on the CPU.</summary>
-    internal static double BytesPerValue(string format)
-    {
-        string name = format.ToLowerInvariant() switch
-        {
-            "bf16" => "bfloat16",
-            "f32" or "fp32" or "float32" => "float32",
-            var other => other,
-        };
-        if (name == "float32")
-        {
-            return 4;
-        }
-
-        if (!PackedWeightFormats.Names.Contains(name, StringComparer.OrdinalIgnoreCase))
-        {
-            throw new UsageException($"Unknown weight format '{format}'; registered: float32, {string.Join(", ", PackedWeightFormats.Names)} (plug-ins add more with --plugin).");
-        }
-
-        const int Side = 256;
-        var values = new float[Side * Side];
-        var random = new Random(1);
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] = (float)(random.NextDouble() * 2 - 1);
-        }
-
-        using var weight = PackedWeightFormats.Pack(name, values, Side, Side, Device.Cpu);
-        return weight.Bytes / (double)values.Length;
     }
 
     // The chosen device, or every device; the memory each has (null when the library does not report it).

@@ -136,10 +136,8 @@ internal sealed class VerifyCommand : Command
             foreach (var file in reader.Tensors.Values.GroupBy(t => t.File))
             {
                 long length = new FileInfo(file.Key).Length, end = file.Max(t => t.Offset + t.Length);
-                bool sizesMatch = file.All(t => t.Length == t.Count * t.BytesPerValue);
-                add(Path.GetFileName(file.Key), end == length && sizesMatch,
+                add(Path.GetFileName(file.Key), end == length,
                     end > length ? string.Create(CultureInfo.InvariantCulture, $"truncated: the header needs {end:N0} bytes, the file has {length:N0}")
-                    : !sizesMatch ? "a tensor's byte range does not match its shape"
                     : end < length ? string.Create(CultureInfo.InvariantCulture, $"{length - end:N0} bytes after the last tensor") : $"{file.Count()} tensors, {Units.Bytes(length)}");
             }
 

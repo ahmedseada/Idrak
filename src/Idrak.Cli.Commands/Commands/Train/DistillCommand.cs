@@ -95,12 +95,11 @@ internal sealed class DistillCommand : Command
                                     shards' (default 0: one per rank, so one in one process; IDRAK_RL_SHARDS)
               --spread NAME         with --on-policy: blocks (runs of prompts, the default) or interleaved (IDRAK_RL_SPREAD)
               --teacher-device D    the teacher's device (default: the student's), e.g. cpu, cuda:1
-          -w, --weights F           the student's base weights, kept frozen: int8, int4 (QLoRA-style, not NF4) or bf16
           and these options of idrak tune train: --rank, --lora-alpha (tune's --alpha), --lr, --epochs, --max-length,
           --batch-tokens, --accumulate, --targets, --optimizer, --weight-decay, --momentum, --schedule, --warmup, --min-lr,
-          --decay, --adapter-type, --adapter, --context, --matmul, --dtype, --gpu-memory, --eval, --eval-fraction, --eval-every,
+          --decay, --adapter-type, --adapter, --context, --gpu-memory, --eval, --eval-fraction, --eval-every,
           --save-every, --system, --max-rows, --no-packing, --checkpointing, --no-checkpointing, --recompute,
-          --bf16-activations, --no-activation-estimate, --no-graphs, --fp8, --cpu-optimizer, --no-dedup, --offload, and for image
+          --no-activation-estimate, --no-graphs, --cpu-optimizer, --no-dedup, --offload, and for image
           records --data-format, --images, --image-transform, --vision, --parts and --feature-cache (a vision-language
           teacher reads the student's images as they are prepared; its family's plug-in with -P). --json prints one JSON
           document at the end with the output lines.
@@ -126,14 +125,14 @@ internal sealed class DistillCommand : Command
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--teacher", "--student", "--base", "--data", "--out", "--temperature", "--alpha", "--top-k", "--precompute", "--max-new", "--batch-size",
-        "--teacher-device", "--weights", "--divergence", "--beta", "--mix", "--steps", "--shards", "--spread", .. TuneValues, .. ClusterJoin.Options,
+        "--teacher-device", "--divergence", "--beta", "--mix", "--steps", "--shards", "--spread", .. TuneValues, .. ClusterJoin.Options,
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--generate", "--reasoning", "--keep-cut-off", "--on-policy", .. TuneFlags];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>
     {
-        ["-b"] = "--base", ["-o"] = "--out", ["-w"] = "--weights",
+        ["-b"] = "--base", ["-o"] = "--out",
     };
 
     public override int Run(CommandContext context)
@@ -217,7 +216,7 @@ internal sealed class DistillCommand : Command
         }
 
         var choice = ModelChoices.Choose(context, student);
-        var args = TuneArguments.Train(context, choice, trainingData, output ?? Path.GetDirectoryName(Path.GetFullPath(precompute!))!, "the student");
+        var args = TuneArguments.Train(context, choice, trainingData, output ?? Path.GetDirectoryName(Path.GetFullPath(precompute!))!);
         if (generate)
         {
             args.AddRange(["--kind", "chat"]);
@@ -482,7 +481,7 @@ internal sealed class DistillCommand : Command
         return o with { Steps = steps, PromptsPerStep = prompts, MaxNewTokens = maxNew, SamplingTemperature = sampling, Seed = context.Seed ?? 0 };
     }
 
-    // The teacher model, loaded on its device (as stored, or in the weights its choice names).
+    // The teacher model, loaded on its device.
     internal static PretrainedModel LoadTeacherModel(CommandContext context, ToolConsole console, ModelChoices.ModelChoice choice, Device device)
     {
         var model = ModelChoices.Load(context, choice, device);

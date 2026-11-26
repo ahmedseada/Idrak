@@ -18,7 +18,7 @@ internal sealed class MergeCommand : Command
     public override string Summary => "Merge a LoRA or DoRA adapter into the base weights";
 
     public override string Usage => """
-        MODEL ADAPTER -o DIR [--type bf16|f16|f32] [-f] [--dry-run]
+        MODEL ADAPTER -o DIR [-f] [--dry-run]
 
         Arguments:
           MODEL    the base model: a cached Hugging Face id, a folder, a .gguf file or an alias
@@ -26,18 +26,17 @@ internal sealed class MergeCommand : Command
 
         Options:
           -o, --out DIR  the merged model, in the Hugging Face layout (model.safetensors, config, tokenizer)
-              --type T   the element type of the written weights (default bf16)
           -f, --force    write into a folder that is not empty
               --dry-run  check the adapter and say what would be written
 
-        The merge runs in float32 on the chosen device (-d); the merged model loads like any other (idrak chat DIR).
+        The merge runs on the chosen device (-d); the merged model loads like any other (idrak chat DIR).
 
         Examples:
           idrak merge Qwen/Qwen3-0.6B ./run/adapter -o ./qwen-tuned
-          idrak merge ./base ./adapter -o ./merged --type f32 -d cpu
+          idrak merge ./base ./adapter -o ./merged -d cpu
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--out", "--type"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--out"];
 
     public override IReadOnlyCollection<string> Flags => ["--force", "--dry-run"];
 
@@ -47,7 +46,6 @@ internal sealed class MergeCommand : Command
     {
         string name = context.Argument(0, "MODEL"), adapter = context.Argument(1, "ADAPTER (a folder with adapter_config.json)");
         string output = context.Option("--out") ?? (context.Positional.Count > 2 ? context.Positional[2] : throw new UsageException("Missing -o DIR (where the merged model goes)."));
-        var type = ModelWork.Type(context);
         if (!File.Exists(Path.Combine(adapter, "adapter_config.json")) || !File.Exists(Path.Combine(adapter, "adapter_model.safetensors")))
         {
             throw new UsageException($"{adapter} is not an adapter folder: it needs adapter_config.json and adapter_model.safetensors.");
@@ -59,25 +57,24 @@ internal sealed class MergeCommand : Command
         string kind = (bool?)config?["use_dora"] == true ? "DoRA" : "LoRA";
         if (Terminal.DryRun(context))
         {
-            context.Write($"Would merge the {kind} adapter {adapter} (rank {(int?)config?["r"]}) into {name} and write {output} ({type}).");
+            context.Write($"Would merge the {kind} adapter {adapter} (rank {(int?)config?["r"]}) into {name} and write {output}.");
             context.WriteJson(new JsonObject { ["model"] = name, ["adapter"] = adapter, ["kind"] = kind, ["out"] = output, ["dryRun"] = true });
             return ExitCodes.Ok;
         }
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
         using var model = Shared.ModelChoices.Load(context, new Shared.ModelChoices.ModelChoice(local.Folder, null, null, adapter));
-        ModelWork.SaveHuggingFace(model, output, type);
+        ModelWork.SaveHuggingFace(model, output);
         string? merged = model.Notes.FirstOrDefault(n => n.StartsWith("adapter ", StringComparison.Ordinal));
         long bytes = ModelCache.FolderBytes(output);
         context.Write($"Merged the {kind} adapter into {name}: {merged ?? "done"}");
-        context.Write(string.Create(CultureInfo.InvariantCulture, $"Wrote {output} ({Units.Bytes(bytes)}, {type}) in {clock.Elapsed.TotalSeconds:F1} s. Try it: idrak run {output} \"Hello\""));
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"Wrote {output} ({Units.Bytes(bytes)}) in {clock.Elapsed.TotalSeconds:F1} s. Try it: idrak run {output} \"Hello\""));
         context.WriteJson(new JsonObject
         {
             ["model"] = name,
             ["adapter"] = adapter,
             ["kind"] = kind,
             ["out"] = output,
-            ["type"] = type.ToString(),
             ["bytes"] = bytes,
             ["notes"] = new JsonArray([.. model.Notes.Select(n => (JsonNode?)JsonValue.Create(n))]),
         });

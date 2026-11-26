@@ -53,7 +53,7 @@ internal sealed class ReinforceCommand : Command
     [
         "--base", "--env", "--data", "--suite", "--reward", "--rounds", "--env-option", "--sandbox", "--algorithm", "--estimator", "--group", "--episodes", "--kl",
         "--clip", "--epochs", "--minibatch", "--iterations", "--environments", "--temperature", "--max-new", "--save-every", "--evaluate-every", "--teacher",
-        "--teacher-device", "--teacher-weight", "--divergence", "--beta", "--mix", "--out", "--weights", "--shards", "--spread", "--kv",
+        "--teacher-device", "--teacher-weight", "--divergence", "--beta", "--mix", "--out", "--shards", "--spread", "--kv",
         "--pairs", "--loss", "--pair-option", "--loss-option", "--reference",
     ];
 
@@ -106,8 +106,7 @@ internal sealed class ReinforceCommand : Command
               --environments N    environments stepped at once (default: the CPU threads)
               --temperature T     the temperature replies are sampled at (default 1)
               --max-new N         the longest reply in tokens (default 256; IDRAK_RL_MAX_NEW)
-              --kv FORMAT         the key/value cache replies are generated with: auto (IDRAK_KV_CACHE_TYPE, else the
-                                  model's element type; the default), float32, bfloat16, int8 (IDRAK_RL_KV)
+              --kv FORMAT         the key/value cache replies are generated with (IDRAK_KV_CACHE_TYPE; IDRAK_RL_KV)
               --no-think          replies without the template's reasoning
               --save-every N      a checkpoint after every N iterations (default: at the end only)
               --evaluate-every N  greedy evaluation episodes after every N iterations (default: none)
@@ -132,7 +131,6 @@ internal sealed class ReinforceCommand : Command
           -o, --out DIR           where the adapter and the checkpoints go
               --list              the registered environments, rewards, algorithms, estimators, sandboxes, divergences,
                                   pair sources and preference losses
-          -w, --weights F         the model's base weights, kept frozen: int8, int4 (QLoRA-style, not NF4) or bf16
               --shards N          the shards a rollout is cut into: a shard's episodes act together, and on a cluster each
                                   rank plays its shards' episodes; the same count gives the same episodes on any number
                                   of ranks (default 0: one per rank, so one in one process; IDRAK_RL_SHARDS)
@@ -143,9 +141,9 @@ internal sealed class ReinforceCommand : Command
                                   adapter's rank); --node NAME, --coordinator H:P and --world-size N as idrak tune has them
           and these options of idrak tune train: --rank, --alpha, --lr, --max-length, --batch-tokens, --accumulate,
           --targets, --optimizer, --weight-decay, --momentum, --schedule (default: IDRAK_RL_SCHEDULE's, constant),
-          --warmup (default: IDRAK_RL_WARMUP's, 0), --min-lr, --decay, --adapter-type, --adapter, --context, --matmul, --dtype,
-          --gpu-memory, --no-packing, --checkpointing, --no-checkpointing, --recompute, --bf16-activations, --no-activation-estimate, --no-graphs,
-          --fp8, --cpu-optimizer, --offload. Every run setting also reads its IDRAK_RL_* variable (idrak help env); the
+          --warmup (default: IDRAK_RL_WARMUP's, 0), --min-lr, --decay, --adapter-type, --adapter, --context,
+          --gpu-memory, --no-packing, --checkpointing, --no-checkpointing, --recompute, --no-activation-estimate, --no-graphs,
+          --cpu-optimizer, --offload. Every run setting also reads its IDRAK_RL_* variable (idrak help env); the
           command line wins. A JSON line per iteration goes to DIR/log.jsonl (IDRAK_RL_LOG: another file; the pass rate
           counts the episodes whose return reaches IDRAK_RL_PASS_RETURN, 1). --json prints one JSON document at the end.
         {{ReinforceNumeric.UsageOptions}}
@@ -161,7 +159,7 @@ internal sealed class ReinforceCommand : Command
           idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --algorithm grpo --group 8 -o runs/math
           idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --algorithm grpo --group 8 --iterations 20 -o runs/rl-demo
           idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --sandbox container -o runs/rl --resume
-          idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --algorithm grpo --teacher Qwen/Qwen3-8B -w int4 -o runs/t
+          idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --algorithm grpo --teacher Qwen/Qwen3-8B -o runs/t
           idrak reinforce Qwen/Qwen3-0.6B --env prompts --data chats.jsonl --algorithm distill --teacher Qwen/Qwen3-8B -o runs/d
           idrak cluster sim --topology two.json -- reinforce Qwen/Qwen3-0.6B --data m.jsonl --algorithm grpo --shards 4 -o rl
           idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --pairs group --loss dpo --group 4 -o runs/dpo
@@ -175,7 +173,7 @@ internal sealed class ReinforceCommand : Command
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>
     {
-        ["-b"] = "--base", ["-o"] = "--out", ["-w"] = "--weights",
+        ["-b"] = "--base", ["-o"] = "--out",
     };
 
     public override int Run(CommandContext context)
@@ -266,7 +264,7 @@ internal sealed class ReinforceCommand : Command
         var captured = context.Json ? new StringWriter() : null;
         var console = ToolHost.Console(context, captured ?? (context.Quiet ? TextWriter.Null : context.Output));
         var choice = ModelChoices.Choose(context, model);
-        var args = TuneArguments.Train(context, choice, prompts ? data : [], output, "the model");
+        var args = TuneArguments.Train(context, choice, prompts ? data : [], output);
         TuneArguments.Pass(context, args, TuneTool.SessionValueOptions, TuneTool.SessionFlags);
         var tool = new TuneTool(console) { Verbose = context.Verbose };
         try

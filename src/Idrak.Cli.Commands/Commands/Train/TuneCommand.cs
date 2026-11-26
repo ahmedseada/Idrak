@@ -12,13 +12,13 @@ namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
 /// <c>idrak tune</c>: the fine-tuning tool (<see cref="TuneTool"/>) as a command, with idrak's model arguments (aliases,
-/// <c>-w</c>/<c>--weights</c>, <c>-k</c>/<c>--kv</c>), <c>-b</c>/<c>--base</c> for the model, and settings from a
+/// <c>-k</c>/<c>--kv</c>), <c>-b</c>/<c>--base</c> for the model, and settings from a
 /// tune.json given with <c>--config</c> (written by <c>idrak tune init</c>; the command line wins).
 /// </summary>
 internal sealed class TuneCommand : Command
 {
     // Keys of a tune.json that are not tune options: the config file's own, the format, and the command, model and data.
-    private static readonly string[] OwnKeys = ["device", "cache", "plugins", "aliases", "token", "hf_token", "profiles", "format", "command", "model", "data", "base", "weights"];
+    private static readonly string[] OwnKeys = ["device", "cache", "plugins", "aliases", "token", "hf_token", "profiles", "format", "command", "model", "data", "base"];
 
     /// <summary>
     /// The "format" of a tune.json (written by <c>idrak tune init</c> and <c>idrak suggest --base</c>, optional when
@@ -37,8 +37,6 @@ internal sealed class TuneCommand : Command
         Options:
           -b, --base MODEL     the model as an option (then every argument after the command is data)
               --data FILE      data as an option (repeatable); with no command given, train
-          -w, --weights F      base weights, kept frozen: int8, int4 or bf16 (as --int8, --int4, --bf16); int4/int8
-                               is QLoRA-style (the library's int4 or int8, not NF4 with double quantization)
           -k, --kv F           the KV cache format (chat, evaluate)
           -o, --out DIR        where train writes the adapter, export the merged model, evaluate the answers
           -s, --system TEXT    a system message for conversations without one
@@ -47,7 +45,7 @@ internal sealed class TuneCommand : Command
                                written with underscores; "format" may name the data's format; "vision" may be an object
                                of the family's options); options on the command line win
           and the options of each command above (Data, Training, Evaluate, Chat, Model). MODEL may be an alias from the
-          config (its weights and KV format apply unless given); --json prints one JSON document at the end with the
+          config (its KV format applies unless given); --json prints one JSON document at the end with the
           command's output lines.
               --cluster FILE   train as one rank of a real cluster of the topology file (idrak cluster init writes one): its
                                device count is the world size, and this host's node (--node) gives the rank; on a node of
@@ -58,24 +56,24 @@ internal sealed class TuneCommand : Command
 
         Examples:
           idrak tune init -b Qwen/Qwen3-0.6B --data chats.jsonl && idrak tune --config tune.json
-          idrak tune train Qwen/Qwen3-0.6B chats.jsonl -o adapters/chat -w int4 --epochs 2
+          idrak tune train Qwen/Qwen3-0.6B chats.jsonl -o adapters/chat --epochs 2
           idrak tune train -b qwen prefs.jsonl --loss dpo -o adapters/dpo -d cuda:0
           idrak tune evaluate adapters/chat held-out.jsonl --adapter adapters/chat
           idrak tune export adapters/chat -o merged
           idrak tune -P plugins/MyVision.dll -b owner/vlm --data train.json --eval val.json --images images.zip
-              --train-projector --metric cer --metric-every 100 -w int4 -o adapters/ocr
+              --train-projector --metric cer --metric-every 100 -o adapters/ocr
           idrak tune evaluate owner/vlm val.json --images images.zip --adapter adapters/ocr --metric cer -P plugins/MyVision.dll
           idrak tune train -b qwen chats.jsonl -o adapters/chat --rank 16 --cluster lan.json
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        [.. TuneTool.ValueOptions.Where(o => o is not ("--device" or "--seed")), "--weights", "--base", "--data", .. ClusterJoin.Options];      // --device and --seed are common options
+        [.. TuneTool.ValueOptions.Where(o => o is not ("--device" or "--seed")), "--base", "--data", .. ClusterJoin.Options];      // --device and --seed are common options
 
     public override IReadOnlyCollection<string> Flags => TuneTool.Flags;
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>
     {
-        ["-o"] = "--out", ["-b"] = "--base", ["-w"] = "--weights", ["-k"] = "--kv", ["-s"] = "--system",
+        ["-o"] = "--out", ["-b"] = "--base", ["-k"] = "--kv", ["-s"] = "--system",
     };
 
     public override int Run(CommandContext context)
@@ -117,24 +115,12 @@ internal sealed class TuneCommand : Command
         args.AddRange(command == "download" ? data.Select(id => ModelChoices.Choose(context, id).Model) : data);
 
         // Options: the command line's, else the tune.json's.
-        string? weights = context.Option("--weights") ?? choice.Weights ?? Text(settings, "weights");
-        if (weights is not null)
-        {
-            args.Add(weights.ToLowerInvariant() switch
-            {
-                "int8" => "--int8",
-                "int4" => "--int4",
-                "bf16" or "bfloat16" => "--bf16",
-                _ => throw new UsageException($"--weights {weights}: tune loads the base weights as int8, int4 or bf16 (leave it out for float32)."),
-            });
-        }
-
         if ((context.Option("--device") ?? context.Config.Get("device")) is { } device)
         {
             args.AddRange(["--device", device]);
         }
 
-        foreach (string option in ValueOptions.Where(o => o is not ("--weights" or "--base" or "--data") && !ClusterJoin.Options.Contains(o)).Append("--seed"))
+        foreach (string option in ValueOptions.Where(o => o is not ("--base" or "--data") && !ClusterJoin.Options.Contains(o)).Append("--seed"))
         {
             var values = option == "--kv" && choice.Kv is { } kv ? [kv] : context.Options(option);
             if (values.Count == 0 && Text(settings, option[2..]) is { } fromFile)
@@ -276,7 +262,7 @@ internal sealed class TuneInitCommand : Command
     public override string Summary => "Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config";
 
     public override string Usage => """
-        [-b MODEL] [--data FILE]... [-o tune.json] [--loss sft|dpo|orpo|simpo] [-w int8|int4|bf16] [-f]
+        [-b MODEL] [--data FILE]... [-o tune.json] [--loss sft|dpo|orpo|simpo] [-f]
 
         Options:
           -b, --base MODEL       the model to tune (a Hugging Face id, a folder, a .gguf file or an alias)
@@ -284,7 +270,6 @@ internal sealed class TuneInitCommand : Command
           -o, --out FILE         where to write the settings (default tune.json)
               --adapter-out DIR  where idrak tune writes the adapter (default adapters/<model name>)
               --loss NAME        sft (default), or dpo, orpo, simpo for preference rows
-          -w, --weights F        base weights, kept frozen: int8, int4 (QLoRA-style, not NF4) or bf16
           -f, --force           overwrite an existing file
 
         The values are the library's defaults (rank, alpha, learning rate, lengths); the device given with -d is written
@@ -295,17 +280,17 @@ internal sealed class TuneInitCommand : Command
 
         Examples:
           idrak tune init -b Qwen/Qwen3-0.6B --data chats.jsonl
-          idrak tune init -b qwen --data prefs.jsonl --loss dpo -w int4 -o dpo.json && idrak tune --config dpo.json
-          idrak tune init -P plugins/MyVision.dll -b owner/vlm -w int4 -o ocr.json && idrak tune --config ocr.json
+          idrak tune init -b qwen --data prefs.jsonl --loss dpo -o dpo.json && idrak tune --config dpo.json
+          idrak tune init -P plugins/MyVision.dll -b owner/vlm -o ocr.json && idrak tune --config ocr.json
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--base", "--data", "--out", "--adapter-out", "--loss", "--weights"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--base", "--data", "--out", "--adapter-out", "--loss"];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--force"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>
     {
-        ["-b"] = "--base", ["-o"] = "--out", ["-w"] = "--weights", ["-f"] = "--force",
+        ["-b"] = "--base", ["-o"] = "--out", ["-f"] = "--force",
     };
 
     public override int Run(CommandContext context)
@@ -326,12 +311,6 @@ internal sealed class TuneInitCommand : Command
         if (loss is not ("sft" or "dpo" or "orpo" or "simpo"))
         {
             throw new UsageException($"--loss {loss}: use sft, dpo, orpo or simpo.");
-        }
-
-        string? weights = context.Option("--weights")?.ToLowerInvariant();
-        if (weights is not (null or "int8" or "int4" or "bf16"))
-        {
-            throw new UsageException($"--weights {weights}: use int8, int4 or bf16.");
         }
 
         string model = context.Option("--base") ?? "owner/model";
@@ -391,8 +370,6 @@ internal sealed class TuneInitCommand : Command
               "out": {{Json(adapters)}},
               // The device: cpu, cuda:0, vulkan:0, hip:0 (left out: the best GPU found, else the CPU).
               {{(device is null ? "// \"device\": \"cuda:0\"," : $"\"device\": {Json(device)},")}}
-              // Base weights, kept frozen: int8, int4 (QLoRA-style, not NF4) or bf16 (left out: float32).
-              {{(weights is null ? "// \"weights\": \"int4\"," : $"\"weights\": {Json(weights)},")}}
               // The loss: sft (conversations and texts), or dpo, orpo, simpo (rows with prompt, chosen and rejected).
               "loss": {{Json(loss)}},
               // The adapters: lora or dora, their rank and alpha (the update is scaled by alpha / rank), and the layers they go on.
@@ -400,7 +377,7 @@ internal sealed class TuneInitCommand : Command
               "rank": {{defaults.Rank}},
               "alpha": {{Number(defaults.Alpha)}},
               "targets": {{Json(string.Join(',', defaults.Targets ?? Idrak.Abstraction.Formats.NetworkParts.Decoder.AdapterTargets))}},
-              // Optimization: learning rate, epochs, optimizer (adamw, adam, adamw8bit, sgd), schedule (cosine, linear,
+              // Optimization: learning rate, epochs, optimizer (adamw, adam, sgd), schedule (cosine, linear,
               // constant, wsd) and the warm-up as a fraction of the steps.
               "lr": {{Number(defaults.LearningRate)}},
               "epochs": {{defaults.Epochs}},
@@ -440,30 +417,18 @@ internal sealed class TuneInitCommand : Command
 /// <summary>
 /// The arguments of idrak tune's train that the commands running a fine-tuning session of their own (idrak distill,
 /// idrak reinforce) build from their options and hand to <see cref="TuneTool"/>, which parses them as tune does: the
-/// model, the data, the output, the base weights, the device, the seed and the session's options.
+/// model, the data, the output, the device, the seed and the session's options.
 /// </summary>
 internal static class TuneArguments
 {
-    /// <summary>"train", the model, the data and --out, then the base weights (-w, or the alias's), the device and the seed when given.</summary>
+    /// <summary>"train", the model, the data and --out, then the device and the seed when given.</summary>
     /// <param name="context">The command's options.</param>
-    /// <param name="choice">The model as chosen (an alias's weights apply unless -w is given).</param>
+    /// <param name="choice">The model as chosen.</param>
     /// <param name="data">The data after the model.</param>
     /// <param name="output">The adapter's folder.</param>
-    /// <param name="who">What loads the weights, for the message of a format that is not one ("the student").</param>
-    public static List<string> Train(CommandContext context, ModelChoices.ModelChoice choice, IEnumerable<string> data, string output, string who)
+    public static List<string> Train(CommandContext context, ModelChoices.ModelChoice choice, IEnumerable<string> data, string output)
     {
         List<string> args = ["train", choice.Model, .. data, "--out", output];
-        if ((context.Option("--weights") ?? choice.Weights) is { } weights)
-        {
-            args.Add(weights.ToLowerInvariant() switch
-            {
-                "int8" => "--int8",
-                "int4" => "--int4",
-                "bf16" or "bfloat16" => "--bf16",
-                _ => throw new UsageException($"--weights {weights}: {who} loads as int8, int4 or bf16 (leave it out for float32)."),
-            });
-        }
-
         if ((context.Option("--device") ?? context.Config.Get("device")) is { } device)
         {
             args.AddRange(["--device", device]);

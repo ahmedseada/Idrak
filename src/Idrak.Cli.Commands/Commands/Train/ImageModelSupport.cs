@@ -35,40 +35,19 @@ internal static class ImageModelFiles
 
     /// <summary>
     /// The image model at <paramref name="path"/> on the command's device, through the family its checkpoint names (a
-    /// plug-in's); with <paramref name="weights"/>, the weights <c>idrak train</c> wrote (.ikw) read over the checkpoint's.
-    /// <paramref name="trainable"/> (and weights to read) keeps every layer in float32.
+    /// plug-in's).
     /// </summary>
-    public static ImageModel Load(CommandContext context, string path, string? weights, bool trainable)
+    public static ImageModel Load(CommandContext context, string path)
     {
         if (!File.Exists(path) && !Directory.Exists(path))
         {
             throw new UsageException($"{path} not found: give a model folder (config.json and safetensors, or an .onnx file), a .safetensors or .onnx file, or a model package (.ikm).");
         }
 
-        if (weights is not null && !File.Exists(weights))
-        {
-            throw new UsageException($"--weights {weights}: no such file (the .ikw weights idrak train writes).");
-        }
-
-        var model = ImageModels.Load(path, new ImageModelOptions
+        return ImageModels.Load(path, new ImageModelOptions
         {
             Device = context.Device,
-            Weights = trainable || weights is not null ? EncoderWeights.Float32 : EncoderWeights.AsStored,
         });
-        if (weights is not null)
-        {
-            try
-            {
-                model.Network.Load(weights);
-            }
-            catch
-            {
-                model.Dispose();
-                throw;
-            }
-        }
-
-        return model;
     }
 
     /// <summary>

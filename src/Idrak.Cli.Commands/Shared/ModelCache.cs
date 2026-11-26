@@ -67,7 +67,7 @@ internal static class ModelCache
                         foreach (string gguf in ggufs)
                         {
                             string file = System.IO.Path.GetRelativePath(revision, gguf).Replace('\\', '/');
-                            entries.Add(new Entry($"{id}/{file}", "gguf", gguf, commit, new FileInfo(gguf).Length, GgufFormat(gguf), LastUse(uses, gguf), true));
+                            entries.Add(new Entry($"{id}/{file}", "gguf", gguf, commit, new FileInfo(gguf).Length, "gguf", LastUse(uses, gguf), true));
                         }
 
                         bool parts = Directory.EnumerateFiles(revision, "*.part", SearchOption.AllDirectories).Any();
@@ -75,7 +75,7 @@ internal static class ModelCache
                                         && Directory.EnumerateFiles(revision, "*.safetensors").Any() && !parts;
                         if (complete)
                         {
-                            entries.Add(new Entry(id, "huggingface", revision, commit, FolderBytes(revision), SafeTensorsFormat(revision), LastUse(uses, revision), true));
+                            entries.Add(new Entry(id, "huggingface", revision, commit, FolderBytes(revision), "safetensors", LastUse(uses, revision), true));
                         }
 
                         // A repository's own model folders, pulled as owner/name/FOLDER (a converter beside its base, a
@@ -91,7 +91,7 @@ internal static class ModelCache
 
                             string sub = System.IO.Path.GetRelativePath(revision, folder).Replace('\\', '/');
                             entries.Add(new Entry($"{id}/{sub}", "huggingface", folder, commit, FolderBytes(folder),
-                                Directory.EnumerateFiles(folder, "*.safetensors").Any() ? SafeTensorsFormat(folder) : "pytorch", LastUse(uses, folder), true));
+                                Directory.EnumerateFiles(folder, "*.safetensors").Any() ? "safetensors" : "pytorch", LastUse(uses, folder), true));
                             folders++;
                         }
 
@@ -110,7 +110,7 @@ internal static class ModelCache
             foreach (string gguf in Directory.GetFiles(urls, "*.gguf", SearchOption.AllDirectories))
             {
                 string name = System.IO.Path.GetRelativePath(urls, gguf).Replace('\\', '/');
-                entries.Add(new Entry(name, "gguf", gguf, null, new FileInfo(gguf).Length, GgufFormat(gguf), LastUse(uses, gguf), true));
+                entries.Add(new Entry(name, "gguf", gguf, null, new FileInfo(gguf).Length, "gguf", LastUse(uses, gguf), true));
             }
 
             foreach (string part in Directory.GetFiles(urls, "*.gguf.part", SearchOption.AllDirectories))
@@ -144,7 +144,7 @@ internal static class ModelCache
                         if (File.Exists(System.IO.Path.Combine(snapshot, "config.json")))
                         {
                             string commit = System.IO.Path.GetFileName(snapshot);
-                            entries.Add(new Entry(id, "hub cache", snapshot, commit[..Math.Min(12, commit.Length)], FolderBytes(snapshot), SafeTensorsFormat(snapshot),
+                            entries.Add(new Entry(id, "hub cache", snapshot, commit[..Math.Min(12, commit.Length)], FolderBytes(snapshot), "safetensors",
                                 LastUse(uses, snapshot), false));
                         }
                     }
@@ -303,36 +303,6 @@ internal static class ModelCache
         catch (Exception e) when (e is IOException or InvalidDataException or System.Text.Json.JsonException)
         {
             return null;
-        }
-    }
-
-    /// <summary>The element types of a folder's safetensors weights ("safetensors BF16").</summary>
-    public static string SafeTensorsFormat(string folder)
-    {
-        try
-        {
-            using var reader = SafeTensorsReader.Open(folder);
-            var types = reader.Tensors.Values.GroupBy(t => t.Type).OrderByDescending(g => g.Sum(t => t.Count)).Select(g => g.Key.ToString());
-            return "safetensors " + string.Join("+", types);
-        }
-        catch (Exception e) when (e is IOException or InvalidDataException or NotSupportedException or System.Text.Json.JsonException or KeyNotFoundException or NullReferenceException)
-        {
-            return "safetensors";
-        }
-    }
-
-    /// <summary>The main element type of a GGUF file's tensors ("gguf Q8_0"), the one holding the most values.</summary>
-    public static string GgufFormat(string path)
-    {
-        try
-        {
-            using var file = GgufFile.Open(path);
-            var main = file.Tensors.Values.GroupBy(t => GgufFile.TypeName(t.Type)).OrderByDescending(g => g.Sum(t => t.Count)).Select(g => g.Key).FirstOrDefault();
-            return main is null ? "gguf" : $"gguf {main}";
-        }
-        catch (Exception e) when (e is IOException or InvalidDataException or NotSupportedException or EndOfStreamException or OverflowException or ArgumentException)
-        {
-            return "gguf (unreadable)";
         }
     }
 

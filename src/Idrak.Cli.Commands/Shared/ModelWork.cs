@@ -62,22 +62,13 @@ internal static class ModelWork
         }
     }
 
-    /// <summary>The safetensors element type named by <c>--type</c> (default bf16).</summary>
-    public static SafeTensorType Type(CommandContext context) => (context.Option("--type") ?? "bf16").ToLowerInvariant() switch
-    {
-        "bf16" or "bfloat16" => SafeTensorType.BF16,
-        "f16" or "fp16" or "float16" => SafeTensorType.F16,
-        "f32" or "fp32" or "float32" => SafeTensorType.F32,
-        var other => throw new UsageException($"--type takes bf16, f16 or f32, not '{other}'."),
-    };
-
     /// <summary>
-    /// Writes a float32 model as a Hugging Face folder; a model read from GGUF loses the marker of its prepared folder, so
+    /// Writes a model as a Hugging Face folder; a model read from GGUF loses the marker of its prepared folder, so
     /// the copy reads as an ordinary safetensors model.
     /// </summary>
-    public static void SaveHuggingFace(PretrainedModel model, string folder, SafeTensorType type)
+    public static void SaveHuggingFace(PretrainedModel model, string folder)
     {
-        model.SaveHuggingFace(folder, type);
+        model.SaveHuggingFace(folder);
         string marker = Path.Combine(folder, "gguf.json");
         if (File.Exists(marker))
         {

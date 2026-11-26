@@ -209,7 +209,7 @@ internal sealed class CommandContext : IDisposable
     /// <summary>The device from <c>--device</c> or the config, else <see cref="Device.Default"/>.</summary>
     public Device Device => _device ??= (Option("--device") ?? Config.Get("device")) is { } name ? Device.Parse(name) : Device.Default;
 
-    /// <summary>Whether <paramref name="flag"/> (e.g. "--int8") was given.</summary>
+    /// <summary>Whether <paramref name="flag"/> was given.</summary>
     public bool Flag(string flag) => _flags.Contains(flag);
 
     /// <summary>The last value given for <paramref name="option"/>, or null.</summary>
