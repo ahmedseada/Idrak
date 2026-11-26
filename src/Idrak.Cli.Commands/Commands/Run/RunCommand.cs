@@ -83,7 +83,7 @@ internal sealed class RunCommand : Command
         var sounds = AudioInputs.Read(context.Options("--audio"));
         var settings = GenerationSettings.From(context);
 
-        // An encoder-decoder answers its source text (finding its family by name is not on the new design yet); anything else is a chat model.
+        // An encoder-decoder answers its source text (its family the one stating its name); anything else is a chat model.
         var choice = ModelChoices.Choose(context, name);
         string folder = ModelChoices.Resolve(context, choice.Model);
         if (Seq2SeqRun.Architecture(folder) is { } architecture)

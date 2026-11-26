@@ -74,8 +74,8 @@ public sealed class TextEncoder : IEmbedder
     /// <summary>The sequence encoder, or null when the encoder runs <see cref="Model"/> on the ids alone.</summary>
     public ISequenceEncoder? Encoder => _encoder;
 
-    // Picking the poolers by name is not on the new design yet.
-    private static ISequencePooler PoolerNamed(string name) => throw new NotSupportedException($"The pooler '{name}' by name is not on the new design yet.");
+    // The pooler a setting's text names: the library's poolers walked, each one's own name compared (SequencePoolers.Named).
+    private static ISequencePooler PoolerNamed(string name) => SequencePoolers.Named(name);
 
     /// <summary>
     /// How the states become one vector per text: a name in <see cref="SequencePoolers"/> ("mean", the default: the

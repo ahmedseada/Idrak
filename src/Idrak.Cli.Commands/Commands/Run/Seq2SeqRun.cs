@@ -42,8 +42,10 @@ internal static class Seq2SeqRun
             return null;
         }
 
-        // Whether the architecture is an encoder-decoder family's: finding the family by name is not on the new design yet, so none is.
-        return null;
+        // Whether the architecture is an encoder-decoder family's: its own name (config.json's "architectures") among the names
+        // the families handed over state (Idrak.Text.Plugins' encoder-decoder families), walked where the folder comes in.
+        string? name = (System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))?["architectures"] as System.Text.Json.Nodes.JsonArray)?.FirstOrDefault()?.GetValue<string>();
+        return name is not null && Idrak.Text.Plugins.BuiltInFamilies.All.Seq2SeqFamilies.Any(f => f.Names.Contains(name, StringComparer.Ordinal)) ? name : null;
     }
 
     /// <summary>The beam settings of the command line: the beams (1 when not given) and the length penalty.</summary>
