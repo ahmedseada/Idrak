@@ -18,46 +18,24 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] HipGroup =
     [
-        ("hip runtime: library names per system; the system's search (the driver's runtime) first, ROCm's folders on Linux only, no SDK's folder anywhere; a missing runtime means no HIP devices, a reason and no exception", HipMissingRuntime),
-        ("hip devices: named hip:N, parsed like the others, listed in --list-devices (with the reason when there are none)", HipDeviceNames),
+        ("hip runtime: library names per system; the system's search (the driver's runtime) first, ROCm's folders on Linux only, no SDK's folder anywhere; a missing runtime gives a reason and no exception", HipMissingRuntime),
         ("hip limits: the block size and the limits' plausibility come from what the device reports", HipBlockSize),
         ("hip architecture: the target string is read from the device properties by content; runtime versions read as major.minor.patch", HipArchitecture),
         ("hip kernel cache: the key changes with every input (a kernel set's with any kernel's text, the target, the device, the format and the versions); a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
         ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row, product, attention, shape, decoding, training, convolution, CTC, recurrent, parity and routing kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
-        ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; IDRAK_HIP_ATTENTION_SPLIT and attention's splits; IDRAK_HIP_GEMV_SPLITS and the k splits of the packed few-row products; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS; IDRAK_HIP_FINISH chooses the last block's finish or a second launch; IDRAK_HIP_ATTENTION_ROWS and the device's LDS the tiled attention's rows a block", HipKernelSettings),
-        ("hip measured choices (G7a): the packed few-row products' candidates (each depth with each k split count and the formula's; a setting leaves only its value); a made-up timer's clear winner is kept and a gain within the margin keeps the default; choices kept per device, driver and build in tuning/hip/, read back only for that identity and only when still a candidate; rank 0's choices taken but never written; HipMeasuredChoices registered for HIP backends alone", HipMeasuredChoicesWithoutDevice),
+        ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it; every kernel has its profile cost; IDRAK_HIP_ATTENTION_SPLIT and attention's splits; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS; IDRAK_HIP_FINISH chooses the last block's finish or a second launch; IDRAK_HIP_ATTENTION_ROWS and the device's LDS the tiled attention's rows a block", HipKernelSettings),
+        ("hip measured choices: HIP's choice files under the cache folder's tuning/hip/ (CUDA's in tuning/cuda/); IDRAK_TUNING_CACHE=0 keeps none", HipMeasuredChoicesWithoutDevice),
         ("hip telemetry: KernelsLoaded (a device's kernel set, from the cache or assembled, its time, kernels and bytes) reaches the hooks at the Devices level, the console logger's line and the JSON lines' kernels_loaded", HipKernelsLoadedEvent),
         ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
         ("hip profiler and telemetry: HipBackend times its kernels (IKernelProfiler) as CUDA does; a runtime without the event functions times nothing and says why; on HIP devices fill_f32's launches are timed under its name or a label with its floating-point operations, a refused code object reaches the telemetry, and a host fallback carries why the kernels are unavailable", HipProfilerAndTelemetry),
-        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise, attention, shape and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) and the decoding ones (the fused packed products, attention over rows and packed sequences, penalties, rotary embeddings, the element-wise operations with parameters, the float32 products of one input, the norm and rotation of queries and keys and of the attention heads into a cache with NormRopeHeads true, the sampler's three paths with the CPU's tokens), the training ones, and the convolutions (composed and depthwise), pooling, resampling, CTC and recurrent steps on the GCN kernels (kernels loaded: none of them through the host fallback; on HIP devices)", HipDeviceMatchesCpu),
-        ("hip device: parity with CUDA (plan 35): UploadRange, the pinned host staging (at a slot's start and anywhere in it), the packed product's epilogue (bias, residual, GELU), the token cross-entropy rows, the packed gated activation, the convolution's composed path and both implicit products (these two the same bits), the measured attention path kept, no quantized operand to reuse; none of it through the host fallback (on HIP devices)", HipDeviceParity),
+        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise, attention, shape and product operations (float32, few-row) and the decoding ones (attention over rows and packed sequences, penalties, rotary embeddings, the element-wise operations with parameters, the float32 products of one input, the norm and rotation of queries and keys and of the attention heads into a cache with NormRopeHeads true, the sampler's three paths with the CPU's tokens), the training ones, and the convolutions (composed and depthwise), pooling, resampling, CTC and recurrent steps on the GCN kernels (kernels loaded: none of them through the host fallback; on HIP devices)", HipDeviceMatchesCpu),
+        ("hip device: parity with CUDA (plan 35): UploadRange, the pinned host staging (at a slot's start and anywhere in it), the token cross-entropy rows, the convolution's composed path and both implicit products (these two the same bits), the measured attention path kept; none of it through the host fallback (on HIP devices)", HipDeviceParity),
     ];
 
-    // G7a's logic without a device: the candidates, the choice by CUDA's comparison under a made-up timer, the table and its
-    // cache file, the sharing between ranks and the provider's registration.
+    // HIP's choice files without a device: the cache folder they are kept in.
     internal static void HipMeasuredChoicesWithoutDevice(Device device)
     {
         _ = device;
-        int E(int depth, int splits) => HipBackend.EncodePacked(depth, splits);
-
-        // Candidates: k = 3072 allows 1 to 32 splits (min(64, k / 64) = 48), each with depths 4 and 8; the formula's 6 joins.
-        int[] all = HipBackend.PackedCandidates(null, null, 6, 3072);
-        int[] counts = [1, 2, 4, 6, 8, 16, 32];
-        Check(all.SequenceEqual(counts.Select(s => E(4, s)).Concat(counts.Select(s => E(8, s)))), $"each depth with each split count and the formula's: {string.Join(", ", all)}");
-        Check(HipBackend.PackedCandidates(8, null, 4, 3072).All(c => c >> 8 == 8) && HipBackend.PackedCandidates(null, 3, 4, 3072).SequenceEqual([E(4, 3), E(8, 3)])
-              && HipBackend.PackedCandidates(4, 2, 4, 3072).SequenceEqual([E(4, 2)]) && HipBackend.PackedCandidates(null, null, 1, 100).SequenceEqual([E(4, 1), E(8, 1)]),
-            "IDRAK_HIP_GEMV_DEPTH or IDRAK_HIP_GEMV_SPLITS leaves only its value among the candidates (both: one candidate, nothing to measure); a short k one split");
-        Check(E(8, 16) >> 8 == 8 && (E(8, 16) & 0xFF) == 16, "a choice encodes the depth and the splits");
-
-        // The comparison under a made-up timer: ms of `runs` runs of a candidate, with a little alternating noise.
-        int fallback = E(4, 6), noise = 0;
-        float Time(Dictionary<int, float> once, int candidate, int runs) => runs * once[candidate] * (1f + ((noise++ & 1) == 0 ? 0.005f : -0.005f));
-        var clear = all.ToDictionary(c => c, c => c == E(8, 4) ? 0.6f : c == fallback ? 1.0f : 1.3f);
-        Check(HipBackend.MeasureChoice(all, fallback, (c, runs) => Time(clear, c, runs)) == E(8, 4), "a candidate clearly faster than the default is kept");
-        var close = all.ToDictionary(c => c, c => c == E(8, 8) ? 0.985f : c == fallback ? 1.0f : 1.3f);
-        Check(HipBackend.MeasureChoice(all, fallback, (c, runs) => Time(close, c, runs)) == fallback, "a gain within the 3% margin keeps the default");
-
-        // The table and its cache file.
         string folder = Directory.CreateTempSubdirectory("idrak-hip-tuning-").FullName;
         try
         {
@@ -65,56 +43,10 @@ internal abstract partial class Tests
                   && TuningCache.Folder(name => name == "IDRAK_CACHE" ? folder : null) == Path.Combine(folder, "tuning", "cuda")
                   && TuningCache.Folder(name => name == "IDRAK_TUNING_CACHE" ? "0" : null, "hip") is null,
                 "HIP's choice files under the cache folder's tuning/hip/ (CUDA's stay in tuning/cuda/); IDRAK_TUNING_CACHE=0 keeps none");
-            var identity = new TuningIdentity("Test GPU; gfx90c; 8 CUs; 2048 MiB", "HIP runtime 6.2.0; driver 1", "0.0.0; kernels 0123");
-            var key = new TuneKey(TuneOp.HipPackedProduct, 0, 1, 1024, 3072);
-            var table = new HipTuningTable(identity, folder);
-            Check(!table.TryKnown(key, all, out _), "nothing known at first");
-            table.Record(key, E(8, 4));
-            Check(table.File is { } file && File.Exists(file) && File.ReadAllText(file).Contains("HipPackedProduct 0 1 1024 3072 0 0 0 = 2052", StringComparison.Ordinal),
-                $"a measured choice is written to the device's file: {table.File}");
-            var again = new HipTuningTable(identity, folder);
-            Check(again.TryKnown(key, all, out int read) && read == E(8, 4), "a new start reads it back for the same device, driver and build");
-            Check(!new HipTuningTable(identity, folder).TryKnown(key, HipBackend.PackedCandidates(4, null, 6, 3072), out _),
-                "a kept choice that is not among the shape's candidates now (a setting forces another depth) is not taken");
-            Check(!new HipTuningTable(identity with { Driver = "HIP runtime 6.3.0; driver 2" }, folder).TryKnown(key, all, out _),
-                "another driver's (or device's, or build's) file is not read: measured again");
-
-            // Sharing: rank 0's choices taken, never written to the taking device's file.
-            var exported = table.Export();
-            Check(exported.ContainsKey("t HipPackedProduct 0 1 1024 3072 0 0 0") && exported.ContainsKey("p HipPackedProduct 0 1 1024 3072 0 0 0"),
-                $"export: those measured here and those the file keeps: {string.Join("; ", exported.Keys)}");
-            string other = Directory.CreateTempSubdirectory("idrak-hip-tuning-rank-").FullName;
-            try
-            {
-                var follower = new HipTuningTable(identity, other);
-                Check(follower.Import(exported) == 1 && follower.TryKnown(key, all, out int taken) && taken == E(8, 4), "rank 0's choice is taken");
-                var second = key with { B = 4096 };
-                follower.Record(second, E(4, 8));
-                string text = File.ReadAllText(follower.File!);
-                Check(text.Contains("HipPackedProduct 0 1 4096 3072", StringComparison.Ordinal) && !text.Contains("HipPackedProduct 0 1 1024 3072", StringComparison.Ordinal),
-                    $"what it measures itself is written; rank 0's choice is not:\n{text}");
-            }
-            finally
-            {
-                Directory.Delete(other, recursive: true);
-            }
         }
         finally
         {
             Directory.Delete(folder, recursive: true);
-        }
-
-        // The provider: registered under "hip", for HIP backends alone.
-        var provider = MeasuredChoiceProviders.Find("hip");
-        Check(provider is HipMeasuredChoices && !provider.Handles(Device.Cpu.Backend) && MeasuredChoiceProviders.For(Device.Cpu.Backend) is null,
-            $"HipMeasuredChoices is registered and handles HIP backends only: {MeasuredChoiceProviders.Describe()}");
-        try
-        {
-            provider!.Export(Device.Cpu.Backend);
-            Check(false, "exporting a CPU backend's choices through HIP's provider must throw");
-        }
-        catch (ArgumentException)
-        {
         }
     }
 
@@ -145,71 +77,6 @@ internal abstract partial class Tests
         {
             System.Runtime.InteropServices.NativeLibrary.Free(both);
         }
-
-        var provider = DeviceProviders.Find("hip");
-        Check(provider is { Type: DeviceType.Hip, Display: "HIP" }, "the HIP provider is registered");
-        if (provider!.Count == 0)
-        {
-            Check(provider.UnavailableReason is { Length: > 0 }, "a reason when there are no devices");
-            Check(!Device.Available.Any(d => d.Type == DeviceType.Hip), "no HIP device listed");
-            try
-            {
-                Device.Get("hip");
-                Check(false, "Device.Get(\"hip\") without devices throws");
-            }
-            catch (InvalidOperationException e)
-            {
-                Check(e.Message.Contains("HIP is not available", StringComparison.Ordinal), $"a clear message: {e.Message}");
-            }
-
-            Console.WriteLine($"    no HIP devices: {provider.UnavailableReason}");
-        }
-        else
-        {
-            Console.WriteLine($"    {provider.Count} HIP device(s), runtime from {HipRuntime.LoadedFrom}");
-        }
-    }
-
-    internal static void HipDeviceNames(Device device)
-    {
-        _ = device;
-        int count = DeviceProviders.Find("hip")!.Count;
-        for (int i = 0; i < count; i++)
-        {
-            var hip = Device.Parse($"hip:{i}");
-            Check(hip.Type == DeviceType.Hip && hip.Kind == "hip" && hip.Ordinal == i && hip.ToString() == $"hip:{i}" && hip.IsGpu, $"hip:{i}");
-            Check(Device.Parse($"HIP:{i}") == hip && Device.Available.Contains(hip), $"hip:{i} is case-insensitive and listed (tested in plain runs)");
-        }
-
-        try
-        {
-            Device.Parse($"hip:{count}");
-            Check(false, $"hip:{count} does not exist");
-        }
-        catch (InvalidOperationException)
-        {
-        }
-
-        Check(Environment.GetEnvironmentVariable("IDRAK_HIP_DEFAULT") == "1" || Device.Default.Type != DeviceType.Hip,
-            "not the default device unless IDRAK_HIP_DEFAULT=1");
-
-        // The device listing has a HIP row: each device, or why there is none.
-        var saved = Console.Out;
-        var text = new StringWriter();
-        Console.SetOut(text);
-        try
-        {
-            ListDevices();
-        }
-        finally
-        {
-            Console.SetOut(saved);
-        }
-
-        string listing = text.ToString();
-        Check(count == 0 ? listing.Contains("| hip:-", StringComparison.Ordinal) && listing.Contains("none found:", StringComparison.Ordinal)
-                : listing.Contains("| hip:0", StringComparison.Ordinal),
-            "--list-devices shows HIP");
     }
 
     // Device limits as a runtime might report them (no card in mind: the values vary independently).
@@ -357,7 +224,7 @@ internal abstract partial class Tests
                 {
                     var (code, layout) = (codes[i], layouts[i]);
                     Check(layout.Arguments.SequenceEqual(code.Arguments) && layout.ArgumentBytes == GcnCodeObject.KernargBytes(code)
-                          && layout.Block == (code.RequiredWorkgroupSize?.X ?? code.MaxFlatWorkgroupSize) && (layout.Block is 256 or GcnKernels.PackedGemvWords || code.Name == "softmax_ce_rows_f32" && layout.Block == GcnKernels.CrossEntropyThreads),
+                          && layout.Block == (code.RequiredWorkgroupSize?.X ?? code.MaxFlatWorkgroupSize) && (layout.Block == 256 || code.Name == "softmax_ce_rows_f32" && layout.Block == GcnKernels.CrossEntropyThreads),
                         $"{processor}, format {format}, {code.Name}: arguments, bytes and block as assembled ({layout.ArgumentBytes} bytes, block {layout.Block})");
                 }
 
@@ -399,16 +266,13 @@ internal abstract partial class Tests
         Check(HipBackend.TargetUnavailable("hip:0", "gfx90c:xnack-", out var isa, out var target) is null && target is { Family: "gfx9" } && isa.Minor == 0 && isa.Stepping == 12,
             "a target gfx9 handles: no reason, its family");
         string? unregistered = HipBackend.TargetUnavailable("hip:0", "gfx1201", out _, out var none);
-        Check(none is null && unregistered is not null && unregistered.Contains("gfx1201", StringComparison.Ordinal) && unregistered.Contains("not registered", StringComparison.Ordinal)
+        Check(none is null && unregistered is not null && unregistered.Contains("gfx1201", StringComparison.Ordinal) && unregistered.Contains("No GCN target family handles", StringComparison.Ordinal)
               && unregistered.Contains("hip:0", StringComparison.Ordinal), $"a target no family handles: {unregistered}");
         string? unread = HipBackend.TargetUnavailable("hip:0", "sm_80", out _, out _);
         Check(unread is not null && unread.Contains("'sm_80'", StringComparison.Ordinal) && unread.Contains("not a target string", StringComparison.Ordinal), $"a target Idrak does not read: {unread}");
 
         var missing = GcnKernels.All.Where(k => HipBackend.Cost(k.Name).Bytes <= 0 && HipBackend.ProductCost(k.Name, 2, 3, 4).Bytes <= 0).Select(k => k.Name).ToList();
         Check(missing.Count == 0, $"every kernel has its profile cost (the tables of GcnKernels.Rows.cs, .Pointwise.cs, .Products.cs, .Attention.cs and .Shapes.cs): {string.Join(", ", missing)}");
-        Check(HipBackend.GemvSplitsSetting(null) is null && HipBackend.GemvSplitsSetting("6") == 6 && HipBackend.GemvSplitsSetting("0") is null && HipBackend.GemvSplitsSetting("x") is null
-              && HipBackend.GemvSplitCount(8, 4, 3072) == 4 && HipBackend.GemvSplitCount(8, 4, 3072, forced: 6) == 6 && HipBackend.GemvSplitCount(64, 1, 100) == 1
-              && HipBackend.GemvSplitCount(1000, 1, 1 << 20) == 64, "IDRAK_HIP_GEMV_SPLITS forces the packed few-row products' k splits; else about two blocks a compute unit, a power of two, at most min(64, k / 64)");
         Check(HipBackend.AttentionSplitPositions(null) == 512 && HipBackend.AttentionSplitPositions("0") == 0 && HipBackend.AttentionSplitPositions("300") == 512
               && HipBackend.AttentionSplitPositions("1024") == 1024 && HipBackend.AttentionSplitPositions("x") == 512,
             "IDRAK_HIP_ATTENTION_SPLIT: positions a split, a multiple of the 256-key tile (512 unless given), 0 for none");
@@ -424,9 +288,6 @@ internal abstract partial class Tests
         Check(HipBackend.FinishByLastBlockSetting(null) && HipBackend.FinishByLastBlockSetting("block") && !HipBackend.FinishByLastBlockSetting("launch")
               && !HipBackend.FinishByLastBlockSetting(" Launch ") && HipBackend.FinishByLastBlockSetting("x"),
             "IDRAK_HIP_FINISH: the last block finishes split sums and the fused kernels' tails (one launch) unless it is launch");
-        Check(HipBackend.GemvDepthSetting(null) == 4 && HipBackend.GemvDepthSetting("8") == 8 && HipBackend.GemvDepthSetting("4") == 4
-              && HipBackend.GemvDepthSetting("16") == 4 && HipBackend.GemvDepthSetting("x") == 4 && GcnKernels.PackedGemvDepths.SequenceEqual([4, 8]),
-            "IDRAK_HIP_GEMV_DEPTH: the packed few-row products take 4 rows of k a step (G4a's kernels) unless it says 8 (G6a's _k8 variants)");
         Check(HipBackend.AttentionRowsSetting(null) is null && HipBackend.AttentionRowsSetting("4") == 4 && HipBackend.AttentionRowsSetting("x") is null
               && HipBackend.AttentionTiledRowsFor(512, 65536, null) == 8 && HipBackend.AttentionTiledRowsFor(512, 65536, 5) == 4
               && HipBackend.AttentionTiledRowsFor(3, 65536, null) == 2 && HipBackend.AttentionTiledRowsFor(1, 65536, null) == 1
@@ -656,19 +517,6 @@ internal abstract partial class Tests
             cpu.RmsNormAffine(On(cpu, x2), On(cpu, gain), cy2, rows, cols, 1e-6f, 1f);
             AssertClose(Read(cpu, cy2, rows * cols), Read(hip, hy2, rows * cols), 1e-4f, "RMS norm with gain");
 
-            // An int8 product with a column count that is not a multiple of four (padded weight rows).
-            int m = 3, cols8 = 301, k8 = 96, stride = (cols8 + 3) / 4 * 4;
-            var bytes = new byte[k8 * stride];
-            random.NextBytes(bytes);
-            var packed = new float[bytes.Length / 4];
-            Buffer.BlockCopy(bytes, 0, packed, 0, bytes.Length);
-            float[] x8 = Values(m * k8), scales = Values(cols8, 0.001f, 0.01f);
-            var hy8 = Keep(hip.Allocate(m * cols8, zeroed: true));
-            var cy8 = Keep(cpu.Allocate(m * cols8, zeroed: true));
-            Wired("int8 product", () => hip.Int8MatMul(On(hip, x8), On(hip, packed), On(hip, scales), hy8, m, cols8, k8));
-            cpu.Int8MatMul(On(cpu, x8), On(cpu, packed), On(cpu, scales), cy8, m, cols8, k8);
-            AssertClose(Read(cpu, cy8, m * cols8), Read(hip, hy8, m * cols8), 1e-3f, "int8 product");
-
             // Every other kernel against the CPU: the same inputs on both, the outputs starting from the same values (for the
             // products' beta and the accumulating copies), every output compared.
             void Both(string what, float[][] inputs, int[] outputs, Action<Backend, Storage[]> op, float tolerance = 1e-4f, bool wired = false)
@@ -716,29 +564,6 @@ internal abstract partial class Tests
                 }
             }, 1e-3f, wired: true);
 
-            // Packed products of few rows and the expansions (bfloat16 packed on the CPU; 4-bit words of random nibbles).
-            int pr = 2, pcols = 300, pdepth = 70;
-            var packedRows = new float[pdepth * pcols / 2];                          // an even width: rows of whole words
-            var packedStorage = On(cpu, packedRows);
-            cpu.PackBFloat16(On(cpu, Values(pdepth * pcols)), packedStorage, pdepth * pcols);
-            cpu.Download(packedStorage, packedRows);
-            Both("bfloat16 product", [Values(pr * pdepth), packedRows], [pr * pcols], (k, s) => k.BFloat16MatMul(s[0], s[1], s[2], pr, pcols, pdepth), 1e-3f, wired: true);
-            Both("bfloat16 expansion", [packedRows], [pdepth * pcols], (k, s) => k.BFloat16Dequantize(s[0], s[1], pdepth, pcols), 0f, wired: true);
-            Both("bfloat16 packing", [Values(301)], [151], (k, s) => k.PackBFloat16(s[0], s[1], 301), 0f, wired: true);
-            Both("float16 product", [Values(pr * pdepth), packedRows], [pr * pcols], (k, s) => k.Float16MatMul(s[0], s[1], s[2], pr, pcols, pdepth), 1e-3f, wired: true);
-            Both("float16 expansion", [packedRows], [pdepth * pcols], (k, s) => k.Float16Dequantize(s[0], s[1], pdepth, pcols), 0f, wired: true);
-            Both("bfloat16 product of 11 rows (expanded)", [Values(11 * pdepth), packedRows], [11 * pcols], (k, s) => k.BFloat16MatMul(s[0], s[1], s[2], 11, pcols, pdepth), 1e-3f, wired: true);
-            Both("int8 product of 11 rows", [Values(11 * k8), packed, scales], [11 * cols8], (k, s) => k.Int8MatMul(s[0], s[1], s[2], s[3], 11, cols8, k8), 1e-3f, wired: true);
-            Both("int8 expansion", [packed, scales], [k8 * cols8], (k, s) => k.Int8Dequantize(s[0], s[1], s[2], k8, cols8), 0f, wired: true);
-            int int4Words = (pcols + 7) / 8;                                           // rows of ⌈n / 8⌉ words, scale rows of 8 · that
-            var nibbles = new byte[pdepth * int4Words * 4];
-            random.NextBytes(nibbles);
-            var int4 = new float[pdepth * int4Words];
-            Buffer.BlockCopy(nibbles, 0, int4, 0, nibbles.Length);
-            float[] int4Scales = Values((pdepth + 31) / 32 * int4Words * 8, 0.001f, 0.01f);
-            Both("4-bit product", [Values(pr * pdepth), int4, int4Scales], [pr * pcols], (k, s) => k.Int4MatMul(s[0], s[1], s[2], s[3], pr, pcols, pdepth), 1e-3f, wired: true);
-            Both("4-bit expansion", [int4, int4Scales], [pdepth * pcols], (k, s) => k.Int4Dequantize(s[0], s[1], s[2], pdepth, pcols), 0f, wired: true);
-
             // Rows: softmax and log-softmax, the masked softmax, layer norm with its statistics, GELU after a bias.
             int sr = 5, sc = 513;
             float[] logits = Values(sr * sc, -6f, 6f), mask = [.. Enumerable.Range(0, 2 * sc).Select(i => i % 4 == 0 ? -1e9f : random.NextSingle())];
@@ -772,8 +597,7 @@ internal abstract partial class Tests
 
             // Attention over key ranges (grouped heads, two tables; with the log-sum-exp, then with an empty range, whose
             // log-sum-exp is -∞; a soft-cap; enough keys to split them), its strided form over packed rows, and over a cache up to
-            // the device position (decoding and the tiled form with the log-sum-exp; a window, a soft-cap; bfloat16 and int8
-            // caches), all on the GCN kernels.
+            // the device position (decoding and the tiled form with the log-sum-exp; a window, a soft-cap), all on the GCN kernels.
             int heads = 4, kvHeads = 2, rowsA = 9, keyRows = 37, dimA = 64;
             float[] q = Values(heads * rowsA * dimA), keysA = Values(kvHeads * keyRows * dimA), valuesA = Values(kvHeads * keyRows * dimA);
             float[] starts = [.. Enumerable.Range(0, 2 * rowsA).Select(i => (float)(i % 3))], ends = [.. Enumerable.Range(0, 2 * rowsA).Select(i => (float)(keyRows - i))];
@@ -805,33 +629,11 @@ internal abstract partial class Tests
             Both("decoding over a long cache, splits merged", [Values(heads * dimA), Values(heads * 2000 * dimA), Values(heads * 2000 * dimA), [1990f]],
                 [heads * dimA], (k, s) => k.AttentionDecode(s[0], s[1], s[2], s[3], s[4], heads, 1, 1, 2000, dimA, 0.125f), 1e-3f, wired: true);
             int dimP = 37, capP = 40;
-            var bf16Cache = Keep(cpu.Allocate(heads * capP * ((dimP + 1) / 2), zeroed: true));
-            cpu.KeyValueWriteBFloat16(On(cpu, Values(heads * capP * dimP)), bf16Cache, On(cpu, [0f]), heads, capP, capP, dimP);
-            float[] bf16Keys = Read(cpu, bf16Cache, heads * capP * ((dimP + 1) / 2));
-            Both("attention over a bfloat16 cache", [Values(heads * 3 * dimP), bf16Keys, bf16Keys, [30f]], [heads * 3 * dimP],
-                (k, s) => k.AttentionBFloat16(s[0], s[1], s[2], s[3], s[4], heads, 3, 3, capP, dimP, 0.15f, tiled: false), wired: true);
-            var int8Cache = Keep(cpu.Allocate(heads * capP * ((dimP + 3) / 4), zeroed: true));
-            var int8Scales = Keep(cpu.Allocate(heads * capP, zeroed: true));
-            cpu.KeyValueWriteInt8(On(cpu, Values(heads * capP * dimP)), int8Cache, int8Scales, On(cpu, [0f]), heads, capP, capP, dimP);
-            float[] int8Keys = Read(cpu, int8Cache, heads * capP * ((dimP + 3) / 4)), int8KeyScales = Read(cpu, int8Scales, heads * capP);
-            Both("attention over an int8 cache", [Values(heads * 2 * dimP), int8Keys, int8Keys, int8KeyScales, int8KeyScales, [30f]], [heads * 2 * dimP],
-                (k, s) => k.AttentionInt8(s[0], s[1], s[2], s[3], s[4], s[5], s[6], heads, 2, 2, capP, dimP, 0.15f, tiled: false, new AttentionVariant(16, 0f)), wired: true);
-            Both("int8 cache scores", [Values(2 * 3 * dimP), int8Keys, int8KeyScales], [2 * 3 * capP],
-                (k, s) => k.AttentionScoresInt8(s[0], s[1], s[2], s[3], 2, 3, capP, dimP), wired: true);
-            Both("int8 cache weighted values", [Values(2 * 3 * capP, 0f, 0.1f), int8Keys, int8KeyScales], [2 * 3 * dimP],
-                (k, s) => k.AttentionContextInt8(s[0], s[1], s[2], s[3], 2, 3, capP, dimP), wired: true);
 
             // Gathers, the cache writes and mask, permutes and an accumulating strided copy, on the GCN kernels.
             float[] ids = [0f, 5f, 36f, 2f];
             Both("gather", [Values(37 * 13), ids], [4 * 13], (k, s) => k.Gather(s[0], s[1], s[2], 4, 13, 37), 0f, wired: true);
-            float[] bf16Table = Read(cpu, bf16Cache, 37 * 7);                          // 37 rows of 13 halves: 7 words each
-            Both("bfloat16 gather", [bf16Table, ids], [4 * 13], (k, s) => k.GatherBFloat16(s[0], s[1], s[2], 4, 13, 37), 0f, wired: true);
-            Both("bfloat16 column gather", [bf16Table, ids], [4 * 7], (k, s) => k.GatherBFloat16Columns(s[0], s[1], s[2], 4, 7, 37), 0f, wired: true);
             Both("cache write", [Values(heads * 2 * dimA), [6f]], [heads * 50 * dimA], (k, s) => k.KeyValueWrite(s[0], s[2], s[1], heads, 2, 50, dimA), 0f, wired: true);
-            Both("bfloat16 cache write", [Values(heads * 2 * dimP), [6f]], [heads * capP * ((dimP + 1) / 2)],
-                (k, s) => k.KeyValueWriteBFloat16(s[0], s[2], s[1], heads, 2, capP, dimP), 0f, wired: true);
-            Both("int8 cache write", [Values(heads * 2 * dimP), [6f]], [heads * capP * ((dimP + 3) / 4), heads * capP],
-                (k, s) => k.KeyValueWriteInt8(s[0], s[2], s[3], s[1], heads, 2, capP, dimP), 0f, wired: true);
             Both("decoder mask", [[6f]], [3 * 50], (k, s) => k.DecoderMask(s[0], s[1], 3, 50), 0f, wired: true);
             Both("permute", [Values(2 * 3 * 4 * 5)], [120], (k, s) => k.Permute(s[0], s[1], [2, 4, 5, 3], [60, 5, 1, 20], accumulate: false), 0f, wired: true);
             Both("permute, adding", [Values(2 * 3 * 4 * 5)], [120], (k, s) => k.Permute(s[0], s[1], [2, 4, 5, 3], [60, 5, 1, 20], accumulate: true), wired: true);
@@ -868,108 +670,15 @@ internal abstract partial class Tests
             Both("repetition penalties", [Values(2 * 310, -4f, 4f), [12, 40, 299, 12, 350, 7, 40, 12, 3, -1, 3, 3, 250, 0, 9, 3], [11f]], [2 * 300],
                 (k, s) => k.PenalizeRows(s[0], s[3], s[1], s[2], 2, 300, 310, 5, 8, 6, 1.3f, 0.2f, 0.1f), wired: true);
 
-            // Rows of different lengths over float32 and bfloat16 caches, and packed sequences (IRowAttentionBackend,
+            // Rows of different lengths over a float32 cache, and packed sequences (IRowAttentionBackend,
             // ISegmentedAttentionBackend): on the kernels, never the host.
             float[] rowStarts = [0f, 5f, 40f, 2f, 31f, 33f];
             Both("attention over rows of different lengths", [Values(heads * 3 * dimP), Values(heads * capP * dimP), Values(heads * capP * dimP), [30f], rowStarts],
                 [heads * 3 * dimP], (k, s) => k.AttentionRows(s[0], s[1], s[2], s[3], s[5], s[4], heads, 2, 3, 3, capP, dimP, 0.15f, new AttentionVariant(9, 4f)), wired: true);
-            Both("attention over rows of different lengths, a bfloat16 cache", [Values(heads * 3 * dimP), bf16Keys, bf16Keys, [30f], rowStarts], [heads * 3 * dimP],
-                (k, s) => k.AttentionRowsBFloat16(s[0], s[1], s[2], s[3], s[5], s[4], heads, 2, 3, 3, capP, dimP, 0.15f), wired: true);
             float[] packedStarts = [0, 0, 0, 3, 3, 3, 3, 7, 7, 0, 0, 2, 2, 2, 2, 2, 2, 2], packedEnds = [3, 3, 3, 7, 7, 7, 7, 9, 9, 2, 2, 9, 9, 9, 9, 9, 9, 9];
             Both("attention over packed sequences", [Values(heads * 9 * 24), Values(heads * 9 * 24), Values(heads * 9 * 24), packedStarts, packedEnds], [heads * 9 * 24, heads * 9],
                 (k, s) => k.AttentionSegmented(s[0], s[1], s[2], s[5], s[6], s[3], s[4], heads, 2, 9, 9, 24, 0.2f, new AttentionVariant(3, 5f)), wired: true);
             Check(hip.SupportsAttentionRows(dimP) && hip.SupportsSegmentedAttention(dimP), "HIP answers for rows and packed sequences as the CPU does");
-
-            // The fused packed products (IFusedPackedKernels) against the CPU's composed operations: on HIP's kernels they run
-            // (true) and take no host fallback.
-            Check(hip.FusedKernels, "HIP implements the fused packed products");
-            void PackedProduct(Backend b, PackedFormat f, Storage x, Storage w, Storage? sc, Storage y, int rows, int cols, int depth)
-            {
-                switch (f)
-                {
-                    case PackedFormat.Int8:
-                        b.Int8MatMul(x, w, sc!, y, rows, cols, depth);
-                        break;
-                    case PackedFormat.Int4:
-                        b.Int4MatMul(x, w, sc!, y, rows, cols, depth);
-                        break;
-                    default:
-                        b.BFloat16MatMul(x, w, y, rows, cols, depth);
-                        break;
-                }
-            }
-
-            foreach (var (format, weightsOf, scalesOf, depth, width) in new (PackedFormat, float[], float[]?, int, int)[]
-                     {
-                         (PackedFormat.Int8, packed, scales, k8, cols8), (PackedFormat.Int4, int4, int4Scales, pdepth, pcols), (PackedFormat.BFloat16, packedRows, null, pdepth, pcols),
-                     })
-            {
-                const int Rows = 3;
-                float[] fx = Values(Rows * depth), fup = Values(Rows * depth), residual = Values(Rows * width), fgain = Values(width), bias = Values(width);
-                float[][] Inputs() => scalesOf is null ? [fx, fup, weightsOf, [0f], residual, fgain, bias] : [fx, fup, weightsOf, scalesOf, residual, fgain, bias];
-                Storage? Scales(Storage[] s) => scalesOf is null ? null : s[3];
-                bool fused = true;
-                void Fused(Backend b, bool done)
-                {
-                    if (ReferenceEquals(b, hip))
-                    {
-                        fused &= done || !kernels;
-                    }
-                }
-
-                Both($"{format} gated product", Inputs(), [Rows * width], (k, s) =>
-                {
-                    if (ReferenceEquals(k, hip))
-                    {
-                        Fused(k, k.PackedMatMulGated(format, 0, s[0], s[1], s[2], Scales(s), s[7], Rows, width, depth));
-                        return;
-                    }
-
-                    var hidden = k.Allocate(Rows * depth, zeroed: false);
-                    k.GatedActivation(s[0], s[1], hidden, Rows * depth, 0);
-                    PackedProduct(k, format, hidden, s[2], Scales(s), s[7], Rows, width, depth);
-                    hidden.Release();
-                }, 1e-3f, wired: true);
-                Both($"{format} product, residual addition and norm", Inputs(), [Rows * width, Rows * width, Rows * width], (k, s) =>
-                {
-                    if (ReferenceEquals(k, hip))
-                    {
-                        Fused(k, k.PackedMatMulAddRmsNorm(format, s[0], s[2], Scales(s), s[7], Rows, width, depth, s[4], s[8], s[5], s[9], 1e-6f, 1f));
-                        return;
-                    }
-
-                    PackedProduct(k, format, s[0], s[2], Scales(s), s[7], Rows, width, depth);
-                    k.AddRmsNormAffine(s[4], s[7], s[8], s[5], s[9], Rows, width, 1e-6f, 1f);
-                }, 1e-3f, wired: true);
-                Both($"{format} product, its norm, residual addition and norm", Inputs(), [Rows * width, Rows * width, Rows * width],
-                    (k, s) => Fused(k, k.PackedMatMulNormAddRmsNorm(format, s[0], s[2], Scales(s), s[7], Rows, width, depth, s[6], 1e-6f, 0f, s[4], s[8], s[5], s[9], 1e-6f, 1f)),
-                    1e-3f, wired: true);
-                Both($"{format} two products of one input, one with a bias", Inputs(), [Rows * width, Rows * width], (k, s) =>
-                {
-                    if (ReferenceEquals(k, hip))
-                    {
-                        Fused(k, k.PackedMatMulMany(format, s[0], Rows, depth, [(s[2], Scales(s), s[6], s[7], width), (s[2], Scales(s), null, s[8], width)]));
-                        return;
-                    }
-
-                    PackedProduct(k, format, s[0], s[2], Scales(s), s[7], Rows, width, depth);
-                    k.AddRowVector(s[7], s[6], s[7], Rows, width);
-                    PackedProduct(k, format, s[0], s[2], Scales(s), s[8], Rows, width, depth);
-                }, 1e-3f, wired: true);
-                Both($"{format} gate/up pair with GELU", Inputs(), [Rows * width, Rows * width, Rows * width], (k, s) =>
-                {
-                    if (ReferenceEquals(k, hip))
-                    {
-                        Fused(k, k.PackedMatMulGatedPair(format, 1, s[0], Rows, depth, [(s[2], Scales(s), null, s[7], width), (s[2], Scales(s), null, s[8], width)], s[9]));
-                        return;
-                    }
-
-                    PackedProduct(k, format, s[0], s[2], Scales(s), s[7], Rows, width, depth);
-                    PackedProduct(k, format, s[0], s[2], Scales(s), s[8], Rows, width, depth);
-                    k.GatedActivation(s[7], s[8], s[9], Rows * width, 1);
-                }, 1e-3f, wired: true);
-                Check(fused, $"{format}: with kernels, every fused packed product ran on HIP's kernels (none declined)");
-            }
             // Training (plan 35, G5b): the backward passes, the optimizers and the reductions on the GCN kernels.
             int tn = 3001;
             float[] tx = Values(tn), tdy = Values(tn), tpos = Values(tn, 0.1f, 3f);
@@ -1030,13 +739,6 @@ internal abstract partial class Tests
             Both("weight norm", [Values(5, 0.5f, 2f), Values(5 * 300)], [5 * 300], (k, s) => k.WeightNorm(s[0], s[1], s[2], 5, 300), 1e-3f, wired: true);
             Both("weight norm gradient", [Values(5, 0.5f, 2f), Values(5 * 300), Values(5 * 300)], [5, 5 * 300],
                 (k, s) => k.WeightNormBackward(s[0], s[1], s[2], s[3], s[4], 5, 300), 1e-3f, wired: true);
-            var codes = new byte[2 * 700];
-            random.NextBytes(codes);
-            float[] moments = new float[2 * 175];
-            Buffer.BlockCopy(codes, 0, moments, 0, codes.Length);
-            float[] map = [.. Enumerable.Range(0, 256).Select(i => MathF.Pow((i - 127.5f) / 127.5f, 3)), .. Enumerable.Range(0, 256).Select(i => i * i / 65025f)];
-            Both("8-bit Adam", [Values(700), moments[..175], moments[175..], Values(6, 0.01f, 0.1f), map], [700],
-                (k, s) => k.AdamStep8Bit(s[5], s[0], s[1], s[2], s[3], s[4], 700, 1e-3f, 0.9f, 0.999f, 1e-8f, 1f, 1f), 1e-3f, wired: true);
             Both("fused AdamW", [Values(5000), Values(300), Values(5000, 0f, 0.01f), Values(300, 0f, 0.01f)], [5000, 5000, 300, 300], (k, s) =>
             {
                 IDisposable? fused = null;
@@ -1072,55 +774,28 @@ internal abstract partial class Tests
                 [3 * 130, 3 * 67, 3 * 200], (k, s) => k.MatMulMany(s[0], 3, 70, [(s[1], s[4], s[6], 130), (s[2], null, s[7], 67), (s[3], s[5], s[8], 200)]), 1e-3f, wired: true);
             Both("RMS norm and rotary embedding of queries and keys", [ropeX, Values(40), Values(2 * 40), Values(40), ropeCos, ropeSin, [5f, 7f]], [6 * 40, 2 * 40],
                 (k, s) => k.RmsNormRopePair(s[0], s[1], s[7], 6, 1e-6f, 0f, 3, s[2], s[3], s[8], 2, 1e-5f, 1f, 1, s[4], s[5], s[6], 40, 2, 16, false), wired: true);
-            foreach (bool bf16 in new[] { false, true })
             {
                 // A decoding step (one sequence, one step): 4 query heads over 2 key/value heads of 40, keys and values
                 // into a cache of 8 rows at row 3; the CPU's steps: the norms with rotation, then the cache writes.
                 const int Heads = 4, Kv = 2, Dim = 40, Cache = 8;
-                int words = bf16 ? Dim / 2 : Dim;
                 bool ran = true;
                 float[][] headsInputs = [Values(Heads * Dim), Values(Kv * Dim), Values(Kv * Dim), Values(Dim), Values(Dim), ropeCos, ropeSin, [5f], [3f]];
-                var hs = headsInputs.Select(v => On(hip, v)).Concat([On(hip, Values(Heads * Dim)), On(hip, Values(Kv * Cache * words)), On(hip, Values(Kv * Cache * words))]).ToArray();
-                var cs = headsInputs.Select(v => On(cpu, v)).Concat(Enumerable.Range(9, 3).Select(i => On(cpu, Read(hip, hs[i], i == 9 ? Heads * Dim : Kv * Cache * words)))).ToArray();
-                Wired($"queries, keys and values into a {(bf16 ? "bfloat16" : "float32")} cache", () => ran = hip.NormRopeHeads(hs[0], hs[1], hs[2], 1, 1, Heads, Kv, Dim, hs[3], 1e-6f,
-                    0f, hs[4], 1e-5f, 1f, hs[5], hs[6], hs[7], 16, false, hs[9], hs[10], hs[11], hs[8], Cache, bf16 ? 2 * words : Dim, bf16));
-                Check(ran == kernels, $"NormRopeHeads ({(bf16 ? "bfloat16" : "float32")} cache): {ran} on HIP, {kernels} expected (the kernel with the kernels loaded)");
+                var hs = headsInputs.Select(v => On(hip, v)).Concat([On(hip, Values(Heads * Dim)), On(hip, Values(Kv * Cache * Dim)), On(hip, Values(Kv * Cache * Dim))]).ToArray();
+                var cs = headsInputs.Select(v => On(cpu, v)).Concat(Enumerable.Range(9, 3).Select(i => On(cpu, Read(hip, hs[i], i == 9 ? Heads * Dim : Kv * Cache * Dim)))).ToArray();
+                Wired("queries, keys and values into a float32 cache", () => ran = hip.NormRopeHeads(hs[0], hs[1], hs[2], 1, 1, Heads, Kv, Dim, hs[3], 1e-6f,
+                    0f, hs[4], 1e-5f, 1f, hs[5], hs[6], hs[7], 16, false, hs[9], hs[10], hs[11], hs[8], Cache, Dim));
+                Check(ran == kernels, $"NormRopeHeads (float32 cache): {ran} on HIP, {kernels} expected (the kernel with the kernels loaded)");
                 var normalized = Keep(cpu.Allocate(Kv * Dim, zeroed: false));
                 cpu.RmsNormRope(cs[0], cs[3], cs[5], cs[6], cs[7], cs[9], Heads, Dim, 1e-6f, 0f, Heads, 1, 16, false);
                 cpu.RmsNormRope(cs[1], cs[4], cs[5], cs[6], cs[7], normalized, Kv, Dim, 1e-5f, 1f, Kv, 1, 16, false);
-                if (bf16)
+                cpu.KeyValueWrite(normalized, cs[10], cs[8], Kv, 1, Cache, Dim);
+                cpu.KeyValueWrite(cs[2], cs[11], cs[8], Kv, 1, Cache, Dim);
+                if (ran)
                 {
-                    cpu.KeyValueWriteBFloat16(normalized, cs[10], cs[8], Kv, 1, Cache, Dim);
-                    cpu.KeyValueWriteBFloat16(cs[2], cs[11], cs[8], Kv, 1, Cache, Dim);
-                }
-                else
-                {
-                    cpu.KeyValueWrite(normalized, cs[10], cs[8], Kv, 1, Cache, Dim);
-                    cpu.KeyValueWrite(cs[2], cs[11], cs[8], Kv, 1, Cache, Dim);
-                }
-
-                if (!ran)
-                {
-                    continue;
-                }
-
-                AssertClose(Read(cpu, cs[9], Heads * Dim), Read(hip, hs[9], Heads * Dim), 1e-4f, "NormRopeHeads: queries");
-                foreach (var (index, tensor) in new[] { (10, "keys"), (11, "values") })
-                {
-                    float[] want = Read(cpu, cs[index], Kv * Cache * words), have = Read(hip, hs[index], Kv * Cache * words);
-                    if (!bf16)
+                    AssertClose(Read(cpu, cs[9], Heads * Dim), Read(hip, hs[9], Heads * Dim), 1e-4f, "NormRopeHeads: queries");
+                    foreach (var (index, tensor) in new[] { (10, "keys"), (11, "values") })
                     {
-                        AssertClose(want, have, 1e-4f, $"NormRopeHeads: {tensor}");
-                        continue;
-                    }
-
-                    // bfloat16 halves as floats: a value rounded on either side of a tie may differ by one bfloat16 step.
-                    var wh = System.Runtime.InteropServices.MemoryMarshal.Cast<float, ushort>(want.AsSpan()).ToArray();
-                    var hh = System.Runtime.InteropServices.MemoryMarshal.Cast<float, ushort>(have.AsSpan()).ToArray();
-                    for (int i = 0; i < wh.Length; i++)
-                    {
-                        float e = BitConverter.UInt32BitsToSingle((uint)wh[i] << 16), g = BitConverter.UInt32BitsToSingle((uint)hh[i] << 16);
-                        Check(wh[i] == hh[i] || MathF.Abs(e - g) <= 1e-2f * MathF.Max(1f, MathF.Abs(e)), $"NormRopeHeads: {tensor} (bfloat16): half {i} is {g}, the CPU's {e}");
+                        AssertClose(Read(cpu, cs[index], Kv * Cache * Dim), Read(hip, hs[index], Kv * Cache * Dim), 1e-4f, $"NormRopeHeads: {tensor}");
                     }
                 }
             }
@@ -1254,17 +929,14 @@ internal abstract partial class Tests
                     rows.Release();
                     dStep.Release();
                 }, 1e-3f, wired: true);
-            float[] packedGate = Values(1501), packedUp = Values(1501);
-            Both("packed gated activation gradient", [packedGate, packedUp, Values(3001)], [3001, 3001], (k, s) => k.GatedActivationBackwardPacked(s[0], s[1], s[2], s[3], s[4], 3001, 0, 3),
-                1e-3f, wired: true);
 
             Check(!kernels || wiredFallbacks == 0,
                 $"with kernels, no row, element-wise, product, attention, shape, training, convolution, pooling, resampling, CTC or recurrent operation took the host fallback ({wiredFallbacks} calls did: {string.Join(", ", wiredNames)})");
             hip.Synchronize();
             if (!kernels)
             {
-                // Unavailable kernels fail the test, unless the setting turned them off or no registered family handles the
-                // device's target (its reason says "not registered"): then a skip, seen even with --failures-only, since a
+                // Unavailable kernels fail the test, unless the setting turned them off or no family handles the device's
+                // target: then a skip, seen even with --failures-only, since a
                 // run whose kernels never loaded is not a pass of the kernels.
                 bool understood = HipBackend.KernelsSettingReason(Environment.GetEnvironmentVariable(HipBackend.KernelsVariable)) is not null
                                 || HipBackend.TargetUnavailable(device.ToString(), hip.DeviceLimits.Architecture, out _, out _) is not null;

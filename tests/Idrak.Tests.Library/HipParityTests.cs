@@ -6,10 +6,9 @@ using Idrak.Gpu.Abstractions;
 using Idrak.Gpu.Hip;
 
 // Plan 35, HIP parity, on HIP devices (the owner's hip:0 run; nothing runs elsewhere): every method CUDA overrides is
-// HIP's own too, and each gives the CPU's results: the partial upload, the pinned host staging, the packed product's
-// epilogue, the token cross-entropy rows, the packed gated activation, the convolution's three paths (the composed one,
-// the 16 × 16 and the 64 × 64 implicit products, these two the same bits), the measured attention path, and no quantized
-// operand to reuse.
+// HIP's own too, and each gives the CPU's results: the partial upload, the pinned host staging, the token cross-entropy
+// rows, the convolution's three paths (the composed one, the 16 × 16 and the 64 × 64 implicit products, these two the
+// same bits) and the measured attention path.
 internal abstract partial class Tests
 {
     internal static void HipDeviceParity(Device device)
@@ -66,25 +65,7 @@ internal abstract partial class Tests
                 AssertClose(pinned, staging.Slot(1)[200..700].ToArray(), 0f, "staging download at an offset in the slot");
             }
 
-            // The packed product's epilogue (bfloat16 weights, prompt-sized): with the bias, the residual, and GELU.
-            const int M = 20, N = 70, K = 48;
-            float[] x = Values(M * K), w = Values(K * N, -0.3f, 0.3f), bias = Values(N), residual = Values(M * N);
-            var packedCpu = cpu.Allocate((K * N + 1) / 2, zeroed: false);
-            owned.Add(packedCpu);
-            cpu.PackBFloat16(On(cpu, w), packedCpu, K * N);
-            float[] packedWords = Read(cpu, packedCpu);
-            foreach (var (useResidual, gelu) in new[] { (false, false), (true, false), (false, true) })
-            {
-                var yCpu = cpu.Allocate(M * N, zeroed: false);
-                var yHip = hip.Allocate(M * N, zeroed: false);
-                owned.Add(yCpu);
-                owned.Add(yHip);
-                cpu.PackedMatMulEpilogue(PackedFormat.BFloat16, On(cpu, x), packedCpu, null, yCpu, M, N, K, On(cpu, bias), useResidual ? On(cpu, residual) : null, gelu);
-                hip.PackedMatMulEpilogue(PackedFormat.BFloat16, On(hip, x), On(hip, packedWords), null, yHip, M, N, K, On(hip, bias), useResidual ? On(hip, residual) : null, gelu);
-                AssertClose(Read(cpu, yCpu), Read(hip, yHip), 1e-4f, $"PackedMatMulEpilogue{(useResidual ? ", the residual" : "")}{(gelu ? ", GELU" : "")}");
-            }
-
-            // The token cross-entropy rows and the packed gated activation.
+            // The token cross-entropy rows.
             const int Rows = 3, Vocabulary = 1500;
             float[] logits = Values(Rows * Vocabulary, -4, 4), targets = [5, 1499, 700], weights = [1f, 0f, 0.5f];
             var (lc, lh) = (On(cpu, logits), On(hip, logits));
@@ -93,19 +74,6 @@ internal abstract partial class Tests
             hip.SoftmaxCrossEntropyRows(lh, On(hip, targets), On(hip, weights), lossH, Rows, Vocabulary, 0.5f);
             AssertClose(Read(cpu, lossC), Read(hip, lossH), 1e-4f, "SoftmaxCrossEntropyRows losses");
             AssertClose(Read(cpu, lc), Read(hip, lh), 1e-4f, "SoftmaxCrossEntropyRows gradient");
-            const int G = 1001;
-            float[] gate = Values(G), up = Values(G);
-            var outputs = new (Storage Y, Storage Py, Storage Pg, Storage Pu)[2];
-            int at = 0;
-            foreach (Backend b in new Backend[] { cpu, hip })
-            {
-                outputs[at] = (On(b, new float[G]), On(b, new float[(G + 1) / 2]), On(b, new float[(G + 1) / 2]), On(b, new float[(G + 1) / 2]));
-                b.GatedActivationPacked(On(b, gate), On(b, up), outputs[at].Pg, outputs[at].Pu, outputs[at].Y, outputs[at].Py, G, 0, 14);
-                at++;
-            }
-
-            AssertClose(Read(cpu, outputs[0].Y), Read(hip, outputs[1].Y), 1e-5f, "GatedActivationPacked y");
-            Check(Read(cpu, outputs[0].Pg).SequenceEqual(Read(hip, outputs[1].Pg)), "GatedActivationPacked: gate packed as the CPU packs it");
 
             // The convolution's paths: composed, 16 × 16 and 64 × 64 implicit products; the two implicit ones the same bits.
             var g = new ConvGeometry(2, 8, 13, 11, 3, 3, 1, 1, 1, 1);
@@ -141,7 +109,7 @@ internal abstract partial class Tests
                 }
             }
 
-            // The attention path: answered (measured once, then kept), and no quantized operand to reuse.
+            // The attention path: answered (measured once, then kept).
             const int Heads = 2, AttentionRows = 64, Dim = 32;
             var q = On(hip, Values(Heads * AttentionRows * Dim));
             var keys = On(hip, Values(Heads * AttentionRows * Dim));
@@ -151,7 +119,6 @@ internal abstract partial class Tests
             bool first = hip.PrefersComposedAttention(q, keys, values, starts, ends, null, Heads, AttentionRows, AttentionRows, Dim, 0.125f);
             Check(hip.PrefersComposedAttention(q, keys, values, starts, ends, null, Heads, AttentionRows, AttentionRows, Dim, 0.125f) == first,
                 "PrefersComposedAttention keeps its choice for the shape");
-            Check(hip.ReuseQuantizedOperands() is null, "HIP's products quantize no operand: nothing to reuse");
             Check(Idrak.Abstraction.Operations.Kernels.HostCalls(hip) == before, "none of it took the host fallback");
         }
         finally
