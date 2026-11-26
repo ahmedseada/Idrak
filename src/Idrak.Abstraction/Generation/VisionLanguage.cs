@@ -365,25 +365,35 @@ public static class ImageAttentionRules
     public const string ImageBlocks = "image-blocks";
 }
 
-internal sealed class CausalRule : IImageAttentionRule
+/// <summary>The image attention rule <see cref="ImageAttentionRules.Causal"/>.</summary>
+public sealed class CausalRule : IImageAttentionRule
 {
+    /// <inheritdoc />
     public string Name => ImageAttentionRules.Causal;
 
+    /// <inheritdoc />
     public bool Causal => true;
 
+    /// <inheritdoc />
     public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) => KeySpans.Causal(rows, window);
 
+    /// <inheritdoc />
     public override string ToString() => "causal image tokens";
 }
 
-internal sealed class ImageBlocksRule : IImageAttentionRule
+/// <summary>The image attention rule <see cref="ImageAttentionRules.ImageBlocks"/>.</summary>
+public sealed class ImageBlocksRule : IImageAttentionRule
 {
+    /// <inheritdoc />
     public string Name => ImageAttentionRules.ImageBlocks;
 
+    /// <inheritdoc />
     public bool Causal => false;
 
+    /// <inheritdoc />
     public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) => KeySpans.ImageBlocks(rows, blocks, window);
 
+    /// <inheritdoc />
     public override string ToString() => "image blocks seen whole";
 }
 
@@ -431,10 +441,13 @@ public static class ImagePositionRules
     public const string Grid = "grid";
 }
 
-internal sealed class GridRule : IImagePositionRule
+/// <summary>The image position rule <see cref="ImagePositionRules.Grid"/>.</summary>
+public sealed class GridRule : IImagePositionRule
 {
+    /// <inheritdoc />
     public string Name => ImagePositionRules.Grid;
 
+    /// <inheritdoc />
     public int Place(int start, int count, IReadOnlyList<ImageRun> images, int axes, Span<float> positions)
     {
         if (positions.Length < axes * count)
@@ -488,5 +501,6 @@ internal sealed class GridRule : IImagePositionRule
         return next;
     }
 
+    /// <inheritdoc />
     public override string ToString() => "grid positions (M-RoPE)";
 }

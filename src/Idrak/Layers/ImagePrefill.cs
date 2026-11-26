@@ -647,7 +647,7 @@ internal sealed class ImageBlocks
         }
 
         int tokens = Batch * Steps, axes = Math.Max(1, Axes);
-        var rule = NotOnTheNewDesign.Yet<IImagePositionRule>($"The image position rule '{ImagePositionRules.Grid}', picked by its name,");
+        var rule = new GridRule();
         var positions = new float[axes * tokens];
         var ends = new int[Batch];
         var relative = new Dictionary<PromptImage, float[]>(ReferenceEqualityComparer.Instance);
