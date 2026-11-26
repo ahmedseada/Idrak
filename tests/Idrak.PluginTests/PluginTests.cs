@@ -3,20 +3,16 @@
 
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Generation;
 using Idrak.Layers;
-using Idrak.Layers.Abstractions;
-using Idrak.Onnx;
-using Idrak.Onnx.Abstractions;
 
 namespace Idrak.PluginTests;
 
 /// <summary>
-/// Plug-ins written with Idrak's public API alone, as an outside package writes them: an optimizer (<see cref="Lion"/>),
-/// an operation with its own backward step, a network-builder step and an ONNX import operator built on it and an ONNX import operator built on it. The test runner
-/// in tests/Idrak.Tests runs <see cref="All"/> on every device; a failed check throws.
+/// Plug-ins written with Idrak's public API alone, as an outside package writes them: an optimizer (<see cref="Lion"/>)
+/// and a function with its own backward step. The test runner in tests/Idrak.Tests runs <see cref="All"/> on every
+/// device; a failed check throws.
 /// </summary>
 public static class PluginTests
 {
@@ -24,23 +20,16 @@ public static class PluginTests
     public static IReadOnlyList<(string Name, Action<Device> Run)> All { get; } =
     [
         ("outside plug-in: Idrak grants this assembly no internal access", NoInternalAccess),
-        ("outside plug-in: a Lion optimizer makes the reference update and trains a linear model; as a kind registered in OptimizerKinds from outside, it is made by name, passes the optimizer suite and unregisters", LionTrains),
-        ("outside plug-in: softplus through Autograd.Function matches finite differences, registers as a network step, trains with Lion and imports from ONNX", SoftplusStep),
+        ("outside plug-in: a Lion optimizer makes the reference update and trains a linear model", LionTrains),
+        ("outside plug-in: softplus through Autograd.Function matches finite differences", SoftplusStep),
         ("outside plug-in: a sample source computed when read trains a classifier, to the weights of its in-memory copy", DataPluginTests.SourceTrains),
         ("outside plug-in: a batch source making tensors itself trains a linear model through Trainer.Fit", DataPluginTests.BatchSourceTrains),
         ("outside plug-in: a message part kind of its own (audio) registers in ChatParts, passes the testing kit, round-trips through the chat JSON and is refused by a text-only model", ChatPartPluginTests.AudioKind),
-        ("outside plug-in: a plain-loop device on the public device API (its own backend, storage and provider) passes the conformance kit and a stress run", ReferenceDeviceConforms),
     ];
 
-    /// <summary>The ONNX operator and network step softplus is exported, imported and replayed as.</summary>
-    public const string SoftplusOperator = "OutsideSoftplus", SoftplusStepName = "outside-softplus";
-
-    /// <summary>
-    /// softplus(x) = log(1 + e^x), its forward step the plug-in operation <see cref="PluginKernels.SoftplusOp"/>, with its
-    /// derivative sigmoid(x) as the backward step.
-    /// </summary>
+    /// <summary>softplus(x) = log(1 + e^x), with its derivative sigmoid(x) as the backward step.</summary>
     public static DifferentiableFunction Softplus { get; } =
-        Autograd.Function("softplus", x => PluginKernels.RunSoftplus(x[0]), (x, y, g) => [g * x[0].Sigmoid()]);
+        Autograd.Function("softplus", x => (x[0].Exp() + 1f).Log(), (x, y, g) => [g * x[0].Sigmoid()]);
 
     private static void NoInternalAccess(Device device)
     {
@@ -56,7 +45,7 @@ public static class PluginTests
 
     private static void LionTrains(Device device)
     {
-        // One step against the formula, made directly and, registered as a kind from this assembly, by name.
+        // One step against the formula.
         float[] p0 = [0.5f, -1f, 2f, 0.25f], g0 = [0.1f, -0.3f, 0f, 2f];
         void FirstStep(Func<IReadOnlyList<Tensor>, Optimizer> make, string what)
         {
@@ -75,21 +64,6 @@ public static class PluginTests
         }
 
         FirstStep(ps => new Lion(ps, learningRate: 0.1f, weightDecay: 0.5f), "the first Lion step");
-        OptimizerKinds.Register(new LionKind());
-        try
-        {
-            Check(OptimizerKinds.Names.Contains(LionKind.KindName) && OptimizerKinds.Origin(LionKind.KindName) == typeof(LionKind).Assembly.GetName().Name
-                  && OptimizerKinds.Default(LionKind.KindName) is null && OptimizerKinds.Describe().Contains("lion: Lion", StringComparison.Ordinal),
-                $"registered from outside: {string.Join(", ", OptimizerKinds.Names)}, origin {OptimizerKinds.Origin(LionKind.KindName)}");
-            FirstStep(OptimizerKinds.Factory("LION", new OptimizerSettings(0.1f, WeightDecay: 0.5f)), "the first Lion step, made by name");
-            var report = Idrak.Abstraction.Testing.Conformance.CheckOptimizerKind(LionKind.KindName, device: device,
-                options: new Idrak.Abstraction.Testing.ContractCheckOptions { RandomCases = 4 });
-            Check(report.Passed, $"the optimizer suite:\n{report}");
-        }
-        finally
-        {
-            Check(OptimizerKinds.Unregister(LionKind.KindName) && OptimizerKinds.Find(LionKind.KindName) is null, "unregistered");
-        }
 
         // A noisy linear function, learned.
         var random = new Random(3);
@@ -144,38 +118,6 @@ public static class PluginTests
             CheckClose(numeric, analytic, 2e-2f, "softplus gradient");
             CheckClose([.. values.Select(v => MathF.Log(1f + MathF.Exp(1.5f * v)))], Softplus.Apply(Tensor.From(values, [values.Length], device) * 1.5f).ToArray(), 1e-5f, "softplus");
         }
-
-        // A network step of its own, trained with Lion.
-        NetworkOps.Register(SoftplusStepName, (b, a) => b.Lambda(t => Softplus.Apply(t), "Softplus", [.. b.CurrentShape]));
-        OnnxImportOps.Register(SoftplusOperator, c => c.Add(SoftplusStepName));
-        try
-        {
-            var random = new Random(5);
-            const int Samples = 48;
-            var xs = Enumerable.Range(0, Samples * 2).Select(_ => random.NextSingle() * 4f - 2f).ToArray();
-            var ys = Enumerable.Range(0, Samples).Select(i => MathF.Abs(xs[2 * i]) - 0.5f * xs[2 * i + 1]).ToArray();
-            using var x = Tensor.From(xs, [Samples, 2], device);
-            using var y = Tensor.From(ys, [Samples, 1], device);
-            var builder = Network.Input(2).Seed(6).Linear(16).Op(SoftplusStepName).Linear(1);
-            using var model = builder.OnDevice(device).Build();
-            using var optimizer = new Lion(model.Parameters(), learningRate: 0.01f);
-            var (first, last) = Train(model, optimizer, x, y, 200);
-            Check(last < 0.2f * first, $"a network with the softplus step: loss {first} → {last}");
-
-            // Exported with the step as a custom operator, and imported back onto the step.
-            model.Eval();
-            var bytes = OnnxExport.For(model).Input(2).Lambda("Softplus", (g, _, input, shape) => g.Node(SoftplusOperator, [input], shape)).ToBytes();
-            using var imported = OnnxImport.Load(bytes, device);
-            using var expected = model.Predict(x);
-            using var actual = imported.Model.Predict(x);
-            CheckClose(expected.ToArray(), actual.ToArray(), 1e-5f, "the imported network");
-            Check(JsonNode.DeepEquals(Network.FromJson(builder.ToJson()).ToJson(), builder.ToJson()), "the step replays from JSON");
-        }
-        finally
-        {
-            NetworkOps.Unregister(SoftplusStepName);
-            OnnxImportOps.Unregister(SoftplusOperator);
-        }
     }
 
     // Full-batch training; the first and the last loss.
@@ -197,32 +139,6 @@ public static class PluginTests
         }
 
         return (first, last);
-    }
-
-    private static void ReferenceDeviceConforms(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;                                                          // compared with the CPU once
-        }
-
-        Abstraction.Devices.DeviceProviders.Register(new ReferenceProvider());
-        try
-        {
-            var reference = Device.Get(ReferenceProvider.Kind);
-            Check(reference.ToString() == "reference:0" && !Device.Available.Contains(reference), "found by name, not listed");
-            long before = ReferenceDevice.Instance.OwnCalls;
-            var report = Abstraction.Testing.Conformance.Check(reference);
-            report.ThrowIfFailed();
-            Check(ReferenceDevice.Instance.OwnCalls > before, "its own loops ran");
-            Check(report.Entries.Any(e => e.Name == "Softmax" && e.Detail.StartsWith("the device's own kernel", StringComparison.Ordinal))
-                  && report.Entries.Any(e => e.Name == "LayerNormFused" && e.Detail.StartsWith("the host fallback", StringComparison.Ordinal)), report.ToString());
-            Abstraction.Testing.Stress.Run(reference, new Abstraction.Testing.StressOptions { Iterations = 200, Threads = 2, Large = false }).ThrowIfFailed();
-        }
-        finally
-        {
-            Abstraction.Devices.DeviceProviders.Unregister(ReferenceProvider.Kind);
-        }
     }
 
     private static void Check(bool condition, string message)

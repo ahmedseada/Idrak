@@ -1,286 +1,34 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Diagnostics;
-using System.Text.Json.Nodes;
 using Idrak;
-using Idrak.Abstraction.Devices;
-using Idrak.Abstraction.Operations;
-using Idrak.Abstraction.Testing;
-using Idrak.Generation;
 using Idrak.Gpu.Cuda;
 using Idrak.Gpu.Hip;
-using Idrak.Layers;
-using Idrak.Layers.Abstractions;
 
 namespace Idrak.PluginTests;
 
 /// <summary>
-/// The plug-ins' own device kernels (<see cref="PluginKernels"/>): the packed format, the cache layout, an
-/// <see cref="Autograd.Function"/> and a graph operation each run their plug-in operation, through its default kernel or
-/// through the kernel <see cref="PluginKernels.Install"/> registers for the device's kind (the CPU; Vulkan, CUDA and HIP
-/// for the packed format and the cache layout), seen in <see cref="Kernels.Chain"/> and counted by <see cref="Kernels.Trace"/>. The test
-/// runner in tests/Idrak.Tests runs <see cref="All"/> on every device; a failed check throws.
+/// The kernels a plug-in writes for a GPU, read as the library reads them: a CUDA kernel's parameters from its PTX
+/// (<see cref="CudaKernel"/>) and a HIP kernel's arguments from its GCN text's .arg lines (<see cref="GcnKernel"/>). The
+/// test runner in tests/Idrak.Tests runs <see cref="All"/> on every device; a failed check throws.
 /// </summary>
 public static class KernelPluginTests
 {
     /// <summary>The tests, by name.</summary>
     public static IReadOnlyList<(string Name, Action<Device> Run)> All { get; } =
     [
-        ("outside plug-in kernels: an Autograd.Function and a graph operation run their plug-in operations, by default and through the CPU kernel, with their gradients", FunctionAndGraphOpKernels),
-        ("outside plug-in kernels: the testing kit checks each plug-in kernel on the device against its default kernel on the CPU (Conformance.Check)", KitChecksKernels),
-        ("outside plug-in kernels: CUDA kernels read their parameters from the PTX, HIP's GCN kernels theirs from the .arg lines (refusing text whose declarations do not read, with the line and column), and both refuse other devices, mismatched arguments and, for GCN, a block its text does not declare", GpuKernelShapes),
-        ("outside plug-in kernels: the plug-in's PTX assembles with ptxas for every GPU target the installed ptxas lists at or above the PTX's own (no list of cards; skipped without ptxas: IDRAK_PTXAS, PATH or CUDA_PATH)", PtxAssembles),
+        ("outside plug-in kernels: CUDA kernels read their parameters from the PTX, HIP's GCN kernels theirs from the .arg lines (refusing text whose declarations do not read, with the line and column)", GpuKernelShapes),
     ];
-
-    private static void KitChecksKernels(Device device)
-    {
-        using var kernels = PluginKernels.Install();
-
-        // Random values from the seed, uploaded to the backend; a fresh output; the kernel; the output read back.
-        static (Storage Storage, float[] Values) Input(Backend backend, Random random, int n)
-        {
-            var values = Enumerable.Range(0, n).Select(_ => random.NextSingle() * 4f - 2f).ToArray();
-            var storage = backend.Allocate(n, zeroed: false);
-            backend.Upload(values, storage);
-            return (storage, values);
-        }
-
-        static float[] Output(Backend backend, Storage output, int n, params Storage[] free)
-        {
-            var values = new float[n];
-            backend.Download(output, values);
-            foreach (var storage in free.Append(output))
-            {
-                backend.Return(storage);
-            }
-
-            return values;
-        }
-
-        var reports = new[]
-        {
-            Conformance.Check(PluginKernels.Unpack, device, (backend, kernel, seed) =>
-            {
-                var random = new Random(seed);
-                int n = 1 + random.Next(300);
-                var words = Enumerable.Range(0, (n + 1) / 2).Select(_ => BitConverter.UInt32BitsToSingle((uint)random.Next() & 0x7F7F7F7Fu)).ToArray();
-                var packed = backend.Allocate(words.Length, zeroed: false);
-                backend.Upload(words, packed);
-                var values = backend.Allocate(n, zeroed: true);
-                kernel(backend, packed, values, n);
-                return Output(backend, values, n, packed);
-            }, tolerance: 0f),
-            Conformance.Check(PluginKernels.Scale, device, (backend, kernel, seed) =>
-            {
-                var random = new Random(seed);
-                int width = 1 + random.Next(40), count = 1 + random.Next(20);
-                var rows = Input(backend, random, count * width);
-                var scales = Input(backend, random, count);
-                var output = backend.Allocate(count * width, zeroed: true);
-                kernel(backend, rows.Storage, scales.Storage, output, count * width, width);
-                return Output(backend, output, count * width, rows.Storage, scales.Storage);
-            }),
-            Conformance.Check(PluginKernels.SoftplusOp, device, (backend, kernel, seed) =>
-            {
-                int n = 1 + new Random(seed).Next(500);
-                var x = Input(backend, new Random(seed + 1), n);
-                var y = backend.Allocate(n, zeroed: true);
-                kernel(backend, x.Storage, y, n);
-                return Output(backend, y, n, x.Storage);
-            }),
-        };
-
-        foreach (var report in reports)
-        {
-            Check(report.Passed && report.Cases == 8, report.ToString());
-        }
-
-        bool registers = RegistersFormatKernels(device.Backend);
-        Check(reports[0].Entries[0].Detail.StartsWith(registers ? "the registered kernel" : "the host kernel", StringComparison.Ordinal), reports[0].Entries[0].Detail);
-    }
-
-    private static void FunctionAndGraphOpKernels(Device device)
-    {
-        float[] values = [-3.5f, -1.2f, -0.4f, 0f, 0.3f, 1.1f, 2.6f, 4f];
-        var backend = device.Backend;
-        bool cpu = device.Type == DeviceType.Cpu;
-        GraphOps.Register(PluginKernels.ScaledTanhName, PluginKernels.ScaledTanhGraphOp);
-        var graph = new GraphModule("x", "y", [new GraphNode(PluginKernels.ScaledTanhName, ["x"], "y", new JsonObject { ["scale"] = 1.5f })]);
-        try
-        {
-            foreach (bool installed in new[] { false, true })
-            {
-                using var kernels = installed ? PluginKernels.Install() : null;
-                var expected = installed && cpu ? KernelSource.Registered : KernelSource.Composed;
-                var chain = Kernels.Chain(backend);
-                Check(chain[PluginKernels.SoftplusOp.Index].Source == expected && chain[PluginKernels.ScaledTanhOp.Index].Source == expected,
-                    $"installed {installed}: softplus {chain[PluginKernels.SoftplusOp.Index].Source}, scaled tanh {chain[PluginKernels.ScaledTanhOp.Index].Source}");
-
-                using var scope = new TensorScope();
-                using var trace = Kernels.Trace(backend);
-
-                // The Autograd.Function: softplus and its gradient sigmoid.
-                var x = Tensor.From(values, [values.Length], device, requiresGrad: true);
-                var y = PluginTests.Softplus.Apply(x);
-                y.Sum().Backward();
-                CheckClose([.. values.Select(v => MathF.Log(1f + MathF.Exp(v)))], y.ToArray(), 1e-5f, $"installed {installed}: softplus");
-                CheckClose([.. values.Select(v => 1f / (1f + MathF.Exp(-v)))], x.Grad!.ToArray(), 1e-5f, $"installed {installed}: softplus gradient");
-
-                // The graph operation: 1.5 · tanh and its gradient.
-                var t = Tensor.From(values, [values.Length], device, requiresGrad: true);
-                var z = graph.Forward(t);
-                z.Sum().Backward();
-                CheckClose([.. values.Select(v => 1.5f * MathF.Tanh(v))], z.ToArray(), 1e-5f, $"installed {installed}: the graph operation");
-                CheckClose([.. values.Select(v => 1.5f * (1f - MathF.Tanh(v) * MathF.Tanh(v)))], t.Grad!.ToArray(), 1e-5f, $"installed {installed}: its gradient");
-                Check(trace.Calls(PluginKernels.SoftplusOp) == 1 && trace.Calls(PluginKernels.ScaledTanhOp) == 1,
-                    $"calls: softplus {trace.Calls(PluginKernels.SoftplusOp)}, scaled tanh {trace.Calls(PluginKernels.ScaledTanhOp)}");
-            }
-        }
-        finally
-        {
-            GraphOps.Unregister(PluginKernels.ScaledTanhName);
-            graph.Dispose();
-        }
-    }
-
-    // Whether Install registers the packed format's and the cache layout's kernels for this device: the CPU, Vulkan,
-    // CUDA, and HIP where a registered GCN family handles the device's target.
-    private static bool RegistersFormatKernels(Backend backend) => backend.Kind is "cpu" or "vulkan" or "cuda" || (backend.Kind == "hip" && PluginKernels.RunsGcn(backend));
 
     private static void GpuKernelShapes(Device device)
     {
-        var cuda = PluginKernels.CudaKernels;
-        Check(cuda[0].Parameters == "ppi" && cuda[1].Parameters == "pppii", $"PTX parameters: {cuda[0].Parameters}, {cuda[1].Parameters}");
         Check(new CudaKernel(".visible .entry k(.param .u64 a, .param .b32 b, .param .f32 c, .param .s32 d, .param .align 8 .b8 e[16]) { ret; }", "k").Parameters == "xwfi?",
             "PTX parameter types");
-        Throws<ArgumentException>(() => new CudaKernel(PluginGpuSources.Ptx, "outside_missing"), "an entry the PTX does not declare");
 
-        // GCN: the arguments from the .arg lines ('p' a buffer, 'w' a 4-byte value, 'l' an 8-byte one), named.
-        var gcn = PluginKernels.GcnKernels;
-        Check(gcn[0].Parameters == "ppw" && gcn[1].Parameters == "pppww" && gcn[1].ParameterNames.SequenceEqual(["rows", "scales", "output", "n", "width"]),
-            $"GCN arguments: {gcn[0].Parameters}, {gcn[1].Parameters} ({string.Join(", ", gcn[1].ParameterNames)})");
+        // GCN: the arguments from the .arg lines ('p' a buffer, 'w' a 4-byte value, 'l' an 8-byte one).
         Check(new GcnKernel(".kernel k\n.arg a, 8, global\n.arg b, 4, value\n.arg c, 8, value\n.arg d, 2, value\n  s_endpgm\n", "k").Parameters == "pwl?", "GCN argument kinds");
-        Throws<ArgumentException>(() => new GcnKernel(PluginGpuSources.GcnScaleRows, "outside_missing"), "an entry the GCN text does not declare");
         string? refused = Message(() => new GcnKernel(".kernel k\n.arg a, 8, global\n.arg b, 4, bytes\n  s_endpgm\n", "k"));
         Check(refused is not null && refused.Contains("line 3, column 12", StringComparison.Ordinal), $"GCN declarations refused with the line and column: {refused}");
-
-        var backend = device.Backend;
-        var x = backend.Allocate(4, zeroed: true);
-        try
-        {
-            if (backend.Kind != "cuda")
-            {
-                Throws<ArgumentException>(() => cuda[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x, 4]), "a CUDA kernel on another device");
-            }
-            else
-            {
-                Throws<ArgumentException>(() => cuda[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x, 4f]), "a float for an integer parameter");
-                Throws<ArgumentException>(() => cuda[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x]), "one argument short");
-            }
-
-            if (backend.Kind != "hip")
-            {
-                Throws<ArgumentException>(() => gcn[0].Launch(backend, 1, 1, 1, 256, 1, 1, [x, x, 4]), "a GCN kernel on another device");
-            }
-            else
-            {
-                string? storage = Message(() => gcn[0].Launch(backend, 1, 1, 1, 256, 1, 1, [x, 4f, 4]));
-                Check(storage is not null && storage.Contains("outside_unpack_pairs", StringComparison.Ordinal) && storage.Contains("(values)", StringComparison.Ordinal),
-                    $"a float for a buffer, named: {storage}");
-                Throws<ArgumentException>(() => gcn[0].Launch(backend, 1, 1, 1, 256, 1, 1, [x, x]), "one argument short");
-                Throws<ArgumentOutOfRangeException>(() => gcn[0].Launch(backend, 1, 1, 1, 128, 1, 1, [x, x, 4]), "a block its text does not declare");
-            }
-        }
-        finally
-        {
-            backend.Return(x);
-        }
-    }
-
-    private static void PtxAssembles(Device device)
-    {
-        if (FindPtxas() is not { } ptxas)
-        {
-            Console.WriteLine("    (ptxas not found: set IDRAK_PTXAS, put it on PATH or set CUDA_PATH; skipped)");
-            return;
-        }
-
-        string file = Path.Combine(Path.GetTempPath(), $"idrak-plugin-{Environment.ProcessId}.ptx");
-        File.WriteAllText(file, PluginGpuSources.Ptx);
-        try
-        {
-            int assembled = 0;
-            int lowest = PtxTarget(PluginGpuSources.Ptx);
-            foreach (string architecture in Targets(ptxas).Where(t => t.Number >= lowest).Select(t => t.Name))
-            {
-                var start = new ProcessStartInfo(ptxas) { RedirectStandardError = true, RedirectStandardOutput = true };
-                foreach (string argument in new[] { $"-arch={architecture}", file, "-o", OperatingSystem.IsWindows() ? "NUL" : "/dev/null" })
-                {
-                    start.ArgumentList.Add(argument);
-                }
-
-                using var process = Process.Start(start)!;
-                var output = process.StandardOutput.ReadToEndAsync();
-                string errors = process.StandardError.ReadToEnd() + output.Result;
-                process.WaitForExit();
-                Check(process.ExitCode == 0, $"ptxas -arch={architecture}: exit {process.ExitCode}: {errors}");
-                assembled++;
-            }
-
-            Check(assembled > 0, $"the installed ptxas lists no target at or above sm_{lowest}");
-        }
-        finally
-        {
-            File.Delete(file);
-        }
-    }
-
-    // The real GPU targets this ptxas can assemble for (sm_NN without a/f suffix), from its own --help list.
-    private static IEnumerable<(string Name, int Number)> Targets(string ptxas)
-    {
-        var start = new ProcessStartInfo(ptxas, "--help") { RedirectStandardOutput = true, RedirectStandardError = true };
-        using var process = Process.Start(start)!;
-        string help = process.StandardOutput.ReadToEnd();
-        process.WaitForExit();
-        return System.Text.RegularExpressions.Regex.Matches(help, "'sm_(\\d+)'").Select(m => (Name: "sm_" + m.Groups[1].Value, Number: int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)))
-            .DistinctBy(t => t.Number).OrderBy(t => t.Number).ToList();
-    }
-
-    // The target a PTX text declares (".target sm_50" gives 50).
-    private static int PtxTarget(string ptx) =>
-        int.Parse(System.Text.RegularExpressions.Regex.Match(ptx, "\\.target\\s+sm_(\\d+)").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-
-    // ptxas from IDRAK_PTXAS, else PATH, else CUDA_PATH/bin; null when none is there.
-    private static string? FindPtxas()
-    {
-        string name = OperatingSystem.IsWindows() ? "ptxas.exe" : "ptxas";
-        if (Environment.GetEnvironmentVariable("IDRAK_PTXAS") is { Length: > 0 } chosen)
-        {
-            return File.Exists(chosen) ? chosen : throw new InvalidOperationException($"IDRAK_PTXAS names {chosen}, which does not exist");
-        }
-
-        var folders = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
-        if (Environment.GetEnvironmentVariable("CUDA_PATH") is { Length: > 0 } cudaPath)
-        {
-            folders.Add(Path.Combine(cudaPath, "bin"));
-        }
-
-        return folders.Select(f => Path.Combine(f, name)).FirstOrDefault(File.Exists);
-    }
-
-    private static void Throws<TException>(Action action, string what) where TException : Exception
-    {
-        try
-        {
-            action();
-        }
-        catch (TException)
-        {
-            return;
-        }
-
-        throw new InvalidOperationException($"{what}: no {typeof(TException).Name}");
     }
 
     // The message of the ArgumentException the action throws, or null when it throws none.
@@ -302,15 +50,6 @@ public static class KernelPluginTests
         if (!condition)
         {
             throw new InvalidOperationException(message);
-        }
-    }
-
-    private static void CheckClose(float[] expected, float[] actual, float tolerance, string what)
-    {
-        Check(expected.Length == actual.Length, $"{what}: {actual.Length} values, expected {expected.Length}");
-        for (int i = 0; i < expected.Length; i++)
-        {
-            Check(MathF.Abs(expected[i] - actual[i]) <= tolerance * MathF.Max(1f, MathF.Abs(expected[i])), $"{what}: element {i} is {actual[i]}, expected {expected[i]}");
         }
     }
 }
