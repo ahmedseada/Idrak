@@ -154,6 +154,9 @@ internal static class Pages
         return elements;
     }
 
+    // The data file's format was picked by its records among the registered formats: not on the new design yet.
+    private static ITuningDataFormat DataFormatOf(string path) => throw new NotSupportedException($"Picking the data format of {path} is not on the new design yet.");
+
     /// <summary>The records of a fine-tuning data file as pages: each record's first image, its prompt and its answer.</summary>
     public static IEnumerable<Page> FromData(string path, string? images)
     {
@@ -165,7 +168,7 @@ internal static class Pages
         string stem = Path.GetFileNameWithoutExtension(path);
         string file = Path.GetFileName(path);
         int record = 0;
-        foreach (var transcript in TuningDataFormats.Read(path, options: new TuningDataOptions { Images = images }))
+        foreach (var transcript in DataFormatOf(path).Read(path, new TuningDataOptions { Images = images }))
         {
             record++;
             var user = transcript.Messages.FirstOrDefault(m => m.Role == "user" && m.Parts.OfType<ChatImage>().Any());

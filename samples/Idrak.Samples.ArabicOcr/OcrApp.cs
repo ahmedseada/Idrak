@@ -19,7 +19,7 @@ internal sealed class OcrContext(Arguments arguments, TextWriter output, TextWri
 
     public bool Verbose => Args.Flag("--verbose");
 
-    /// <summary>The device of <c>--device</c> (auto, cpu, cuda, vulkan, cuda:N, vulkan:N): the library's default when not given.</summary>
+    /// <summary>The device of <c>--device</c> (auto, cpu): the library's default when not given.</summary>
     public Device Device { get; } = OcrApp.ParseDevice(arguments.Option("--device"));
 
     /// <summary>A line of progress (to the error stream, so the output stays the result).</summary>
@@ -55,7 +55,7 @@ internal static class OcrApp
           tune-vlm --model DIR --data train.json [--eval val.json] [--images DIR|ZIP] [-o ADAPTER]
                prints the idrak tune command (plan 12) for that data
 
-        Common: --device auto|cpu|cuda|vulkan|cuda:N|vulkan:N, -j/--json, -v/--verbose, -h/--help.
+        Common: --device auto|cpu, -j/--json, -v/--verbose, -h/--help.
         Data files (.json, .jsonl: ShareGPT or chat messages) take --images DIR|ZIP for their images.
         """;
 
@@ -117,8 +117,6 @@ internal static class OcrApp
     public static Device ParseDevice(string? text) => text?.ToLowerInvariant() switch
     {
         null or "auto" => Device.Default,
-        "cuda" or "gpu" => Device.Cuda(),
-        "vulkan" => Device.Parse("vulkan:0"),
         var name => Device.Parse(name),
     };
 }

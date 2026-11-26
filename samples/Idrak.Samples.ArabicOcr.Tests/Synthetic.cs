@@ -140,6 +140,6 @@ internal static class Synthetic
         return (Scan(ink, width, height, random), rows);
     }
 
-    /// <summary>Writes <paramref name="image"/> as a PNG (the library's encoders).</summary>
-    public static void Save(string path, ImageData image) => ImageEncoders.Save(path, image);
+    /// <summary>Writes <paramref name="image"/> as a PNG (the encoder picked by the extension: not on the new design yet).</summary>
+    public static void Save(string path, ImageData image) => throw new NotSupportedException($"Picking the image encoder of {path} is not on the new design yet.");
 }

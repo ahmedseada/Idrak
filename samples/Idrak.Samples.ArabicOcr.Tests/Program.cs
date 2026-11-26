@@ -58,7 +58,7 @@ var timings = new List<string>();
     ("ocr text: reading order reverses digits and Latin runs only, and undoes itself", () =>
     {
         string logical = Beh + Alef + " 123 " + Seen + " abc de " + Meem + " ١٢";
-        var order = ReadingOrders.Get(ReadingOrders.Runs);
+        var order = ReadingOrderNamed(ReadingOrders.Runs);
         string columns = order.ToColumns(logical, rightToLeft: true);
         Check(columns == Beh + Alef + " 321 " + Seen + " ed cba " + Meem + " ٢١", $"columns: {columns}");
         Check(order.FromColumns(columns, rightToLeft: true) == logical, "not its own inverse");
@@ -118,11 +118,11 @@ var timings = new List<string>();
         var lines = pages[0]!["lines"]!.AsArray();
         Check(lines.Count == 3, $"{lines.Count} lines: {output}");
         string read = (string)pages[0]!["text"]!;
-        double cer = TuningMetrics.Get("cer").Score(read, string.Join("\n", text)).Value;
+        double cer = MetricNamed("cer").Score(read, string.Join("\n", text)).Value;
         Check(cer <= 0.1, $"read '{read}' for '{string.Join("|", text)}' (cer {cer})");
         // Logical order: the reading is far from each line's letters reversed (what an unflipped reading would give).
         string reversed = string.Join("\n", text.Select(t => new string([.. t.Reverse()])));
-        Check(TuningMetrics.Get("cer").Score(read, reversed).Value > 3 * cer + 0.2, "the reading is in visual (reversed) order");
+        Check(MetricNamed("cer").Score(read, reversed).Value > 3 * cer + 0.2, "the reading is in visual (reversed) order");
         Check(lines.All(l => (double)l!["score"]! is > 0 and <= 1 && (int)l["box"]!["height"]! > 0), "boxes and scores");
         // The text output: the same lines, and -o writes them as UTF-8 without a BOM, lines ending as the console's.
         string outFile = Path.Combine(folder, "page.txt");
@@ -130,7 +130,7 @@ var timings = new List<string>();
         Check(code == 0, error);
         byte[] bytes = File.ReadAllBytes(outFile);
         Check(bytes.Length > 3 && !(bytes[0] == 0xEF && bytes[1] == 0xBB), "a BOM");
-        Check(File.ReadAllText(outFile) == OcrText.EndLines(read + "\n") || TuningMetrics.Get("cer").Score(File.ReadAllText(outFile).Trim(), read).Value <= 0.1, "beam's file");
+        Check(File.ReadAllText(outFile) == OcrText.EndLines(read + "\n") || MetricNamed("cer").Score(File.ReadAllText(outFile).Trim(), read).Value <= 0.1, "beam's file");
     }),
     ("ocr eval: per line and total CER/WER are TuningMetrics' over the same texts; unknown characters reported", () =>
     {
@@ -149,8 +149,8 @@ var timings = new List<string>();
             Check((string)p!["truth"]! == OcrText.ReadTranscription(Path.Combine(lines, (string)p["name"]! + ".txt")), "truth is the .txt");
         }
 
-        var cer = TuningMetrics.Score("cer", pairs);
-        var wer = TuningMetrics.Score("wer", pairs);
+        var cer = TuningScore.Sum(pairs.Select(p => MetricNamed("cer").Score(p.Item1, p.Item2)));
+        var wer = TuningScore.Sum(pairs.Select(p => MetricNamed("wer").Score(p.Item1, p.Item2)));
         Check((double)json["total"]!["cer"]! == cer.Value && (double)json["total"]!["wer"]! == wer.Value
               && (double)json["total"]!["characters"]! == cer.Denominator, $"total {json["total"]!.ToJsonString()} against {cer} {wer}");
         // A truth with a letter the recognizer never saw: reported, counted as an error, no crash.
@@ -435,6 +435,11 @@ string Fresh(string name)
     Directory.CreateDirectory(folder);
     return folder;
 }
+
+// The metrics and the reading orders were picked by their names among the registered ones: not on the new design yet.
+static ITuningMetric MetricNamed(string name) => throw new NotSupportedException($"Picking the metric '{name}' by its name is not on the new design yet.");
+
+static IReadingOrder ReadingOrderNamed(string name) => throw new NotSupportedException($"Picking the reading order '{name}' by its name is not on the new design yet.");
 
 static string RepositoryRoot()
 {

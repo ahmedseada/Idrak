@@ -188,11 +188,10 @@ internal sealed class VlmReader : IPageReader
         // The adapter's preparation (how its images were tuned), the command line's over it, as idrak run does.
         string? adapter = args.Option("--adapter");
         var tuned = adapter is null ? null : TuningImages.Read(adapter) ?? TuningImages.None;
-        var given = args.Options("--image-transform") is { Count: > 0 } pipelines ? ImageTransformPipeline.Parse(string.Join(",", pipelines)) : null;
-        var transforms = given ?? tuned?.Pipeline ?? ImageTransformPipeline.Empty;
-        if (args.Flag("--grayscale") && !transforms.Contains("grayscale"))
+        if (args.Options("--image-transform").Any(p => !string.IsNullOrWhiteSpace(p) && !p.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
+            || args.Flag("--grayscale") || tuned?.Grayscale == true)
         {
-            transforms = ImageTransformPipeline.Parse("grayscale").Then(transforms);
+            ImageTransformsByName();
         }
 
         var vision = (tuned?.VisionOptions ?? VisionOptions.Empty).With(VisionOptions.Parse(args.Options("--vision-option")));
@@ -201,17 +200,15 @@ internal sealed class VlmReader : IPageReader
             vision = vision.With(VisionOptions.Parse(["do_pan_and_scan=true"]));
         }
 
-        Transforms = transforms;
         VisionOptions = vision;
         _model = PretrainedModel.Load(folder, new PretrainedOptions { Device = context.Device, MergeAdapter = adapter });
         try
         {
             var family = _model.Vision ?? throw new UsageException($"--model {folder} reads text only (no vision encoder): give a vision-language checkpoint.");
             tuned?.ThrowIfOtherFamily(family.Family, $"the adapter {adapter}");
-            vision.ThrowIfUnknown(family.Family, family.VisionOptionKeys);
             _reader = new ImageReader(_model, new ImageReaderOptions
             {
-                Transforms = transforms, VisionOptions = vision.Count > 0 ? vision : null, ContextLength = Math.Min(args.Integer("--context", 8192, 256), _model.MaxPositions),
+                VisionOptions = vision.Count > 0 ? vision : null, ContextLength = Math.Min(args.Integer("--context", 8192, 256), _model.MaxPositions),
             });
         }
         catch
@@ -227,8 +224,9 @@ internal sealed class VlmReader : IPageReader
 
     public string Name => Readers.Vlm;
 
-    /// <summary>The image transforms every page goes through first.</summary>
-    public ImageTransformPipeline Transforms { get; }
+    // The image transforms (--image-transform, --grayscale and an adapter's grayscale) were picked by their names: not on
+    // the new design yet.
+    private static void ImageTransformsByName() => throw new NotSupportedException("The image transforms (--image-transform, --grayscale), picked by their names, are not on the new design yet.");
 
     /// <summary>The family's options for every page.</summary>
     public VisionOptions VisionOptions { get; }
@@ -249,7 +247,6 @@ internal sealed class VlmReader : IPageReader
         {
             ["reader"] = Name,
             ["prompt"] = prompt,
-            ["image_transforms"] = Transforms.ToString(),
             ["vision_options"] = VisionOptions.ToJson(),
             ["prompt_tokens"] = stats?.PromptTokens,
             ["generated_tokens"] = stats?.GeneratedTokens,
