@@ -21,7 +21,8 @@ internal abstract partial class DesktopTests
     [
         ("fonts woff: every D8 sample .woff (fontTools' WOFF 1.0 of the four test fonts) reads through WoffFormat: every table byte for byte its source's, the dump's glyph count, table lengths, advances and characters, the source face's outlines and characters exactly", WoffSamples),
         ("fonts woff: every test font (TrueType, CFF, a collection, variable fonts' default instance, the legacy fonts as read) written as WOFF unpacks to exactly what the truetype writer writes and reads back unchanged (tables, glyphs, advances, outlines, every character); the same face, the same bytes; each table compressed only when smaller, 4-byte aligned and zero-padded, the directory by tag, the data in the font's order; kept in test-output/fonts/woff", WoffEveryFont),
-        ("fonts woff: damaged and hostile WOFF files fail fast with an InvalidDataException naming the file and the cause: cut short, a table past the end, longer or shorter than declared, a damaged zlib stream, a decompression bomb past the limit refused before inflating, one lying about its length stopped at what it declares, a length zlib cannot give, unsorted, repeated, overlapping or misaligned tables, a wrong font size, extra bytes, no tables, a WOFF inside a WOFF", WoffHostile),
+        ("fonts woff: Encode packs a TrueType and a CFF file as they are (every table byte for byte, the flavor the font's version), and WoffFormat reads the font inside back by its flavor (the OpenType reader); the compression level (IDRAK_WOFF_COMPRESSION; 0 stores every table) and the limit (IDRAK_WOFF_MAX_BYTES) are settings, bad values refused naming the variable", WoffContract),
+        ("fonts woff: damaged and hostile WOFF files fail fast with an InvalidDataException naming the file and the cause, unpacked or read: cut short, a table past the end, longer or shorter than declared, a damaged zlib stream, a decompression bomb past the limit refused before inflating, one lying about its length stopped at what it declares, a length zlib cannot give, unsorted, repeated, overlapping or misaligned tables, a wrong font size, extra bytes, no tables, a WOFF inside a WOFF", WoffHostile),
     ];
 
     // The D8 WOFF samples: each one's stem and its source under the test fonts.
@@ -262,6 +263,74 @@ internal abstract partial class DesktopTests
                           + $"({100.0 * packed / unpacked:F1}%), {compressed} tables compressed, {stored} stored as they are; {watch.Elapsed.TotalSeconds:F1} s");
     }
 
+    private static void WoffContract(Device device)
+    {
+        CpuOnly(device);
+        var amiri = new OpenTypeFormat().Read(File.ReadAllBytes(FontData("arabic/amiri.ttf")), "amiri").Single();
+
+        // Encode packs a font file as it is: TrueType and CFF, every table kept byte for byte, the flavor its version.
+        var format = new WoffFormat();
+        foreach (string file in (string[])["features.ttf", "dejavu-sans-cff.otf"])
+        {
+            byte[] source = File.ReadAllBytes(FontData(file));
+            using var packed = new MemoryStream();
+            new WoffWriter().Encode(source, packed);
+            byte[] woff = packed.ToArray(), sfnt = format.Decode(woff, file);
+            Check(BinaryPrimitives.ReadUInt32BigEndian(woff.AsSpan(4)) == BinaryPrimitives.ReadUInt32BigEndian(source) && BinaryPrimitives.ReadUInt32BigEndian(sfnt) == BinaryPrimitives.ReadUInt32BigEndian(source),
+                $"{file}: the flavor is not the font's version");
+            var tables = SfntDirectory(source);
+            var unpacked = SfntDirectory(sfnt);
+            Check(unpacked.Select(t => t.Tag).SequenceEqual(tables.Select(t => t.Tag).Order(StringComparer.Ordinal)), $"{file}: the unpacked font's tables by tag");
+            foreach (var table in tables)
+            {
+                var back = unpacked.Single(t => t.Tag == table.Tag);
+                Check(back.Checksum == table.Checksum && sfnt.AsSpan(back.Offset, back.Length).SequenceEqual(source.AsSpan(table.Offset, table.Length)),
+                    $"{file}: table {table.Tag} unpacks otherwise");
+            }
+
+            var read = format.Read(woff, file).Single();
+            var original = new OpenTypeFormat().Read(source, file).Single();
+            Check(read.GlyphCount == original.GlyphCount && read.Format == original.Format && read.Family == original.Family, $"{file}: read back otherwise as WOFF");
+        }
+
+        // The compression level: 0 stores every table, 1 and 9 compress, each unpacking to the same font.
+        byte[] font = WriteFont(new TrueTypeWriter(), amiri, new FontWriteOptions());
+        var sizes = new List<int>();
+        foreach (int level in (int[])[0, 1, 9])
+        {
+            var levelled = new WoffWriter { CompressionLevel = level };
+            using var packed = new MemoryStream();
+            levelled.Write(amiri, packed, new FontWriteOptions());
+            byte[] woff = packed.ToArray();
+            Check(format.Decode(woff).AsSpan().SequenceEqual(font), $"level {level}: unpacks to another font");
+            var (compressedTables, storedTables) = WoffStructure($"amiri at level {level}", woff, font, level);
+            Check(level == 0 ? compressedTables == 0 && woff.Length == 44 + 20 * storedTables + font.Length - 12 - 16 * storedTables : compressedTables > 0,
+                $"level {level}: {compressedTables} tables compressed, {storedTables} stored, {woff.Length} bytes for {font.Length}");
+            sizes.Add(woff.Length);
+        }
+
+        Check(sizes[0] > sizes[1] && sizes[0] > sizes[2], $"compressing makes the file smaller: {string.Join(", ", sizes)} bytes at levels 0, 1 and 9");
+
+        // The settings: the variables read when a format or writer is made, bad values and options refused naming them.
+        Check(new WoffWriter().CompressionLevel == 9 && new WoffWriter().SfntWriter == TrueTypeWriter.WriterName && new WoffFormat().MaxFontBytes is > 0 and <= int.MaxValue,
+            $"the defaults: level {new WoffWriter().CompressionLevel}, limit {new WoffFormat().MaxFontBytes}");
+        WithEnvironment(new Dictionary<string, string?> { [WoffWriter.CompressionLevelVariable] = "0", [WoffFormat.MaxFontBytesVariable] = "64k" }, () =>
+        {
+            Check(new WoffWriter().CompressionLevel == 0 && new WoffFormat().MaxFontBytes == 65536, "IDRAK_WOFF_COMPRESSION=0 and IDRAK_WOFF_MAX_BYTES=64k");
+            ThrowsNaming<InvalidDataException>(() => new WoffFormat().Decode(File.ReadAllBytes(Path.Combine(FontWriteSamples(), "amiri.woff")), "amiri"), "a WOFF past the limit",
+                "amiri: ", "more than the limit of 65,536", "WoffFormat.MaxFontBytes", WoffFormat.MaxFontBytesVariable);
+        });
+        WithEnvironment(new Dictionary<string, string?> { [WoffWriter.CompressionLevelVariable] = "12" }, () =>
+            ThrowsNaming<ArgumentException>(() => _ = new WoffWriter(), "a level past 9", "IDRAK_WOFF_COMPRESSION=12", "0 to 9"));
+        WithEnvironment(new Dictionary<string, string?> { [WoffFormat.MaxFontBytesVariable] = "lots" }, () =>
+            ThrowsNaming<ArgumentException>(() => _ = new WoffFormat(), "a limit that is no number", "IDRAK_WOFF_MAX_BYTES=lots", "256m"));
+        ThrowsNaming<ArgumentOutOfRangeException>(() => _ = new WoffWriter { CompressionLevel = -1 }, "level -1", "0 to 9", WoffWriter.CompressionLevelVariable);
+        ThrowsNaming<ArgumentOutOfRangeException>(() => _ = new WoffFormat { MaxFontBytes = 0 }, "a limit of 0", "more than 0", WoffFormat.MaxFontBytesVariable);
+        ThrowsNaming<ArgumentException>(() => _ = new WoffWriter { SfntWriter = "WOFF" }, "woff as its own sfnt writer", "its own sfnt writer");
+        ThrowsNaming<InvalidDataException>(() => new WoffWriter().Encode(File.ReadAllBytes(Path.Combine(FontWriteSamples(), "amiri.woff")), Stream.Null), "a WOFF packed again",
+            "one sfnt font", "wOFF");
+    }
+
     private static void WoffHostile(Device device)
     {
         CpuOnly(device);
@@ -319,6 +388,10 @@ internal abstract partial class DesktopTests
         foreach (var (what, bytes, says) in cases)
         {
             ThrowsNaming<InvalidDataException>(() => format.Decode(bytes, "hostile"), what, ["hostile: ", .. says]);
+            if (bytes.Length >= 4 && format.Accepts(bytes))
+            {
+                ThrowsNaming<InvalidDataException>(() => format.Read(bytes, "hostile"), $"{what}, read", ["hostile: ", .. says]);
+            }
         }
 
         double each = watch.Elapsed.TotalMilliseconds / cases.Count;
@@ -365,6 +438,7 @@ internal abstract partial class DesktopTests
         before = GC.GetAllocatedBytesForCurrentThread();
         ThrowsNaming<InvalidDataException>(() => format.Decode(liar, "bomb"), "a bomb lying about its length", "bomb: ", $"the WOFF table 'glyf' inflates past the {Number(lie)} bytes it declares");
         long liarBytes = GC.GetAllocatedBytesForCurrentThread() - before;
+        ThrowsNaming<InvalidDataException>(() => format.Read(liar, "bomb"), "a lying bomb read", "bomb: ", $"inflates past the {Number(lie)} bytes");
         Check(honestBytes < 256 * 1024 && liarBytes < 1024 * 1024, $"a bomb costs {honestBytes:N0} bytes refused by the limit, {liarBytes:N0} stopped at its length");
 
         // Claiming a size zlib cannot give from its stored bytes: refused before the limit is even asked.

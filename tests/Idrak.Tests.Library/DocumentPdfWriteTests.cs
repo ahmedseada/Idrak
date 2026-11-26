@@ -313,7 +313,7 @@ internal abstract partial class Tests
             var read = document.ReadPage(0, DocumentParts.Images).Images.Single();
             byte[] expected = new JpegImageEncoder().Encode(photo, new ImageEncodeOptions { Quality = 80 });
             Check(read.Encoding == DocumentImage.Jpeg && read.Bytes().Span.SequenceEqual(expected)
-                  && new JpegCodec().Decode(read.Bytes().Span).Pixels.AsSpan().SequenceEqual(new JpegCodec().Decode(JpegEncoder.Encode(photo, 80)).Pixels), "JPEG: the encoder's bytes, the codec's pixels");
+                  && read.Decode().Pixels.AsSpan().SequenceEqual(new JpegCodec().Decode(JpegEncoder.Encode(photo, 80)).Pixels), "JPEG: the encoder's bytes, the codec's pixels");
         }
 
         // Auto: every D6 input measured as the sample measured it, and stored as it expects.
@@ -351,7 +351,7 @@ internal abstract partial class Tests
                 string chosen = read.Encoding == DocumentImage.Jpeg ? "Jpeg" : "Flate";
                 Check(chosen == expected, $"{name}: Auto chose {chosen}, the sample expects {expected}");
                 Check(chosen == "Flate" ? PdfSamePixels(read.Decode().Pixels, image.Pixels)
-                        : new JpegCodec().Decode(read.Bytes().Span).Pixels.AsSpan().SequenceEqual(new JpegCodec().Decode(JpegEncoder.Encode(image, 90)).Pixels),
+                        : read.Decode().Pixels.AsSpan().SequenceEqual(new JpegCodec().Decode(JpegEncoder.Encode(image, 90)).Pixels),
                     $"{name}: stored exact, or the codec's round trip");
             }
         }
@@ -707,7 +707,7 @@ internal abstract partial class Tests
             var page = document.ReadPage(0, DocumentParts.All);
             var image = page.Images.Single();
             Check(image.Encoding == DocumentImage.Jpeg && PdfNear(image.Box, new DocumentBox(0, 0, width, height)) && image.Order == 0
-                  && new JpegCodec().Decode(image.Bytes().Span).Pixels.AsSpan().SequenceEqual(new JpegCodec().Decode(JpegEncoder.Encode(scan, 90)).Pixels),
+                  && image.Decode().Pixels.AsSpan().SequenceEqual(new JpegCodec().Decode(JpegEncoder.Encode(scan, 90)).Pixels),
                 $"the scan's image: {image.Encoding} in {image.Box}");
             Check(page.Runs.Count == lines.Length && page.Runs.All(r => r.Hidden) && page.Runs.Select(r => r.Text).SequenceEqual(lines) && page.Text == string.Join("\n", lines),
                 $"its hidden text: {page.Text}");

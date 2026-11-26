@@ -752,7 +752,10 @@ internal abstract partial class Tests
             var plain = document.DrawPage(0, new DocumentDrawOptions { Dpi = dpi });
             var imageOnly = document.DrawPage(0, new DocumentDrawOptions { Dpi = dpi, Parts = DocumentParts.Images });
             var textOnly = document.DrawPage(0, new DocumentDrawOptions { Dpi = dpi, Parts = DocumentParts.Text, Hidden = true, Fonts = PdfDrawFonts() });
+            var decoded = image.Decode();
             Check(PdfInterleaved(plain.Image).AsSpan().SequenceEqual(PdfInterleaved(imageOnly.Image)), "the scan page drawn is its image alone (its hidden text is not drawn unless asked)");
+            var (share, _) = PdfDrawDifference(imageOnly.Image, new ImageData(decoded.Resize(3, imageOnly.Image.Height, imageOnly.Image.Width), 3, imageOnly.Image.Height, imageOnly.Image.Width), 8);
+            Check(share < 0.001, string.Create(CultureInfo.InvariantCulture, $"the scan's image drawn over its page: {share * 100:F3}% off its decoded pixels"));
             int inked = PdfInterleaved(textOnly.Image).Count(v => v < 128);
             Check(inked > 100 && textOnly.Issues.All(i => i.Kind != DocumentIssue.MissingFont), $"its hidden text drawn when asked: {inked} dark values; issues {string.Join("; ", textOnly.Issues.Select(i => i.Detail))}");
         }
