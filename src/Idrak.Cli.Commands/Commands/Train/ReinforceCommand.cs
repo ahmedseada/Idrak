@@ -17,7 +17,7 @@ namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
 /// <c>idrak reinforce MODEL</c> (Plan 27, R5): reinforcement learning of a language model's adapters in an environment
-/// (<c>prompts</c>, the coding plug-in's <c>coding</c>), by the library's
+/// (<c>prompts</c>, <c>coding</c>), by the library's
 /// trainer (<see cref="ReinforcementTrainer{TObservation, TAction}"/>) over Idrak.Text's language-model policy
 /// (<see cref="LanguageModelPolicy"/>), with a teacher term beside the reward when asked; <c>--algorithm distill</c> is
 /// on-policy distillation alone (Idrak.Text's <see cref="OnPolicyDistiller"/>, as <c>idrak distill --on-policy</c>). The

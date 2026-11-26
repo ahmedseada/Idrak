@@ -16,8 +16,8 @@ namespace Idrak.Cli.Shared;
 internal static class ToolAssemblies
 {
     /// <summary>
-    /// The feature switch saying whether the commands may load assemblies from files (<c>-P</c> plug-ins, <c>--tools</c>
-    /// DLLs): on unless a host turns it off. A trimmed host turns it off in its project
+    /// The feature switch saying whether the commands may load assemblies from files (<c>--tools</c> DLLs): on unless a
+    /// host turns it off. A trimmed host turns it off in its project
     /// (<c>&lt;RuntimeHostConfigurationOption Include="Idrak.Cli.LoadAssemblies" Value="false" Trim="true" /&gt;</c>): the
     /// trimmer then drops the loading code, and those options are refused, named.
     /// </summary>

@@ -51,8 +51,8 @@ internal static class ModelChoices
     /// <summary>Help lines for <see cref="VisionOption"/>, aligned as the commands' options are.</summary>
     public const string VisionOptionHelp = """
               --vision-option K=V an option of the model's vision family for its images (repeatable; the family names
-                                 the keys it takes and refuses others; with the Gemma 3 plug-in, do_pan_and_scan=true
-                                 adds crops of a tall or wide page); an alias can keep them ("vision_options")
+                                 the keys it takes and refuses others; Gemma 3's do_pan_and_scan=true adds crops of a
+                                 tall or wide page); an alias can keep them ("vision_options")
         """;
 
     /// <summary>The option giving the image transforms, a pipeline such as grayscale,max_width=1024,contrast=1.5 (repeatable: joined in order).</summary>

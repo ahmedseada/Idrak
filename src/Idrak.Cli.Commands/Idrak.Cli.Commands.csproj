@@ -7,7 +7,7 @@
     dashboard), which it registers in CommandServers; a host without them refuses the commands that need one, by what
     each command declares it needs (CommandNeeds), never by a list of names. Part of the tool, not a package of its own.
     Trimmable: its commands are listed in CommandTable (no discovery by reflection), and what loads assemblies at run
-    time (-P plug-ins, tools from a DLL) is marked and guarded.
+    time (tools from a DLL) is marked and guarded.
   -->
   <PropertyGroup>
     <RootNamespace>Idrak.Cli</RootNamespace>
@@ -33,14 +33,14 @@
     <ProjectReference Include="..\Idrak.Vision\Idrak.Vision.csproj" />
     <!-- transcribe, speak, voice, data audio, data mel and the audio option of run and chat: sound files, features, speech and voices (plan 21). -->
     <ProjectReference Include="..\Idrak.Audio\Idrak.Audio.csproj" />
-    <!-- The model families as plug-ins (plan 26), registered at startup before the -P plug-ins load. -->
+    <!-- The model families' packages (plan 26). -->
     <ProjectReference Include="..\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
     <ProjectReference Include="..\Idrak.Vision.Plugins\Idrak.Vision.Plugins.csproj" />
     <ProjectReference Include="..\Idrak.Audio.Plugins\Idrak.Audio.Plugins.csproj" />
-    <!-- Reinforcement learning (plan 27): the general algorithms, and the environment families as plug-ins, registered at startup with the others. -->
+    <!-- Reinforcement learning (plan 27): the general algorithms, and the environment families. -->
     <ProjectReference Include="..\Idrak.Reinforcement\Idrak.Reinforcement.csproj" />
     <ProjectReference Include="..\Idrak.Reinforcement.Plugins\Idrak.Reinforcement.Plugins.csproj" />
-    <!-- Font formats as plug-ins (plan 28, D8: WOFF), registered at startup with the others, so data fonts and data synth read .woff. -->
+    <!-- Font formats (plan 28, D8: WOFF). -->
     <ProjectReference Include="..\Idrak.Imaging.Plugins\Idrak.Imaging.Plugins.csproj" />
     <ProjectReference Include="..\Idrak.Cluster\Idrak.Cluster.csproj" />
     <ProjectReference Include="..\Idrak.Network\Idrak.Network.csproj" />

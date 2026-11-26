@@ -14,7 +14,7 @@ namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
 /// <c>idrak reinforce --env cartpole</c> (Plan 27, R9): reinforcement learning in an environment whose observations are
-/// numbers (the classic plug-in's bandit, cartpole, pendulum, mountain-car), with no model to load. On-policy
+/// numbers (the classic environments: bandit, cartpole, pendulum, mountain-car), with no model to load. On-policy
 /// (<c>--algorithm reinforce|ppo|grpo</c>) the library's
 /// <see cref="ReinforcementTrainer{TObservation, TAction}"/> trains a <see cref="ModulePolicy{TAction}"/> that
 /// <see cref="PolicyNetworks"/> builds from the options (categorical for discrete actions, Gaussian for a box); off-policy

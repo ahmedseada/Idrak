@@ -80,8 +80,8 @@ internal sealed class ServeCommand : Command
                                      (such as grayscale,max_width=1024,contrast=1.5; an alias can keep them); a
                                      request gives its own as "image_transforms" (they replace these; "none": none)
               --vision-option K=V    an option of a vision model's family for every image (repeatable; the family
-                                     names the keys it takes; with the Gemma 3 plug-in, do_pan_and_scan=true adds
-                                     crops of a tall or wide page); a request gives its own as "vision_options":
+                                     names the keys it takes; Gemma 3's do_pan_and_scan=true adds crops of a tall
+                                     or wide page); a request gives its own as "vision_options":
                                      {"KEY": VALUE}, over these
               --allow-image-urls     let image_url parts name http(s) addresses the server downloads (off: data
                                      URLs and uploads only; each download is held to --max-request-mb and 30 s);
@@ -134,8 +134,8 @@ internal sealed class ServeCommand : Command
           metrics            GET /metrics (with --metrics)
         A vision-language model (Gemma 3, such as an OCR fine-tune) takes images on /v1/chat/completions,
         /v1/chat/upload and /api/chat (PNG, JPEG, BMP, PPM/PGM; turned upright by their EXIF orientation); a
-        text-only model answers an image with 400. An encoder-decoder (a folder whose architecture a plug-in registers as
-        one) answers prompts on /v1/completions and MCP generate (num_beams, length_penalty and early_stopping per
+        text-only model answers an image with 400. An encoder-decoder (a folder whose architecture is an encoder-decoder
+        family's) answers prompts on /v1/completions and MCP generate (num_beams, length_penalty and early_stopping per
         request, --beams and --length-penalty for every request); the chat routes answer it with 400 and the web chat
         leaves it out. Tool calls are returned to the client, which runs the tools. A request field the OpenAI-style API
         does not implement (response_format other than text, json_schema, logprobs, top_logprobs, logit_bias, a

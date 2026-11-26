@@ -12,7 +12,7 @@ namespace Idrak.Cli.Shared;
 /// shares"): the label, the share done, the amount, the rate and the time left, shown by the library's progress
 /// reporters (<see cref="ProgressReporters"/>) on the error output (so the standard output stays clean for pipes). The
 /// reporter: none with <c>--quiet</c>; the host's (<see cref="CommandHost.ProgressReporter"/>: an app's terminal) when it names one; the one <c>IDRAK_PROGRESS</c> names when set ("console", "plain", "json",
-/// "quiet" or a plug-in's); none with <c>--json</c> or <c>--plain</c> or when the error output is not a terminal; else
+/// "quiet"); none with <c>--json</c> or <c>--plain</c> or when the error output is not a terminal; else
 /// "console", the line redrawn in place.
 /// </summary>
 /// <example><code>

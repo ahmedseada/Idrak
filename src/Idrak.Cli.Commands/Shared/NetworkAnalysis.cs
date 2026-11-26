@@ -14,7 +14,7 @@ internal sealed record LayerInfo(int Index, string Op, string Description, int[]
 /// What a network description (the builder's JSON, <c>idrak-network/1</c>) costs, for <c>idrak explain</c>,
 /// <c>idrak viz</c> and the size rules of <c>idrak suggest</c>. Each step is replayed through the builder
 /// (<see cref="NetworkBuilder.Op"/>), so output shapes are the builder's own; parameters are counted from the layer
-/// sizes exactly as the layers create them (a step registered by a plug-in is built on the CPU and counted instead).
+/// sizes exactly as the layers create them (a step this analysis does not know is built on the CPU and counted instead).
 /// FLOPs count a multiply-add as two and an element-wise operation as one per value, forward only, per sample.
 /// </summary>
 internal sealed class NetworkAnalysis
@@ -34,7 +34,7 @@ internal sealed class NetworkAnalysis
 
     public List<LayerInfo> Layers { get; } = [];
 
-    /// <summary>Steps the analysis does not know (registered by a plug-in): their FLOPs are not counted.</summary>
+    /// <summary>Steps the analysis does not know (their parameters counted from the built network): their FLOPs are not counted.</summary>
     public List<string> Unknown { get; } = [];
 
     public long Parameters => Layers.Sum(l => l.Parameters);

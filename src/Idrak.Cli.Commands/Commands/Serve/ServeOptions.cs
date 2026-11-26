@@ -40,8 +40,8 @@ internal sealed record ServedModel(string Name, string Source, ModelChoices.Mode
     public static string? Architecture(JsonObject config) => config["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : null;
 
     /// <summary>
-    /// The architecture when it is an encoder-decoder a plug-in registered (<c>PretrainedSeq2Seq</c>), else null: such a
-    /// model is served as the engine's "seq2seq" kind (prompts on /v1/completions and MCP generate), not as a chat model.
+    /// The architecture when it is an encoder-decoder family's (<c>PretrainedSeq2Seq</c>), else null: such a model is
+    /// served as the engine's "seq2seq" kind (prompts on /v1/completions and MCP generate), not as a chat model.
     /// </summary>
     public string? EncoderDecoder { get; init; }
 
@@ -404,7 +404,7 @@ internal static class ServeOptions
                 throw new UsageException($"{name}: {e.Message}");
             }
 
-            // An encoder-decoder a plug-in registered: served as one (weight choices it does not take refused now, as run does).
+            // An encoder-decoder: served as one (weight choices it does not take refused now, as run does).
             string? encoderDecoder = Seq2SeqRun.Architecture(folder);
             if (encoderDecoder is not null)
             {

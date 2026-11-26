@@ -5,7 +5,7 @@ using Idrak.Cli.Commands.Health;
 
 namespace Idrak.Cli.Commands;
 
-/// <summary>Setup and health: doctor, devices, version, report, env, init, cache, config, plugins, formats, completion, update, login, setup (plans/done/idrak-cli.md).</summary>
+/// <summary>Setup and health: doctor, devices, version, report, env, init, cache, config, completion, update, login, setup (plans/done/idrak-cli.md).</summary>
 internal static class HealthCommands
 {
     public static IReadOnlyList<Command> All { get; } =

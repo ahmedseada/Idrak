@@ -63,8 +63,8 @@ internal static class HelpTopics
     private const string Devices = """
         idrak help devices
 
-        A device is where tensors live and their math runs: cpu, cuda:N, vulkan:N, hip:N, or a kind a plug-in
-        registers. -d/--device NAME chooses it for a command; the config's "device" gives a default; otherwise the
+        A device is where tensors live and their math runs: cpu, cuda:N, vulkan:N or hip:N. -d/--device NAME
+        chooses it for a command; the config's "device" gives a default; otherwise the
         default device is the best GPU found (CUDA first; a Vulkan or HIP GPU only when IDRAK_VULKAN_DEFAULT=1 or
         IDRAK_HIP_DEFAULT=1), else the CPU.
 

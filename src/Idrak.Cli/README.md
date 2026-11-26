@@ -114,8 +114,6 @@ What works on this machine, and the tool's own settings.
 | `idrak config set` | Sets a config value (JSON values such as ["a.dll"] or 4 are kept as JSON) |
 | `idrak config unset` | Removes a config value |
 | `idrak config list` | Every config value (or a profile's), and the file's path |
-| `idrak plugins list` | Everything registered: formats, families, RoPE scalings, tool-call formats, ops, devices |
-| `idrak formats` | Every registered weight, KV cache, checkpoint, dataset and tool-call format |
 | `idrak completion` | Prints a shell completion script (bash, zsh, fish, pwsh) |
 | `idrak update` | Whether a newer version of the tool exists, and the command to install it |
 | `idrak login` | Stores a token for the Hugging Face hub, GitHub or Kaggle where the library reads it |
@@ -290,11 +288,10 @@ The model cache: what `pull` downloads is what loading reads (Hugging Face model
 | `idrak alias rm` | Remove a model alias from the config |
 | `idrak memory` | Memory per weight and KV format at a context length, against each device's memory |
 | `idrak merge` | Merge a LoRA or DoRA adapter into the base weights |
-| `idrak inspect` (`i`) | Tensor names, shapes, types and metadata of a GGUF, safetensors or .ikm file |
+| `idrak inspect` (`i`) | Tensor names, shapes and metadata of a GGUF, safetensors or .ikm file |
 | `idrak verify` | Check a cached model's files: sizes, hashes where the hub gives them, readable tensors |
 | `idrak convert` | Convert between GGUF and Hugging Face folders |
 | `idrak diff` | Which tensors differ between two checkpoints, and by how much |
-| `idrak families` | Supported model families and what each supports (windows, soft-capping, RoPE scalings, experts, GGUF) |
 
 ```bash
 idrak ls --sort size
@@ -367,7 +364,7 @@ Fine-tuning language models (`tune`) and training networks from the builder's JS
 |---|---|
 | `idrak tune` | Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info |
 | `idrak tune init` | Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config |
-| `idrak reinforce` | Reinforcement learning of a language model's adapters in an environment (`prompts`, `coding`, a plug-in's): GRPO, PPO, REINFORCE, a teacher term beside the reward, or on-policy distillation alone; in an environment of numbers (`bandit`, `cartpole`, `pendulum`, `mountain-car`) a small policy with no model: PPO, REINFORCE, GRPO or DQN; `--list` names every registered environment, reward, algorithm, estimator, sandbox and divergence |
+| `idrak reinforce` | Reinforcement learning of a language model's adapters in an environment (`prompts`, `coding`): GRPO, PPO, REINFORCE, a teacher term beside the reward, or on-policy distillation alone; in an environment of numbers (`bandit`, `cartpole`, `pendulum`, `mountain-car`) a small policy with no model: PPO, REINFORCE, GRPO or DQN |
 | `idrak train` | Train a builder JSON network, or fine-tune an image model, on a CSV, image folders or annotated images |
 | `idrak resume` | Continue a training run from its last checkpoint (the remaining epochs, or --epochs N more) |
 | `idrak runs list` (`runs`) | Training runs (from their JSON Lines logs): epochs, best epoch and loss, time, status |
@@ -654,7 +651,7 @@ Project templates, the library's tests, ONNX, the generated kernels and telemetr
 | `idrak onnx export` | Exports a model package (.ikm) or a network JSON to ONNX |
 | `idrak onnx check` | Checks an ONNX model: Idrak's import against a round trip and against ONNX Runtime |
 | `idrak vlm check` | Compares a vision-language model with a transformers reference folder (`tools/vlm/compare_real.py`): pixels, encoder, image features, logits per position (near-tie or real difference), greedy tokens |
-| `idrak kernels` | Which kernel each operation runs on a device: registered, its own, composed, host fallback or none; on a device whose kernels load on first need (`hip:0`'s GCN set, Vulkan's), whether they loaded or why not |
+| `idrak kernels` | Which kernel each operation runs on a device: its own, composed, host fallback or none; on a device whose kernels load on first need (`hip:0`'s GCN set, Vulkan's), whether they loaded or why not |
 | `idrak kernels dump` | Writes the generated GPU kernels (PTX, SPIR-V, GCN) for debugging; `gcn` writes HIP's kernels as written (virtual registers) and as Idrak's assembler prints them for a target (`--target`, default `hip:0`'s) |
 | `idrak trace` | Runs an idrak command with telemetry printed live or written to JSON Lines |
 | `idrak demo` | Trains a small built-in sample in seconds on the device, with the speed |
