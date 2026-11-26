@@ -43,11 +43,9 @@ internal sealed class ShapesLayout : IPageLayout
 
         // The page's settings, read once.
         var options = style.Options;
-        var profile = ShapeProfiles.Resolve(Option(options, "shapes") ?? "grid");
-        var pen = Pens.Get(Option(options, "pen") ?? Pens.Ideal);
-        var penSettings = pen.Read(PageOptions.Only(options, pen.Keys));
-        var binding = TextBindings.Get(Option(options, "bind") ?? TextBindings.Sequence);
-        var bindSettings = binding.Read(PageOptions.Only(options, binding.Keys));
+        string penName = Option(options, "pen") ?? Pens.Ideal, bindName = Option(options, "bind") ?? TextBindings.Sequence;
+        var (pen, penSettings) = PenFor(options, penName);
+        var (binding, bindSettings) = BindingFor(options, bindName);
         float bluePen = Option(options, "blue-pen") is { } blueText ? PageOptions.Chance("Page setting blue-pen", blueText) : 0;
         string align = Option(options, "cell-align") is { } alignText ? PageOptions.Choice("Page setting cell-align", alignText, Alignments) : "mixed";
         var strokeShare = Option(options, "stroke") is { } strokeText ? PageOptions.Range("Page setting stroke", strokeText, 0.005f, 1) : (0.05f, 0.09f);
@@ -95,14 +93,14 @@ internal sealed class ShapesLayout : IPageLayout
         };
 
         int shapeSeed = Mix(seed, 1), penSeed = Mix(seed, 2), bindSeed = Mix(seed, 3), placeSeed = Mix(seed, 4);
-        var pipeline = profile.Sample(shapeSeed);
-        if (sections || pipeline.Steps.Any(Composes))
+        var (profileName, shapeSteps) = ProfileSteps(Option(options, "shapes") ?? "grid", shapeSeed);
+        if (sections || shapeSteps.Any(Composes))
         {
-            return Composed(new Setup(content, style, profile, pipeline, pen, penSettings, binding, bindSettings, align, leastSize, glyphs, rtl, width, margin, body, size,
-                spacing, strokeWidth, blue, paper, darkness, blueInk, lineHeight, stray, area, bottomMargin, shapeSeed, penSeed, bindSeed, placeSeed, sections));
+            return Composed(new Setup(content, style, profileName, shapeSteps, pen, penSettings, binding, bindSettings, align, leastSize, glyphs, rtl, width, margin, body, size,
+                spacing, strokeWidth, blue, paper, darkness, blueInk, lineHeight, stray, area, bottomMargin, shapeSeed, penSeed, bindSeed, placeSeed, sections, penName, bindName));
         }
 
-        var (drawn, regions) = Plan(pipeline, area, shapeSeed);
+        var (drawn, regions) = Plan(shapeSteps, area, shapeSeed);
 
         // Regions kept clear of a wobbling pen's reach, too small ones left out; with none at all, rows down the page.
         var usable = new List<ShapeRegion>(regions.Count);
@@ -127,7 +125,7 @@ internal sealed class ShapesLayout : IPageLayout
         var bound = binding.Bind(lines, usable, bindSettings, bindSeed);
         if (bound.Texts.Count != usable.Count)
         {
-            throw new InvalidOperationException($"The text binding {binding.Name} gave {bound.Texts.Count} texts for {usable.Count} regions.");
+            throw new InvalidOperationException($"The text binding {bindName} gave {bound.Texts.Count} texts for {usable.Count} regions.");
         }
 
         // The page's height: every shape and region on it, with its bottom margin.
@@ -213,26 +211,39 @@ internal sealed class ShapesLayout : IPageLayout
         }
 
         var image = canvas.Compose(paper, darkness, blueInk, style.Color);
-        string described = profile.Name == "custom" ? "written" : profile.Name;
+        string described = profileName == "custom" ? "written" : profileName;
         string description = string.Create(CultureInfo.InvariantCulture,
-            $"shapes: {described} [{pipeline}], pen {pen.Name}, bind {binding.Name}, {Describe(body)}, spacing {spacing:F2}, stroke {strokeWidth:F1}px, margin {margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {texts.Count} with text{(blue ? ", blue pen" : "")}{Paired(body)}{Posed(glyphs)}");
+            $"shapes: {described} [{string.Join(",", shapeSteps)}], pen {penName}, bind {bindName}, {Describe(body)}, spacing {spacing:F2}, stroke {strokeWidth:F1}px, margin {margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {texts.Count} with text{(blue ? ", blue pen" : "")}{Paired(body)}{Posed(glyphs)}");
         return new RenderedPage(image, string.Join("\n", label), blocks, description) { Vectors = record?.Finish(width, height, paper, darkness, blueInk, style.Color) };
     }
 
     private static string? Option(IReadOnlyDictionary<string, string> options, string key) => options.TryGetValue(key, out var value) && value.Length > 0 ? value : null;
 
+    // The shape profiles, pens, text bindings and shapes were registered (ShapeProfiles, Pens, TextBindings, Shapes) and
+    // picked by name, each read with its own keys of the page's options: not on the new design yet.
+    private static (string Name, IReadOnlyList<ShapeStep> Steps) ProfileSteps(string nameOrText, int seed) =>
+        throw new NotSupportedException($"The shape profile '{nameOrText}' by name or text is not on the new design yet.");
+
+    internal static (IPen Pen, PenSettings Settings) PenFor(IReadOnlyDictionary<string, string> options, string name) =>
+        throw new NotSupportedException($"The pen '{name}' by name is not on the new design yet.");
+
+    private static (ITextBinding Binding, TextBindingSettings Settings) BindingFor(IReadOnlyDictionary<string, string> options, string name) =>
+        throw new NotSupportedException($"The text binding '{name}' by name is not on the new design yet.");
+
+    internal static IShape ShapeNamed(string name) => throw new NotSupportedException($"The shape '{name}' by name is not on the new design yet.");
+
     // Every step's plan in order: in the page, or once inside each region the step before ended with (in=last); a step
     // whose plans make regions there takes those regions' place, one that makes none leaves them.
-    internal static (List<(ShapeStep Step, ShapePlan Plan)> Drawn, List<ShapeRegion> Regions) Plan(ShapePipeline pipeline, ShapeContext area, int shapeSeed)
+    internal static (List<(ShapeStep Step, ShapePlan Plan)> Drawn, List<ShapeRegion> Regions) Plan(IReadOnlyList<ShapeStep> steps, ShapeContext area, int shapeSeed)
     {
         var drawn = new List<(ShapeStep, ShapePlan)>();
         var regions = new List<ShapeRegion?>();
         var previous = new List<int>();
         int groups = 0;
-        for (int s = 0; s < pipeline.Steps.Count; s++)
+        for (int s = 0; s < steps.Count; s++)
         {
-            var step = pipeline.Steps[s];
-            var shape = Shapes.Get(step.Name);
+            var step = steps[s];
+            var shape = ShapeNamed(step.Name);
             var next = new List<int>();
             if (step.InLast())
             {
@@ -374,10 +385,11 @@ internal sealed class ShapesLayout : IPageLayout
     private static bool Composes(ShapeStep step) => step.Name == "text" || step.FlowsDown() || step.Has("lines") || step.HoldsParagraphs();
 
     // What a composed page is drawn from: the page's settings and choices, made as for any page.
-    private sealed record Setup(PageContent Content, PageStyle Style, IShapeProfile Profile, ShapePipeline Pipeline, IPen Pen, PenSettings PenSettings,
+    private sealed record Setup(PageContent Content, PageStyle Style, string ProfileName, IReadOnlyList<ShapeStep> Steps, IPen Pen, PenSettings PenSettings,
         ITextBinding Binding, TextBindingSettings BindSettings, string Align, float LeastSize, GlyphPainter Glyphs, bool Rtl, int Width, float Margin,
         TextStyle Body, float Size, float Spacing, float StrokeWidth, bool Blue, (float R, float G, float B) Paper, float Darkness, (float R, float G, float B) BlueInk,
-        float LineHeight, float Stray, ShapeContext Area, float BottomMargin, int ShapeSeed, int PenSeed, int BindSeed, int PlaceSeed, bool Sections);
+        float LineHeight, float Stray, ShapeContext Area, float BottomMargin, int ShapeSeed, int PenSeed, int BindSeed, int PlaceSeed, bool Sections, string PenName,
+        string BindName);
 
     // A page of parts: steps placed in the page or stacked down it (flow=down, each its height from what it holds), the
     // page's lines shared between the steps that take text (lines=N|rest, or a section each with sections=blank), regions
@@ -406,7 +418,7 @@ internal sealed class ShapesLayout : IPageLayout
         }
 
         var all = sections.SelectMany(x => x).ToList();
-        var steps = p.Pipeline.Steps;
+        var steps = p.Steps;
         var slices = Share(p, steps, sections, all);
 
         // Every step planned in order: stacked ones down from the top of the page, the others where at and size put them.
@@ -419,7 +431,7 @@ internal sealed class ShapesLayout : IPageLayout
         for (int s = 0; s < steps.Count; s++)
         {
             var step = steps[s];
-            var shape = Shapes.Get(step.Name);
+            var shape = ShapeNamed(step.Name);
             var next = new List<int>();
             if (step.InLast())
             {
@@ -531,7 +543,7 @@ internal sealed class ShapesLayout : IPageLayout
                     var bound = p.Binding.Bind(slice, [.. mine.Select(i => usable[i].Region)], p.BindSettings, Mix(p.BindSeed, 1 + s));
                     if (bound.Texts.Count != mine.Count)
                     {
-                        throw new InvalidOperationException($"The text binding {p.Binding.Name} gave {bound.Texts.Count} texts for {mine.Count} regions.");
+                        throw new InvalidOperationException($"The text binding {p.BindName} gave {bound.Texts.Count} texts for {mine.Count} regions.");
                     }
 
                     for (int k = 0; k < mine.Count; k++)
@@ -652,9 +664,9 @@ internal sealed class ShapesLayout : IPageLayout
         }
 
         var image = canvas.Compose(p.Paper, p.Darkness, p.BlueInk, p.Style.Color);
-        string described = p.Profile.Name == "custom" ? "written" : p.Profile.Name;
+        string described = p.ProfileName == "custom" ? "written" : p.ProfileName;
         string description = string.Create(CultureInfo.InvariantCulture,
-            $"shapes: {described} [{p.Pipeline}], pen {p.Pen.Name}, bind {p.Binding.Name}, {Describe(p.Body)}, spacing {p.Spacing:F2}, stroke {p.StrokeWidth:F1}px, margin {p.Margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {label.Count} with text, composed{(p.Sections ? ", sections" : "")}{(p.Blue ? ", blue pen" : "")}{Paired(p.Body)}{Posed(p.Glyphs)}");
+            $"shapes: {described} [{string.Join(",", p.Steps)}], pen {p.PenName}, bind {p.BindName}, {Describe(p.Body)}, spacing {p.Spacing:F2}, stroke {p.StrokeWidth:F1}px, margin {p.Margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {label.Count} with text, composed{(p.Sections ? ", sections" : "")}{(p.Blue ? ", blue pen" : "")}{Paired(p.Body)}{Posed(p.Glyphs)}");
         return new RenderedPage(image, string.Join("\n", lines), blocks, description) { Vectors = record?.Finish(width, height, p.Paper, p.Darkness, p.BlueInk, p.Style.Color) };
     }
 
@@ -672,7 +684,7 @@ internal sealed class ShapesLayout : IPageLayout
                 continue;
             }
 
-            var shape = Shapes.Get(step.Name);
+            var shape = ShapeNamed(step.Name);
             var seed = Mix(p.ShapeSeed, 1 + s * 65_536);
             var one = shape.Plan(step, (p.Area with { Lines = 1, MostUnits = 1, Seed = seed }).Place(step));
             if (one.Regions.Count == 0)

@@ -44,11 +44,14 @@ internal sealed class PageCanvas : IDisposable
         }
     }
 
+    // The default rasterizer, reached directly (it was the registry's default).
+    private static readonly CoverageRasterizer CoverageRasterizer = new();
+
     /// <summary>A filled rectangle of ink (a rule).</summary>
     public void Rectangle(Span<float> layer, float x, float y, float w, float h)
     {
         var rect = new GlyphOutline([OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close], [0, 0, w, 0, w, h, 0, h]);
-        OutlineRasterizers.Get().Fill(rect, 1f, x, y + h, layer, Width, Height);
+        CoverageRasterizer.Fill(rect, 1f, x, y + h, layer, Width, Height);
     }
 
     /// <summary>
@@ -62,7 +65,7 @@ internal sealed class PageCanvas : IDisposable
             return;
         }
 
-        var fill = OutlineRasterizers.Get();
+        IOutlineRasterizer fill = CoverageRasterizer;
         if (share >= 1f)
         {
             fill.Fill(outline, 1f, 0, 0, layer, Width, Height);
@@ -287,7 +290,7 @@ internal static class PageDrawing
 /// lines, the end side's number, date and attachments), a rule, an optional centred title, the subject line, the body
 /// (justified or at its start), a signature block at the end side with a pen-drawn signature over its name (blue ink or
 /// black), an optional stamp over it, and a footer under a rule. Every size, margin and spacing is drawn from the
-/// style's ranges. The emblem, the stamp and the signature are shape profiles (<see cref="ShapeProfiles"/>: one of the
+/// style's ranges. The emblem, the stamp and the signature are shape profiles (<c>ShapeProfiles</c>: one of the
 /// page's <c>emblem-shapes</c>, <c>stamp-shapes</c> and <c>signature-shapes</c> options, the library's by default)
 /// drawn through the shape pipeline by a pen (<c>emblem-pen</c>, <c>stamp-pen</c>, <c>signature-pen</c>); their texts
 /// (the page's first header line, a stamp's generic word) are ornament, not the page's text. Their choices come from
@@ -444,7 +447,7 @@ internal sealed class LetterLayout : IPageLayout
                 X = cx - emblemRadius, Y = cy - emblemRadius, Width = 2 * emblemRadius, Height = 2 * emblemRadius, RightToLeft = rtl,
                 TextSize = header.Size, LineHeight = header.Size * 1.2f, StrokeWidth = Math.Max(1f, emblemRadius * 0.05f),
             };
-            var (drawn, _) = ShapesLayout.Plan(profile.Sample(Mix(e, 2)), box, Mix(e, 3));
+            var (drawn, _) = ShapesLayout.Plan(Sample(profile, Mix(e, 2)), box, Mix(e, 3));
             var lettering = new ShapeLettering(Lettering(header.Size), name, rtl);
             record?.Shapes(drawn, box.StrokeWidth, lettering, blue: false);
             var ink = ShapeDrawing.Draw(canvas, canvas.Ink, drawn, ornaments.EmblemPen, ornaments.EmblemPenSettings, Mix(e, 4), box.StrokeWidth, null, lettering);
@@ -467,13 +470,13 @@ internal sealed class LetterLayout : IPageLayout
             {
                 X = signedX, Y = signatureTop, Width = signedWidth, Height = signedHeight, RightToLeft = rtl, TextSize = bodySize, LineHeight = bodySize * 1.2f, StrokeWidth = signedStroke,
             };
-            var (drawn, _) = ShapesLayout.Plan(profile.Sample(Mix(signing, 2)), box, Mix(signing, 3));
+            var (drawn, _) = ShapesLayout.Plan(Sample(profile, Mix(signing, 2)), box, Mix(signing, 3));
             var lettering = new ShapeLettering(Lettering(bodySize), name, rtl);
             record?.Shapes(drawn, signedStroke, lettering, blueSignature);
             var ink = ShapeDrawing.Draw(canvas, blueSignature ? canvas.Blue : canvas.Ink, drawn, ornaments.SignaturePen, ornaments.SignaturePenSettings, Mix(signing, 4), signedStroke,
                 null, lettering);
             blocks.Add(Ornament("scribble", box, ink, width, height));
-            signatureName = $"{Named(profile)} with {ornaments.SignaturePen.Name}";
+            signatureName = $"{Named(profile)} with {ornaments.SignaturePenName}";
         }
 
         string? stampName = null;
@@ -492,7 +495,7 @@ internal sealed class LetterLayout : IPageLayout
                 X = cx - stampRadius, Y = cy - stampRadius, Width = 2 * stampRadius, Height = 2 * stampRadius, RightToLeft = rtl, TextSize = bodySize, LineHeight = bodySize * 1.2f,
                 StrokeWidth = stroke,
             };
-            var (drawn, _) = ShapesLayout.Plan(profile.Sample(Mix(st, 2)), box, Mix(st, 3));
+            var (drawn, _) = ShapesLayout.Plan(Sample(profile, Mix(st, 2)), box, Mix(st, 3));
 
             // Drawn turned in a canvas of its own (its square turned, its widest stroke and the pen's reach inside it), then
             // laid on the page with a stamp's uneven ink.
@@ -533,7 +536,12 @@ internal sealed class LetterLayout : IPageLayout
     }
 
     // A profile's name in a description ("written" for one written as text).
-    private static string Named(IShapeProfile profile) => profile.Name == "custom" ? "written" : profile.Name;
+    private static string Named(string profile) => profile == "custom" ? "written" : profile;
+
+    // A shape profile's steps for a seed: the profiles were registered (ShapeProfiles) and sampled by name, which is not on the
+    // new design yet.
+    private static IReadOnlyList<ShapeStep> Sample(string profile, int seed) =>
+        throw new NotSupportedException($"The shape profile '{profile}' by name is not on the new design yet.");
 
     private static float Between(Random random, (float Min, float Max) range) => range.Min + (float)random.NextDouble() * (range.Max - range.Min);
 
@@ -556,11 +564,11 @@ internal sealed class LetterLayout : IPageLayout
 /// </summary>
 internal sealed class LetterOrnaments
 {
-    public required IReadOnlyList<IShapeProfile> Emblems { get; init; }
+    public required IReadOnlyList<string> Emblems { get; init; }
 
-    public required IReadOnlyList<IShapeProfile> Stamps { get; init; }
+    public required IReadOnlyList<string> Stamps { get; init; }
 
-    public required IReadOnlyList<IShapeProfile> Signatures { get; init; }
+    public required IReadOnlyList<string> Signatures { get; init; }
 
     public required IPen EmblemPen { get; init; }
 
@@ -572,6 +580,9 @@ internal sealed class LetterOrnaments
 
     public required IPen SignaturePen { get; init; }
 
+    /// <summary>The signature pen's name, as the options asked for it.</summary>
+    public required string SignaturePenName { get; init; }
+
     public required PenSettings SignaturePenSettings { get; init; }
 
     public required (float Min, float Max) StampTurn { get; init; }
@@ -582,28 +593,29 @@ internal sealed class LetterOrnaments
 
     public required float Signature { get; init; }
 
+    // The shape profiles between '|', each checked by name in their registry (ShapeProfiles): not on the new design yet.
+    private static IReadOnlyList<string> Choices(string list) =>
+        throw new NotSupportedException($"The shape profiles '{list}' by name are not on the new design yet.");
+
     /// <summary>The settings <paramref name="options"/> give, the defaults for those not given.</summary>
     /// <exception cref="ArgumentException">A bad value; the message names the setting.</exception>
     /// <exception cref="NotSupportedException">A shape profile or a pen that is not registered.</exception>
     public static LetterOrnaments Read(IReadOnlyDictionary<string, string> options)
     {
         string? Given(string key) => options.TryGetValue(key, out var value) && value.Length > 0 ? value : null;
-        (IPen, PenSettings) Pen(string key, string otherwise)
-        {
-            var pen = Pens.Get(Given(key) ?? otherwise);
-            return (pen, pen.Read(PageOptions.Only(options, pen.Keys)));
-        }
+        (IPen, PenSettings) Pen(string key, string otherwise) => ShapesLayout.PenFor(options, Given(key) ?? otherwise);
 
         var (emblemPen, emblemSettings) = Pen("emblem-pen", Pens.Ideal);
         var (stampPen, stampSettings) = Pen("stamp-pen", Pens.Ideal);
+        string signaturePenName = Given("signature-pen") ?? "ballpoint";
         var (signaturePen, signatureSettings) = Pen("signature-pen", "ballpoint");
         return new LetterOrnaments
         {
-            Emblems = ShapeProfiles.Choices(Given("emblem-shapes") ?? Ornaments.Emblems),
-            Stamps = ShapeProfiles.Choices(Given("stamp-shapes") ?? Ornaments.Stamps),
-            Signatures = ShapeProfiles.Choices(Given("signature-shapes") ?? Ornaments.Signature),
+            Emblems = Choices(Given("emblem-shapes") ?? Ornaments.Emblems),
+            Stamps = Choices(Given("stamp-shapes") ?? Ornaments.Stamps),
+            Signatures = Choices(Given("signature-shapes") ?? Ornaments.Signature),
             EmblemPen = emblemPen, EmblemPenSettings = emblemSettings, StampPen = stampPen, StampPenSettings = stampSettings, SignaturePen = signaturePen,
-            SignaturePenSettings = signatureSettings,
+            SignaturePenName = signaturePenName, SignaturePenSettings = signatureSettings,
             StampTurn = Given("stamp-turn") is { } turn ? PageOptions.Range("Page setting stamp-turn", turn, -180, 180) : (-12, 12),
             StampInk = Given("stamp-ink") is { } ink ? PageOptions.Range("Page setting stamp-ink", ink, 0, 1) : (0.2f, 0.65f),
             StampBlack = Given("stamp-black") is { } black ? PageOptions.Chance("Page setting stamp-black", black) : 0.2f,

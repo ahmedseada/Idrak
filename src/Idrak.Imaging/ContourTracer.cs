@@ -55,7 +55,7 @@ internal sealed class ContourTracer : IOutlineTracer
     // The most times the whole outline is checked against the pixel centres (each round splits the pieces that misplace one).
     private const int MostRounds = 64;
 
-    private static readonly OptionKeys Own = new(ThresholdKey, SimplifyKey, CornerKey, SmoothingKey);
+    private static readonly string Own = string.Join(", ", ThresholdKey, SimplifyKey, CornerKey, SmoothingKey);
 
     private static readonly Settings Defaults = new(PageOptions.None, null, DefaultSimplify, DefaultCorner, DefaultSmoothing);
 
@@ -67,8 +67,6 @@ internal sealed class ContourTracer : IOutlineTracer
                              + "into lines and quadratic curves, corners kept where it turns trace-corner degrees within trace-smoothing pixels";
 
     /// <inheritdoc/>
-    public IReadOnlySet<string> Keys => Own;
-
     /// <inheritdoc/>
     public OutlineTracerSettings Read(IReadOnlyDictionary<string, string> options)
     {

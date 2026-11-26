@@ -13,13 +13,11 @@ namespace Idrak.Imaging;
 /// </summary>
 internal sealed class SequenceBinding : ITextBinding
 {
-    private static readonly OptionKeys Own = new("take", "blank", "blank-at");
+    private static readonly string Own = string.Join(", ", "take", "blank", "blank-at");
 
     public string Name => TextBindings.Sequence;
 
     public string Summary => "each line fills one group of regions in reading order, a unit a region (take: units per region, rest for one that takes what the others leave; blank: the chance a region is left empty; blank-at: which, from 1)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public TextBindingSettings Read(IReadOnlyDictionary<string, string> options)
     {

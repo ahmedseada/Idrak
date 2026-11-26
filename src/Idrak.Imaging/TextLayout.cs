@@ -175,6 +175,10 @@ public static class TextLayout
     /// <summary>The width of <paramref name="text"/> set on one line (pixels).</summary>
     public static float Measure(string text, TextStyle style) => Layout(text, style).Lines.Sum(l => l.Width);
 
+    // The text shapers were registered by script (TextShapers) and a run shaped by its script's: not on the new design yet.
+    private static ShapedGlyph[] ShapeRun(IFontFace font, string text, TextRun run, IReadOnlyCollection<string>? features) =>
+        throw new NotSupportedException($"Shaping a run of {font.Family} through the text shapers by script is not on the new design yet.");
+
     // The shaped runs of [start, end) of a paragraph with its levels, in text order, each with the font that shapes it and
     // the paragraph's seed.
     private static List<(TextRun Run, byte Level, IFontFace Font, ShapedGlyph[] Glyphs)> Shape(string p, byte[] levels, int start, int end, TextStyle style, int seed)
@@ -183,7 +187,7 @@ public static class TextLayout
         foreach (var (run, level) in Itemizer.Runs(p, levels, start, end, style.Language))
         {
             var font = FontFor(p, run, style);
-            shaped.Add((run, level, font, TextShapers.Shape(font, p, run with { Seed = seed }, style.Features)));
+            shaped.Add((run, level, font, ShapeRun(font, p, run with { Seed = seed }, style.Features)));
         }
 
         return shaped;
@@ -401,6 +405,9 @@ public static class TextLayout
 /// <summary>Draws laid-out text as ink coverage (0 none, 1 full) with an outline rasterizer.</summary>
 public static class TextRenderer
 {
+    // The rasterizers were registered (OutlineRasterizers) and picked by name: not on the new design yet.
+    private static IOutlineRasterizer RasterizerNamed(string name) => throw new NotSupportedException($"The outline rasterizer '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// Adds the glyphs of <paramref name="block"/>, its top-left corner at (<paramref name="x"/>, <paramref name="y"/>), to
     /// <paramref name="ink"/> (<paramref name="height"/> rows of <paramref name="width"/>).
@@ -408,7 +415,7 @@ public static class TextRenderer
     public static void Draw(TextBlock block, float x, float y, Span<float> ink, int width, int height, string rasterizer = OutlineRasterizers.Coverage)
     {
         ArgumentNullException.ThrowIfNull(block);
-        var fill = OutlineRasterizers.Get(rasterizer);
+        var fill = RasterizerNamed(rasterizer);
         foreach (var line in block.Lines)
         {
             foreach (var g in line.Glyphs)

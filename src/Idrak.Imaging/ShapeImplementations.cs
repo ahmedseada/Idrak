@@ -104,13 +104,9 @@ internal static class ShapeGeometry
 /// <summary>"line": a straight line between two points of its box, or from a point at a length and an angle.</summary>
 internal sealed class LineShape : IShape
 {
-    private static readonly OptionKeys Own = new("from", "to", "length", "angle");
-
     public string Name => "line";
 
     public string Summary => "a straight line: from=X:Y to=X:Y (shares of its box, X from the start side; 0:0.5 to 1:0.5), or from, length (a share of the box's width) and angle (degrees from the reading direction, up positive)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {
@@ -150,13 +146,9 @@ internal sealed class LineShape : IShape
 /// <summary>"polyline": an open line through points of its box.</summary>
 internal sealed class PolylineShape : IShape
 {
-    private static readonly OptionKeys Own = new("points");
-
     public string Name => "polyline";
 
     public string Summary => "an open line through points=X:Y:X:Y:... (shares of its box, X from the start side; at least two)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {
@@ -180,18 +172,10 @@ internal sealed class PolylineShape : IShape
 /// <summary>"polygon": a regular polygon of N sides in its box (one region inside), or a closed line through points.</summary>
 internal sealed class PolygonShape : IShape
 {
-    private static readonly OptionKeys Own = new("points", "pad");
-
     // The value ("") is drawn whole by a profile: a count of sides.
-    private static readonly FrozenSet<string> Whole = new[] { "" }.ToFrozenSet(StringComparer.Ordinal);
-
     public string Name => "polygon";
 
     public string Summary => "a closed polygon: regular with N sides (polygon=N; 6) in its box, a region inside it, or through points=X:Y:X:Y:... (shares, X from the start side); pad (text sizes; 0.15)";
-
-    public IReadOnlySet<string> Keys => Own;
-
-    public IReadOnlySet<string> WholeKeys => Whole;
 
     public void Check(ShapeStep step)
     {
@@ -238,15 +222,11 @@ internal sealed class PolygonShape : IShape
 /// <summary>"box": a rectangle around its box (rounded corners, some sides only), one region inside.</summary>
 internal sealed class BoxShape : IShape
 {
-    private static readonly OptionKeys Own = new("radius", "sides", "pad");
-
     private static readonly string[] SideNames = ["top", "end", "bottom", "start"];
 
     public string Name => "box";
 
     public string Summary => "a rectangle around its box, a region inside: radius (rounded corners, a share of the smaller side; 0), sides=top:end:bottom:start (the sides drawn; all), pad (text sizes; 0.15)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {
@@ -370,11 +350,7 @@ internal sealed class BoxShape : IShape
 /// </summary>
 internal sealed class GridShape : IShape
 {
-    private static readonly OptionKeys Own = new("widths", "heights", "row-height", "heavy-every", "heavy-from", "heavy-width", "border", "inner", "pad");
-
     // The value ("": rows and columns) and the heavy lines' columns are drawn whole by a profile.
-    private static readonly FrozenSet<string> Whole = new[] { "", "heavy-every", "heavy-from" }.ToFrozenSet(StringComparer.Ordinal);
-
     private static readonly string[] SideNames = ["top", "end", "bottom", "start"];
 
     public string Name => "grid";
@@ -382,10 +358,6 @@ internal sealed class GridShape : IShape
     public string Summary => "a grid, grid=ROWSxCOLS (auto: a row a text line, a column a unit of its longest line; auto x auto), each line drawn once across it, a region a cell: "
         + "widths and heights (relative, columns in reading order), row-height (text line heights; 1.3..2), heavy-every, heavy-from and heavy-width (heavier lines after column "
         + "heavy-from and every heavy-every after it, heavy-width times as wide; 2), border (on, off or sides top:end:bottom:start), inner (on, off, rows, cols), pad (text sizes; 0.12)";
-
-    public IReadOnlySet<string> Keys => Own;
-
-    public IReadOnlySet<string> WholeKeys => Whole;
 
     public void Check(ShapeStep step)
     {
@@ -579,13 +551,9 @@ internal sealed class GridShape : IShape
 /// <summary>"circle": a ring in the middle of its box, one region inside.</summary>
 internal sealed class CircleShape : IShape
 {
-    private static readonly OptionKeys Own = new("radius", "pad");
-
     public string Name => "circle";
 
     public string Summary => "a ring in the middle of its box, a region inside: radius (a share of half the smaller side; 1), pad (text sizes; 0.15)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {
@@ -610,13 +578,9 @@ internal sealed class CircleShape : IShape
 /// <summary>"ellipse": an ellipse in its box, one region inside.</summary>
 internal sealed class EllipseShape : IShape
 {
-    private static readonly OptionKeys Own = new("radii", "pad");
-
     public string Name => "ellipse";
 
     public string Summary => "an ellipse in its box, a region inside: radii=RX:RY (shares of half the width and half the height; 1:1), pad (text sizes; 0.15)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {
@@ -641,13 +605,9 @@ internal sealed class EllipseShape : IShape
 /// <summary>"arc": part of an ellipse in its box.</summary>
 internal sealed class ArcShape : IShape
 {
-    private static readonly OptionKeys Own = new("radii", "start", "end");
-
     public string Name => "arc";
 
     public string Summary => "part of an ellipse in its box: start and end (degrees from the reading direction, up positive; 0 and 180), radii=RX:RY (shares of half the width and height; 1:1)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {
@@ -672,13 +632,9 @@ internal sealed class ArcShape : IShape
 /// <summary>"arrow": a line with a head at its end.</summary>
 internal sealed class ArrowShape : IShape
 {
-    private static readonly OptionKeys Own = new("from", "to", "head", "head-style");
-
     public string Name => "arrow";
 
     public string Summary => "a line with a head at its end: from=X:Y to=X:Y (shares of its box, X from the start side; 0:0.5 to 1:0.5), head (its length in stroke widths; 8), head-style (open, closed, filled)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {
@@ -731,8 +687,6 @@ internal sealed class FillShape : IShape
 
     public string Summary => "a solid tint over its box (tone: how dark, a share of the ink; 0.12)";
 
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
     public void Check(ShapeStep step) => ShapeGeometry.NoValue(step);
 
     public ShapePlan Plan(ShapeStep step, ShapeContext context) =>
@@ -743,13 +697,9 @@ internal sealed class FillShape : IShape
 /// <summary>"hatch": parallel lines across its box.</summary>
 internal sealed class HatchShape : IShape
 {
-    private static readonly OptionKeys Own = new("spacing", "angle");
-
     public string Name => "hatch";
 
     public string Summary => "parallel lines across its box: spacing (stroke widths between them; 6), angle (degrees from the reading direction, up positive; 45)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {
@@ -790,13 +740,9 @@ internal sealed class HatchShape : IShape
 /// </summary>
 internal sealed class TextShape : IShape
 {
-    private static readonly OptionKeys Own = new("pad");
-
     public string Name => "text";
 
     public string Summary => "paragraphs of the page's text in its box, no line drawn: one region of wrapped paragraphs (pad: text sizes; 0)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {

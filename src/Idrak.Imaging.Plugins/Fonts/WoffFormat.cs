@@ -11,7 +11,7 @@ namespace Idrak.Imaging.Plugins.Fonts;
 /// <summary>
 /// "woff": WOFF 1.0 fonts (.woff; the W3C Recommendation of 2012), an sfnt font (TrueType or OpenType) whose tables are
 /// each zlib-compressed or stored as they are. <see cref="Read"/> unpacks the font inside (<see cref="Decode"/>) and
-/// hands it to the first other format of <see cref="FontFormats"/> that accepts it (the library's "opentype", reached
+/// hands it to the first other format of <c>FontFormats</c> that accepts it (the library's "opentype", reached
 /// through the registry), so a face read from a WOFF is that font's face: the same glyphs, outlines, advances, characters
 /// and tables, and its <see cref="IFontFace.Format"/> names the reader of the font inside. Inflating goes through
 /// <see cref="ZLibStream"/> (the base library's zlib, on every platform).
@@ -27,7 +27,7 @@ namespace Idrak.Imaging.Plugins.Fonts;
 /// </summary>
 public sealed class WoffFormat : IFontFormat
 {
-    /// <summary>The format's name in <see cref="FontFormats"/>: "woff".</summary>
+    /// <summary>The format's name in <c>FontFormats</c>: "woff".</summary>
     public const string FormatName = "woff";
 
     /// <summary>The variable that sets <see cref="MaxFontBytes"/> (bytes, or with k, m or g): "IDRAK_WOFF_MAX_BYTES".</summary>
@@ -62,28 +62,17 @@ public sealed class WoffFormat : IFontFormat
     public bool Accepts(ReadOnlySpan<byte> header) => header.Length >= 4 && BinaryPrimitives.ReadUInt32BigEndian(header) == WoffSettings.Woff;
 
     /// <inheritdoc/>
-    /// <exception cref="InvalidDataException">The file is damaged or hostile (the message says how), or no other registered format reads the font inside.</exception>
+    /// <exception cref="InvalidDataException">The file is damaged or hostile (the message says how).</exception>
+    /// <exception cref="NotSupportedException">Always after the unpacking for now: the font inside is read through the
+    /// registered font formats, which are not on the new design yet.</exception>
     public IReadOnlyList<IFontFace> Read(ReadOnlyMemory<byte> file, string name)
     {
         ArgumentNullException.ThrowIfNull(name);
         byte[] sfnt = Decode(file, name);
-        ReadOnlySpan<byte> header = sfnt.AsSpan(0, Math.Min(sfnt.Length, FontFormats.HeaderBytes));
-        foreach (string format in FontFormats.Names)
-        {
-            if (string.Equals(format, Name, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;                                                    // this format (or an app's over it): never a WOFF inside a WOFF
-            }
-
-            var reader = FontFormats.Get(format);
-            if (reader.Accepts(header))
-            {
-                return reader.Read(sfnt, name);                             // the faces keep the unpacked font, not copied
-            }
-        }
-
-        string flavor = WoffSettings.Tag(BinaryPrimitives.ReadUInt32BigEndian(sfnt)), formats = string.Join(", ", FontFormats.Names);
-        throw Damaged(name, $"the font inside the WOFF (flavor {flavor}) is of none of the other registered formats ({formats}); register one with FontFormats.Register");
+        // The font inside was read by the first other registered font format that accepts it (FontFormats): not on the new
+        // design yet.
+        string flavor = WoffSettings.Tag(BinaryPrimitives.ReadUInt32BigEndian(sfnt));
+        throw new NotSupportedException($"{name}: the font inside the WOFF (flavor {flavor}) is read through the registered font formats, which are not on the new design yet.");
     }
 
     /// <summary>

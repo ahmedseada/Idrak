@@ -75,12 +75,12 @@ public sealed class ImageFolderSource : ISampleSource
         var files = Scan(folder, out var classes);
         if (channels is null || height is null || width is null)
         {
-            var first = files.Count > 0 ? ImageCodecs.ReadInfo(files[0].Path) : null;
+            var first = files.Count > 0 ? Codecs.ReadInfo(files[0].Path) : null;
             if (first is not { } info)
             {
                 throw new InvalidDataException(files.Count == 0
-                    ? $"{folder} has no images in class folders ({string.Join(", ", ImageCodecs.Extensions)})."
-                    : $"{files[0].Path}: no registered image codec reads it ({string.Join(", ", ImageCodecs.Names)}).");
+                    ? $"{folder} has no images in class folders."
+                    : $"{files[0].Path}: no image codec reads it.");
             }
 
             channels ??= info.Channels;
@@ -116,7 +116,7 @@ public sealed class ImageFolderSource : ISampleSource
     /// <exception cref="InvalidDataException">The file is not an image a registered codec reads; the message names it.</exception>
     public void Read(int index, Span<float> features, Span<float> targets)
     {
-        ImageCodecs.Decode(_files[index]).Resize(_featureShape[0], _featureShape[1], _featureShape[2], features);
+        Codecs.Decode(_files[index]).Resize(_featureShape[0], _featureShape[1], _featureShape[2], features);
         if (_labels is not null)
         {
             targets.Clear();
@@ -135,6 +135,16 @@ public sealed class ImageFolderSource : ISampleSource
         var folders = Directory.GetDirectories(folder).Order(StringComparer.Ordinal).ToList();
         classes = [.. folders.Select(Path.GetFileName).OfType<string>()];
         return [.. folders.SelectMany((d, label) => Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories)
-            .Where(ImageCodecs.CanDecode).Order(StringComparer.Ordinal).Select(f => (f, label)))];
+            .Where(Codecs.CanDecode).Order(StringComparer.Ordinal).Select(f => (f, label)))];
     }
+}
+
+// The image codecs were registered (ImageCodecs) and a file decoded by the one that reads it: not on the new design yet.
+file static class Codecs
+{
+    public static ImageData Decode(string path) => throw new NotSupportedException($"{path}: decoding an image through the registered image codecs is not on the new design yet.");
+
+    public static ImageInfo? ReadInfo(string path) => throw new NotSupportedException($"{path}: reading an image's size through the registered image codecs is not on the new design yet.");
+
+    public static bool CanDecode(string path) => throw new NotSupportedException($"{path}: finding an image codec by the file's extension is not on the new design yet.");
 }

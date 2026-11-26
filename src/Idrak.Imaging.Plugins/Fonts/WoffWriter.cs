@@ -8,7 +8,7 @@ namespace Idrak.Imaging.Plugins.Fonts;
 
 /// <summary>
 /// "woff": writes a face as a WOFF 1.0 font (.woff). The face is first written as an sfnt by the font writer
-/// <see cref="SfntWriter"/> names (the library's "truetype", reached through <see cref="FontWriters"/> at run time), with
+/// <see cref="SfntWriter"/> names (the library's "truetype", reached through <c>FontWriters</c> at run time), with
 /// the options given (a subset, the layout tables, names, the curve tolerance and hinting all pass through); then
 /// <see cref="Encode"/> packs it: each table zlib-compressed through <see cref="ZLibStream"/> at
 /// <see cref="CompressionLevel"/> and kept so only when that is smaller (else stored as it is), every table on a 4-byte
@@ -19,7 +19,7 @@ namespace Idrak.Imaging.Plugins.Fonts;
 /// </summary>
 public sealed class WoffWriter : IFontWriter
 {
-    /// <summary>The writer's name in <see cref="FontWriters"/>: "woff".</summary>
+    /// <summary>The writer's name in <c>FontWriters</c>: "woff".</summary>
     public const string WriterName = "woff";
 
     /// <summary>The variable that sets <see cref="CompressionLevel"/> (0 to 9): "IDRAK_WOFF_COMPRESSION".</summary>
@@ -50,7 +50,7 @@ public sealed class WoffWriter : IFontWriter
     }
 
     /// <summary>
-    /// The <see cref="FontWriters"/> name of the writer that writes a face as an sfnt before it is packed
+    /// The <c>FontWriters</c> name of the writer that writes a face as an sfnt before it is packed
     /// (<see cref="DefaultSfntWriter"/> unless set; any writer of TrueType or OpenType fonts).
     /// </summary>
     /// <exception cref="ArgumentException">Empty, or this writer's own name.</exception>
@@ -65,8 +65,11 @@ public sealed class WoffWriter : IFontWriter
         }
     }
 
+    // The font writers were registered (FontWriters) and picked by name: not on the new design yet.
+    private static IFontWriter WriterNamed(string name) => throw new NotSupportedException($"The font writer '{name}' by name is not on the new design yet.");
+
     /// <inheritdoc/>
-    /// <exception cref="NotRegisteredException">No writer is registered as <see cref="SfntWriter"/>.</exception>
+    /// <exception cref="NotSupportedException">Always for now: the writer <see cref="SfntWriter"/> names is looked up by name, which is not on the new design yet.</exception>
     /// <exception cref="NotSupportedException">The sfnt writer refuses the face (its message says what it cannot hold).</exception>
     /// <exception cref="InvalidDataException">The sfnt writer wrote no sfnt font.</exception>
     public void Write(IFontFace face, Stream destination, FontWriteOptions options)
@@ -75,7 +78,7 @@ public sealed class WoffWriter : IFontWriter
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentNullException.ThrowIfNull(options);
         using var sfnt = new MemoryStream();
-        FontWriters.Get(SfntWriter).Write(face, sfnt, options);
+        WriterNamed(SfntWriter).Write(face, sfnt, options);
         if (!sfnt.TryGetBuffer(out ArraySegment<byte> written))
         {
             written = sfnt.ToArray();

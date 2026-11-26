@@ -13,8 +13,6 @@ internal sealed class NonePose : IGlyphPose
 
     public string Summary => "every glyph as set (no drift, slant or noise)";
 
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
     public GlyphPoseSettings Read(IReadOnlyDictionary<string, string> options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -41,7 +39,7 @@ internal sealed class NonePose : IGlyphPose
 /// </summary>
 internal sealed class DriftPose : IGlyphPose
 {
-    private static readonly OptionKeys Own = new("pose-slant", "pose-size", "pose-baseline", "pose-rotate", "pose-pressure");
+    private static readonly string Own = string.Join(", ", "pose-slant", "pose-size", "pose-baseline", "pose-rotate", "pose-pressure");
 
     private static readonly Settings Defaults = new(PageOptions.None, (-0.05f, 0.05f), (0f, 0.04f), (0f, 0.04f), (0f, 1.2f), (0f, 0.2f));
 
@@ -51,8 +49,6 @@ internal sealed class DriftPose : IGlyphPose
     public string Name => "drift";
 
     public string Summary => "a hand's writing: the baseline, slant, turn and size drift along each line, a little noise per cluster in size and ink (pose-slant, pose-size, pose-baseline, pose-rotate, pose-pressure: ranges)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public GlyphPoseSettings Read(IReadOnlyDictionary<string, string> options)
     {
@@ -167,9 +163,10 @@ internal sealed class GlyphPainter
     private readonly Dictionary<int, float[]> _points = [];       // transformed points, one array per length, reused
     private int _line;
 
-    public GlyphPainter(IGlyphPose pose, GlyphPoseSettings settings, int seed)
+    public GlyphPainter(IGlyphPose pose, string name, GlyphPoseSettings settings, int seed)
     {
         _pose = pose;
+        Name = name;
         _settings = settings;
         _seed = seed;
         Bounds = pose.Bounds(settings);
@@ -183,19 +180,17 @@ internal sealed class GlyphPainter
     public bool IsIdentity { get; }
 
     /// <summary>The pose's name.</summary>
-    public string Name => _pose.Name;
+    public string Name { get; }
 
     /// <summary>The page's next line number: the lines drawn so far (each block's lines take the next numbers).</summary>
     public int Line => _line;
 
     /// <summary>The pose a page's options choose (<c>pose</c>, "none" by default) with its own keys, read once.</summary>
     /// <exception cref="ArgumentException">A bad pose setting.</exception>
-    /// <exception cref="NotSupportedException">A pose that is not registered.</exception>
-    public static GlyphPainter Read(IReadOnlyDictionary<string, string> options, int seed)
-    {
-        var pose = GlyphPoses.Get(options.TryGetValue("pose", out var name) && name.Length > 0 ? name : GlyphPoses.None);
-        return new GlyphPainter(pose, pose.Read(PageOptions.Only(options, pose.Keys)), seed);
-    }
+    /// <exception cref="NotSupportedException">Always for now: the poses were registered (GlyphPoses) and picked by name,
+    /// each read with its own keys of the options, which is not on the new design yet.</exception>
+    public static GlyphPainter Read(IReadOnlyDictionary<string, string> options, int seed) =>
+        throw new NotSupportedException($"The glyph pose '{(options.TryGetValue("pose", out var name) && name.Length > 0 ? name : GlyphPoses.None)}' by name is not on the new design yet.");
 
     /// <summary>The most a posed glyph's ink moves, in pixels, for text of <paramref name="size"/> whose outlines reach <paramref name="reach"/> pixels from their origins (0 for none).</summary>
     public float Reach(float size, float reach) => IsIdentity ? 0 : Bounds.Reach(size, reach);
@@ -211,7 +206,7 @@ internal sealed class GlyphPainter
             return;
         }
 
-        var fill = OutlineRasterizers.Get();
+        var fill = new CoverageRasterizer();                  // the default rasterizer, reached directly
         float cos = 1, sin = 0;
         var last = GlyphPose.Identity;
         foreach (var (g, pose) in Posed(block, _line))

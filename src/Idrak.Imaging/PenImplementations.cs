@@ -356,8 +356,6 @@ internal sealed class IdealPen : IPen
 
     public string Summary => "the path exactly, at its width (no wobble, no pressure)";
 
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
     public PenSettings Read(IReadOnlyDictionary<string, string> options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -391,15 +389,13 @@ internal sealed class IdealPen : IPen
 /// </summary>
 internal sealed class BallpointPen : IPen
 {
-    private static readonly OptionKeys Own = new("pen-wobble", "pen-jitter", "pen-pressure", "pen-overshoot", "pen-tilt");
+    private static readonly string Own = string.Join(", ", "pen-wobble", "pen-jitter", "pen-pressure", "pen-overshoot", "pen-tilt");
 
     private static readonly Settings Defaults = new(PageOptions.None, (0.15f, 0.5f), (0.03f, 0.1f), (0.1f, 0.3f), (0f, 1.5f), (0f, 1f));
 
     public string Name => "ballpoint";
 
     public string Summary => "a hand's ballpoint: a slow wobble, a little jitter, pressure along the stroke, an overshoot or a short stop at its ends, a slight drift (pen-wobble, pen-jitter, pen-pressure, pen-overshoot, pen-tilt: ranges)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public PenSettings Read(IReadOnlyDictionary<string, string> options)
     {

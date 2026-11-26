@@ -239,7 +239,7 @@ public sealed class ImagePreprocessor
     public float[] Pixels(ImageData image) => Pixels(image, out _, out _, out _);
 
     /// <summary>The pixel values of an image file (any registered codec), as <see cref="Pixels(ImageData)"/>.</summary>
-    public float[] Pixels(string path) => Pixels(ImageCodecs.Decode(path));
+    public float[] Pixels(string path) => Pixels(Codecs.Decode(path));
 
     /// <summary>The pixel values of <paramref name="image"/> as a [channels, height, width] tensor on <paramref name="device"/>.</summary>
     public Tensor Process(ImageData image, Device? device = null)
@@ -500,7 +500,7 @@ public sealed class ImagePreprocessor
     }
 
     /// <summary>The pixel values of an image file (any registered codec) as a tensor, as <see cref="Process(ImageData, Device?)"/>.</summary>
-    public Tensor Process(string path, Device? device = null) => Process(ImageCodecs.Decode(path), device);
+    public Tensor Process(string path, Device? device = null) => Process(Codecs.Decode(path), device);
 
     /// <summary>
     /// The pixel values of <paramref name="image"/> as <see cref="Pixels(ImageData)"/> gives them, written into
@@ -1178,4 +1178,10 @@ public sealed class ImagePreprocessor
             return PortableMath.Sin(x) / x;
         }
     }
+}
+
+// The image codecs were registered (ImageCodecs) and a file decoded by the one that reads it: not on the new design yet.
+file static class Codecs
+{
+    public static ImageData Decode(string path) => throw new NotSupportedException($"{path}: decoding an image through the registered image codecs is not on the new design yet.");
 }

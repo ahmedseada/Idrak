@@ -1895,6 +1895,10 @@ internal sealed class ImageItem
     private readonly double[] _toImage;   // surface pixel to the image's unit square (a homography, 9 numbers)
     private readonly Lazy<Source?> _source;
 
+    // A stored image was decoded through the image codecs by name (DocumentImage.Decode): not on the new design yet.
+    private static ImageData Decode(DocumentImage image) =>
+        throw new NotSupportedException("A stored document image: decoding it through the image codecs is not on the new design yet.");
+
     public ImageItem(GlyphOutline quad, DocumentImage image, Affine toUnit, DrawContext context, int pageIndex)
     {
         (_quad, _image) = (quad, image);
@@ -1909,7 +1913,7 @@ internal sealed class ImageItem
         {
             try
             {
-                var pixels = image.Stencil is null ? image.Decode() : null;
+                var pixels = image.Stencil is null ? Decode(image) : null;
                 var mask = image.Mask();
                 return new Source(pixels, mask);
             }

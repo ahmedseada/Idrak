@@ -7,7 +7,7 @@ namespace Idrak.Imaging;
 
 /// <summary>
 /// The letter's ornaments as shape profiles: the emblems, the stamps and the signature the library registers
-/// (<see cref="ShapeProfiles"/>), and the lists a letter draws one of by default (its <c>emblem-shapes</c>,
+/// (<c>ShapeProfiles</c>), and the lists a letter draws one of by default (its <c>emblem-shapes</c>,
 /// <c>stamp-shapes</c> and <c>signature-shapes</c> options). Every design is generic: rings, a seal, a star, a shield, a
 /// monogram, boxes; their texts are the page's own name line or the generic office words below.
 /// </summary>
@@ -24,15 +24,6 @@ internal static class Ornaments
 
     // Generic office stamp words in two directions: a stamp says one its page's fonts draw, in the page's direction.
     private const string StampWords = "words=RECEIVED:APPROVED:COPY:DRAFT:ORIGINAL:CHECKED:FILED:PAID:VERIFIED:URGENT:وارد:صادر:نسخة:معتمد:مسودة:أصل:عاجل:مدفوع";
-
-    /// <summary>Registers the emblems, the stamps and the signature as shape profiles.</summary>
-    public static void Register()
-    {
-        foreach (var (name, text, summary) in Profiles)
-        {
-            ShapeProfiles.Register(new ShapeProfile(name, text, summary));
-        }
-    }
 
     // Each drawn in a square box (an emblem's or a stamp's); the stroke a share of its size.
     private static readonly (string Name, string Text, string Summary)[] Profiles =
@@ -78,15 +69,11 @@ internal static class ShapeWords
 /// <summary>"ring-text": a text round a ring in the middle of its box, along its top or its bottom, read left to right.</summary>
 internal sealed class RingTextShape : IShape
 {
-    private static readonly OptionKeys Own = new("radius", "font-size", "side", "span", "words", "initials");
-
     public string Name => "ring-text";
 
     public string Summary => "a text round a ring in the middle of its box, its ink inside the ring's edge: radius (the edge, a share of half the smaller side; 1), font-size (a share of "
         + "the radius; 0.16), side (top or bottom; top: the glyphs' tops outward, bottom: toward the middle), span (the most degrees it takes; 150), words (A:B:..., one drawn; "
         + "none: the page's own text), initials (on: the first letters of the text's first three words)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {
@@ -123,14 +110,10 @@ internal sealed class RingTextShape : IShape
 /// <summary>"lettering": a line of text set upright across the middle of its box.</summary>
 internal sealed class LetteringShape : IShape
 {
-    private static readonly OptionKeys Own = new("font-size", "words", "initials");
-
     public string Name => "lettering";
 
     public string Summary => "a line of text upright across the middle of its box, smaller when it is longer than the box is wide: font-size (a share of the box's height; 0.5), "
         + "words (A:B:..., one drawn; none: the page's own text), initials (on: the first letters of the text's first three words)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {
@@ -157,18 +140,10 @@ internal sealed class LetteringShape : IShape
 /// <summary>"star": a star of N points in its box, one region inside.</summary>
 internal sealed class StarShape : IShape
 {
-    private static readonly OptionKeys Own = new("inner", "pad");
-
     // The value ("") is drawn whole by a profile: a count of points.
-    private static readonly FrozenSet<string> Whole = new[] { "" }.ToFrozenSet(StringComparer.Ordinal);
-
     public string Name => "star";
 
     public string Summary => "a star of N points in its box (star=N; 5), its first point at the top, a region inside: inner (its inner corners, a share of the outer; 0.45), pad (text sizes; 0.15)";
-
-    public IReadOnlySet<string> Keys => Own;
-
-    public IReadOnlySet<string> WholeKeys => Whole;
 
     public void Check(ShapeStep step)
     {
@@ -202,14 +177,10 @@ internal sealed class StarShape : IShape
 /// <summary>"shield": a shield's outline in its box (a flat top, straight sides, curving to a point at the bottom), one region in its upper part.</summary>
 internal sealed class ShieldShape : IShape
 {
-    private static readonly OptionKeys Own = new("shoulder", "pad");
-
     public string Name => "shield";
 
     public string Summary => "a shield in its box: a flat top, straight sides down to the shoulder, then curving to a point at the bottom's middle, a region above the shoulder: "
         + "shoulder (a share of the height; 0.5), pad (text sizes; 0.15)";
-
-    public IReadOnlySet<string> Keys => Own;
 
     public void Check(ShapeStep step)
     {
@@ -265,11 +236,7 @@ internal sealed class ShieldShape : IShape
 /// </summary>
 internal sealed class ScribbleShape : IShape
 {
-    private static readonly OptionKeys Own = new("letters", "slant", "flourish");
-
     // The letters are drawn whole by a profile.
-    private static readonly FrozenSet<string> Whole = new[] { "letters" }.ToFrozenSet(StringComparer.Ordinal);
-
     // Points a letter's loop is drawn with.
     private const int StepsPerLetter = 40;
 
@@ -277,10 +244,6 @@ internal sealed class ScribbleShape : IShape
 
     public string Summary => "a hand's signature-like scribble filling its box, never text: letters (how many letter-like loops; 4 to 9 from the seed), slant (degrees, forward "
         + "positive; 5 to 25 from the seed), flourish (none, under: a stroke back under it, loop: a last wide loop, any: one of them from the seed; any)";
-
-    public IReadOnlySet<string> Keys => Own;
-
-    public IReadOnlySet<string> WholeKeys => Whole;
 
     public void Check(ShapeStep step)
     {

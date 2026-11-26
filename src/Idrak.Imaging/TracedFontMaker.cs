@@ -22,7 +22,7 @@ namespace Idrak.Imaging;
 /// TrueType gives them back (whole units; <see cref="GlyphEncoder.Whole"/>), so the font written from the face is the face.
 /// The forms, ligatures, marks (placed above or below from where their ink sat) and alternates (a character's other fills)
 /// are written into a font map as data (glyphs by "#id"; the script tags and the ligatures' feature from the settings),
-/// which <see cref="FontMaps.Apply(IFontFace, FontMap)"/> applies: the "opentype" mapper makes the GSUB, GDEF and GPOS
+/// which <c>FontMaps.Apply</c> applies: the "opentype" mapper makes the GSUB, GDEF and GPOS
 /// tables, anchors the marks from the ink and draws the digits and marks the glyphs lack, sized from the written glyphs
 /// (<see cref="MeasureKey"/>). Nothing names a script: the characters, forms and tags are the labels and the settings.
 /// The maker holds no state; fonts are made from several threads at once.
@@ -77,7 +77,7 @@ internal sealed class TracedFontMaker : IFontMaker
         ["fina"] = ("medi", "medi", "fina"),
     };
 
-    private static readonly OptionKeys Own = new(UnitsKey, SideBearingKey, JoinedFormsKey, InkShareKey, LineGapKey, SpaceKey, ScriptsKey, LigatureFeatureKey, AlternatesKey,
+    private static readonly string Own = string.Join(", ", UnitsKey, SideBearingKey, JoinedFormsKey, InkShareKey, LineGapKey, SpaceKey, ScriptsKey, LigatureFeatureKey, AlternatesKey,
         MeasureKey, MarkGapKey, MarkWindowKey, ThreadsKey);
 
     private static readonly Settings Defaults = new(PageOptions.None);
@@ -90,14 +90,19 @@ internal sealed class TracedFontMaker : IFontMaker
                              + "marks and a character's other fills (alternates) made into a font map's GSUB, GDEF and GPOS; the digits and marks the glyphs lack drawn";
 
     /// <inheritdoc/>
-    public IReadOnlySet<string> Keys => Own;
-
     /// <inheritdoc/>
     public FontMakerSettings Read(IReadOnlyDictionary<string, string> options)
     {
         ArgumentNullException.ThrowIfNull(options);
         return options.Count == 0 ? Defaults : new Settings(options);
     }
+
+    // The outline tracers were registered (OutlineTracers) and picked by name; a font map was applied through the mapper
+    // the font maps named (FontMaps, FontMappers): not on the new design yet.
+    private static IOutlineTracer TracerNamed(string name) => throw new NotSupportedException($"The outline tracer '{name}' by name is not on the new design yet.");
+
+    private static IFontFace Apply(IFontFace face, FontMap map) =>
+        throw new NotSupportedException($"{map.Source}: applying a font map through the registered font mapper is not on the new design yet.");
 
     /// <inheritdoc/>
     public MadeFont Make(FontMakerRequest request)
@@ -112,7 +117,7 @@ internal sealed class TracedFontMaker : IFontMaker
 
         int upem = own.UnitsPerEm;
         double window = own.MarkWindow * upem;
-        var tracer = OutlineTracers.Get(request.Tracer);
+        var tracer = TracerNamed(request.Tracer);
         var tracerSettings = tracer.Read(request.TracerOptions ?? PageOptions.None);
 
         // Every glyph traced and its ink measured, independent of the others: on several threads (rule 79).
@@ -289,7 +294,7 @@ internal sealed class TracedFontMaker : IFontMaker
         var face = builder.Build();
         var map = FontMap.Parse(MapJson(request, own, metrics, order, roles, groups, ids, components, inks), $"{family} (made)");
         made.Sort((a, b) => a.Index.CompareTo(b.Index));
-        return new MadeFont(FontMaps.Apply(face, map), map, metrics, [.. made.Select(m => m.Glyph)], leftOut);
+        return new MadeFont(Apply(face, map), map, metrics, [.. made.Select(m => m.Glyph)], leftOut);
     }
 
     // The face's metrics from the ink of the glyphs that are not marks (all of them when every glyph is a mark).

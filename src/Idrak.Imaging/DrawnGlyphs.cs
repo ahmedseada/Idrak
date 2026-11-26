@@ -51,7 +51,7 @@ internal static class InkMeasure
         {
             var ink = coverage.AsSpan(0, size);
             ink.Clear();
-            OutlineRasterizers.Get().Fill(outline, (float)scale, ox, oy, ink, width, height);
+            new CoverageRasterizer().Fill(outline, (float)scale, ox, oy, ink, width, height);   // the default rasterizer, reached directly
             int minCol = int.MaxValue, maxCol = -1, minRow = int.MaxValue, maxRow = -1;
 
             // Runs across, row by row (each ink pixel gets its run's length), and runs down: the run above it so far, then

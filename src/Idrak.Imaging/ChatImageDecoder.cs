@@ -25,7 +25,7 @@ public static class ChatImageDecoder
 
     /// <summary>An image file held in memory, decoded and turned upright (see <see cref="Decode(ChatImage)"/>).</summary>
     /// <exception cref="InvalidDataException">No registered codec reads it, or its data is damaged.</exception>
-    public static ImageData Decode(ReadOnlySpan<byte> file) => Orient(ImageCodecs.Decode(file), Orientation(file));
+    public static ImageData Decode(ReadOnlySpan<byte> file) => Orient(Codecs.Decode(file), Orientation(file));
 
     /// <summary>
     /// The width and height of an image file held in memory as <see cref="Decode(ReadOnlySpan{byte})"/> gives it (turned
@@ -33,7 +33,7 @@ public static class ChatImageDecoder
     /// registered codec knows its format or its header gives no size.
     /// </summary>
     public static (int Width, int Height)? Size(ReadOnlySpan<byte> file) =>
-        ImageCodecs.ReadInfo(file) is { Width: > 0, Height: > 0 } info
+        Codecs.ReadInfo(file) is { Width: > 0, Height: > 0 } info
             ? Orientation(file) >= 5 ? (info.Height, info.Width) : (info.Width, info.Height)
             : null;
 
@@ -45,15 +45,7 @@ public static class ChatImageDecoder
     {
         ArgumentNullException.ThrowIfNull(image);
         var header = image.Data.Span[..Math.Min(image.Data.Length, ImageCodecs.HeaderBytes)];
-        foreach (string name in ImageCodecs.Names)
-        {
-            if (ImageCodecs.Get(name).ReadInfo(header) is not null)
-            {
-                return name;
-            }
-        }
-
-        return null;
+        return Codecs.FormatOf(header);
     }
 
     /// <summary>
@@ -301,4 +293,14 @@ public static class ChatImageDecoder
             }
         });
     }
+}
+
+// The image codecs were registered (ImageCodecs) and an image's format found among them: not on the new design yet.
+file static class Codecs
+{
+    public static ImageData Decode(ReadOnlySpan<byte> file) => throw new NotSupportedException("Decoding an image through the registered image codecs is not on the new design yet.");
+
+    public static ImageInfo? ReadInfo(ReadOnlySpan<byte> file) => throw new NotSupportedException("Reading an image's size through the registered image codecs is not on the new design yet.");
+
+    public static string? FormatOf(ReadOnlySpan<byte> header) => throw new NotSupportedException("Finding an image's format among the registered image codecs is not on the new design yet.");
 }

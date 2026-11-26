@@ -177,9 +177,7 @@ public static partial class PillowImageOps
     /// written with the standard tables.
     /// </summary>
     public static ImageData JpegRoundTrip(ImageData image, int quality, JpegSubsampling subsampling = JpegSubsampling.Half420) =>
-        ImageCodecs.Origin("jpeg") == Overrides.Library
-            ? JpegEncoder.RoundTrip(image, quality, subsampling)
-            : ImageCodecs.Get("jpeg").Decode(JpegEncoder.Encode(image, quality, subsampling: subsampling));
+        JpegEncoder.RoundTrip(image, quality, subsampling);
 
     // ---------------------------------------------------------------- helpers
 

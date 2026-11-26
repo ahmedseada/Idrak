@@ -204,9 +204,14 @@ internal sealed class DrawContext(DocumentDrawOptions options)
 
     public DocumentDrawOptions Options { get; } = options;
 
-    public IOutlineRasterizer Rasterizer { get; } = OutlineRasterizers.Get(options.Rasterizer);
+    // The rasterizers and pens were registered (OutlineRasterizers, Pens) and picked by name: not on the new design yet.
+    private static IOutlineRasterizer RasterizerNamed(string name) => throw new NotSupportedException($"The outline rasterizer '{name}' by name is not on the new design yet.");
 
-    public IPen Pen { get; } = Pens.Get(options.Pen);
+    private static IPen PenNamed(string name) => throw new NotSupportedException($"The pen '{name}' by name is not on the new design yet.");
+
+    public IOutlineRasterizer Rasterizer { get; } = RasterizerNamed(options.Rasterizer);
+
+    public IPen Pen { get; } = PenNamed(options.Pen);
 
     public PenSettings PenSettings => _penSettings ??= Pen.Read(PageOptions.None);
 
@@ -268,12 +273,16 @@ internal static class FontFolder
 {
     private static readonly ConcurrentDictionary<string, Lazy<IReadOnlyList<IFontFace>>> Folders = new(StringComparer.Ordinal);
 
+    // A fonts folder was read through the registered font formats (FontFormats): not on the new design yet.
+    private static IReadOnlyList<IFontFace> FontsIn(string folder) =>
+        throw new NotSupportedException($"{folder}: reading fonts through the registered font formats is not on the new design yet.");
+
     public static IFontFace? Match(string folder, string? font, string text)
     {
         IReadOnlyList<IFontFace> faces;
         try
         {
-            faces = Folders.GetOrAdd(Path.GetFullPath(folder), f => new Lazy<IReadOnlyList<IFontFace>>(() => Directory.Exists(f) ? FontFormats.ReadFolder(f) : [])).Value;
+            faces = Folders.GetOrAdd(Path.GetFullPath(folder), f => new Lazy<IReadOnlyList<IFontFace>>(() => Directory.Exists(f) ? FontsIn(f) : [])).Value;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException or ArgumentException)
         {
