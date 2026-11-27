@@ -21,9 +21,10 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // measured once on the real operands (Chosen).
 internal sealed partial class CpuBackend
 {
-    // A stored weight's words, k, the bytes of a row and where the rows' read part starts in each (bytes): a value made on
-    // every product, on the stack (nothing allocated a call).
-    private readonly record struct StoredLane(float[] Words, int Length, int K, long RowBytes, int Offset = 0);
+    // A stored weight's words, k, the bytes of a row and where the rows' read part starts in each (bytes), and a row's
+    // scale where the lane reads the codes alone (RowCodesOf: each output times its row's scale, read from the row's
+    // block as its number type reads it): a value made on every product, on the stack (nothing allocated a call).
+    private readonly record struct StoredLane(float[] Words, int Length, int K, long RowBytes, int Offset = 0, BlockScale? RowScale = null);
 
     // The bytes of a row of k values of a description (whole groups of blocks).
     private static long RowBytesOf(TypeDescription d, int k) => (long)k / d.UnitValues * d.UnitBytes;
@@ -87,26 +88,21 @@ internal sealed partial class CpuBackend
             return false;
         }
 
-        var scale = d.Scales![0];
-        long rowBytes = d.Bytes;
-        var lane = new StoredLane(D(weight), weight.Length, k, rowBytes, d.Planes[0].Offset);
-        if (!DescribedProduct(codes, lane, x, y, m, n, k))
-        {
-            return false;
-        }
-
-        var stored = System.Runtime.InteropServices.MemoryMarshal.AsBytes(D(weight).AsSpan());
-        for (int j = 0; j < n; j++)
-        {
-            float factor = (float)scale.Value(stored.Slice((int)(j * rowBytes), (int)rowBytes), 0);
-            for (int i = 0; i < m; i++)
-            {
-                y[(long)i * n + j] *= factor;
-            }
-        }
-
-        return true;
+        return DescribedProduct(codes, RowCodesLane(d, D(weight), weight.Length, k), x, y, m, n, k);
     }
+
+    // The lane of a row-scaled description's codes where they lie in each row's block, each output times its row's scale
+    // (FormatColumns, a tile's columns once their sums are made: the same product, a float32 multiply of each sum by its
+    // row's scale, whichever thread makes it).
+    private static StoredLane RowCodesLane(TypeDescription d, float[] words, int length, int k) => new(words, length, k, d.Bytes, d.Planes[0].Offset, d.Scales![0]);
+
+    // Row c's scale (a row's block at `block`) as its number type reads it: a float32 as it is stored, any other through
+    // its type (the same number).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe float RowScaleAt(BlockScale scale, byte* block, int bytes) =>
+        scale is { Pieces: null, Bias: 0d, Type: { Kind: NumberKind.Float, Bits: 32, Exponent: 8, Mantissa: 23, ExponentBias: 127, Signed: true, Specials: FloatSpecials.Ieee, Subnormals: true, Width: 1 } }
+            ? Unsafe.ReadUnaligned<float>(block + scale.Offset)
+            : (float)scale.Value(new ReadOnlySpan<byte>(block, bytes), 0);
 
     // The described lane's kind of lane (a lane id's low 4 bits: LaneOf).
     private const int DescribedLaneId = 11;
@@ -2035,18 +2031,24 @@ internal sealed partial class CpuBackend
     private static bool DescribedGrouped(TypeDescription description, float[] x, int m, int k, ThreeProducts products, int count)
     {
         FusedInHardware.Ensure();
+        // A row-scaled description the lane has no plan for: its codes alone, each output times its row's scale.
+        TypeDescription? codes = null;
         if (!DescribedFormat.Reads(description, k, out var described))
         {
-            return false;
+            codes = RowCodesOf(description, k);
+            if (codes is null || !DescribedFormat.Reads(codes, k, out described))
+            {
+                return false;
+            }
         }
 
         ThreeParts parts = new();
         for (int j = 0; j < count; j++)
         {
             var (values, output, n) = products[j];
-            var lane = new StoredLane(D(values), values.Length, k, RowBytesOf(description, k));
+            var lane = codes is null ? new StoredLane(D(values), values.Length, k, RowBytesOf(description, k)) : RowCodesLane(description, D(values), values.Length, k);
             float[] y = D(output);
-            int chosen = Chosen(new LaneCandidates(described, description, lane, x, y, m, n, k), m, n, k);
+            int chosen = Chosen(new LaneCandidates(described, codes ?? description, lane, x, y, m, n, k), m, n, k);
             parts[j] = new RowPart(lane, y, n, chosen);
         }
 
@@ -2239,6 +2241,20 @@ internal sealed partial class CpuBackend
 
                 var kernels = format.Kernels(part.LaneId, k, new LanePointers(xv, xc, xs), scratch, scratchBytes);
                 RowGroups(ref kernels, (byte*)words + lane.Offset, rowBytes, k, format.Span(k), format.GroupBytes, part.Y, part.N, j0, j1, i0, i1);
+                if (lane.RowScale is { } scale)
+                {
+                    // The codes alone multiplied: each output times its row's scale.
+                    float[] y = part.Y;
+                    int n = part.N;
+                    for (int c = j0; c < j1; c++)
+                    {
+                        float factor = RowScaleAt(scale, (byte*)words + c * rowBytes, (int)rowBytes);
+                        for (int i = i0; i < i1; i++)
+                        {
+                            y[(long)i * n + c] *= factor;
+                        }
+                    }
+                }
             }
         }
         finally
