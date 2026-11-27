@@ -3280,6 +3280,7 @@ internal sealed partial class CpuBackend
             planeLow = Pin<int>(Planes);
             streamAt = Pin<int>(4 * spans * Planes);
             planeRadix = Pin<int>(Planes);
+            planeBits = Pin<int>(Planes);
             digitTimes = d.Planes.Any(p => p.Radix != 0) ? Pin<Vector256<byte>>(spans * Planes) : null;
             Order = Pin<int>(Period);
             int low = 0;
@@ -3288,6 +3289,7 @@ internal sealed partial class CpuBackend
                 planeMask[p] = Vector256.Create((byte)((1 << d.Planes[p].Bits) - 1));
                 planeLow[p] = low;
                 planeRadix[p] = d.Planes[p].Radix;
+                planeBits[p] = d.Planes[p].Bits;
                 low += d.Planes[p].Bits;
             }
 
@@ -3809,13 +3811,12 @@ internal sealed partial class CpuBackend
         // entry of 8 or 4 values), the sign vector's -1s applied ((v ^ m) - m a byte; each group's index one unaligned 16-bit
         // load), the least added back; any other codebook by CodebookAny.
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        private Vector256<byte> CodebookCodes(byte* period, int span)
-        {
-            if (!codebookFast)
-            {
-                return CodebookAny(period, span);
-            }
+        private Vector256<byte> CodebookCodes(byte* period, int span) => codebookFast ? CodebookFast(period, span) : CodebookAny(period, span);
 
+        // CodebookCodes' fast reading (codebookFast: entries of 8 or 4 values, at most one sign vector of 8).
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<byte> CodebookFast(byte* period, int span)
+        {
             Vector256<byte> v;
             if (entryWidth == 8)
             {
@@ -4344,6 +4345,9 @@ internal sealed partial class CpuBackend
         /// <summary>Whether a factor is read a lane at a time (FactorRead.Scalar: ReadOneByOne), the loop over the factors then taking it (CpuBackend.FactorLoop{Yes}).</summary>
         public bool ReadsScalar { get; private set; }
 
+        /// <summary>Whether a codebook's spans take the fast reading (CodebookFast; else CodebookAny).</summary>
+        public bool CodebookIsFast => codebookFast;
+
         // FactorKinds' numbers: whether minimums are added (else subtracted); per factor its bias, bits, pieces, table and
         // 16-bit float reading.
         private bool minsAdded;
@@ -4607,7 +4611,7 @@ internal sealed partial class CpuBackend
                         v = EightRuns.Load<TI>(from, runShift, runCount, at);
                         break;
                     case StreamRuns:
-                        v = StreamLoad(period, at, D.Planes[p].Bits);
+                        v = StreamLoad(period, at, planeBits[p]);
                         break;
                     case WindowRuns:
                         code |= Vector256.ShiftLeft((WindowLoad<TI>(period, at) & planeMask[p]).AsUInt16(), planeLow[p]).AsByte();
@@ -4627,8 +4631,10 @@ internal sealed partial class CpuBackend
             return code;
         }
 
-        // A plane of digits' planes' radix (0: bits), and per span and plane each byte's power of the radix (its run's digit).
+        // A plane of digits' planes' radix (0: bits), and per span and plane each byte's power of the radix (its run's digit);
+        // each plane's bits (a stream's field's: StreamLoad), from the plan, not the description, on the kernels' path.
         private int* planeRadix;
+        private int* planeBits;
         private Vector256<byte>* digitTimes;
 
         // Each byte's digit: ⌊radix · ((byte · times) mod 256) / 256⌋ (CodePlane.Digit), over 16-bit lanes.
@@ -4659,7 +4665,11 @@ internal sealed partial class CpuBackend
                 // Fields of one bit: the 4 groups' bytes in every 32-bit lane, byte j / 8 of them to byte j, and bit j mod 8
                 // of it tested.
                 uint four = period[group[0]] | (uint)period[group[1]] << 8 | (uint)period[group[2]] << 16 | (uint)period[group[3]] << 24;
-                var spread = Vector256.Shuffle(Vector256.Create(four).AsByte(), BitBytes);
+                // (Byte j / 8 of the 4 repeated to byte j, each 128-bit half picking from its own copy of them: a constant to the
+                // JIT, where a static field read by a kernel compiled before its class is made costs a call and the spills
+                // around it.)
+                var bitBytes = Vector256.Create((byte)0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 18, 18, 18, 18, 18, 18, 18, 18, 19, 19, 19, 19, 19, 19, 19, 19);
+                var spread = Vector256.Shuffle(Vector256.Create(four).AsByte(), bitBytes);
                 var test = Vector256.Create(0x8040201008040201UL).AsByte();
                 return Vector256.Equals(spread & test, test) & Vector256.Create((byte)1);
             }
@@ -4675,10 +4685,6 @@ internal sealed partial class CpuBackend
 
             return codes.AsByte();
         }
-
-        // Byte j / 8 of 4 bytes repeated to byte j (each 128-bit half picks from its own copy of them, so the shuffle stays within
-        // the halves: StreamLoad's one-bit fields).
-        private static readonly Vector256<byte> BitBytes = Vector256.Create((byte)0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 18, 18, 18, 18, 18, 18, 18, 18, 19, 19, 19, 19, 19, 19, 19, 19);
 
         // The `bits` bytes of 8 stream fields from `p` (little-endian), and no byte past them.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -4761,28 +4767,49 @@ internal sealed partial class CpuBackend
         /// <summary>
         /// Group <paramref name="gp"/> of the period at <paramref name="period"/> as the integer lane's steps (codes of at most 8
         /// bits: a wide integer's are made by IStepLoad.Plane): lane l of step s holds 4 bytes of chunk l, its positions
-        /// 4s..4s + 3 in its span's order. T = 4: s4..s7 are not written.
+        /// 4s..4s + 3 in its span's order. T = 4: s4..s7 are 0. The group's spans made one at a time (TS: the plan's way of
+        /// making them, ISpanCodes), each one's dwords put in their steps' lanes as it is made (a dword broadcast and a blend
+        /// a step), so a kernel holds one span's making, its plan's way alone, and the JIT inlines all of it: every span made
+        /// and moved in registers.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        public void Steps<TI>(byte* period, int gp, out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3,
-            out Vector256<byte> s4, out Vector256<byte> s5, out Vector256<byte> s6, out Vector256<byte> s7) where TI : struct, IInstructions
+        public void Steps<TI, TS>(byte* period, int gp, out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3,
+            out Vector256<byte> s4, out Vector256<byte> s5, out Vector256<byte> s6, out Vector256<byte> s7) where TI : struct, IInstructions where TS : struct, ISpanCodes
         {
-            if (stepsGathered)
-            {
-                GroupSteps<TI>(period, gp, out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
-                return;
-            }
-
             int span = gp * (GroupValues / 32);
+            Vector256<int> t0 = default, t1 = default, t2 = default, t3 = default, t4 = default, t5 = default, t6 = default, t7 = default;
             if (C == 32)
             {
-                Transpose8<TI>(Codes<TI>(period, span), Codes<TI>(period, span + 1), Codes<TI>(period, span + 2), Codes<TI>(period, span + 3), Codes<TI>(period, span + 4),
-                    Codes<TI>(period, span + 5), Codes<TI>(period, span + 6), Codes<TI>(period, span + 7), out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
-                return;
+                // Chunk l is span l: its dword s to lane l of step s.
+                for (int l = 0; l < 8; l++)
+                {
+                    var v = TS.Codes<TI>(this, period, span + l).AsInt32();
+                    var lane = Vector256.Equals(Vector256.Create(l), Vector256<int>.Indices);
+                    t0 = Vector256.ConditionalSelect(lane, TI.Permute(v, Vector256.Create(0)), t0);
+                    t1 = Vector256.ConditionalSelect(lane, TI.Permute(v, Vector256.Create(1)), t1);
+                    t2 = Vector256.ConditionalSelect(lane, TI.Permute(v, Vector256.Create(2)), t2);
+                    t3 = Vector256.ConditionalSelect(lane, TI.Permute(v, Vector256.Create(3)), t3);
+                    t4 = Vector256.ConditionalSelect(lane, TI.Permute(v, Vector256.Create(4)), t4);
+                    t5 = Vector256.ConditionalSelect(lane, TI.Permute(v, Vector256.Create(5)), t5);
+                    t6 = Vector256.ConditionalSelect(lane, TI.Permute(v, Vector256.Create(6)), t6);
+                    t7 = Vector256.ConditionalSelect(lane, TI.Permute(v, Vector256.Create(7)), t7);
+                }
+            }
+            else
+            {
+                // Chunks 2q and 2q + 1 are span q's halves: its dwords s and 4 + s to lanes 2q and 2q + 1 of step s.
+                for (int q = 0; q < 4; q++)
+                {
+                    var v = TS.Codes<TI>(this, period, span + q).AsInt32();
+                    var lanes = Vector256.Equals(Vector256.Create(q), Vector256.ShiftRightLogical(Vector256<int>.Indices, 1));
+                    t0 = Vector256.ConditionalSelect(lanes, TI.Permute(v, Vector256.Create(0, 4, 0, 4, 0, 4, 0, 4)), t0);
+                    t1 = Vector256.ConditionalSelect(lanes, TI.Permute(v, Vector256.Create(1, 5, 1, 5, 1, 5, 1, 5)), t1);
+                    t2 = Vector256.ConditionalSelect(lanes, TI.Permute(v, Vector256.Create(2, 6, 2, 6, 2, 6, 2, 6)), t2);
+                    t3 = Vector256.ConditionalSelect(lanes, TI.Permute(v, Vector256.Create(3, 7, 3, 7, 3, 7, 3, 7)), t3);
+                }
             }
 
-            Transpose4<TI>(Codes<TI>(period, span), Codes<TI>(period, span + 1), Codes<TI>(period, span + 2), Codes<TI>(period, span + 3), out s0, out s1, out s2, out s3);
-            s4 = s5 = s6 = s7 = default;
+            (s0, s1, s2, s3, s4, s5, s6, s7) = (t0.AsByte(), t1.AsByte(), t2.AsByte(), t3.AsByte(), t4.AsByte(), t5.AsByte(), t6.AsByte(), t7.AsByte());
         }
 
         // Steps gathered straight into the dot products' lanes (GatherSteps), where the spans do not load alike: step s of a
@@ -5105,38 +5132,6 @@ internal sealed partial class CpuBackend
             }
         }
 
-        /// <summary>
-        /// Group <paramref name="gp"/>'s steps gathered (GatherSteps): its distinct dword vectors gathered once (on the stack,
-        /// not cleared: each written before it is read), each step made from the ones it reads. T = 4: s4..s7 not written.
-        /// </summary>
-        [SkipLocalsInit]
-        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
-        private void GroupSteps<TI>(byte* period, int gp, out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3,
-            out Vector256<byte> s4, out Vector256<byte> s5, out Vector256<byte> s6, out Vector256<byte> s7) where TI : struct, IInstructions
-        {
-            int start = groupWordStart[gp], count = groupWordStart[gp + 1] - start, first = gp * T;
-            Vector256<uint>* words = stackalloc Vector256<uint>[Math.Max(1, count)];
-            for (int u = 0; u < count; u++)
-            {
-                words[u] = TI.Gather(period, wordOffsets + 8 * (start + u)).AsUInt32();
-            }
-
-            s0 = GatheredStep<TI>(words, first);
-            s1 = GatheredStep<TI>(words, first + 1);
-            s2 = GatheredStep<TI>(words, first + 2);
-            s3 = GatheredStep<TI>(words, first + 3);
-            if (T == 8)
-            {
-                s4 = GatheredStep<TI>(words, first + 4);
-                s5 = GatheredStep<TI>(words, first + 5);
-                s6 = GatheredStep<TI>(words, first + 6);
-                s7 = GatheredStep<TI>(words, first + 7);
-                return;
-            }
-
-            s4 = s5 = s6 = s7 = default;
-        }
-
         // The value at position 4s of step s's lane l (the step counted over the period: its group s / T; the lane's chunk).
         private int StepValue(int s, int l) => Order[((s / T) * Cg + l) * C + 4 * (s % T)];
 
@@ -5192,7 +5187,7 @@ internal sealed partial class CpuBackend
 
         /// <summary>
         /// Step <paramref name="s"/> of the period (counted over the period) made from its group's gathered dword vectors
-        /// (<paramref name="words"/>: GroupSteps): the integer lane's bytes.
+        /// (<paramref name="words"/>: the gathered group's, GatherWords): the integer lane's bytes.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<byte> GatheredStep<TI>(Vector256<uint>* words, int s) where TI : struct, IInstructions
@@ -5354,6 +5349,41 @@ internal sealed partial class CpuBackend
         }
 
         /// <summary>How a step's code becomes the integer lane's bytes (GatheredStep's map).</summary>
+        /// <summary>
+        /// How the spans-made kernels (Steps) make a span's codes as the integer lane's bytes, the plan's way as a type
+        /// parameter (CpuBackend.WithSpans), so each kernel holds that way's code alone: a span's bits (Raw) through the map
+        /// TM, a codebook's entries by its fast reading or by any (CodebookFast, CodebookAny), or any plan's (Codes).
+        /// </summary>
+        internal interface ISpanCodes
+        {
+            static abstract Vector256<byte> Codes<TI>(DescribedPlan plan, byte* period, int span) where TI : struct, IInstructions;
+        }
+
+        internal readonly struct RawSpans<TM> : ISpanCodes where TM : struct, IStepMap
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Codes<TI>(DescribedPlan plan, byte* period, int span) where TI : struct, IInstructions =>
+                TM.Map<TI>(plan, plan.Raw<TI>(period, span).AsUInt32(), null, 0);
+        }
+
+        internal readonly struct FastBookSpans : ISpanCodes
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Codes<TI>(DescribedPlan plan, byte* period, int span) where TI : struct, IInstructions => plan.CodebookFast(period, span);
+        }
+
+        internal readonly struct AnyBookSpans : ISpanCodes
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Codes<TI>(DescribedPlan plan, byte* period, int span) where TI : struct, IInstructions => plan.CodebookAny(period, span);
+        }
+
+        internal readonly struct PlanSpans : ISpanCodes
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Codes<TI>(DescribedPlan plan, byte* period, int span) where TI : struct, IInstructions => plan.Codes<TI>(period, span);
+        }
+
         internal interface IStepMap
         {
             static abstract Vector256<byte> Map<TI>(DescribedPlan plan, Vector256<uint> code, Vector256<uint>* words, int s) where TI : struct, IInstructions;
@@ -6525,17 +6555,17 @@ internal sealed partial class CpuBackend
         }
     }
 
-    // MadeOne's steps: the plan's spans made and transposed (DescribedPlan.Steps).
-    private readonly unsafe struct MadeGroup : IGroupSteps<MadeGroup>
+    // MadeOne's steps: the plan's spans made one at a time, TS's way, and put in their steps (DescribedPlan.Steps).
+    private readonly unsafe struct MadeGroup<TS> : IGroupSteps<MadeGroup<TS>> where TS : struct, DescribedPlan.ISpanCodes
     {
-        public static MadeGroup Of(DescribedPlan plan) => default;
+        public static MadeGroup<TS> Of(DescribedPlan plan) => default;
 
         public static int WordCount(DescribedPlan plan) => 1;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public void Make<TI>(DescribedPlan plan, byte* at, int gp, Vector256<uint>* words, out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3,
             out Vector256<byte> s4, out Vector256<byte> s5, out Vector256<byte> s6, out Vector256<byte> s7) where TI : struct, IInstructions =>
-            plan.Steps<TI>(at, gp, out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
+            plan.Steps<TI, TS>(at, gp, out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
     }
 
     // The integer lane's tile (P = 1): `columns` stored rows (from `rows`, `rowBytes` apart, each read where it is stored;
@@ -6829,7 +6859,7 @@ internal sealed partial class CpuBackend
 
         return plan.P switch
         {
-            1 => MadeOne<EightChunks, TI, FactorLoop<Yes>>(plan, row, tail, full, groups, chunks, x, lanes),
+            1 => MadeOne<EightChunks, TI, FactorLoop<Yes>, DescribedPlan.PlanSpans>(plan, row, tail, full, groups, chunks, x, lanes),
             2 => WideMadeOne<FourChunks, TI>(plan, row, tail, full, groups, x, lanes),
             4 => WideMadeOne<TwoChunks, TI>(plan, row, tail, full, groups, x, lanes),
             _ => WideMadeOne<OneChunk, TI>(plan, row, tail, full, groups, x, lanes),
@@ -6986,11 +7016,11 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private readonly unsafe struct MadeOneUse<TI> : IFactorsUse where TI : struct, IInstructions
+    private readonly unsafe struct MadeOneUse<TI, TS> : IFactorsUse where TI : struct, IInstructions where TS : struct, DescribedPlan.ISpanCodes
     {
         public static nint Use<TF>() where TF : struct, IFactors
         {
-            delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> kernel = &MadeOne<EightChunks, TI, TF>;
+            delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> kernel = &MadeOne<EightChunks, TI, TF, TS>;
             return (nint)kernel;
         }
     }
@@ -7004,6 +7034,35 @@ internal sealed partial class CpuBackend
             return (nint)kernel;
         }
     }
+
+    /// <summary>A spans-made kernel's address with its plan's way of making a span as the type parameter (WithSpans), its factors then chosen.</summary>
+    private interface ISpansUse
+    {
+        static abstract nint Use<TS>(DescribedPlan plan) where TS : struct, DescribedPlan.ISpanCodes;
+    }
+
+    private readonly struct MadeOneSpans<TI> : ISpansUse where TI : struct, IInstructions
+    {
+        public static nint Use<TS>(DescribedPlan plan) where TS : struct, DescribedPlan.ISpanCodes => WithFactors<MadeOneUse<TI, TS>>(plan);
+    }
+
+    private readonly struct MadeTileSpans<TI, TW, TE, TM> : ISpansUse
+        where TI : struct, IInstructions where TW : struct, IVectorWidth where TE : struct, IFlag where TM : struct, IFlag
+    {
+        public static nint Use<TS>(DescribedPlan plan) where TS : struct, DescribedPlan.ISpanCodes => WithFactors<IntegerTileUse<TI, MadeGroup<TS>, TW, TE, TM>>(plan);
+    }
+
+    // The spans-made kernels' way of making a span as a type parameter (DescribedPlan.ISpanCodes): a codebook's by its fast
+    // reading or by any, else the span's bits through the plan's map; so each kernel holds its plan's way alone and stays
+    // within what the JIT inlines. Made once a plan and kernel, never a call.
+    private static nint WithSpans<TU>(DescribedPlan plan) where TU : struct, ISpansUse => plan.Map switch
+    {
+        CodeMap.Codebook => plan.CodebookIsFast ? TU.Use<DescribedPlan.FastBookSpans>(plan) : TU.Use<DescribedPlan.AnyBookSpans>(plan),
+        CodeMap.Flip => TU.Use<DescribedPlan.RawSpans<DescribedPlan.FlipStepMap>>(plan),
+        CodeMap.Shuffle => TU.Use<DescribedPlan.RawSpans<DescribedPlan.ShuffleStepMap>>(plan),
+        CodeMap.Table => TU.Use<DescribedPlan.RawSpans<DescribedPlan.TableStepMap>>(plan),
+        _ => TU.Use<DescribedPlan.RawSpans<DescribedPlan.SameStepMap>>(plan),
+    };
 
     /// <summary>A gathered kernel's address with its steps' readings as the type parameter (WithSteps' last step), its factors then chosen.</summary>
     private interface IStepsUse
@@ -7086,7 +7145,7 @@ internal sealed partial class CpuBackend
             };
         }
 
-        return plan.StepsGathered ? WithSteps<GatheredOneSteps<TI>>(plan) : WithFactors<MadeOneUse<TI>>(plan);
+        return plan.StepsGathered ? WithSteps<GatheredOneSteps<TI>>(plan) : WithSpans<MadeOneSpans<TI>>(plan);
     }
 
     private static nint OneByMap<TR, TI>(DescribedPlan plan) where TR : struct, IRunLoad where TI : struct, IInstructions => plan.Map switch
@@ -7142,7 +7201,7 @@ internal sealed partial class CpuBackend
             };
         }
 
-        return plan.StepsGathered ? WithSteps<GatheredTileSteps<TI, TW, TE, TM>>(plan) : WithFactors<IntegerTileUse<TI, MadeGroup, TW, TE, TM>>(plan);
+        return plan.StepsGathered ? WithSteps<GatheredTileSteps<TI, TW, TE, TM>>(plan) : WithSpans<MadeTileSpans<TI, TW, TE, TM>>(plan);
     }
 
     private static nint TileByMap<TR, TI, TW, TE, TM>(DescribedPlan plan)
@@ -7457,8 +7516,8 @@ internal sealed partial class CpuBackend
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe float MadeOne<TX, TI, TF>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
-        where TX : struct, IStepLoad where TI : struct, IInstructions where TF : struct, IFactors
+    private static unsafe float MadeOne<TX, TI, TF, TS>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
+        where TX : struct, IStepLoad where TI : struct, IInstructions where TF : struct, IFactors where TS : struct, DescribedPlan.ISpanCodes
     {
         int gpp = plan.GroupsPerPeriod, t = plan.T, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, xStep = 4 * plan.Cg, cg = plan.Cg, p = plan.P;
         bool mins = plan.Mins;
@@ -7467,7 +7526,7 @@ internal sealed partial class CpuBackend
         {
             int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp;
             byte* at = period < full ? row + (nint)period * plan.PeriodBytes : tail;
-            plan.Steps<TI>(at, gp, out var s0, out var s1, out var s2, out var s3, out var s4, out var s5, out var s6, out var s7);
+            plan.Steps<TI, TS>(at, gp, out var s0, out var s1, out var s2, out var s3, out var s4, out var s5, out var s6, out var s7);
             TF.Read<TI>(plan, at, gp, Math.Min(cg, chunks - g * cg) * p, out var scale, out var min);
             sbyte* xg = x + (nint)g * groupValues;
             float* lg = lanes + (nint)g * laneFloats;
