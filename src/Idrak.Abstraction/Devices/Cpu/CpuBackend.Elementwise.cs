@@ -265,13 +265,16 @@ internal sealed unsafe partial class CpuBackend
             return;
         }
 
-        fixed (float* wx = D(x), py = V(y))
+        fixed (float* wx = D(x), wy = D(y))
         {
+            // A typed output written through its type a chunk (whole groups of its blocks) at a time (TypedInOut.Into).
             var tx = new TypedInput(x, wx, 0, ChunkValues, "Unary");
-            for (long i = 0, step = Step(n, tx.Typed); i < n; i += step)
+            var ty = new TypedInOut(y, wy, 0, ChunkValues, "Unary");
+            for (long i = 0, step = tx.Typed || ty.Typed ? ty.Piece(ChunkValues) : Math.Max(1, n); i < n; i += step)
             {
                 long e = Math.Min(n, i + step);
-                Unary(op, tx.Range(i, e - i), py, n, i, e);
+                Unary(op, tx.Range(i, e - i), ty.Into(i), n, i, e);
+                ty.Store(i, e - i);
             }
         }
     }
@@ -350,13 +353,14 @@ internal sealed unsafe partial class CpuBackend
             return;
         }
 
-        fixed (float* wa = D(a), wb = D(b), pc = V(c))
+        fixed (float* wa = D(a), wb = D(b), wc = D(c))
         {
             TypedInput ta = new(a, wa, 0, ChunkValues, "Binary"), tb = new(b, wb, 1, ChunkValues, "Binary");
-            for (long i = 0, step = Step(n, ta.Typed || tb.Typed); i < n; i += step)
+            var tc = new TypedInOut(c, wc, 0, ChunkValues, "Binary");              // a typed output written through its type
+            for (long i = 0, step = ta.Typed || tb.Typed || tc.Typed ? tc.Piece(ChunkValues) : Math.Max(1, n); i < n; i += step)
             {
                 long e = Math.Min(n, i + step);
-                float* pa = ta.Range(i, e - i), pb = tb.Range(i, e - i);
+                float* pa = ta.Range(i, e - i), pb = tb.Range(i, e - i), pc = tc.Into(i);
                 switch (op)
                 {
                     case BinaryOp.Add: Elements("Binary Add", new Map2<AddFn>(pa, pb, pc, n), e, 1, i); break;
@@ -366,6 +370,8 @@ internal sealed unsafe partial class CpuBackend
                     case BinaryOp.Minimum: Elements("Binary Minimum", new Map2<MinFn>(pa, pb, pc, n), e, 1, i); break;
                     default: throw new ArgumentOutOfRangeException(nameof(op), op, "Not a binary function.");
                 }
+
+                tc.Store(i, e - i);
             }
         }
     }
@@ -685,13 +691,15 @@ internal sealed unsafe partial class CpuBackend
             return;
         }
 
-        fixed (float* wx = D(x), py = V(y))
+        fixed (float* wx = D(x), wy = D(y))
         {
             var tx = new TypedInput(x, wx, 0, ChunkValues, "Affine");
-            for (long i = 0, step = Step(n, tx.Typed); i < n; i += step)
+            var ty = new TypedInOut(y, wy, 0, ChunkValues, "Affine");              // a typed output written through its type
+            for (long i = 0, step = tx.Typed || ty.Typed ? ty.Piece(ChunkValues) : Math.Max(1, n); i < n; i += step)
             {
                 long e = Math.Min(n, i + step);
-                Elements("Affine", new AffineMap(tx.Range(i, e - i), py, alpha, beta, n), e, 1, i);
+                Elements("Affine", new AffineMap(tx.Range(i, e - i), ty.Into(i), alpha, beta, n), e, 1, i);
+                ty.Store(i, e - i);
             }
         }
     }

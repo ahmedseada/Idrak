@@ -261,6 +261,21 @@ internal sealed unsafe partial class CpuBackend
             return _buffer - first;
         }
 
+        /// <summary>
+        /// Where an output's range [<paramref name="first"/>, ...) is written (p[i] value i): the words themselves, or the
+        /// thread's buffer, nothing read (an output only written); <see cref="Store"/> writes it through the type.
+        /// </summary>
+        public float* Into(long first)
+        {
+            if (_type is null)
+            {
+                return _words;
+            }
+
+            Check(first);
+            return _buffer - first;
+        }
+
         /// <summary>Writes the range's values back through the type (nothing for float32's own words, written in place).</summary>
         public void Store(long first, long count)
         {

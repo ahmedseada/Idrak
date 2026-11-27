@@ -107,6 +107,25 @@ internal abstract partial class Tests
             SameOutputsOnTyped($"{name}: LSTM steps' gradient, typed weights", typed, plain, [32, 384],
                 (w, o) => backend.LstmSequenceBackward(gates.Storage, cells.Storage, dOutput.Storage, w, o[0], o[1], 3, 2, 16, false));
 
+            // Typed outputs: unary, binary and affine results written through the output's type a chunk at a time hold the
+            // float32 results written through the type.
+            foreach (var (label, run) in new (string, Action<Storage>)[]
+                     {
+                         ("exp", y => backend.Unary(UnaryOp.Exp, other.Storage, y, Count)),
+                         ("a sum", y => backend.Binary(BinaryOp.Add, other.Storage, plain.Storage, y, Count)),
+                         ("an affine map", y => backend.Affine(other.Storage, y, Count, 0.5f, 0.25f)),
+                     })
+            {
+                using var floatOut = Tensor.Zeros([Count], Device.Cpu);
+                run(floatOut.Storage);
+                var typedOut = Tensor.Stored(type, new float[Count], [Count], Device.Cpu);
+                run(typedOut.Storage);
+                var wanted = ThroughType(type, floatOut.ToArray());
+                var got = typedOut.ToArray();
+                int bad = Enumerable.Range(0, Count).FirstOrDefault(j => BitConverter.SingleToInt32Bits(wanted[j]) != BitConverter.SingleToInt32Bits(got[j]), -1);
+                Check(bad < 0, $"{name}: {label} into a typed output: element {bad} is {(bad < 0 ? 0 : got[bad])}, the float32 result written through the type {(bad < 0 ? 0 : wanted[bad])}");
+            }
+
             // The recurrent cells' typed projections and recurrent products (h = 16), and typed states written back through
             // their type (h = 256: rows of whole blocks of every type).
             var recurrent = Floats(2 * 64);
