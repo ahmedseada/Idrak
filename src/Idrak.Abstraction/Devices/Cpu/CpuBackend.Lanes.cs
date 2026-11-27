@@ -107,8 +107,17 @@ internal sealed partial class CpuBackend
     // The described lane's kind of lane (a lane id's low 4 bits: LaneOf).
     private const int DescribedLaneId = 11;
 
+    // The described lane's second kind, where its float32 lane reads 16-bit values (DescribedKernels.Decodes): the same
+    // lane with a group's stored rows made float32 once into the tile's scratch, which every four rows of x then read
+    // (each value the number the first kind makes in registers, the same multiply-adds in the same order: the same bits);
+    // the measured choice takes the faster at each shape.
+    private const int DecodedLaneId = 12;
+
     // The described lane's name in the recorded choices.
     private const string DescribedLaneName = "described lane (any type read from its description alone, its values decoded in registers inside the dot products)";
+
+    // Its second kind's (DecodedLaneId).
+    private const string DecodedLaneName = "described lane, a group's 16-bit rows made float32 once for four rows of x at a time";
 
     // ------------------------------------------------------------------ the instructions a lane is compiled for
 
@@ -159,18 +168,19 @@ internal sealed partial class CpuBackend
     private static bool NarrowOf(int lane) => (lane & NarrowLane) != 0;
 
     // A lane's name: its kind's, the instruction set where it is not the portable one, and a 128-bit twin's vectors.
-    private static string LaneName(int lane) => InstructionsOf(lane) switch
+    private static string LaneName(int lane) => (KindOf(lane) == DecodedLaneId ? DecodedLaneName : DescribedLaneName) + InstructionsOf(lane) switch
     {
-        Instructions.Avx2 => DescribedLaneName + " by AVX2 and FMA",
-        Instructions.Vnni => DescribedLaneName + " by AVX-VNNI",
-        Instructions.Neon => DescribedLaneName + " by NEON",
-        Instructions.DotProd => DescribedLaneName + " by Arm's dot products (DotProd)",
-        Instructions.DotProdWide => DescribedLaneName + " by Arm's dot products, two a step for codes past 127 (DotProd)",
-        _ => DescribedLaneName,
+        Instructions.Avx2 => " by AVX2 and FMA",
+        Instructions.Vnni => " by AVX-VNNI",
+        Instructions.Neon => " by NEON",
+        Instructions.DotProd => " by Arm's dot products (DotProd)",
+        Instructions.DotProdWide => " by Arm's dot products, two a step for codes past 127 (DotProd)",
+        _ => "",
     } + (NarrowOf(lane) ? ", four rows of x at a time on 128-bit vectors" : "");
 
-    // A lane's short name in a measurement's times (its kind's first word, its instruction set's, and /128 for a 128-bit twin).
-    private static string LaneShortName(int lane) => DescribedLaneName.Split(' ')[0] + InstructionsOf(lane) switch
+    // A lane's short name in a measurement's times (its kind's first word, "decoded" for the second kind, its instruction
+    // set's, and /128 for a 128-bit twin).
+    private static string LaneShortName(int lane) => (KindOf(lane) == DecodedLaneId ? "decoded" : DescribedLaneName.Split(' ')[0]) + InstructionsOf(lane) switch
     {
         Instructions.Avx2 => "/avx2",
         Instructions.Vnni => "/avx-vnni",
@@ -273,7 +283,7 @@ internal sealed partial class CpuBackend
             var wide = default(LaneList);
             for (int i = 0; i < Count; i++)
             {
-                if (!NarrowOf(this[i]))
+                if (!NarrowOf(this[i]) && KindOf(this[i]) != DecodedLaneId)
                 {
                     wide = wide.With(this[i]);
                 }
@@ -1701,8 +1711,8 @@ internal sealed partial class CpuBackend
         /// <summary>x as <paramref name="lane"/> reads it: x itself, or what the lane makes of it first (pooled; LaneInput.Release).</summary>
         LaneInput Prepare(int lane, float[] x, int m, int k);
 
-        /// <summary>The floats and bytes of scratch a tile's kernels take, for a group of <paramref name="group"/> stored rows (0: rows read alone).</summary>
-        (int Floats, int Bytes) Scratch(int k, int group);
+        /// <summary>The floats and bytes of scratch a tile's kernels of <paramref name="lane"/> take, for a group of <paramref name="group"/> stored rows (0: rows read alone).</summary>
+        (int Floats, int Bytes) Scratch(int lane, int k, int group);
 
         /// <summary>The kernels of <paramref name="lane"/> (its kind, by its instructions) for a tile: x and the scratch (its bytes cleared) pinned.</summary>
         TKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes);
@@ -1862,12 +1872,19 @@ internal sealed partial class CpuBackend
     }
 
     // A shape's key in the machine's kept choices: the description's fingerprint (from its fields alone), the vector paths
-    // allowed, the rows' class, n and k.
+    // allowed, the rows' class, n and k; and, where the candidates hold the lane's second kind (DecodedLaneId), its name, so
+    // a choice kept from among the first kind's lanes alone is measured again with it.
     private static string LaneFileKey<TC>(in TC product, int m, int n, int k) where TC : struct, ILaneChoice
     {
         var (vectors, rows, _, _) = ShapeOf(m, n, k);
+        bool second = false;
+        for (int c = 0; c < product.Count; c++)
+        {
+            second |= KindOf(product.Candidate(c)) == DecodedLaneId;
+        }
+
         return string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"described {product.Description.CpuFingerprint} {rows}x{k}->{n} {vectors}");
+            $"described {product.Description.CpuFingerprint} {rows}x{k}->{n} {vectors}{(second ? " decoded" : "")}");
     }
 
     // A description's fingerprint: SHA-256 of its fields as text (each list's items, never a type's name), 16 hex digits.
@@ -2222,7 +2239,7 @@ internal sealed partial class CpuBackend
     {
         var lane = part.Lane;
         nint rowBytes = (nint)lane.RowBytes;
-        var (floats, bytes) = format.Scratch(k, i1 - i0 > 1 ? RowGroup(rowBytes, j1 - j0, format.GroupBytes) : 0);
+        var (floats, bytes) = format.Scratch(part.LaneId, k, i1 - i0 > 1 ? RowGroup(rowBytes, j1 - j0, format.GroupBytes) : 0);
         float[]? floatArray = floats > 0 ? ArrayPool<float>.Shared.Rent(floats) : null;
         byte[]? byteArray = bytes > 0 ? ArrayPool<byte>.Shared.Rent(bytes) : null;
         try
@@ -4884,7 +4901,7 @@ internal sealed partial class CpuBackend
         // a byte plane each (DescribedPlan.PairsFit).
         public LaneList Lanes => plan.Mode == DescribedMode.Integer
             ? default(LaneList).WithKind(DescribedLaneId, dots: true, pairs: plan.P == 1 && plan.PairsFit)
-            : default(LaneList).WithKind(DescribedLaneId);
+            : DescribedKernels.Decodes(plan) ? default(LaneList).WithKind(DescribedLaneId).WithKind(DecodedLaneId) : default(LaneList).WithKind(DescribedLaneId);
 
         public int First => DescribedLaneId;
 
@@ -4970,14 +4987,18 @@ internal sealed partial class CpuBackend
 
         // The integer lane's made steps of a group's rows, as floats (every byte written before it is read); a row's last
         // period where it is short of one, copied into zeros (its bytes cleared).
-        public (int Floats, int Bytes) Scratch(int k, int group) => plan.Mode switch
+        // The float32 lane's 16-bit values: a group's stored rows made float32 once (DescribedKernels.Group), which every
+        // four rows of x then read as float32.
+        public (int Floats, int Bytes) Scratch(int lane, int k, int group) => plan.Mode switch
         {
             DescribedMode.Integer => (group * plan.Groups(k) * plan.GroupStepBytes / sizeof(float), plan.PeriodBytes),
             DescribedMode.Single when plan.Wide == WideRead.Codes => (0, plan.PeriodBytes),
+            DescribedMode.Single when group > 0 && KindOf(lane) == DecodedLaneId => (group * k, 0),
             _ => (0, 0),
         };
 
-        public DescribedKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(plan, InstructionsOf(lane), NarrowOf(lane), k, x, (byte*)floats, bytes);
+        public DescribedKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) =>
+            new(plan, InstructionsOf(lane), NarrowOf(lane), KindOf(lane) == DecodedLaneId, k, x, (byte*)floats, bytes);
     }
 
     // The described lane as RowGroups' kernels, each call by the lane's instruction set. Integer: a group's stored rows made
@@ -4988,18 +5009,20 @@ internal sealed partial class CpuBackend
     {
         private readonly DescribedPlan plan;
         private readonly Instructions with;
-        private readonly bool narrow;
+        private readonly bool narrow, decoded;
         private readonly int k, groups, full, tailBytes, rowSteps, chunks;
         private readonly nint xRow, lRow;
         private readonly float* x, lanes;
         private readonly sbyte* xq;
         private readonly byte* steps, tail;
 
-        public DescribedKernels(DescribedPlan plan, Instructions with, bool narrow, int k, LanePointers input, byte* steps, byte* tail)
+        // `decodedKind`: the second kind (DecodedLaneId), a group's 16-bit rows made float32 once where its scratch is given.
+        public DescribedKernels(DescribedPlan plan, Instructions with, bool narrow, bool decodedKind, int k, LanePointers input, byte* steps, byte* tail)
         {
             this.plan = plan;
             this.with = with;
             this.narrow = narrow;
+            decoded = steps != null && decodedKind && Decodes(plan);
             this.k = k;
             this.steps = steps;
             this.tail = tail;
@@ -5028,8 +5051,23 @@ internal sealed partial class CpuBackend
             }
         }
 
+        /// <summary>Whether the float32 lane makes a group's stored values float32 once for four rows of x and more (16-bit values: made, not loaded).</summary>
+        public static bool Decodes(DescribedPlan plan) => plan.Mode == DescribedMode.Single && plan.Wide is WideRead.Half or WideRead.Short;
+
         public void Group(byte* stored, nint rowBytes, int c0, int count)
         {
+            if (decoded)
+            {
+                // Each stored row's values made float32 into the scratch, a row of k after another (as each four rows of x
+                // would make them: the same numbers).
+                for (int c = 0; c < count; c++)
+                {
+                    DecodeSingleRow(plan, stored + (c0 + c) * rowBytes, (float*)steps + (nint)c * k, k);
+                }
+
+                return;
+            }
+
             if (plan.Mode != DescribedMode.Integer)
             {
                 return;
@@ -5120,6 +5158,14 @@ internal sealed partial class CpuBackend
                         }
 
                         DescribedCodesFour<TI>(plan, row, tail, full, groups, chunks, x + i * xRow, xRow, out y0, out y1, out y2, out y3);
+                        return;
+                    }
+
+                    if (decoded)
+                    {
+                        // The group's row made float32 (Group): read as float32, its offset already added.
+                        SingleFourBy<SingleRead, TI>(new SingleRead(), 4, 0f, narrow, (byte*)((float*)steps + (nint)c * k + p0), x + (nint)i * k + p0, k, p1 - p0,
+                            out y0, out y1, out y2, out y3);
                         return;
                     }
 
@@ -6876,6 +6922,62 @@ internal sealed partial class CpuBackend
         }
 
         SingleFour<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+    }
+
+    // A stored row's k values of 2 bytes made float32 into `into` as the float32 lane reads them (DescribedSingleFour's
+    // readers, the code offset added): 8 at a time, the rest one at a time. By the portable instructions (moves, shifts and
+    // conversions: the same numbers by any set).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DecodeSingleRow(DescribedPlan plan, byte* row, float* into, int k)
+    {
+        float offset = (float)plan.D.CodeOffset;
+        switch (plan.Wide)
+        {
+            case WideRead.Half when plan.Half16 is { Shift: 16, Times: 1f, Special: 0, SignShift: 16 }:
+                DecodeRowBy(new HighHalfRead(), offset, row, into, k);
+                break;
+            case WideRead.Half:
+                DecodeRowBy(new HalfRead(plan.Half16), offset, row, into, k);
+                break;
+            default:
+                DecodeRowBy(new ShortRead(plan.D.Code.Signed), offset, row, into, k);
+                break;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DecodeRowBy<TR>(TR read, float offset, byte* row, float* into, int k) where TR : struct, ISingleRead
+    {
+        if (offset != 0f)
+        {
+            DecodeRowOf(new SingleOffset<TR>(read, offset), row, into, k);
+            return;
+        }
+
+        DecodeRowOf(read, row, into, k);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DecodeRowOf<TR>(TR read, byte* row, float* into, int k) where TR : struct, ISingleRead
+    {
+        int p = 0;
+        if (!Vector256.IsHardwareAccelerated)
+        {
+            for (; p + 4 <= k; p += 4)
+            {
+                read.Four<PortableInstructions>(row + 2 * (nint)p).Store(into + p);
+            }
+        }
+
+        for (; p + 8 <= k; p += 8)
+        {
+            read.Eight<PortableInstructions>(row + 2 * (nint)p).Store(into + p);
+        }
+
+        for (; p < k; p++)
+        {
+            into[p] = read.One(row + 2 * (nint)p);
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
