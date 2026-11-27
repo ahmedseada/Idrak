@@ -108,7 +108,7 @@ public sealed partial class Tensor : IDisposable
         }
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = ResultFor(_shape, Device, this);                       // float64 where the values need it
+        var y = MoveResult(_shape, _layout!);                            // its own type where its bytes move exactly
         var layout = _layout;
         Backend.StridedCopy(_storage, layout.Offset, layout.Shape, layout.Strides, y.Storage);
         TensorViews.CountScratch((long)Size * sizeof(float));
@@ -1124,10 +1124,37 @@ public sealed partial class Tensor : IDisposable
         return Grad.Storage;
     }
 
-    // A block for a view's elements copied from `source`: float64 where the source's values need it (never narrowed),
-    // float32 otherwise.
-    private Storage ViewValues(Storage source) =>
-        source.Typed && Devices.Cpu.CpuBackend.WideValues(source.Type) ? Backend.Allocate(Types.F64.Type, Size, zeroed: false) : Backend.Allocate(Size, zeroed: false);
+    // The result of a move of this tensor's elements through `layout` (a copy, a permutation): this tensor's own type where
+    // the move copies its stored bytes exactly, else ResultFor's.
+    internal Tensor MoveResult(ReadOnlySpan<int> shape, TensorLayout layout)
+    {
+        if (_storage.Typed && !Devices.Cpu.CpuBackend.NativeFloats(_storage)
+            && Devices.Cpu.CpuBackend.CopiesAsStored(_storage.Type, layout.Offset, layout.Shape, layout.Strides))
+        {
+            return new Tensor(shape.ToArray(), Backend.Allocate(_storage.Type, ElementCount(shape), zeroed: false), Device, track: true);
+        }
+
+        return ResultFor(shape, Device, this);
+    }
+
+    // A block for this view's elements copied from `source`: the source's own type where the view copies as its stored
+    // bytes (one value a block, or a run from a block's first value: nothing widened or rounded), else float64 where the
+    // values need it (never narrowed), else float32.
+    private Storage ViewValues(Storage source)
+    {
+        if (!source.Typed || Devices.Cpu.CpuBackend.NativeFloats(source))
+        {
+            return Backend.Allocate(Size, zeroed: false);
+        }
+
+        var layout = _layout!;
+        if (Devices.Cpu.CpuBackend.CopiesAsStored(source.Type, layout.Offset, layout.Shape, layout.Strides))
+        {
+            return Backend.Allocate(source.Type, Size, zeroed: false);
+        }
+
+        return Devices.Cpu.CpuBackend.WideValues(source.Type) ? Backend.Allocate(Types.F64.Type, Size, zeroed: false) : Backend.Allocate(Size, zeroed: false);
+    }
 
     // A gradient buffer of this tensor's shape outside any scope, in its values' compute type: float64 where its values
     // need float64 (a float64 or int64 tensor's gradient is never rounded to float32), float32 otherwise.

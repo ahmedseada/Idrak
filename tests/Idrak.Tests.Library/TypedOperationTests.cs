@@ -290,6 +290,47 @@ internal abstract partial class Tests
         Same("the product's right gradient", b.Grad!, [big + 2, big + 2, 1 + mid, 1 + mid]);
     }
 
+    internal static void TypedViewsKeepTheirType(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        const int Rows = 12, Cols = 256;
+        foreach (var type in TypedWritable(wide: false).Concat(TypedWritable(wide: true)))
+        {
+            using var scope = new TensorScope();
+            var values = new float[Rows * Cols];
+            var random = new Random(23);
+            for (int i = 0; i < values.Length; i++)
+            {
+                values[i] = random.NextSingle() * 4f - 2f;
+            }
+
+            var typed = Tensor.Stored(type, values, [Rows, Cols], Device.Cpu);
+            var plain = Tensor.From(typed.ToArray(), [Rows, Cols], Device.Cpu);
+            bool perValue = type.Description.UnitValues == 1;
+            // One value a block: a transpose; any type: rows of whole blocks (a narrow of the first dimension).
+            var (view, plainView, what) = perValue
+                ? (typed.Transpose(0, 1), plain.Transpose(0, 1), "a transpose")
+                : (typed.Narrow(0, 2, 5), plain.Narrow(0, 2, 5), "rows of whole blocks");
+            var copy = view.Contiguous();
+            var wanted = plainView.Contiguous().ToArray();
+            Check(copy.Type.Description == type.Description && copy.ToArray().Select(BitConverter.SingleToInt32Bits).SequenceEqual(wanted.Select(BitConverter.SingleToInt32Bits)),
+                $"{type.Name}: {what} copied keeps its type ({copy.Type.Name}) and its values");
+            if (CpuBackend.WideValues(type))
+            {
+                continue;                                                   // computed in float64: not its float32 values' bits
+            }
+
+            var exp = view.Exp().ToArray();
+            var expPlain = plainView.Exp().ToArray();
+            Check(exp.Select(BitConverter.SingleToInt32Bits).SequenceEqual(expPlain.Select(BitConverter.SingleToInt32Bits)),
+                $"{type.Name}: exp of {what} gives its float32 values' bits");
+        }
+    }
+
     internal static void WideResultsStayWide(Device device)
     {
         if (device.Type != DeviceType.Cpu)

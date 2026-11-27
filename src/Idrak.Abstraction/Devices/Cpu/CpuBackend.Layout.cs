@@ -20,6 +20,12 @@ internal sealed unsafe partial class CpuBackend
                 strides[d] = inStrides[d];
             }
 
+            if (!accumulate && x.Typed && y.Typed && x.Type.Description == y.Type.Description)
+            {
+                StridedStored(x, 0, outShape, strides[..inStrides.Length], y, "Permute");      // kept in its own type
+                return;
+            }
+
             if (Wide(x, y))
             {
                 StridedWide(x, 0, outShape, strides[..inStrides.Length], y, accumulate, "Permute");
@@ -65,8 +71,93 @@ internal sealed unsafe partial class CpuBackend
         }
     }
 
+    // Whether a view of `type` (shape, strides, offset) copies into a contiguous storage of the same type exactly, as its
+    // stored bytes: one value a block (each value's bytes moved), or the view a contiguous run from a block's first value.
+    internal static bool CopiesAsStored(IElementType type, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides)
+    {
+        long unit = Math.Max(1, type.Description.UnitValues);
+        return unit == 1 || offset % unit == 0 && Dense(shape, strides);
+    }
+
+    // Whether strides are the row-major ones of shape (dimensions of 1 left out).
+    private static bool Dense(ReadOnlySpan<int> shape, ReadOnlySpan<long> strides)
+    {
+        long step = 1;
+        for (int d = shape.Length - 1; d >= 0; d--)
+        {
+            if (shape[d] == 1)
+            {
+                continue;
+            }
+
+            if (strides[d] != step)
+            {
+                return false;
+            }
+
+            step *= shape[d];
+        }
+
+        return true;
+    }
+
+    // A view copied into a storage of its own type as the stored bytes (CopiesAsStored): each value's bytes moved in the
+    // output's row-major order, or the run's bytes at once; nothing read or rounded.
+    private static void StridedStored(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y, string operation)
+    {
+        var type = x.Type;
+        if (!CopiesAsStored(type, offset, shape, strides))
+        {
+            throw new NotSupportedException($"The CPU's {operation} copies {type.Name} as its stored bytes one value a block, or a run from a block's first value: this view is neither.");
+        }
+
+        long total = 1;
+        foreach (int d in shape)
+        {
+            total *= d;
+        }
+
+        fixed (float* wx = D(x), wy = D(y))
+        {
+            byte* from = (byte*)wx, to = (byte*)wy;
+            long unit = Math.Max(1, type.Description.UnitValues);
+            if (unit > 1 || Dense(shape, strides))
+            {
+                long bytes = type.ByteCount(total);
+                Buffer.MemoryCopy(from + type.ByteCount(offset), to, bytes, bytes);
+                return;
+            }
+
+            int size = type.Description.UnitBytes, rank = shape.Length;
+            Span<int> index = stackalloc int[Math.Max(1, rank)];
+            index.Clear();
+            long at = offset;
+            for (long o = 0; o < total; o++)
+            {
+                Buffer.MemoryCopy(from + at * size, to + o * size, size, size);
+                for (int d = rank - 1; d >= 0; d--)
+                {
+                    at += strides[d];
+                    if (++index[d] < shape[d])
+                    {
+                        break;
+                    }
+
+                    at -= strides[d] * shape[d];
+                    index[d] = 0;
+                }
+            }
+        }
+    }
+
     public override void StridedCopyKernel(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y)
     {
+        if (x.Typed && y.Typed && !NativeFloats(x) && x.Type.Description == y.Type.Description)
+        {
+            StridedStored(x, offset, shape, strides, y, "StridedCopy");          // a view kept in its own type
+            return;
+        }
+
         if (Wide(x, y))
         {
             StridedWide(x, offset, shape, strides, y, accumulate: false, "StridedCopy");
