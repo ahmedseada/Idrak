@@ -7733,35 +7733,33 @@ internal sealed partial class CpuBackend
     }
 
     // DescribedCodesFour on 128-bit vectors (its 128-bit twin): each group's scales and minimums and each span's codes made
-    // once for the four rows (by the plan's Factor and Raw, compiled on their own: CodesFactors, CodesRaw), then each 4 codes'
-    // numbers read from the table as a half, times their chunk's scale less its minimum (the lanes the 256-bit kernel
-    // broadcasts), each sum a register a half.
+    // in registers once for the four rows (the plan's Factor and Raw, as the 256-bit kernel makes them), then each 8 codes'
+    // numbers gathered from the table and taken as two halves, times their chunk's scale less its minimum (the lane the
+    // 256-bit kernel broadcasts, its lower half), each sum a register a half.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static unsafe void DescribedCodesFour128<TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, float* x, nint stride,
         out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
     {
         int gpp = plan.GroupsPerPeriod, spans = plan.GroupValues / 32, c = plan.C;
         float* table = plan.CodeValues;
-        float* factors = stackalloc float[16];
-        byte* codes = stackalloc byte[32];
         nint s2 = 2 * stride, s3 = 3 * stride;
         Vector128<float> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
         for (int g = 0; g < groups; g++)
         {
             int period = g / gpp, gp = g - period * gpp;
             byte* at = period < full ? row + (nint)period * plan.PeriodBytes : tail;
-            CodesFactors<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), factors);
+            plan.Factor<TI>(at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
             for (int s = 0; s < spans; s++)
             {
-                CodesRaw<TI>(plan, at, gp * spans + s, codes);
+                var codes = plan.Raw<TI>(at, gp * spans + s);
                 for (int e = 0; e < 4; e++)
                 {
                     int lane = (32 * s + 8 * e) / c;
-                    var d = Vector128.Create(factors[lane]);
-                    var m = Vector128.Create(factors[8 + lane]);
-                    byte* ce = codes + 8 * e;
-                    var wl = TI.Fused(Vector128.Create(table[ce[0]], table[ce[1]], table[ce[2]], table[ce[3]]), d, m);
-                    var wu = TI.Fused(Vector128.Create(table[ce[4]], table[ce[5]], table[ce[6]], table[ce[7]]), d, m);
+                    var d = TI.Broadcast(scale, lane).GetLower();
+                    var m = TI.Broadcast(min, lane).GetLower();
+                    var g8 = TI.Gather(table, TI.Widen(EightAt(codes, e), false));
+                    var wl = TI.Fused(g8.GetLower(), d, m);
+                    var wu = TI.Fused(g8.GetUpper(), d, m);
                     float* xp = x + (nint)g * plan.GroupValues + 32 * s + 8 * e;
                     a0l = TI.Fused(wl, Vector128.Load(xp), a0l);
                     a0u = TI.Fused(wu, Vector128.Load(xp + 4), a0u);
@@ -7780,19 +7778,6 @@ internal sealed partial class CpuBackend
         y2 = SumOf(a2l, a2u);
         y3 = SumOf(a3l, a3u);
     }
-
-    // A group's scales (at `into`) and minimums (at `into` + 8) as DescribedPlan.Factor reads them, compiled on its own.
-    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void CodesFactors<TI>(DescribedPlan plan, byte* at, int gp, int valid, float* into) where TI : struct, IInstructions
-    {
-        plan.Factor<TI>(at, gp, valid, out var scale, out var min);
-        scale.Store(into);
-        min.Store(into + 8);
-    }
-
-    // A span's 32 codes as DescribedPlan.Raw makes them, into `into`, compiled on its own.
-    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void CodesRaw<TI>(DescribedPlan plan, byte* at, int span, byte* into) where TI : struct, IInstructions => plan.Raw<TI>(at, span).Store(into);
 
     // DescribedCodesFour for one row of x.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
