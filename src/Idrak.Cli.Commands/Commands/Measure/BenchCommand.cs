@@ -44,6 +44,7 @@ internal sealed class BenchCommand : Command
         "      --num-ctx N       with a model: the context window a generation may use (default the prompt and the\n" +
         "                        tokens); a long one (32768) shows what its key/value caches hold: they grow on demand\n" +
         "                        (IDRAK_KV_GROW=0 reserves the whole window, as before), see the memory peak\n" +
+        ModelChoices.WeightsHelp + "\n" +
         "      --kernels LIST    without a model: matmul,attention (default all)\n" +
         "      --small           without a model: small shapes (slow devices, quick checks)\n" +
         "  -n, --repeat N        runs per measurement (default 3 with a model, 10 for kernels); the median is kept\n" +
@@ -74,7 +75,7 @@ internal sealed class BenchCommand : Command
         "  idrak b big-model --draft small-model -d cuda:0";
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. ModelChoices.ValueOptions, "--prompt-tokens", "--tokens", "--num-ctx", "--kernels", "--repeat", "--save", "--compare", "--devices", "--draft", "--draft-tokens", .. WarmupOptions];
+        [.. ModelChoices.ValueOptions, ModelChoices.WeightsOption, "--prompt-tokens", "--tokens", "--num-ctx", "--kernels", "--repeat", "--save", "--compare", "--devices", "--draft", "--draft-tokens", .. WarmupOptions];
 
     // The kernel benchmarks' warm-up options (BenchSettle).
     private static readonly string[] WarmupOptions = ["--warmup", "--warmup-calls", "--settle", "--settle-rounds", "--warmup-round"];
@@ -82,7 +83,7 @@ internal sealed class BenchCommand : Command
     public override IReadOnlyCollection<string> Flags => ["--small"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string>(ModelChoices.ShortForms) { ["-n"] = "--repeat" };
+        new Dictionary<string, string>(ModelChoices.ShortForms) { ["-n"] = "--repeat", ["-w"] = ModelChoices.WeightsOption };
 
     /// <summary>One benchmark run: a device.</summary>
     private sealed record BenchRun(Device Device)

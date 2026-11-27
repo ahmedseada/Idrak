@@ -27,15 +27,16 @@ internal sealed class PerplexityCommand : Command
         "the first of a window is scored. Lower is better; compare runs on the same text and window.\n\n" +
         "Options:\n" +
         "      --context N       the model's context length; --adapter DIR: merge an adapter first\n" +
+        ModelChoices.WeightsHelp + "\n" +
         "      --window N        tokens per window (default the context, at most 1024)\n" +
         "      --max-tokens N    score only the first N tokens of the text\n\n" +
         "Examples:\n" +
         "  idrak score org/model wiki.txt\n" +
         "  idrak score org/model wiki.txt -j";
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions.Where(o => o != "--kv"), "--window", "--max-tokens"];   // scored without a KV cache
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions.Where(o => o != "--kv"), ModelChoices.WeightsOption, "--window", "--max-tokens"];   // scored without a KV cache
 
-    public override IReadOnlyDictionary<string, string> ShortForms { get; } = ModelChoices.ShortForms.Where(p => p.Key != "-k").ToDictionary();
+    public override IReadOnlyDictionary<string, string> ShortForms { get; } = ModelChoices.ShortForms.Where(p => p.Key != "-k").Append(KeyValuePair.Create("-w", ModelChoices.WeightsOption)).ToDictionary();
 
     public override int Run(CommandContext context)
     {
