@@ -460,10 +460,10 @@ internal sealed partial class CpuBackend
             // 255 · 128), each 32-bit lane's two of each added as 32-bit integers.
             var c = codes.AsInt16();
             var v = x.AsInt16();
-            var even = ((c & Vector256.Create((short)0xFF)) * Vector256.ShiftRightArithmetic(Vector256.ShiftLeft(v, 8), 8)).AsInt32();
-            var odd = (Vector256.ShiftRightLogical(c, 8) * Vector256.ShiftRightArithmetic(v, 8)).AsInt32();
-            return sum + (Vector256.ShiftRightArithmetic(Vector256.ShiftLeft(even, 16), 16) + Vector256.ShiftRightArithmetic(even, 16))
-                + (Vector256.ShiftRightArithmetic(Vector256.ShiftLeft(odd, 16), 16) + Vector256.ShiftRightArithmetic(odd, 16));
+            var even = ((c & Vector256.Create((short)0xFF)) * ((v << 8) >> 8)).AsInt32();
+            var odd = ((c >>> 8) * (v >> 8)).AsInt32();
+            return sum + (((even << 16) >> 16) + (even >> 16))
+                + (((odd << 16) >> 16) + (odd >> 16));
         }
 
         // Dot over 128 bits (a half of a 256-bit lane set where those are not accelerated, and the 128-bit twins': the same
@@ -557,32 +557,32 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<uint> ShiftRight(Vector256<uint> v, Vector256<uint> counts)
         {
-            v = Vector256.ConditionalSelect(Bit(counts, 1), Vector256.ShiftRightLogical(v, 1), v);
-            v = Vector256.ConditionalSelect(Bit(counts, 2), Vector256.ShiftRightLogical(v, 2), v);
-            v = Vector256.ConditionalSelect(Bit(counts, 4), Vector256.ShiftRightLogical(v, 4), v);
-            v = Vector256.ConditionalSelect(Bit(counts, 8), Vector256.ShiftRightLogical(v, 8), v);
-            return Vector256.ConditionalSelect(Bit(counts, 16), Vector256.ShiftRightLogical(v, 16), v);
+            v = Vector256.ConditionalSelect(Bit(counts, 1), v >>> 1, v);
+            v = Vector256.ConditionalSelect(Bit(counts, 2), v >>> 2, v);
+            v = Vector256.ConditionalSelect(Bit(counts, 4), v >>> 4, v);
+            v = Vector256.ConditionalSelect(Bit(counts, 8), v >>> 8, v);
+            return Vector256.ConditionalSelect(Bit(counts, 16), v >>> 16, v);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<uint> ShiftLeft(Vector256<uint> v, Vector256<uint> counts)
         {
-            v = Vector256.ConditionalSelect(Bit(counts, 1), Vector256.ShiftLeft(v, 1), v);
-            v = Vector256.ConditionalSelect(Bit(counts, 2), Vector256.ShiftLeft(v, 2), v);
-            v = Vector256.ConditionalSelect(Bit(counts, 4), Vector256.ShiftLeft(v, 4), v);
-            v = Vector256.ConditionalSelect(Bit(counts, 8), Vector256.ShiftLeft(v, 8), v);
-            return Vector256.ConditionalSelect(Bit(counts, 16), Vector256.ShiftLeft(v, 16), v);
+            v = Vector256.ConditionalSelect(Bit(counts, 1), v << 1, v);
+            v = Vector256.ConditionalSelect(Bit(counts, 2), v << 2, v);
+            v = Vector256.ConditionalSelect(Bit(counts, 4), v << 4, v);
+            v = Vector256.ConditionalSelect(Bit(counts, 8), v << 8, v);
+            return Vector256.ConditionalSelect(Bit(counts, 16), v << 16, v);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<ulong> ShiftRight(Vector256<ulong> v, Vector256<ulong> counts)
         {
-            v = Vector256.ConditionalSelect(Bit(counts, 1), Vector256.ShiftRightLogical(v, 1), v);
-            v = Vector256.ConditionalSelect(Bit(counts, 2), Vector256.ShiftRightLogical(v, 2), v);
-            v = Vector256.ConditionalSelect(Bit(counts, 4), Vector256.ShiftRightLogical(v, 4), v);
-            v = Vector256.ConditionalSelect(Bit(counts, 8), Vector256.ShiftRightLogical(v, 8), v);
-            v = Vector256.ConditionalSelect(Bit(counts, 16), Vector256.ShiftRightLogical(v, 16), v);
-            return Vector256.ConditionalSelect(Bit(counts, 32), Vector256.ShiftRightLogical(v, 32), v);
+            v = Vector256.ConditionalSelect(Bit(counts, 1), v >>> 1, v);
+            v = Vector256.ConditionalSelect(Bit(counts, 2), v >>> 2, v);
+            v = Vector256.ConditionalSelect(Bit(counts, 4), v >>> 4, v);
+            v = Vector256.ConditionalSelect(Bit(counts, 8), v >>> 8, v);
+            v = Vector256.ConditionalSelect(Bit(counts, 16), v >>> 16, v);
+            return Vector256.ConditionalSelect(Bit(counts, 32), v >>> 32, v);
         }
 
         // All bits set in the lanes whose count has `bit` set.
@@ -715,8 +715,8 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<uint> Pairs(Vector256<uint> word, int first)
         {
-            var w = first == 0 ? word : Vector256.ShiftRightLogical(word, first);
-            return Vector256.ShiftRightLogical(w * Vector256.Create(1u << 29, 1u << 27, 1u << 25, 1u << 23, 1u << 21, 1u << 19, 1u << 17, 1u << 15), 29);
+            var w = first == 0 ? word : word >>> first;
+            return (w * Vector256.Create(1u << 29, 1u << 27, 1u << 25, 1u << 23, 1u << 21, 1u << 19, 1u << 17, 1u << 15)) >>> 29;
         }
 
         public static bool ShiftsByLane => false;
@@ -2666,7 +2666,7 @@ internal sealed partial class CpuBackend
         public Vector256<int> TopLanes { get; private set; }
 
         /// <summary>One scale of one piece and no bias or minimums, read as a 16-bit float by its bits (1) or through its table (2); else 0.</summary>
-        private int OneScale => oneScale;
+        internal int OneScale => oneScale;
 
         private int oneScale;
 
@@ -5104,9 +5104,6 @@ internal sealed partial class CpuBackend
         private int* vectorDwords;
         private byte* vectorFromBits;
 
-        // Byte 0 of each dword to its 4 bytes (within each 128-bit half, as the byte shuffles take it).
-        private static readonly Vector256<byte> LowBytes = Vector256.Create((byte)0, 0, 0, 0, 4, 4, 4, 4, 8, 8, 8, 8, 12, 12, 12, 12, 0, 0, 0, 0, 4, 4, 4, 4, 8, 8, 8, 8, 12, 12, 12, 12);
-
         // The gathered steps' dword vectors: each group's (from groupWordStart[gp], 8 offsets each in wordOffsets), and per
         // step and plane (and vector factor) the one it reads; the most a group gathers.
         private int* groupWordStart;
@@ -5265,7 +5262,10 @@ internal sealed partial class CpuBackend
                     // byte copied to its 4 bytes, each byte's own bit tested.
                     var bits = TI.ShiftRight(index, Vector256.ShiftLeft(vectorWithin[i], 2).AsUInt32()).AsByte();
                     var one = Vector256.Create(0x08040201u).AsByte();
-                    m = Vector256.Equals(TI.ShuffleBytes(bits, LowBytes) & one, one);
+                    // (Byte 0 of each dword to its 4 bytes, within each 128-bit half: a constant to the JIT, where a static
+                    // field read by a kernel compiled before the plan's class is made costs a call and the spills around it.)
+                    var lowBytes = Vector256.Create((byte)0, 0, 0, 0, 4, 4, 4, 4, 8, 8, 8, 8, 12, 12, 12, 12, 0, 0, 0, 0, 4, 4, 4, 4, 8, 8, 8, 8, 12, 12, 12, 12);
+                    m = Vector256.Equals(TI.ShuffleBytes(bits, lowBytes) & one, one);
                 }
                 else
                 {
@@ -5474,13 +5474,7 @@ internal sealed partial class CpuBackend
         {
             if (OneScale != 0)
             {
-                // One scale: its field gathered and read with the unit folded in (a 16-bit float's constants as vectors made
-                // once a plan, or a table of its numbers times the unit), no loop over factors.
-                var bits = fUniform[gp] != 0 ? Vector256.Create((int)(Unsafe.ReadUnaligned<uint>(period + fOffset[8 * gp]) >> fShiftOne[gp]))
-                    : Shifted<TI>(TI.Gather(period, fOffset + 8 * gp), gp);
-                var one = OneScale == 1 ? oneHalf.Of(bits) : TI.Gather(oneTable, bits & fMask[gp]);
-                scale = valid < 8 ? one & GroupMask(valid).AsSingle() : one;
-                min = default;
+                OneScaleFactor<TI>(period, gp, valid, out scale, out min);
                 return;
             }
 
@@ -5514,6 +5508,21 @@ internal sealed partial class CpuBackend
 
             scale = s;
             min = mn;
+        }
+
+        /// <summary>
+        /// Factor's one scale (OneScale): its field gathered and read with the unit folded in (a 16-bit float's constants as
+        /// vectors made once a plan, or a table of its numbers times the unit), no loop over factors; the kernels of a plan
+        /// with one scale take it alone (CpuBackend.OneScaleRead), so no code of the loop is theirs.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public void OneScaleFactor<TI>(byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min) where TI : struct, IInstructions
+        {
+            var bits = fUniform[gp] != 0 ? Vector256.Create((int)(Unsafe.ReadUnaligned<uint>(period + fOffset[8 * gp]) >> fShiftOne[gp]))
+                : Shifted<TI>(TI.Gather(period, fOffset + 8 * gp), gp);
+            var one = OneScale == 1 ? oneHalf.Of(bits) : TI.Gather(oneTable, bits & fMask[gp]);
+            scale = valid < 8 ? one & GroupMask(valid).AsSingle() : one;
+            min = default;
         }
 
         // Entry i's gathered dwords shifted right by its lanes' shifts (by one shift where every lane's is the same and the
@@ -6894,6 +6903,14 @@ internal sealed partial class CpuBackend
             plan.Factor<TI, TS>(period, gp, valid, out scale, out min);
     }
 
+    // A plan's one scale alone (DescribedPlan.OneScale: OneScaleFactor), no loop over factors in its kernels.
+    private readonly unsafe struct OneScaleRead : IFactors
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static void Read<TI>(DescribedPlan plan, byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min) where TI : struct, IInstructions =>
+            plan.OneScaleFactor<TI>(period, gp, valid, out scale, out min);
+    }
+
     private readonly unsafe struct SlotFactors<T0, T1, T2, T3> : IFactors
         where T0 : struct, DescribedPlan.IFactorSlot where T1 : struct, DescribedPlan.IFactorSlot where T2 : struct, DescribedPlan.IFactorSlot where T3 : struct, DescribedPlan.IFactorSlot
     {
@@ -6912,7 +6929,8 @@ internal sealed partial class CpuBackend
     // number's, the last handing the set to TU; the loop over the factors where the plan has no kinds. Made once a plan and
     // kernel (DescribedPlan.OneKernel, TileKernel), never a call.
     private static nint WithFactors<TU>(DescribedPlan plan) where TU : struct, IFactorsUse =>
-        plan.FactorKinds != 0 ? FactorsFirst<TU>(plan.FactorKinds) : plan.ReadsScalar ? TU.Use<FactorLoop<Yes>>() : TU.Use<FactorLoop<No>>();
+        plan.FactorKinds != 0 ? FactorsFirst<TU>(plan.FactorKinds) : plan.OneScale != 0 ? TU.Use<OneScaleRead>()
+            : plan.ReadsScalar ? TU.Use<FactorLoop<Yes>>() : TU.Use<FactorLoop<No>>();
 
     private static nint FactorsFirst<TU>(int k) where TU : struct, IFactorsUse => (k >> 4 & 15) switch
     {
