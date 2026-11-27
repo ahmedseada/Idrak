@@ -358,6 +358,9 @@ internal sealed partial class CpuBackend
         /// <summary>table[indices[l]] in lane l.</summary>
         static abstract Vector256<float> Gather(float* table, Vector256<int> indices);
 
+        /// <summary>The dword at <paramref name="at"/> + offsets[l] in lane l (the offsets in a register).</summary>
+        static abstract Vector256<int> Gather(byte* at, Vector256<int> offsets);
+
         /// <summary>
         /// Each 128-bit half's bytes picked by its own bytes of <paramref name="control"/> from its own 16 of
         /// <paramref name="bytes"/>: a control byte below 16 picks that byte, one with its top bit set gives 0 (none other
@@ -620,6 +623,12 @@ internal sealed partial class CpuBackend
             table[indices.GetElement(0)], table[indices.GetElement(1)], table[indices.GetElement(2)], table[indices.GetElement(3)],
             table[indices.GetElement(4)], table[indices.GetElement(5)], table[indices.GetElement(6)], table[indices.GetElement(7)]);
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Gather(byte* at, Vector256<int> offsets) => Vector256.Create(
+            Unsafe.ReadUnaligned<int>(at + offsets.GetElement(0)), Unsafe.ReadUnaligned<int>(at + offsets.GetElement(1)), Unsafe.ReadUnaligned<int>(at + offsets.GetElement(2)),
+            Unsafe.ReadUnaligned<int>(at + offsets.GetElement(3)), Unsafe.ReadUnaligned<int>(at + offsets.GetElement(4)), Unsafe.ReadUnaligned<int>(at + offsets.GetElement(5)),
+            Unsafe.ReadUnaligned<int>(at + offsets.GetElement(6)), Unsafe.ReadUnaligned<int>(at + offsets.GetElement(7)));
+
         // Each half by Vector128.Shuffle (a control byte past 15 gives 0, as the top bit's does on x86's byte shuffle).
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<byte> ShuffleBytes(Vector256<byte> bytes, Vector256<byte> control) =>
@@ -798,6 +807,9 @@ internal sealed partial class CpuBackend
         public static Vector256<float> Gather(float* table, Vector256<int> indices) => Avx2.GatherVector256(table, indices, 4);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Gather(byte* at, Vector256<int> offsets) => Avx2.GatherVector256((int*)at, offsets, 1);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<byte> ShuffleBytes(Vector256<byte> bytes, Vector256<byte> control) => Avx2.Shuffle(bytes, control);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -919,6 +931,9 @@ internal sealed partial class CpuBackend
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<float> Gather(float* table, Vector256<int> indices) => Avx2.GatherVector256(table, indices, 4);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Gather(byte* at, Vector256<int> offsets) => Avx2.GatherVector256((int*)at, offsets, 1);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<byte> ShuffleBytes(Vector256<byte> bytes, Vector256<byte> control) => Avx2.Shuffle(bytes, control);
@@ -1069,6 +1084,9 @@ internal sealed partial class CpuBackend
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<float> Gather(float* table, Vector256<int> indices) => PortableInstructions.Gather(table, indices);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Gather(byte* at, Vector256<int> offsets) => PortableInstructions.Gather(at, offsets);
 
         // TBL: a control byte past 15 gives 0, as the top bit's does on x86's byte shuffle.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1225,6 +1243,9 @@ internal sealed partial class CpuBackend
         public static Vector256<float> Gather(float* table, Vector256<int> indices) => NeonInstructions.Gather(table, indices);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Gather(byte* at, Vector256<int> offsets) => NeonInstructions.Gather(at, offsets);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<byte> ShuffleBytes(Vector256<byte> bytes, Vector256<byte> control) => NeonInstructions.ShuffleBytes(bytes, control);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1352,6 +1373,9 @@ internal sealed partial class CpuBackend
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<float> Gather(float* table, Vector256<int> indices) => DotProdInstructions.Gather(table, indices);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Gather(byte* at, Vector256<int> offsets) => DotProdInstructions.Gather(at, offsets);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<byte> ShuffleBytes(Vector256<byte> bytes, Vector256<byte> control) => DotProdInstructions.ShuffleBytes(bytes, control);
@@ -2020,6 +2044,15 @@ internal sealed partial class CpuBackend
     /// </summary>
     internal static (int Runs, int Windows, int Streams, int Codebook, int OneByOne)? DescribedSpans(TypeDescription description, int k) =>
         DescribedFormat.Reads(description, k, out var described) ? described.Spans() : null;
+
+    /// <summary>
+    /// The readings of <paramref name="description"/> its plan takes that no built-in type's takes (DescribedPlan.Fallbacks):
+    /// "one by one" (a span's codes a value at a time), "table" (codes through the 256-byte table), "codebook" (a codebook
+    /// the fast reading does not take), "scalar" (a scale or minimum a lane at a time); null where the described lane does
+    /// not read it. For tests.
+    /// </summary>
+    internal static IReadOnlyList<string>? DescribedFallbacks(TypeDescription description, int k) =>
+        DescribedFormat.Reads(description, k, out var described) ? described.Fallbacks() : null;
 
     // The product by one lane (FormatMany with one part).
     private static void FormatProduct<TF, TK>(TF format, int laneId, StoredLane lane, float[] x, float[] y, int m, int n, int k)
@@ -2773,8 +2806,7 @@ internal sealed partial class CpuBackend
 
         // Scales then minimums: count, scales' count, pieces at most; per factor its reading, bits, bias, pieces and table;
         // per group of the period, factor and piece, the lanes' offsets (as numbers, 8 an entry), shifts, masks and lefts
-        // (and the shift and the left where every lane's is the same, else −1); per group, factor and lane the block and
-        // index (one lane at a time).
+        // (and the shift and the left where every lane's is the same, else −1).
         private int factors, scaleFactors, pieces;
         private FactorRead[] reads = [];
         private int[] factorBits = [], factorPieces = [];
@@ -2792,7 +2824,17 @@ internal sealed partial class CpuBackend
         // own: a super-scale): then read once by scalar loads and broadcast, no gather; per piece its mask as a number.
         private byte* fUniform;
         private int* fMaskOne;
-        private int[] scalarBlock = [], scalarIndex = [];
+
+        // The factors read a lane at a time (FactorRead.Scalar: ReadOneByOne): per factor its number's reading
+        // (ScalarNumber); per group of the period, factor and lane its bits' pieces, scalarPieces an entry, each a byte of
+        // the period (from its first), a shift, a mask and the place its bits go (a piece past a lane's own has mask 0).
+        // Places and the description's numbers, made once.
+        private ScalarNumber* scalarNumbers;
+        private int scalarPieces;
+        private int* sOffset;
+        private int* sShift;
+        private int* sMask;
+        private int* sLeft;
 
         // The factors a chunk takes (the scales, then the minimums; a codebook's vector factors are not among them).
         private List<BlockScale> factorList = [];
@@ -3104,8 +3146,10 @@ internal sealed partial class CpuBackend
                 }
                 else
                 {
+                    // The codes' bytes, made once from the description (each code's number in units less the least, a byte
+                    // each): 3 bytes past the 256 so the dword Through reads at any code's lies within it.
                     Map = CodeMap.Table;
-                    byteTable = Pin<byte>(256);
+                    byteTable = Pin<byte>(256 + 3);
                     for (int i = 0; i < 256; i++)
                     {
                         byteTable[i] = unsigned[i % count];
@@ -3389,6 +3433,11 @@ internal sealed partial class CpuBackend
                     {
                         runKind[r * Planes + p] = windows ? WindowRuns : (byte)0;
                     }
+
+                    if (!windows)
+                    {
+                        OneValues(r);
+                    }
                 }
             }
 
@@ -3399,6 +3448,51 @@ internal sealed partial class CpuBackend
 
         // A span's run kind made from two windows of 16 bytes (Spans; Raw reads it by WindowLoad).
         private const byte WindowRuns = 17;
+
+        // A span read one value at a time (OneByOne): per value of the period and plane, the dword its field lies in (its first
+        // byte from the period's first, kept within the period) and the field's shift in it (a digit plane's: its byte's), and
+        // a digit's power of the radix; per plane its field's mask. Places, made once from the description.
+        private int* oneAt;
+        private byte* oneShift;
+        private int* onePower;
+        private uint* oneMask;
+
+        // Span r's values' places, one value at a time (Spans, where neither runs nor windows take the span): the place
+        // CodeBits reads each plane's field from.
+        private void OneValues(int r)
+        {
+            var d = D;
+            if (oneAt == null)
+            {
+                oneAt = Pin<int>(Period * Planes);
+                oneShift = Pin<byte>(Period * Planes);
+                onePower = Pin<int>(Period * Planes);
+                oneMask = Pin<uint>(Planes);
+                for (int p = 0; p < Planes; p++)
+                {
+                    oneMask[p] = (1u << d.Planes[p].Bits) - 1;
+                }
+            }
+
+            for (int t = 0; t < 32; t++)
+            {
+                int v = 32 * r + t;
+                for (int p = 0; p < Planes; p++)
+                {
+                    var plane = d.Planes[p];
+                    var (b, s) = plane.Place(v % d.Values);
+                    int at = v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b, kept = Math.Max(0, Math.Min(at, PeriodBytes - 4)), i = v * Planes + p;
+                    int power = 1;
+                    for (int e = 0; plane.Radix != 0 && e < s; e++)
+                    {
+                        power *= plane.Radix;
+                    }
+
+                    // (A field within the period lies within its kept dword: at most 8 bits from a bit below 8 of its byte.)
+                    (oneAt[i], oneShift[i], onePower[i]) = (kept, (byte)(8 * (at - kept) + (plane.Radix != 0 ? 0 : s)), power);
+                }
+            }
+        }
 
         /// <summary>The period's spans by how their codes are made: in runs, from two windows, as a stream, by a codebook's entries, one value at a time (tests).</summary>
         public (int Runs, int Windows, int Streams, int Codebook, int OneByOne) SpanKinds()
@@ -3432,6 +3526,37 @@ internal sealed partial class CpuBackend
             }
 
             return (runs, windows, streams, 0, one);
+        }
+
+        /// <summary>
+        /// The plan's readings no built-in type's takes (tests): "one by one" (a span's codes a value at a time: OneByOne),
+        /// "table" (codes through the 256-byte table: Through), "codebook" (a codebook the fast reading does not take:
+        /// CodebookAny), "scalar" (a scale or minimum a lane at a time: ReadOneByOne).
+        /// </summary>
+        public IReadOnlyList<string> Fallbacks()
+        {
+            var taken = new List<string>();
+            if (SpanKinds().OneByOne > 0)
+            {
+                taken.Add("one by one");
+            }
+
+            if (Map == CodeMap.Table)
+            {
+                taken.Add("table");
+            }
+
+            if (Map == CodeMap.Codebook && !codebookFast)
+            {
+                taken.Add("codebook");
+            }
+
+            if (reads.Contains(FactorRead.Scalar))
+            {
+                taken.Add("scalar");
+            }
+
+            return taken;
         }
 
         // Per span and plane: its two windows' first bytes (from the period's first), the byte shuffles taking each value's
@@ -3727,8 +3852,10 @@ internal sealed partial class CpuBackend
             return v + leastBytes;
         }
 
-        // Any codebook span's codes (entries of 1, 2, 4 or 8 values, vector factors of any group width and pieces).
-        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+        // Any codebook span's codes (entries of 1, 2, 4 or 8 values, vector factors of any group width and pieces), in registers:
+        // the entries' bytes 64-bit words (8 / w entries a word for entries of 1 or 2 values, each word put in its lane), the
+        // vector factors' masks applied, the least added back. Nothing is written.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         private Vector256<byte> CodebookAny(byte* period, int span)
         {
             int w = entryWidth, per = 32 / w, at = span * per;
@@ -3752,13 +3879,19 @@ internal sealed partial class CpuBackend
                         *(uint*)(entryBytes + 4 * Entry(period, at + 7))).AsByte();
                     break;
                 default:
-                    Span<byte> bytes = stackalloc byte[32];
-                    for (int j = 0; j < per; j++)
+                    var words = Vector256<ulong>.Zero;
+                    for (int q = 0, j = at; q < 4; q++)
                     {
-                        new ReadOnlySpan<byte>(entryBytes + w * Entry(period, at + j), w).CopyTo(bytes.Slice(j * w, w));
+                        ulong word = 0;
+                        for (int b = 0; b < 64; b += 8 * w, j++)
+                        {
+                            word |= (ulong)(w == 1 ? *(byte*)(entryBytes + Entry(period, j)) : *(ushort*)(entryBytes + 2 * Entry(period, j))) << b;
+                        }
+
+                        words |= Vector256.Create(word) & Vector256.Equals(Vector256.Create((ulong)q), Vector256<ulong>.Indices);
                     }
 
-                    v = Vector256.Create<byte>(bytes);
+                    v = words.AsByte();
                     break;
             }
 
@@ -3905,8 +4038,6 @@ internal sealed partial class CpuBackend
             fLeft = Pin<Vector256<int>>(groups * factors * pieces);
             fShiftOne = Pin<int>(groups * factors * pieces);
             fLeftOne = Pin<int>(groups * factors * pieces);
-            scalarBlock = new int[groups * factors * 8];
-            scalarIndex = new int[groups * factors * 8];
             Span<int> offsets = stackalloc int[8], shifts = stackalloc int[8], masks = stackalloc int[8], lefts = stackalloc int[8];
             for (int f = 0; f < factors; f++)
             {
@@ -3953,8 +4084,6 @@ internal sealed partial class CpuBackend
                         {
                             int c = g * Cg + l / P, v0 = Order[c * C], index = D.ScaleIndex(factor, v0);
                             int start = v0 / D.UnitValues * D.UnitBytes + D.ScaleBase(factor, v0), bit, bits, left = 0;
-                            scalarBlock[(g * factors + f) * 8 + l] = start;
-                            scalarIndex[(g * factors + f) * 8 + l] = index;
                             if (factor.Pieces is { } p)
                             {
                                 var own = p[index];
@@ -4102,7 +4231,104 @@ internal sealed partial class CpuBackend
                 FactorKinds = kinds;
             }
 
+            ScalarReads(all);
             return PeriodBytes >= 4 || factors == 0;
+        }
+
+        // A factor's number as NumberType.Value reads it, for the factors read a lane at a time (ReadOneByOne, ScalarOf): its
+        // type's fields and its bias; a table's entries, their bias added and rounded, 2^bits floats made once.
+        private struct ScalarNumber
+        {
+            public NumberKind Kind;
+            public bool Signed, Subnormals;
+            public FloatSpecials Specials;
+            public int Bits, Exponent, Mantissa, ExponentBias;
+            public double Bias;
+            public float* Table;
+        }
+
+        // The factors read a lane at a time: each one's number (ScalarNumber), and per group, lane and piece the byte, shift,
+        // mask and place of its bits (BlockScale.Bits': its pieces as listed, or its bits from Offset a byte at a time).
+        private void ScalarReads(List<BlockScale> all)
+        {
+            if (!reads.Contains(FactorRead.Scalar))
+            {
+                return;
+            }
+
+            var d = D;
+            ReadsScalar = true;
+            int groups = Period / GroupValues;
+            var lanes = new List<(int Offset, int Shift, int Mask, int Left)>[groups * factors * 8];
+            scalarNumbers = Pin<ScalarNumber>(factors);
+            for (int f = 0; f < factors; f++)
+            {
+                if (reads[f] != FactorRead.Scalar)
+                {
+                    continue;
+                }
+
+                var factor = all[f];
+                var type = factor.Type;
+                float* table = null;
+                if (type.Kind == NumberKind.Table)
+                {
+                    table = Pin<float>(1 << type.Bits);
+                    for (int c = 0; c < 1 << type.Bits; c++)
+                    {
+                        table[c] = (float)(type.Value((ulong)c) + factor.Bias);
+                    }
+                }
+
+                scalarNumbers[f] = new ScalarNumber
+                {
+                    Kind = type.Kind, Signed = type.Signed, Subnormals = type.Subnormals, Specials = type.Specials, Bits = type.Bits, Exponent = type.Exponent,
+                    Mantissa = type.Mantissa, ExponentBias = type.ExponentBias, Bias = factor.Bias, Table = table,
+                };
+                for (int g = 0; g < groups; g++)
+                {
+                    for (int l = 0; l < 8; l++)
+                    {
+                        int c = g * Cg + l / P, v0 = Order[c * C], index = d.ScaleIndex(factor, v0);
+                        int start = v0 / d.UnitValues * d.UnitBytes + d.ScaleBase(factor, v0);
+                        var own = lanes[(g * factors + f) * 8 + l] = [];
+                        if (factor.Pieces is { } listed)
+                        {
+                            int left = 0;
+                            foreach (var piece in listed[index])
+                            {
+                                own.Add((start + piece.Offset, piece.Shift, (1 << piece.Bits) - 1, left));
+                                left += piece.Bits;
+                            }
+
+                            continue;
+                        }
+
+                        long bit = 8L * factor.Offset + (long)index * type.Bits;
+                        for (int remaining = type.Bits, at = 0; remaining > 0;)
+                        {
+                            int s = (int)(bit % 8), take = Math.Min(remaining, 8 - s);
+                            own.Add((start + (int)(bit / 8), s, (1 << take) - 1, at));
+                            (bit, remaining, at) = (bit + take, remaining - take, at + take);
+                        }
+                    }
+                }
+            }
+
+            scalarPieces = Math.Max(1, lanes.Max(own => own?.Count ?? 0));
+            int entries = groups * factors * 8 * scalarPieces;
+            sOffset = Pin<int>(entries);
+            sShift = Pin<int>(entries);
+            sMask = Pin<int>(entries);
+            sLeft = Pin<int>(entries);
+            for (int i = 0; i < lanes.Length; i++)
+            {
+                for (int q = 0; q < (lanes[i]?.Count ?? 0); q++)
+                {
+                    int at = i * scalarPieces + q;
+                    (sOffset[at], sShift[at], sMask[at], sLeft[at]) = lanes[i]![q];
+                }
+            }
         }
 
         /// <summary>
@@ -4114,6 +4340,9 @@ internal sealed partial class CpuBackend
         /// (Factor): one scale alone (its own reading), none, more than two of either, or a field read one lane at a time.
         /// </summary>
         public int FactorKinds { get; private set; }
+
+        /// <summary>Whether a factor is read a lane at a time (FactorRead.Scalar: ReadOneByOne), the loop over the factors then taking it (CpuBackend.FactorLoop{Yes}).</summary>
+        public bool ReadsScalar { get; private set; }
 
         // FactorKinds' numbers: whether minimums are added (else subtracted); per factor its bias, bits, pieces, table and
         // 16-bit float reading.
@@ -4465,18 +4694,34 @@ internal sealed partial class CpuBackend
             _ => Unsafe.ReadUnaligned<ulong>(p),
         };
 
-        // A span's codes one value at a time, in value order, by the description (a layout the runs do not take).
-        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+        // A span's codes one value at a time, in value order (a layout the runs and windows do not take), in registers: each
+        // value's planes' fields from their dwords at the plan's places (OneValues), joined as CodeBits joins them (a digit
+        // plane's digit of its byte), 8 values a 64-bit word and each word put in its lane of the span. Nothing is written.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         private Vector256<byte> OneByOne(byte* period, int span)
         {
-            Span<byte> codes = stackalloc byte[32];
-            for (int t = 0; t < 32; t++)
+            var codes = Vector256<ulong>.Zero;
+            for (int q = 0, i = 32 * span * Planes; q < 4; q++)
             {
-                int v = 32 * span + t;
-                codes[t] = (byte)D.CodeBits(new ReadOnlySpan<byte>(period + v / D.UnitValues * D.UnitBytes, D.UnitBytes), v % D.UnitValues);
+                ulong word = 0;
+                for (int j = 0; j < 64; j += 8)
+                {
+                    uint code = 0;
+                    for (int p = 0; p < Planes; p++, i++)
+                    {
+                        uint field = Unsafe.ReadUnaligned<uint>(period + oneAt[i]) >> oneShift[i];
+                        int radix = planeRadix[p];
+                        field = radix == 0 ? field & oneMask[p] : ((field & 0xFF) * (uint)onePower[i] & 0xFF) * (uint)radix >> 8;
+                        code |= field << planeLow[p];
+                    }
+
+                    word |= (ulong)code << j;
+                }
+
+                codes |= Vector256.Create(word) & Vector256.Equals(Vector256.Create((ulong)q), Vector256<ulong>.Indices);
             }
 
-            return Vector256.Create<byte>(codes);
+            return codes.AsByte();
         }
 
         /// <summary>The integer lane's bytes of span <paramref name="span"/>'s codes: each its number in units less the least.</summary>
@@ -4493,23 +4738,24 @@ internal sealed partial class CpuBackend
             {
                 CodeMap.Flip => code ^ Flip,
                 CodeMap.Shuffle => TI.ShuffleBytes(Shuffle, code),
-                CodeMap.Table => Through(code),
+                CodeMap.Table => Through<TI>(code),
                 _ => code,
             };
         }
 
-        // Each byte through the 256-entry table (codes of 5 to 8 bits whose numbers are not their bits).
-        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
-        private Vector256<byte> Through(Vector256<byte> code)
+        // Each byte through the 256-entry table (codes of 5 to 8 bits whose numbers are not their bits), in registers: 8 codes
+        // at a time each a 32-bit lane, the table's dword at each code's byte gathered (its first byte the code's), and the 32
+        // lanes' first bytes narrowed back into place. The table is the plan's own (made once from the description), not a copy
+        // of stored values; nothing is written.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<byte> Through<TI>(Vector256<byte> code) where TI : struct, IInstructions
         {
-            Span<byte> bytes = stackalloc byte[32];
-            code.CopyTo(bytes);
-            for (int i = 0; i < 32; i++)
-            {
-                bytes[i] = byteTable[bytes[i]];
-            }
-
-            return Vector256.Create<byte>(bytes);
+            var (low, high) = Vector256.Widen(code);
+            var (c0, c1) = Vector256.Widen(low);
+            var (c2, c3) = Vector256.Widen(high);
+            byte* table = byteTable;
+            return Vector256.Narrow(Vector256.Narrow(TI.Gather(table, c0.AsInt32()).AsUInt32(), TI.Gather(table, c1.AsInt32()).AsUInt32()),
+                Vector256.Narrow(TI.Gather(table, c2.AsInt32()).AsUInt32(), TI.Gather(table, c3.AsInt32()).AsUInt32()));
         }
 
         /// <summary>
@@ -5002,7 +5248,7 @@ internal sealed partial class CpuBackend
             {
                 CodeMap.Flip => bytes ^ Flip,
                 CodeMap.Shuffle => TI.ShuffleBytes(Shuffle, bytes),
-                CodeMap.Table => Through(bytes),
+                CodeMap.Table => Through<TI>(bytes),
                 _ => bytes,
             };
         }
@@ -5136,7 +5382,7 @@ internal sealed partial class CpuBackend
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
             public static Vector256<byte> Map<TI>(DescribedPlan plan, Vector256<uint> code, Vector256<uint>* words, int s) where TI : struct, IInstructions =>
-                plan.Through(code.AsByte());
+                plan.Through<TI>(code.AsByte());
         }
 
         internal readonly struct BookStepMap : IStepMap
@@ -5183,10 +5429,18 @@ internal sealed partial class CpuBackend
         /// <summary>
         /// The scales (each lane's product of the scales covering its chunk, times the unit) and minimums (their product, less
         /// where they are subtracted) of group <paramref name="gp"/> of the period at <paramref name="period"/>, read for the 8
-        /// lanes at once; lanes from <paramref name="valid"/> on 0.
+        /// lanes at once; lanes from <paramref name="valid"/> on 0 (any factor's reading: Factor{TI, TS} with Yes).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        public void Factor<TI>(byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min) where TI : struct, IInstructions
+        public void Factor<TI>(byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min) where TI : struct, IInstructions =>
+            Factor<TI, Yes>(period, gp, valid, out scale, out min);
+
+        /// <summary>
+        /// Factor, where <typeparamref name="TS"/> says whether a factor is read a lane at a time (FactorRead.Scalar:
+        /// ReadsScalar): a kernel of a plan without one holds no code for it (CpuBackend.WithFactors' FactorLoop{No}).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public void Factor<TI, TS>(byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min) where TI : struct, IInstructions where TS : struct, IFlag
         {
             if (OneScale != 0)
             {
@@ -5204,7 +5458,7 @@ internal sealed partial class CpuBackend
             var product = s;
             for (int f = 0; f < factors; f++)
             {
-                var v = Read<TI>(period, gp, f);
+                var v = Read<TI, TS>(period, gp, f);
                 if (f < scaleFactors)
                 {
                     s = f == 0 ? v : s * v;
@@ -5252,10 +5506,16 @@ internal sealed partial class CpuBackend
         }
 
         // Factor f's numbers for group gp's 8 lanes: its bits gathered (a dword a lane, each piece's shifted, masked and put
-        // in place), then read by its type.
+        // in place), then read by its type; a layout or a number the gathers do not take a lane at a time (ReadOneByOne,
+        // where TS says the plan has one).
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        private Vector256<float> Read<TI>(byte* period, int gp, int f) where TI : struct, IInstructions
+        private Vector256<float> Read<TI, TS>(byte* period, int gp, int f) where TI : struct, IInstructions where TS : struct, IFlag
         {
+            if (typeof(TS) == typeof(Yes) && reads[f] == FactorRead.Scalar)
+            {
+                return ReadOneByOne(period, gp, f);
+            }
+
             int at = (gp * factors + f) * pieces;
             Vector256<int> bits;
             if (fUniform[gp * factors + f] != 0)
@@ -5292,26 +5552,109 @@ internal sealed partial class CpuBackend
                     return TI.Gather(factorTables[f], bits);
                 case FactorRead.Half:
                     return HalfBits(bits, factorHalves[f]) + Vector256.Create(bias);
-                case FactorRead.Single:
-                    return bits.AsSingle() + Vector256.Create(bias);
                 default:
-                    return ReadOneByOne(period, gp, f);
+                    return bits.AsSingle() + Vector256.Create(bias);       // FactorRead.Single
             }
         }
 
-        // Factor f's numbers one lane at a time, by its type (a layout or a number the gathers do not take).
-        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+        // Factor f's numbers for group gp's 8 lanes one lane at a time, by its type (a layout or a number the gathers do not
+        // take), in registers: each lane's bits from their pieces (ScalarReads' places), read as BlockScale.Value reads them
+        // (ScalarOf: NumberType.Value's operations in float64, the bias added) and rounded to float32, put in its lane.
+        // Nothing is written.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         private Vector256<float> ReadOneByOne(byte* period, int gp, int f)
         {
-            var factor = factorList[f];
-            Span<float> values = stackalloc float[8];
-            for (int l = 0; l < 8; l++)
+            ScalarNumber* number = scalarNumbers + f;
+            int count = scalarPieces;
+            var values = Vector256<float>.Zero;
+            for (int l = 0, at = (gp * factors + f) * 8 * count; l < 8; l++)
             {
-                int i = (gp * factors + f) * 8 + l;
-                values[l] = (float)factor.Value(new ReadOnlySpan<byte>(period + scalarBlock[i], PeriodBytes - scalarBlock[i]), scalarIndex[i]);
+                ulong bits = 0;
+                for (int q = 0; q < count; q++, at++)
+                {
+                    bits |= (ulong)(uint)(period[sOffset[at]] >> sShift[at] & sMask[at]) << sLeft[at];
+                }
+
+                var lane = Vector256.Equals(Vector256.Create(l), Vector256<int>.Indices).AsSingle();
+                values = Vector256.ConditionalSelect(lane, Vector256.Create(ScalarOf(bits, number)), values);
             }
 
-            return Vector256.Create<float>(values);
+            return values;
+        }
+
+        // The number a factor's bits stand for, its bias added, rounded to float32: NumberType.Value's operations on them in
+        // float64 (Math.ScaleB's as TimesTwoTo), then the bias's addition and the rounding BlockScale.Value and the lane's
+        // read take, so the same bits; a table's from the plan's table of them (each the same number, made once). No call.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private static float ScalarOf(ulong bits, ScalarNumber* n)
+        {
+            int width = n->Bits, mantissa = n->Mantissa;
+            bits = width == 64 ? bits : bits & ((1UL << width) - 1);
+            double value;
+            switch (n->Kind)
+            {
+                case NumberKind.Table:
+                    return n->Table[(int)bits];
+                case NumberKind.Integer:
+                    value = n->Signed && width < 64 ? (long)(bits << (64 - width)) >> (64 - width) : n->Signed ? (long)bits : (double)bits;
+                    break;
+                default:
+                    // (The sign taken before the scaling, which rounds alike either way: x · 2^p's sign is x's.)
+                    bool negative = n->Signed && (bits >> (width - 1) & 1) != 0;
+                    ulong magnitude = n->Signed ? bits & ((1UL << (width - 1)) - 1) : bits;
+                    long e = (long)(magnitude >> mantissa), top = (1L << n->Exponent) - 1;
+                    ulong m = magnitude & ((1UL << mantissa) - 1);
+                    if (n->Specials == FloatSpecials.Ieee && e == top)
+                    {
+                        value = m == 0 ? double.PositiveInfinity : double.NaN;
+                        value = negative ? -value : value;
+                    }
+                    else if (n->Specials == FloatSpecials.AllOnesNaN && magnitude == (n->Signed ? (1UL << (width - 1)) - 1 : width == 64 ? ulong.MaxValue : (1UL << width) - 1))
+                    {
+                        value = double.NaN;
+                        value = negative ? -value : value;
+                    }
+                    else
+                    {
+                        bool subnormal = e == 0 && n->Subnormals;
+                        double x = subnormal ? m : (double)((1UL << mantissa) | m);
+                        value = TimesTwoTo(negative ? -x : x, (subnormal ? 1 : (int)e) - n->ExponentBias - mantissa);
+                    }
+
+                    break;
+            }
+
+            return (float)(value + n->Bias);
+        }
+
+        // x · 2^p as Math.ScaleB makes it (musl's scalbn: x times at most three powers of two, each made from its bits), so
+        // the same bits; no call.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static double TimesTwoTo(double x, int p)
+        {
+            const double Up = 8.98846567431158E+307, Down = 2.2250738585072014E-308 * 9007199254740992;    // 2^1023, 2^-1022 · 2^53
+            if (p > 1023)
+            {
+                x *= Up;
+                p -= 1023;
+                if (p > 1023)
+                {
+                    x *= Up;
+                    p = p - 1023 > 1023 ? 1023 : p - 1023;
+                }
+            }
+            else if (p < -1022)
+            {
+                x *= Down;
+                p += 1022 - 53;
+                if (p < -1022)
+                {
+                    x *= Down;
+                    p = p + 1022 - 53 < -1022 ? -1022 : p + 1022 - 53;
+                }
+            }
+
+            return x * BitConverter.Int64BitsToDouble((long)(0x3ff + p) << 52);
         }
 
         /// <summary>16-bit floats (each lane's low 16 bits) as float32 by their bits (HalfOf): exactly, specials too.</summary>
@@ -5428,6 +5771,9 @@ internal sealed partial class CpuBackend
 
         /// <summary>The plan's spans by how their codes are made (DescribedPlan.SpanKinds; tests).</summary>
         public (int Runs, int Windows, int Streams, int Codebook, int OneByOne) Spans() => plan.SpanKinds();
+
+        /// <summary>The plan's readings no built-in type's takes (DescribedPlan.Fallbacks; tests).</summary>
+        public IReadOnlyList<string> Fallbacks() => plan.Fallbacks();
 
         /// <summary>The arithmetic the plan took: "integer", "float32" or "float64".</summary>
         public string Arithmetic => plan.Mode switch
@@ -6066,15 +6412,15 @@ internal sealed partial class CpuBackend
     }
 
     /// <summary>A plan's yes or no as a type parameter (Yes, No), tested by its type: a constant to the JIT in the tile kernels' loops.</summary>
-    private interface IFlag
+    internal interface IFlag
     {
     }
 
-    private readonly struct Yes : IFlag
+    internal readonly struct Yes : IFlag
     {
     }
 
-    private readonly struct No : IFlag
+    internal readonly struct No : IFlag
     {
     }
 
@@ -6478,12 +6824,12 @@ internal sealed partial class CpuBackend
 
         if (plan.StepsGathered)
         {
-            return GatheredOne<TI, FactorLoop, DescribedPlan.PlanSteps>(plan, row, tail, full, groups, chunks, x, lanes);
+            return GatheredOne<TI, FactorLoop<Yes>, DescribedPlan.PlanSteps>(plan, row, tail, full, groups, chunks, x, lanes);
         }
 
         return plan.P switch
         {
-            1 => MadeOne<EightChunks, TI, FactorLoop>(plan, row, tail, full, groups, chunks, x, lanes),
+            1 => MadeOne<EightChunks, TI, FactorLoop<Yes>>(plan, row, tail, full, groups, chunks, x, lanes),
             2 => WideMadeOne<FourChunks, TI>(plan, row, tail, full, groups, x, lanes),
             4 => WideMadeOne<TwoChunks, TI>(plan, row, tail, full, groups, x, lanes),
             _ => WideMadeOne<OneChunk, TI>(plan, row, tail, full, groups, x, lanes),
@@ -6494,9 +6840,9 @@ internal sealed partial class CpuBackend
     private static unsafe float UniformOneBy<TR, TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
         where TR : struct, IRunLoad where TI : struct, IInstructions => plan.Map switch
         {
-            CodeMap.Same => UniformOne<TR, SameCodes, TI, FactorLoop>(plan, row, tail, full, groups, chunks, x, lanes),
-            CodeMap.Flip => UniformOne<TR, FlippedCodes, TI, FactorLoop>(plan, row, tail, full, groups, chunks, x, lanes),
-            _ => UniformOne<TR, ShuffledCodes, TI, FactorLoop>(plan, row, tail, full, groups, chunks, x, lanes),
+            CodeMap.Same => UniformOne<TR, SameCodes, TI, FactorLoop<Yes>>(plan, row, tail, full, groups, chunks, x, lanes),
+            CodeMap.Flip => UniformOne<TR, FlippedCodes, TI, FactorLoop<Yes>>(plan, row, tail, full, groups, chunks, x, lanes),
+            _ => UniformOne<TR, ShuffledCodes, TI, FactorLoop<Yes>>(plan, row, tail, full, groups, chunks, x, lanes),
         };
 
     /// <summary>
@@ -6509,11 +6855,13 @@ internal sealed partial class CpuBackend
         static abstract void Read<TI>(DescribedPlan plan, byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min) where TI : struct, IInstructions;
     }
 
-    private readonly unsafe struct FactorLoop : IFactors
+    // The loop over the factors; TS: whether a factor is read a lane at a time (DescribedPlan.ReadsScalar), so a plan
+    // without one has no code for it in its kernels.
+    private readonly unsafe struct FactorLoop<TS> : IFactors where TS : struct, IFlag
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public static void Read<TI>(DescribedPlan plan, byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min) where TI : struct, IInstructions =>
-            plan.Factor<TI>(period, gp, valid, out scale, out min);
+            plan.Factor<TI, TS>(period, gp, valid, out scale, out min);
     }
 
     private readonly unsafe struct SlotFactors<T0, T1, T2, T3> : IFactors
@@ -6534,7 +6882,7 @@ internal sealed partial class CpuBackend
     // number's, the last handing the set to TU; the loop over the factors where the plan has no kinds. Made once a plan and
     // kernel (DescribedPlan.OneKernel, TileKernel), never a call.
     private static nint WithFactors<TU>(DescribedPlan plan) where TU : struct, IFactorsUse =>
-        plan.FactorKinds == 0 ? TU.Use<FactorLoop>() : FactorsFirst<TU>(plan.FactorKinds);
+        plan.FactorKinds != 0 ? FactorsFirst<TU>(plan.FactorKinds) : plan.ReadsScalar ? TU.Use<FactorLoop<Yes>>() : TU.Use<FactorLoop<No>>();
 
     private static nint FactorsFirst<TU>(int k) where TU : struct, IFactorsUse => (k >> 4 & 15) switch
     {

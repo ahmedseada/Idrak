@@ -4,14 +4,14 @@
 using Idrak.Abstraction.Devices.Cpu;
 
 // Proof 1: the CPU's lanes give the same bits on any CPU. The described lane over stored weights (the bits recorded by
-// commit 3f1c53e2's lane-bits test for each type's description and the types made of a description alone; the written
-// lanes are gone) and the operations of the new design by every width that runs here (each width forced in turn): one
+// commit 3f1c53e2's lane-bits test for each type's description and the types made of a description alone, the fallbacks'
+// types' by commit d7adc2d3's lanes; the written lanes are gone) and the operations of the new design by every width that runs here (each width forced in turn): one
 // list of hashes holds on every CPU and instruction set.
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] LaneBitsGroup =
     [
-        ("lane bits: the CPU's described lane over stored weights (q4_k, q4_0, mxfp4, q6_k, bfloat16, float64, int2 and int64 from their types' descriptions; the types made of a description alone, int8 groups under a shared float32 level among them; 1, 3, 4, 5, 9 and 70 rows of fixed operands) gives commit 3f1c53e2's recorded bits (the shared levels' recorded since) by every instruction set that runs here, and the new design's operations (element-wise, rows, products, attention, sums) give one hash each by every width (512, 256, 128 bits, one float): the same list on any CPU", LaneBits),
+        ("lane bits: the CPU's described lane over stored weights (q4_k, q4_0, mxfp4, q6_k, bfloat16, float64, int2 and int64 from their types' descriptions; the types made of a description alone, int8 groups under a shared float32 level among them, and the fallbacks' types, each taking the reading no built-in type takes (codes one value at a time, through the byte table, a codebook's entries of 2 and 1 values, factors a lane at a time), by 128 rows too; 1, 3, 4, 5, 9 and 70 rows of fixed operands) gives commit 3f1c53e2's recorded bits (the shared levels' and the fallbacks' recorded since) by every instruction set that runs here, and the new design's operations (element-wise, rows, products, attention, sums) give one hash each by every width (512, 256, 128 bits, one float): the same list on any CPU", LaneBits),
     ];
 
     private static float[] LaneBitsValues(Random random, long count) => [.. Enumerable.Range(0, (int)count).Select(_ => random.NextSingle() * 2 - 1)];
@@ -60,6 +60,48 @@ internal abstract partial class Tests
         };
 
         return made;
+    }
+
+    // Types made of a description alone that no built-in type is like, each forcing one of the described lane's ways of
+    // reading what its kernels' usual ways do not take (no built-in type reaches them): codes one value at a time (6-bit
+    // fields listed out of order, some across bytes, by the integer lane and by the float32 lane); codes through the
+    // 256-byte table (6-bit numbers that are neither their bits nor their bits with the top one flipped); a codebook's
+    // entries of 2 values and of 1, which the codebook's fast reading does not take; and scales and minimums read one lane at
+    // a time (a 32-bit integer with a bias, a 16-bit float whose only special is a NaN, a 10-bit table's entry from two
+    // pieces, a float64). Each with the row length it is multiplied with (a period and a short one) and the reading it forces
+    // (CpuBackend.DescribedFallbacks).
+    private static (string Name, TypeDescription D, int K, string Forces)[] LaneBitsFallbacks()
+    {
+        var e8m0 = Idrak.Abstraction.Types.F8E8M0.Type.Description.Code;
+        // Value v's 6-bit field at bit 6 · ((13v + 5) mod 32) of the bytes from byte 1: listed, out of order, some across bytes.
+        var scattered = Enumerable.Range(0, 32).Select(v => 6 * ((13 * v + 5) % 32)).Select(bit => new FieldPlace(1 + bit / 8, bit % 8)).ToArray();
+        double[] fractions = [.. Enumerable.Range(0, 64).Select(c => Math.Round(Math.Tanh((c - 31.5) / 13), 5))];
+        double[] shuffled = [.. Enumerable.Range(0, 64).Select(c => (double)((37 * c + 11) % 64 - 32))];
+        double[] pairs = [.. Enumerable.Range(0, 32).Select(i => (double)((7 * i + 3) % 16 - 8))];
+        double[] fours = [.. Enumerable.Range(0, 64).Select(i => (i / 4 >> i % 4 & 1) != 0 ? -1d : 1d)];
+        double[] eights = [.. Enumerable.Range(0, 256 * 8).Select(i => (i / 8 >> i % 8 & 1) != 0 ? -1d : 1d)];
+        double[] singles = [.. Enumerable.Range(0, 16).Select(i => (double)((5 * i + 2) % 16 - 8))];
+        double[] tenBits = [.. Enumerable.Range(0, 1024).Select(c => Math.Round(Math.Sin(0.37 * c) / 2, 6))];
+        return
+        [
+            ("6-bit codes listed out of order, some across bytes, offset -32, an E8M0 scale a 32 values",
+                new TypeDescription(32, 25, NumberType.Integer(6, false), [new CodePlane(0, 6, 1, Places: scattered)], -32, [new BlockScale(e8m0, 32, 0)]), 288, "one by one"),
+            ("a table of 64 fractions in 6-bit codes listed out of order, an E8M0 scale a 32 values",
+                new TypeDescription(32, 25, NumberType.Entries(6, fractions), [new CodePlane(0, 6, 1, Places: scattered)], Scales: [new BlockScale(e8m0, 32, 0)]), 288, "one by one"),
+            ("6-bit codes in a stream standing for a shuffle of -32 to 31, an E8M0 scale a 32 values",
+                new TypeDescription(32, 25, NumberType.Entries(6, shuffled), [new CodePlane(1, 6, 1, Stream: true)], Scales: [new BlockScale(e8m0, 32, 0)]), 288, "table"),
+            ("a codebook of 16 pairs, 4-bit indices, a sign vector a 4 values, a float16 scale a 32 values",
+                new TypeDescription(32, 14, NumberType.Codebook(4, 2, pairs), [new CodePlane(2, 4, 16)],
+                    Scales: [new BlockScale(NumberType.Floating(5, 10), 32, 0), new BlockScale(NumberType.Codebook(4, 4, fours), 4, 10)]), 288, "codebook"),
+            ("a codebook of 16 single values, 4-bit indices, a sign vector an 8 values, an E8M0 scale a 32 values",
+                new TypeDescription(32, 21, NumberType.Entries(4, singles), [new CodePlane(5, 4, 32)],
+                    Scales: [new BlockScale(e8m0, 32, 0), new BlockScale(NumberType.Codebook(8, 8, eights), 8, 1)]), 288, "codebook"),
+            ("4-bit codes, offset -8, a 32-bit integer scale plus 0.5 and a 16-bit float scale whose only special is a NaN, a 10-bit table's minimum from two pieces and a float64 minimum, each a 32 values",
+                new TypeDescription(32, 32, NumberType.Integer(4, false), [new CodePlane(8, 4, 32)], -8,
+                    [new BlockScale(NumberType.Integer(32, true), 32, 0, Bias: 0.5), new BlockScale(NumberType.Floating(5, 10, specials: FloatSpecials.AllOnesNaN), 32, 4)],
+                    [new BlockScale(NumberType.Entries(10, tenBits), 32, 6, Pieces: [[new ScalePiece(6, 0, 8), new ScalePiece(7, 0, 2)]]), new BlockScale(NumberType.Floating(11, 52), 32, 24)]),
+                288, "scalar"),
+        ];
     }
 
     // n rows of k values of description d as stored, made from the description alone (never bytes an encoder wrote):
@@ -159,9 +201,19 @@ internal abstract partial class Tests
             ("q6_k", Idrak.Types.Q6_K.Type, 768, 37), ("bfloat16", Idrak.Abstraction.Types.BF16.Type, 520, 37), ("bfloat16", Idrak.Abstraction.Types.BF16.Type, 4200, 9),
             ("int64 (no row scales)", Idrak.Abstraction.Types.I64.Type, 544, 37), ("float64", Idrak.Abstraction.Types.F64.Type, 2600, 9), ("int2", Idrak.Types.Int2.Type, 320, 37),
         };
-        var described = formats.Select(f => (f.Name, f.Type.Description, f.K, f.N, Seed: $"{f.Name} [{f.K}, {f.N}]"))
-            .Concat(LaneBitsDescribedOnly().Select(t => (t.Name, t.D, t.K, N: 37, Seed: t.Name)));
-        foreach (var (name, d, k, n, seed) in described)
+        // The fallbacks' types also by 128 rows of x (a tile of several blocks of rows), each checked to take its reading.
+        int[] fallbackRows = [.. rows, 128];
+        var fallbacks = LaneBitsFallbacks();
+        foreach (var (name, d, k, forces) in fallbacks)
+        {
+            var taken = CpuBackend.DescribedFallbacks(d, k);
+            Check(taken is not null && taken.Contains(forces), $"{name} [{k}]: its plan does not read it {forces} (it reads it {(taken is null ? "not at all" : string.Join(", ", taken))})");
+        }
+
+        var described = formats.Select(f => (f.Name, f.Type.Description, f.K, f.N, Seed: $"{f.Name} [{f.K}, {f.N}]", Rows: rows))
+            .Concat(LaneBitsDescribedOnly().Select(t => (t.Name, t.D, t.K, N: 37, Seed: t.Name, Rows: rows)))
+            .Concat(fallbacks.Select(t => (t.Name, t.D, t.K, N: 37, Seed: t.Name, Rows: fallbackRows)));
+        foreach (var (name, d, k, n, seed, rowsOf) in described)
         {
             var random = new Random(LaneBitsSeed(seed));
             var bytes = LaneBitsBytes(d, k, n, random);
@@ -170,7 +222,7 @@ internal abstract partial class Tests
             Add($"{name} stored", "", bytes);
             var lanes = CpuBackend.DescribedLanesOf(d, k);
             Check(lanes.Count >= 1, $"{name} [{k}]: no described lane runs here");
-            foreach (int m in rows)
+            foreach (int m in rowsOf)
             {
                 var x = LaneBitsValues(random, (long)m * k);
                 for (int lane = 0; lane < lanes.Count; lane++)
@@ -326,6 +378,20 @@ internal abstract partial class Tests
         ["q6_k stored"] = "00ED6D2AADE10493",
         ["int64 (no row scales) described"] = "D7B50979F241C3B2",
         ["int64 (no row scales) stored"] = "59711973EE997480",
+
+        // The fallbacks' types (LaneBitsFallbacks), recorded from commit d7adc2d3's lanes.
+        ["4-bit codes, offset -8, a 32-bit integer scale plus 0.5 and a 16-bit float scale whose only special is a NaN, a 10-bit table's minimum from two pieces and a float64 minimum, each a 32 values described"] = "BFFFA58958DA347E",
+        ["4-bit codes, offset -8, a 32-bit integer scale plus 0.5 and a 16-bit float scale whose only special is a NaN, a 10-bit table's minimum from two pieces and a float64 minimum, each a 32 values stored"] = "C67FC3DE57E087D6",
+        ["6-bit codes in a stream standing for a shuffle of -32 to 31, an E8M0 scale a 32 values described"] = "3B3BAB0893FD17F5",
+        ["6-bit codes in a stream standing for a shuffle of -32 to 31, an E8M0 scale a 32 values stored"] = "9D7297ED09AF60D2",
+        ["6-bit codes listed out of order, some across bytes, offset -32, an E8M0 scale a 32 values described"] = "9D1E3B8095259EBE",
+        ["6-bit codes listed out of order, some across bytes, offset -32, an E8M0 scale a 32 values stored"] = "628F5A2F3FD44A2B",
+        ["a codebook of 16 pairs, 4-bit indices, a sign vector a 4 values, a float16 scale a 32 values described"] = "D21B043F85C087B5",
+        ["a codebook of 16 pairs, 4-bit indices, a sign vector a 4 values, a float16 scale a 32 values stored"] = "930FB902D7454FDE",
+        ["a codebook of 16 single values, 4-bit indices, a sign vector an 8 values, an E8M0 scale a 32 values described"] = "0E7836B6501243B6",
+        ["a codebook of 16 single values, 4-bit indices, a sign vector an 8 values, an E8M0 scale a 32 values stored"] = "FE5EB0365191B1CD",
+        ["a table of 64 fractions in 6-bit codes listed out of order, an E8M0 scale a 32 values described"] = "E1FF87992D0B3E6D",
+        ["a table of 64 fractions in 6-bit codes listed out of order, an E8M0 scale a 32 values stored"] = "D623973B473FA92D",
         ["operation: binary"] = "2ED7FE9F02A4A134",
         ["operation: cached attention"] = "4BC9EF71A6784112",
         ["operation: exact gelu"] = "AE1AEC36118F23EE",
