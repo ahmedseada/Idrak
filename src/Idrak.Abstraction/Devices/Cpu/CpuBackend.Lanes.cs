@@ -3164,6 +3164,8 @@ internal sealed partial class CpuBackend
             GroupStepBytes = P > 1 ? T * 32 : T * 32 + (Mins ? 64 : 32);
             PlaneMask0 = planeMask == null ? default : planeMask[0];
             MapVector = Map == CodeMap.Flip ? Flip : Shuffle;
+            oneKernels = Pin<nint>(8);
+            rowKernels = Pin<nint>(8);
             if (Mode == DescribedMode.Integer && P == 1 && UniformRuns == 0)
             {
                 GatherSteps();                                              // false: the spans made and transposed (Steps)
@@ -4001,7 +4003,314 @@ internal sealed partial class CpuBackend
                 };
             }
 
+            // Each factor's numbers for the reads as type parameters, pinned (FactorKinds): its bias, bits, pieces, table and
+            // 16-bit float reading as vectors.
+            minsAdded = D.MinsAdded;
+            fBiasAt = Pin<float>(factors);
+            fBitsAt = Pin<int>(factors);
+            fPiecesAt = Pin<int>(factors);
+            fTablesAt = Pin<nint>(factors);
+            fHalvesAt = Pin<HalfVectors>(factors);
+            for (int f = 0; f < factors; f++)
+            {
+                (fBiasAt[f], fBitsAt[f], fPiecesAt[f], fTablesAt[f]) = (factorBias[f], factorBits[f], factorPieces[f], (nint)factorTables[f]);
+                fHalvesAt[f] = reads[f] == FactorRead.Half ? new HalfVectors(factorHalves[f], 1f) : default;
+            }
+
+            // Each entry's 8 dwords where they lie within 16 bytes of the period (a block's own scales, a super-block's packed
+            // ones): that window's first byte and the byte shuffle that puts each lane's dword in place, the same bits a gather
+            // takes (−1: they do not).
+            int entries = groups * factors * pieces;
+            fWindow = Pin<int>(entries);
+            fWindowBytes = Pin<Vector256<byte>>(entries);
+            Span<byte> window = stackalloc byte[32];
+            for (int i = 0; i < entries; i++)
+            {
+                int least = int.MaxValue, most = int.MinValue;
+                for (int l = 0; l < 8; l++)
+                {
+                    (least, most) = (Math.Min(least, fOffset[8 * i + l]), Math.Max(most, fOffset[8 * i + l]));
+                }
+
+                int first = Math.Min(least, PeriodBytes - 16);
+                fWindow[i] = first >= 0 && most + 4 <= first + 16 ? first : -1;
+                for (int l = 0; l < 8 && fWindow[i] >= 0; l++)
+                {
+                    for (int b = 0; b < 4; b++)
+                    {
+                        window[4 * l + b] = (byte)(fOffset[8 * i + l] - first + b);
+                    }
+                }
+
+                fWindowBytes[i] = fWindow[i] >= 0 ? Vector256.Create<byte>(window) : default;
+            }
+
+            // The kinds: up to two scales and two minimums, each read alike in every group of the period (FactorRead's
+            // readings but the one lane at a time); one scale alone reads by its own way (OneScale), and any other set by
+            // the loop over the factors (Factor). A field's bits: plain loads where every lane's are the same, else one
+            // 16-byte load and a byte shuffle where each piece's dwords lie within 16 bytes, else gathers.
+            int minCount = factors - scaleFactors;
+            if (oneScale == 0 && scaleFactors is 1 or 2 && minCount <= 2 && reads.All(r => r != FactorRead.Scalar))
+            {
+                int kinds = 0;
+                for (int f = 0; f < factors; f++)
+                {
+                    bool uniform = true, windowed = true;
+                    for (int g = 0; g < groups; g++)
+                    {
+                        uniform &= fUniform[g * factors + f] != 0;
+                        for (int q = 0; q < factorPieces[f]; q++)
+                        {
+                            windowed &= fWindow[(g * factors + f) * pieces + q] >= 0;
+                        }
+                    }
+
+                    int fetch = uniform ? 1 : windowed ? (factorPieces[f] == 1 ? 4 : 5) : factorPieces[f] == 1 ? 2 : 3, slot = f < scaleFactors ? f : 2 + f - scaleFactors;
+                    kinds |= (fetch << 4 | (int)reads[f]) << (8 * slot);
+                }
+
+                FactorKinds = kinds;
+            }
+
             return PeriodBytes >= 4 || factors == 0;
+        }
+
+        /// <summary>
+        /// The plan's factors as the group loop's type parameters (CpuBackend.WithFactors): 8 bits a slot (the first scale,
+        /// the second, the first minimum, the second), the field's reading in the high 4 (0: no factor; 1: the same bits in
+        /// every lane, by plain loads; 2: gathered, one piece; 3: gathered, its pieces joined; 4: one piece, by a window of 16
+        /// bytes; 5: its pieces, each by its window) and its number's in the low 4
+        /// (FactorRead: unsigned, signed, a table, a 16-bit float, a float32). 0 where the loop over the factors reads them
+        /// (Factor): one scale alone (its own reading), none, more than two of either, or a field read one lane at a time.
+        /// </summary>
+        public int FactorKinds { get; private set; }
+
+        // FactorKinds' numbers: whether minimums are added (else subtracted); per factor its bias, bits, pieces, table and
+        // 16-bit float reading.
+        private bool minsAdded;
+        private float* fBiasAt;
+        private int* fBitsAt;
+        private int* fPiecesAt;
+        private nint* fTablesAt;
+        private HalfVectors* fHalvesAt;
+
+        // Per entry (group, factor, piece) the first byte of the 16 its 8 dwords lie within (−1: none), and the byte shuffle
+        // that puts each lane's dword in place from them (WindowBits).
+        private int* fWindow;
+        private Vector256<byte>* fWindowBytes;
+
+        /// <summary>A factor's bits for the 8 lanes, at entry <c>at</c> ((group · factors + f) · pieces) of factor <c>f</c>.</summary>
+        internal interface IFactorBits
+        {
+            static abstract Vector256<int> Bits<TI>(DescribedPlan plan, byte* period, int at, int f) where TI : struct, IInstructions;
+        }
+
+        /// <summary>The same bits in every lane: each piece by a plain load, joined, broadcast (Read's uniform branch).</summary>
+        internal readonly struct UniformBits : IFactorBits
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<int> Bits<TI>(DescribedPlan plan, byte* period, int at, int f) where TI : struct, IInstructions
+            {
+                uint value = 0;
+                for (int q = 0, i = at, count = plan.fPiecesAt[f]; q < count; q++, i++)
+                {
+                    value |= (Unsafe.ReadUnaligned<uint>(period + plan.fOffset[8 * i]) >> plan.fShiftOne[i] & (uint)plan.fMaskOne[i]) << plan.fLeftOne[i];
+                }
+
+                return Vector256.Create((int)value);
+            }
+        }
+
+        /// <summary>One piece, gathered: a dword a lane, shifted and masked.</summary>
+        internal readonly struct GatherBits : IFactorBits
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<int> Bits<TI>(DescribedPlan plan, byte* period, int at, int f) where TI : struct, IInstructions =>
+                plan.Shifted<TI>(TI.Gather(period, plan.fOffset + 8 * at), at) & plan.fMask[at];
+        }
+
+        /// <summary>One piece whose dwords lie within 16 bytes (fWindow): those bytes loaded once and shuffled to the lanes, shifted and masked.</summary>
+        internal readonly struct WindowBits : IFactorBits
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<int> Bits<TI>(DescribedPlan plan, byte* period, int at, int f) where TI : struct, IInstructions =>
+                plan.Shifted<TI>(TI.ShuffleBytes(TI.Halves(period + plan.fWindow[at]), plan.fWindowBytes[at]).AsInt32(), at) & plan.fMask[at];
+        }
+
+        /// <summary>Pieces whose dwords each lie within 16 bytes: each by its window, shifted, masked and put in place.</summary>
+        internal readonly struct WindowPieces : IFactorBits
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<int> Bits<TI>(DescribedPlan plan, byte* period, int at, int f) where TI : struct, IInstructions
+            {
+                var bits = WindowBits.Bits<TI>(plan, period, at, f);
+                for (int q = 1, count = plan.fPiecesAt[f]; q < count; q++)
+                {
+                    var piece = WindowBits.Bits<TI>(plan, period, at + q, f).AsUInt32();
+                    int one = plan.fLeftOne[at + q];
+                    bits |= (TI.ShiftsByLane || one < 0 ? TI.ShiftLeft(piece, plan.fLeft[at + q].AsUInt32()) : Vector256.ShiftLeft(piece, one)).AsInt32();
+                }
+
+                return bits;
+            }
+        }
+
+        /// <summary>Its pieces gathered, each shifted, masked and put in place (Read's gathered branch).</summary>
+        internal readonly struct PieceBits : IFactorBits
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<int> Bits<TI>(DescribedPlan plan, byte* period, int at, int f) where TI : struct, IInstructions
+            {
+                var bits = plan.Shifted<TI>(TI.Gather(period, plan.fOffset + 8 * at), at) & plan.fMask[at];
+                for (int q = 1, count = plan.fPiecesAt[f]; q < count; q++)
+                {
+                    var piece = (plan.Shifted<TI>(TI.Gather(period, plan.fOffset + 8 * (at + q)), at + q) & plan.fMask[at + q]).AsUInt32();
+                    int one = plan.fLeftOne[at + q];
+                    bits |= (TI.ShiftsByLane || one < 0 ? TI.ShiftLeft(piece, plan.fLeft[at + q].AsUInt32()) : Vector256.ShiftLeft(piece, one)).AsInt32();
+                }
+
+                return bits;
+            }
+        }
+
+        /// <summary>A factor's bits as its numbers (Read's readings).</summary>
+        internal interface IFactorNumber
+        {
+            static abstract Vector256<float> Of<TI>(DescribedPlan plan, Vector256<int> bits, int f) where TI : struct, IInstructions;
+        }
+
+        internal readonly struct UnsignedNumber : IFactorNumber
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<float> Of<TI>(DescribedPlan plan, Vector256<int> bits, int f) where TI : struct, IInstructions =>
+                Vector256.ConvertToSingle(bits) + Vector256.Create(plan.fBiasAt[f]);
+        }
+
+        internal readonly struct SignedNumber : IFactorNumber
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<float> Of<TI>(DescribedPlan plan, Vector256<int> bits, int f) where TI : struct, IInstructions
+            {
+                int up = 32 - plan.fBitsAt[f];
+                return Vector256.ConvertToSingle(Vector256.ShiftRightArithmetic(Vector256.ShiftLeft(bits, up), up)) + Vector256.Create(plan.fBiasAt[f]);
+            }
+        }
+
+        internal readonly struct TableNumber : IFactorNumber
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<float> Of<TI>(DescribedPlan plan, Vector256<int> bits, int f) where TI : struct, IInstructions =>
+                TI.Gather((float*)plan.fTablesAt[f], bits);
+        }
+
+        internal readonly struct HalfNumber : IFactorNumber
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<float> Of<TI>(DescribedPlan plan, Vector256<int> bits, int f) where TI : struct, IInstructions =>
+                plan.fHalvesAt[f].Of(bits) + Vector256.Create(plan.fBiasAt[f]);
+        }
+
+        internal readonly struct SingleNumber : IFactorNumber
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<float> Of<TI>(DescribedPlan plan, Vector256<int> bits, int f) where TI : struct, IInstructions =>
+                bits.AsSingle() + Vector256.Create(plan.fBiasAt[f]);
+        }
+
+        /// <summary>A slot of FactorKinds: factor <c>f</c>'s numbers for group <c>gp</c>'s 8 lanes, or none.</summary>
+        internal interface IFactorSlot
+        {
+            static abstract bool Present { get; }
+
+            static abstract Vector256<float> Read<TI>(DescribedPlan plan, byte* period, int gp, int f) where TI : struct, IInstructions;
+        }
+
+        internal readonly struct NoFactor : IFactorSlot
+        {
+            public static bool Present => false;
+
+            public static Vector256<float> Read<TI>(DescribedPlan plan, byte* period, int gp, int f) where TI : struct, IInstructions => default;
+        }
+
+        internal readonly struct Field<TB, TN> : IFactorSlot where TB : struct, IFactorBits where TN : struct, IFactorNumber
+        {
+            public static bool Present => true;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<float> Read<TI>(DescribedPlan plan, byte* period, int gp, int f) where TI : struct, IInstructions =>
+                TN.Of<TI>(plan, TB.Bits<TI>(plan, period, (gp * plan.factors + f) * plan.pieces, f), f);
+        }
+
+        /// <summary>Factor's arithmetic over FactorKinds' slots, in its order (the scales' product, the unit, the minimums' product, its sign, the lanes kept).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        internal void Slots<T0, T1, T2, T3, TI>(byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min)
+            where T0 : struct, IFactorSlot where T1 : struct, IFactorSlot where T2 : struct, IFactorSlot where T3 : struct, IFactorSlot where TI : struct, IInstructions
+        {
+            var s = T0.Read<TI>(this, period, gp, 0);
+            if (T1.Present)
+            {
+                s *= T1.Read<TI>(this, period, gp, 1);
+            }
+
+            if (Unit != 1f)
+            {
+                s *= Vector256.Create(Unit);
+            }
+
+            var mn = Vector256<float>.Zero;
+            if (T2.Present)
+            {
+                int f = T1.Present ? 2 : 1;
+                var product = T2.Read<TI>(this, period, gp, f);
+                if (T3.Present)
+                {
+                    product *= T3.Read<TI>(this, period, gp, f + 1);
+                }
+
+                mn = minsAdded ? product : -product;
+            }
+
+            if (valid < 8)
+            {
+                var keep = GroupMask(valid).AsSingle();
+                s &= keep;
+                mn &= keep;
+            }
+
+            scale = s;
+            min = mn;
+        }
+
+        // The one-row integer kernel and the row steps' maker per instruction set (Instructions' value), resolved on first
+        // use (CpuBackend.ResolveOne, ResolveRowSteps): 0 not yet, −1 none (their own dispatch reads the plan).
+        private nint* oneKernels, rowKernels;
+
+        /// <summary>The one-row integer kernel by TI (<paramref name="with"/>: its Instructions value), or null where DescribedIntegerOne's dispatch reads the plan.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> OneKernel<TI>(int with) where TI : struct, IInstructions
+        {
+            nint f = oneKernels[with];
+            if (f == 0)
+            {
+                f = ResolveOne<TI>(this);
+                oneKernels[with] = f = f == 0 ? -1 : f;
+            }
+
+            return f == -1 ? null : (delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float>)f;
+        }
+
+        /// <summary>The row steps' maker by TI (<paramref name="with"/>: its Instructions value), or null where RowStepsOf's dispatch reads the plan.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal delegate*<DescribedPlan, byte*, byte*, int, int, int, byte*, void> RowKernel<TI>(int with) where TI : struct, IInstructions
+        {
+            nint f = rowKernels[with];
+            if (f == 0)
+            {
+                f = ResolveRowSteps<TI>(this);
+                rowKernels[with] = f = f == 0 ? -1 : f;
+            }
+
+            return f == -1 ? null : (delegate*<DescribedPlan, byte*, byte*, int, int, int, byte*, void>)f;
         }
 
         /// <summary>
@@ -4427,6 +4736,24 @@ internal sealed partial class CpuBackend
                 words[u].CopyTo(new Span<int>(wordOffsets + 8 * u, 8));
             }
 
+            // The readings as type parameters for up to three planes (StepKinds).
+            if (Planes is >= 1 and <= 3)
+            {
+                int kinds = ((int)Map + 1) << 12;
+                for (int p = 0; p < Planes; p++)
+                {
+                    int kind = stepRead[p] switch
+                    {
+                        StepRead.Bytes or StepRead.Index => 1,
+                        StepRead.Stream => d.Planes[p].Bits == 1 ? 3 : 4,
+                        _ => 5,
+                    };
+                    kinds |= kind << (4 * p);
+                }
+
+                StepKinds = kinds;
+            }
+
             stepsGathered = true;
             return true;
 
@@ -4631,30 +4958,7 @@ internal sealed partial class CpuBackend
 
             if (Map == CodeMap.Codebook)
             {
-                // The index's entry dword (each lane's within its entry), the vector factors' -1s applied, the least added back.
-                var entries = TI.Gather((float*)entryBytes, code.AsInt32() * (entryWidth / 4) + bookWithin[s]).AsByte();
-                for (int f = 0; f < vectorCount; f++)
-                {
-                    int i = s * vectorCount + f;
-                    var index = TI.ShiftRight(words[vectorWord[i]], vectorShift[i]) & vectorIndexMasks[f];
-                    Vector256<byte> m;
-                    if (vectorFromBits[f] != 0)
-                    {
-                        // The index's bits are the signs (bit j set: value j negative): this lane's 4 bits, its dword's low
-                        // byte copied to its 4 bytes, each byte's own bit tested.
-                        var bits = TI.ShiftRight(index, Vector256.ShiftLeft(vectorWithin[i], 2).AsUInt32()).AsByte();
-                        var one = Vector256.Create(0x08040201u).AsByte();
-                        m = Vector256.Equals(TI.ShuffleBytes(bits, LowBytes) & one, one);
-                    }
-                    else
-                    {
-                        m = TI.Gather((float*)vectorMaskTables[f], index.AsInt32() * vectorDwords[f] + vectorWithin[i]).AsByte();
-                    }
-
-                    entries = (entries ^ m) - m;
-                }
-
-                return entries + leastBytes;
+                return BookBytes<TI>(code, words, s);
             }
 
             var bytes = code.AsByte();
@@ -4665,6 +4969,179 @@ internal sealed partial class CpuBackend
                 CodeMap.Table => Through(bytes),
                 _ => bytes,
             };
+        }
+
+        // Step s's codebook indices (`code`) as the integer lane's bytes: the index's entry dword (each lane's within its
+        // entry), the vector factors' -1s applied, the least added back.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<byte> BookBytes<TI>(Vector256<uint> code, Vector256<uint>* words, int s) where TI : struct, IInstructions
+        {
+            var entries = TI.Gather((float*)entryBytes, code.AsInt32() * (entryWidth / 4) + bookWithin[s]).AsByte();
+            for (int f = 0; f < vectorCount; f++)
+            {
+                int i = s * vectorCount + f;
+                var index = TI.ShiftRight(words[vectorWord[i]], vectorShift[i]) & vectorIndexMasks[f];
+                Vector256<byte> m;
+                if (vectorFromBits[f] != 0)
+                {
+                    // The index's bits are the signs (bit j set: value j negative): this lane's 4 bits, its dword's low
+                    // byte copied to its 4 bytes, each byte's own bit tested.
+                    var bits = TI.ShiftRight(index, Vector256.ShiftLeft(vectorWithin[i], 2).AsUInt32()).AsByte();
+                    var one = Vector256.Create(0x08040201u).AsByte();
+                    m = Vector256.Equals(TI.ShuffleBytes(bits, LowBytes) & one, one);
+                }
+                else
+                {
+                    m = TI.Gather((float*)vectorMaskTables[f], index.AsInt32() * vectorDwords[f] + vectorWithin[i]).AsByte();
+                }
+
+                entries = (entries ^ m) - m;
+            }
+
+            return entries + leastBytes;
+        }
+
+        /// <summary>
+        /// The gathered steps' readings as type parameters (CpuBackend.WithSteps): plane 0's reading in the low 4 bits, plane
+        /// 1's and plane 2's in the next 4 each (0: no such plane; 1: masked bytes or an index; 3: fields of one bit spread to
+        /// bytes; 4: a stream of fields; 5: digits), the map plus one in the next (CodeMap); 0 where GatheredStep's loop reads
+        /// them (more planes).
+        /// </summary>
+        public int StepKinds { get; private set; }
+
+        /// <summary>How a step's plane is made from its shifted dword (GatheredStep's readings).</summary>
+        internal interface IStepPlane
+        {
+            static abstract bool Present { get; }
+
+            static abstract Vector256<uint> Read(DescribedPlan plan, Vector256<uint> word, int i, int p);
+        }
+
+        internal readonly struct NoPlane : IStepPlane
+        {
+            public static bool Present => false;
+
+            public static Vector256<uint> Read(DescribedPlan plan, Vector256<uint> word, int i, int p) => default;
+        }
+
+        internal readonly struct MaskedPlane : IStepPlane
+        {
+            public static bool Present => true;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<uint> Read(DescribedPlan plan, Vector256<uint> word, int i, int p) => word & plan.stepMasks[p];
+        }
+
+        internal readonly struct BitPlane : IStepPlane
+        {
+            public static bool Present => true;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<uint> Read(DescribedPlan plan, Vector256<uint> word, int i, int p) =>
+                (word & Vector256.Create(0xFu)) * Vector256.Create(0x00204081u) & Vector256.Create(0x01010101u);
+        }
+
+        internal readonly struct StreamPlane : IStepPlane
+        {
+            public static bool Present => true;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<uint> Read(DescribedPlan plan, Vector256<uint> word, int i, int p)
+            {
+                int bits = plan.stepBits[p];
+                var field = plan.stepFields[p];
+                return (word & field) | Vector256.ShiftLeft(Vector256.ShiftRightLogical(word, bits) & field, 8)
+                    | Vector256.ShiftLeft(Vector256.ShiftRightLogical(word, 2 * bits) & field, 16) | Vector256.ShiftLeft(Vector256.ShiftRightLogical(word, 3 * bits) & field, 24);
+            }
+        }
+
+        internal readonly struct DigitPlane : IStepPlane
+        {
+            public static bool Present => true;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<uint> Read(DescribedPlan plan, Vector256<uint> word, int i, int p)
+            {
+                var low = Vector256.Create(0x00FF00FFu);
+                var times = plan.stepTimes[i];
+                var radix = Vector256.Create((ushort)plan.stepBits[plan.Planes + p]);
+                var even = Vector256.ShiftRightLogical(((word & low).AsUInt16() * times & low.AsUInt16()) * radix, 8);
+                var odd = Vector256.ShiftRightLogical(((Vector256.ShiftRightLogical(word, 8) & low).AsUInt16() * times & low.AsUInt16()) * radix, 8);
+                return even.AsUInt32() | Vector256.ShiftLeft(odd.AsUInt32(), 8);
+            }
+        }
+
+        /// <summary>How a step's code becomes the integer lane's bytes (GatheredStep's map).</summary>
+        internal interface IStepMap
+        {
+            static abstract Vector256<byte> Map<TI>(DescribedPlan plan, Vector256<uint> code, Vector256<uint>* words, int s) where TI : struct, IInstructions;
+        }
+
+        internal readonly struct SameStepMap : IStepMap
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Map<TI>(DescribedPlan plan, Vector256<uint> code, Vector256<uint>* words, int s) where TI : struct, IInstructions => code.AsByte();
+        }
+
+        internal readonly struct FlipStepMap : IStepMap
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Map<TI>(DescribedPlan plan, Vector256<uint> code, Vector256<uint>* words, int s) where TI : struct, IInstructions => code.AsByte() ^ plan.Flip;
+        }
+
+        internal readonly struct ShuffleStepMap : IStepMap
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Map<TI>(DescribedPlan plan, Vector256<uint> code, Vector256<uint>* words, int s) where TI : struct, IInstructions =>
+                TI.ShuffleBytes(plan.Shuffle, code.AsByte());
+        }
+
+        internal readonly struct TableStepMap : IStepMap
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Map<TI>(DescribedPlan plan, Vector256<uint> code, Vector256<uint>* words, int s) where TI : struct, IInstructions =>
+                plan.Through(code.AsByte());
+        }
+
+        internal readonly struct BookStepMap : IStepMap
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Map<TI>(DescribedPlan plan, Vector256<uint> code, Vector256<uint>* words, int s) where TI : struct, IInstructions =>
+                plan.BookBytes<TI>(code, words, s);
+        }
+
+        /// <summary>Step s of the period made from its group's gathered dword vectors (GatheredStep, or its readings as type parameters).</summary>
+        internal interface IGatheredSteps
+        {
+            static abstract Vector256<byte> Step<TI>(DescribedPlan plan, Vector256<uint>* words, int s) where TI : struct, IInstructions;
+        }
+
+        internal readonly struct PlanSteps : IGatheredSteps
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Step<TI>(DescribedPlan plan, Vector256<uint>* words, int s) where TI : struct, IInstructions => plan.GatheredStep<TI>(words, s);
+        }
+
+        internal readonly struct PlaneSteps<TP0, TP1, TP2, TM> : IGatheredSteps
+            where TP0 : struct, IStepPlane where TP1 : struct, IStepPlane where TP2 : struct, IStepPlane where TM : struct, IStepMap
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Step<TI>(DescribedPlan plan, Vector256<uint>* words, int s) where TI : struct, IInstructions
+            {
+                int i = s * plan.Planes;
+                var code = Vector256.ShiftLeft(TP0.Read(plan, TI.ShiftRight(words[plan.stepWord[i]], plan.stepShift[i]), i, 0), plan.stepLows[0]);
+                if (TP1.Present)
+                {
+                    code |= Vector256.ShiftLeft(TP1.Read(plan, TI.ShiftRight(words[plan.stepWord[i + 1]], plan.stepShift[i + 1]), i + 1, 1), plan.stepLows[1]);
+                }
+
+                if (TP2.Present)
+                {
+                    code |= Vector256.ShiftLeft(TP2.Read(plan, TI.ShiftRight(words[plan.stepWord[i + 2]], plan.stepShift[i + 2]), i + 2, 2), plan.stepLows[2]);
+                }
+
+                return TM.Map<TI>(plan, code, words, s);
+            }
         }
 
         /// <summary>
@@ -5075,27 +5552,36 @@ internal sealed partial class CpuBackend
 
             if (with == Instructions.Portable)
             {
-                GroupBy<PortableInstructions>(stored, rowBytes, c0, count);
+                GroupBy<PortableInstructions>(stored, rowBytes, c0, count, Instructions.Portable);
             }
             else if (AdvSimd.Arm64.IsSupported)
             {
-                GroupBy<NeonInstructions>(stored, rowBytes, c0, count);
+                GroupBy<NeonInstructions>(stored, rowBytes, c0, count, Instructions.Neon);
             }
             else
             {
-                GroupBy<Avx2Instructions>(stored, rowBytes, c0, count);
+                GroupBy<Avx2Instructions>(stored, rowBytes, c0, count, Instructions.Avx2);
             }
         }
 
-        // Compiled optimized from its first call, so the shape's lane is measured on the code it then runs.
+        // Compiled optimized from its first call, so the shape's lane is measured on the code it then runs. The plan's maker
+        // by its choices as type parameters, made once (DescribedPlan.RowKernel), where it has one.
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        private void GroupBy<TI>(byte* stored, nint rowBytes, int c0, int count) where TI : struct, IInstructions
+        private void GroupBy<TI>(byte* stored, nint rowBytes, int c0, int count, Instructions by) where TI : struct, IInstructions
         {
+            var make = plan.RowKernel<TI>((int)by);
             for (int c = 0; c < count; c++)
             {
                 byte* row = stored + (c0 + c) * rowBytes;
                 Tail(row);
-                RowStepsOf<TI>(plan, row, tail, full, groups, chunks, steps + (nint)c * rowSteps);
+                if (make != null)
+                {
+                    make(plan, row, tail, full, groups, chunks, steps + (nint)c * rowSteps);
+                }
+                else
+                {
+                    RowStepsOf<TI>(plan, row, tail, full, groups, chunks, steps + (nint)c * rowSteps);
+                }
             }
         }
 
@@ -5230,7 +5716,10 @@ internal sealed partial class CpuBackend
             {
                 case DescribedMode.Integer:
                     Tail(row);
-                    return DescribedIntegerOne<TI>(plan, row, tail, full, groups, chunks, xq + i * xRow, lanes + i * lRow);
+                    // The plan's kernel by its choices as type parameters, made once (DescribedPlan.OneKernel).
+                    var one = plan.OneKernel<TI>((int)with);
+                    return one != null ? one(plan, row, tail, full, groups, chunks, xq + i * xRow, lanes + i * lRow)
+                        : DescribedIntegerOne<TI>(plan, row, tail, full, groups, chunks, xq + i * xRow, lanes + i * lRow);
                 case DescribedMode.Double:
                     return DescribedDoubleOne<TI>(plan, row, (double*)x + (nint)i * k, k);
                 default:
@@ -5446,7 +5935,8 @@ internal sealed partial class CpuBackend
     // A stored row's integer steps, scales and minimums (DescribedPlan.Steps and Factor), a group after another, into `into`
     // (GroupStepBytes a group); its last period from `tail` where it is short.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void DescribedRowSteps<TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, byte* into) where TI : struct, IInstructions
+    private static unsafe void DescribedRowSteps<TI, TF>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, byte* into)
+        where TI : struct, IInstructions where TF : struct, IFactors
     {
         int gpp = plan.GroupsPerPeriod, t = plan.T, stepBytes = plan.GroupStepBytes;
         for (int g = 0; g < groups; g++)
@@ -5467,7 +5957,7 @@ internal sealed partial class CpuBackend
                 s7.Store(to + 224);
             }
 
-            plan.Factor<TI>(at, gp, Math.Min(plan.Cg, chunks - g * plan.Cg) * plan.P, out var scale, out var min);
+            TF.Read<TI>(plan, at, gp, Math.Min(plan.Cg, chunks - g * plan.Cg) * plan.P, out var scale, out var min);
             scale.Store((float*)(to + 32 * t));
             if (plan.Mins)
             {
@@ -6021,12 +6511,12 @@ internal sealed partial class CpuBackend
 
         if (plan.StepsGathered)
         {
-            return GatheredOne<TI>(plan, row, tail, full, groups, chunks, x, lanes);
+            return GatheredOne<TI, FactorLoop, DescribedPlan.PlanSteps>(plan, row, tail, full, groups, chunks, x, lanes);
         }
 
         return plan.P switch
         {
-            1 => MadeOne<EightChunks, TI>(plan, row, tail, full, groups, chunks, x, lanes),
+            1 => MadeOne<EightChunks, TI, FactorLoop>(plan, row, tail, full, groups, chunks, x, lanes),
             2 => WideMadeOne<FourChunks, TI>(plan, row, tail, full, groups, x, lanes),
             4 => WideMadeOne<TwoChunks, TI>(plan, row, tail, full, groups, x, lanes),
             _ => WideMadeOne<OneChunk, TI>(plan, row, tail, full, groups, x, lanes),
@@ -6037,9 +6527,9 @@ internal sealed partial class CpuBackend
     private static unsafe float UniformOneBy<TR, TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
         where TR : struct, IRunLoad where TI : struct, IInstructions => plan.Map switch
         {
-            CodeMap.Same => UniformOne<TR, SameCodes, TI>(plan, row, tail, full, groups, chunks, x, lanes),
-            CodeMap.Flip => UniformOne<TR, FlippedCodes, TI>(plan, row, tail, full, groups, chunks, x, lanes),
-            _ => UniformOne<TR, ShuffledCodes, TI>(plan, row, tail, full, groups, chunks, x, lanes),
+            CodeMap.Same => UniformOne<TR, SameCodes, TI, FactorLoop>(plan, row, tail, full, groups, chunks, x, lanes),
+            CodeMap.Flip => UniformOne<TR, FlippedCodes, TI, FactorLoop>(plan, row, tail, full, groups, chunks, x, lanes),
+            _ => UniformOne<TR, ShuffledCodes, TI, FactorLoop>(plan, row, tail, full, groups, chunks, x, lanes),
         };
 
     // A stored row's integer steps (DescribedRowSteps), by the plan's uniform load and map as type parameters where it has them.
@@ -6063,11 +6553,11 @@ internal sealed partial class CpuBackend
         {
             if (plan.StepsGathered)
             {
-                GatheredRowSteps<TI>(plan, row, tail, full, groups, chunks, into);
+                GatheredRowSteps<TI, FactorLoop, DescribedPlan.PlanSteps>(plan, row, tail, full, groups, chunks, into);
                 return;
             }
 
-            DescribedRowSteps<TI>(plan, row, tail, full, groups, chunks, into);
+            DescribedRowSteps<TI, FactorLoop>(plan, row, tail, full, groups, chunks, into);
             return;
         }
 
@@ -6095,16 +6585,311 @@ internal sealed partial class CpuBackend
         switch (plan.Map)
         {
             case CodeMap.Same:
-                UniformRowSteps<TR, SameCodes, TI>(plan, row, tail, full, groups, chunks, into);
+                UniformRowSteps<TR, SameCodes, TI, FactorLoop>(plan, row, tail, full, groups, chunks, into);
                 break;
             case CodeMap.Flip:
-                UniformRowSteps<TR, FlippedCodes, TI>(plan, row, tail, full, groups, chunks, into);
+                UniformRowSteps<TR, FlippedCodes, TI, FactorLoop>(plan, row, tail, full, groups, chunks, into);
                 break;
             default:
-                UniformRowSteps<TR, ShuffledCodes, TI>(plan, row, tail, full, groups, chunks, into);
+                UniformRowSteps<TR, ShuffledCodes, TI, FactorLoop>(plan, row, tail, full, groups, chunks, into);
                 break;
         }
     }
+
+    /// <summary>
+    /// How the integer lane's group loop reads a group's scales and minimums: the plan's loop over its factors
+    /// (FactorLoop), or the plan's factors as type parameters (DescribedPlan.FactorKinds: SlotFactors), each group then
+    /// straight-line code. The same numbers either way.
+    /// </summary>
+    private unsafe interface IFactors
+    {
+        static abstract void Read<TI>(DescribedPlan plan, byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min) where TI : struct, IInstructions;
+    }
+
+    private readonly unsafe struct FactorLoop : IFactors
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static void Read<TI>(DescribedPlan plan, byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min) where TI : struct, IInstructions =>
+            plan.Factor<TI>(period, gp, valid, out scale, out min);
+    }
+
+    private readonly unsafe struct SlotFactors<T0, T1, T2, T3> : IFactors
+        where T0 : struct, DescribedPlan.IFactorSlot where T1 : struct, DescribedPlan.IFactorSlot where T2 : struct, DescribedPlan.IFactorSlot where T3 : struct, DescribedPlan.IFactorSlot
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static void Read<TI>(DescribedPlan plan, byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min) where TI : struct, IInstructions =>
+            plan.Slots<T0, T1, T2, T3, TI>(period, gp, valid, out scale, out min);
+    }
+
+    /// <summary>A kernel's address with its factors as the type parameter (WithFactors' last step).</summary>
+    private interface IFactorsUse
+    {
+        static abstract nint Use<TF>() where TF : struct, IFactors;
+    }
+
+    // The plan's factors as type parameters (DescribedPlan.FactorKinds), a slot at a time: its field's reading, then its
+    // number's, the last handing the set to TU; the loop over the factors where the plan has no kinds. Made once a plan and
+    // kernel (DescribedPlan.OneKernel, RowKernel), never a call.
+    private static nint WithFactors<TU>(DescribedPlan plan) where TU : struct, IFactorsUse =>
+        plan.FactorKinds == 0 ? TU.Use<FactorLoop>() : FactorsFirst<TU>(plan.FactorKinds);
+
+    private static nint FactorsFirst<TU>(int k) where TU : struct, IFactorsUse => (k >> 4 & 15) switch
+    {
+        1 => FirstNumber<TU, DescribedPlan.UniformBits>(k),
+        2 => FirstNumber<TU, DescribedPlan.GatherBits>(k),
+        3 => FirstNumber<TU, DescribedPlan.PieceBits>(k),
+        4 => FirstNumber<TU, DescribedPlan.WindowBits>(k),
+        _ => FirstNumber<TU, DescribedPlan.WindowPieces>(k),
+    };
+
+    private static nint FirstNumber<TU, TB>(int k) where TU : struct, IFactorsUse where TB : struct, DescribedPlan.IFactorBits => (k & 15) switch
+    {
+        0 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.UnsignedNumber>>(k >> 8),
+        1 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.SignedNumber>>(k >> 8),
+        2 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>(k >> 8),
+        3 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>(k >> 8),
+        _ => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>(k >> 8),
+    };
+
+    private static nint FactorsSecond<TU, T0>(int k) where TU : struct, IFactorsUse where T0 : struct, DescribedPlan.IFactorSlot => (k >> 4 & 15) switch
+    {
+        0 => FactorsThird<TU, T0, DescribedPlan.NoFactor>(k >> 8),
+        1 => SecondNumber<TU, T0, DescribedPlan.UniformBits>(k),
+        2 => SecondNumber<TU, T0, DescribedPlan.GatherBits>(k),
+        3 => SecondNumber<TU, T0, DescribedPlan.PieceBits>(k),
+        4 => SecondNumber<TU, T0, DescribedPlan.WindowBits>(k),
+        _ => SecondNumber<TU, T0, DescribedPlan.WindowPieces>(k),
+    };
+
+    private static nint SecondNumber<TU, T0, TB>(int k) where TU : struct, IFactorsUse where T0 : struct, DescribedPlan.IFactorSlot where TB : struct, DescribedPlan.IFactorBits =>
+        (k & 15) switch
+        {
+            0 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.UnsignedNumber>>(k >> 8),
+            1 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.SignedNumber>>(k >> 8),
+            2 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>(k >> 8),
+            3 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>(k >> 8),
+            _ => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>(k >> 8),
+        };
+
+    private static nint FactorsThird<TU, T0, T1>(int k) where TU : struct, IFactorsUse where T0 : struct, DescribedPlan.IFactorSlot where T1 : struct, DescribedPlan.IFactorSlot =>
+        (k >> 4 & 15) switch
+        {
+            0 => FactorsFourth<TU, T0, T1, DescribedPlan.NoFactor>(k >> 8),
+            1 => ThirdNumber<TU, T0, T1, DescribedPlan.UniformBits>(k),
+            2 => ThirdNumber<TU, T0, T1, DescribedPlan.GatherBits>(k),
+            3 => ThirdNumber<TU, T0, T1, DescribedPlan.PieceBits>(k),
+            4 => ThirdNumber<TU, T0, T1, DescribedPlan.WindowBits>(k),
+            _ => ThirdNumber<TU, T0, T1, DescribedPlan.WindowPieces>(k),
+        };
+
+    private static nint ThirdNumber<TU, T0, T1, TB>(int k)
+        where TU : struct, IFactorsUse where T0 : struct, DescribedPlan.IFactorSlot where T1 : struct, DescribedPlan.IFactorSlot where TB : struct, DescribedPlan.IFactorBits =>
+        (k & 15) switch
+        {
+            0 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.UnsignedNumber>>(k >> 8),
+            1 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.SignedNumber>>(k >> 8),
+            2 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>(k >> 8),
+            3 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>(k >> 8),
+            _ => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>(k >> 8),
+        };
+
+    private static nint FactorsFourth<TU, T0, T1, T2>(int k)
+        where TU : struct, IFactorsUse where T0 : struct, DescribedPlan.IFactorSlot where T1 : struct, DescribedPlan.IFactorSlot where T2 : struct, DescribedPlan.IFactorSlot =>
+        (k >> 4 & 15) switch
+        {
+            0 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.NoFactor>>(),
+            1 => FourthNumber<TU, T0, T1, T2, DescribedPlan.UniformBits>(k),
+            2 => FourthNumber<TU, T0, T1, T2, DescribedPlan.GatherBits>(k),
+            3 => FourthNumber<TU, T0, T1, T2, DescribedPlan.PieceBits>(k),
+            4 => FourthNumber<TU, T0, T1, T2, DescribedPlan.WindowBits>(k),
+            _ => FourthNumber<TU, T0, T1, T2, DescribedPlan.WindowPieces>(k),
+        };
+
+    private static nint FourthNumber<TU, T0, T1, T2, TB>(int k) where TU : struct, IFactorsUse
+        where T0 : struct, DescribedPlan.IFactorSlot where T1 : struct, DescribedPlan.IFactorSlot where T2 : struct, DescribedPlan.IFactorSlot where TB : struct, DescribedPlan.IFactorBits =>
+        (k & 15) switch
+        {
+            0 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.UnsignedNumber>>>(),
+            1 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.SignedNumber>>>(),
+            2 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>>(),
+            3 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>>(),
+            _ => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>>(),
+        };
+
+    // The kernels WithFactors hands a plan's factors to: the one-row kernels, the row steps' makers.
+    private readonly unsafe struct UniformOneUse<TR, TM, TI> : IFactorsUse where TR : struct, IRunLoad where TM : struct, ICodeMap where TI : struct, IInstructions
+    {
+        public static nint Use<TF>() where TF : struct, IFactors
+        {
+            delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> kernel = &UniformOne<TR, TM, TI, TF>;
+            return (nint)kernel;
+        }
+    }
+
+    private readonly unsafe struct GatheredOneUse<TI, TS> : IFactorsUse where TI : struct, IInstructions where TS : struct, DescribedPlan.IGatheredSteps
+    {
+        public static nint Use<TF>() where TF : struct, IFactors
+        {
+            delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> kernel = &GatheredOne<TI, TF, TS>;
+            return (nint)kernel;
+        }
+    }
+
+    private readonly unsafe struct MadeOneUse<TI> : IFactorsUse where TI : struct, IInstructions
+    {
+        public static nint Use<TF>() where TF : struct, IFactors
+        {
+            delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> kernel = &MadeOne<EightChunks, TI, TF>;
+            return (nint)kernel;
+        }
+    }
+
+    private readonly unsafe struct UniformRowStepsUse<TR, TM, TI> : IFactorsUse where TR : struct, IRunLoad where TM : struct, ICodeMap where TI : struct, IInstructions
+    {
+        public static nint Use<TF>() where TF : struct, IFactors
+        {
+            delegate*<DescribedPlan, byte*, byte*, int, int, int, byte*, void> kernel = &UniformRowSteps<TR, TM, TI, TF>;
+            return (nint)kernel;
+        }
+    }
+
+    private readonly unsafe struct GatheredRowStepsUse<TI, TS> : IFactorsUse where TI : struct, IInstructions where TS : struct, DescribedPlan.IGatheredSteps
+    {
+        public static nint Use<TF>() where TF : struct, IFactors
+        {
+            delegate*<DescribedPlan, byte*, byte*, int, int, int, byte*, void> kernel = &GatheredRowSteps<TI, TF, TS>;
+            return (nint)kernel;
+        }
+    }
+
+    /// <summary>A gathered kernel's address with its steps' readings as the type parameter (WithSteps' last step), its factors then chosen.</summary>
+    private interface IStepsUse
+    {
+        static abstract nint Use<TS>(DescribedPlan plan) where TS : struct, DescribedPlan.IGatheredSteps;
+    }
+
+    private readonly struct GatheredOneSteps<TI> : IStepsUse where TI : struct, IInstructions
+    {
+        public static nint Use<TS>(DescribedPlan plan) where TS : struct, DescribedPlan.IGatheredSteps => WithFactors<GatheredOneUse<TI, TS>>(plan);
+    }
+
+    private readonly struct GatheredRowStepsSteps<TI> : IStepsUse where TI : struct, IInstructions
+    {
+        public static nint Use<TS>(DescribedPlan plan) where TS : struct, DescribedPlan.IGatheredSteps => WithFactors<GatheredRowStepsUse<TI, TS>>(plan);
+    }
+
+    // The gathered steps' readings as type parameters (DescribedPlan.StepKinds): plane 0's, plane 1's (or none), the map;
+    // GatheredStep's loop where the plan has no kinds. Made once a plan and kernel, never a call.
+    private static nint WithSteps<TU>(DescribedPlan plan) where TU : struct, IStepsUse
+    {
+        int k = plan.StepKinds;
+        return k == 0 ? TU.Use<DescribedPlan.PlanSteps>(plan) : (k & 15) switch
+        {
+            1 => SecondPlane<TU, DescribedPlan.MaskedPlane>(plan, k),
+            3 => SecondPlane<TU, DescribedPlan.BitPlane>(plan, k),
+            4 => SecondPlane<TU, DescribedPlan.StreamPlane>(plan, k),
+            _ => SecondPlane<TU, DescribedPlan.DigitPlane>(plan, k),
+        };
+    }
+
+    private static nint SecondPlane<TU, TP0>(DescribedPlan plan, int k) where TU : struct, IStepsUse where TP0 : struct, DescribedPlan.IStepPlane => (k >> 4 & 15) switch
+    {
+        0 => StepMapOf<TU, TP0, DescribedPlan.NoPlane, DescribedPlan.NoPlane>(plan, k),
+        1 => ThirdPlane<TU, TP0, DescribedPlan.MaskedPlane>(plan, k),
+        3 => ThirdPlane<TU, TP0, DescribedPlan.BitPlane>(plan, k),
+        4 => ThirdPlane<TU, TP0, DescribedPlan.StreamPlane>(plan, k),
+        _ => ThirdPlane<TU, TP0, DescribedPlan.DigitPlane>(plan, k),
+    };
+
+    private static nint ThirdPlane<TU, TP0, TP1>(DescribedPlan plan, int k)
+        where TU : struct, IStepsUse where TP0 : struct, DescribedPlan.IStepPlane where TP1 : struct, DescribedPlan.IStepPlane => (k >> 8 & 15) switch
+        {
+            0 => StepMapOf<TU, TP0, TP1, DescribedPlan.NoPlane>(plan, k),
+            1 => StepMapOf<TU, TP0, TP1, DescribedPlan.MaskedPlane>(plan, k),
+            3 => StepMapOf<TU, TP0, TP1, DescribedPlan.BitPlane>(plan, k),
+            4 => StepMapOf<TU, TP0, TP1, DescribedPlan.StreamPlane>(plan, k),
+            _ => StepMapOf<TU, TP0, TP1, DescribedPlan.DigitPlane>(plan, k),
+        };
+
+    private static nint StepMapOf<TU, TP0, TP1, TP2>(DescribedPlan plan, int k)
+        where TU : struct, IStepsUse where TP0 : struct, DescribedPlan.IStepPlane where TP1 : struct, DescribedPlan.IStepPlane where TP2 : struct, DescribedPlan.IStepPlane =>
+        (CodeMap)((k >> 12) - 1) switch
+        {
+            CodeMap.Same => TU.Use<DescribedPlan.PlaneSteps<TP0, TP1, TP2, DescribedPlan.SameStepMap>>(plan),
+            CodeMap.Flip => TU.Use<DescribedPlan.PlaneSteps<TP0, TP1, TP2, DescribedPlan.FlipStepMap>>(plan),
+            CodeMap.Shuffle => TU.Use<DescribedPlan.PlaneSteps<TP0, TP1, TP2, DescribedPlan.ShuffleStepMap>>(plan),
+            CodeMap.Table => TU.Use<DescribedPlan.PlaneSteps<TP0, TP1, TP2, DescribedPlan.TableStepMap>>(plan),
+            _ => TU.Use<DescribedPlan.PlaneSteps<TP0, TP1, TP2, DescribedPlan.BookStepMap>>(plan),
+        };
+
+    private readonly unsafe struct DescribedRowStepsUse<TI> : IFactorsUse where TI : struct, IInstructions
+    {
+        public static nint Use<TF>() where TF : struct, IFactors
+        {
+            delegate*<DescribedPlan, byte*, byte*, int, int, int, byte*, void> kernel = &DescribedRowSteps<TI, TF>;
+            return (nint)kernel;
+        }
+    }
+
+    // The one-row integer kernel of a plan by TI, its choices as type parameters (DescribedIntegerOne's, and the factors'):
+    // made once a plan and instruction set (DescribedPlan.OneKernel); 0 for byte planes of wide integers (their dispatch).
+    private static nint ResolveOne<TI>(DescribedPlan plan) where TI : struct, IInstructions
+    {
+        if (plan.P != 1)
+        {
+            return 0;
+        }
+
+        if (plan.UniformRuns != 0)
+        {
+            return plan.UniformRuns switch
+            {
+                1 => OneByMap<OneRun, TI>(plan),
+                2 => OneByMap<TwoRuns, TI>(plan),
+                4 => OneByMap<FourRuns, TI>(plan),
+                _ => OneByMap<EightRuns, TI>(plan),
+            };
+        }
+
+        return plan.StepsGathered ? WithSteps<GatheredOneSteps<TI>>(plan) : WithFactors<MadeOneUse<TI>>(plan);
+    }
+
+    private static nint OneByMap<TR, TI>(DescribedPlan plan) where TR : struct, IRunLoad where TI : struct, IInstructions => plan.Map switch
+    {
+        CodeMap.Same => WithFactors<UniformOneUse<TR, SameCodes, TI>>(plan),
+        CodeMap.Flip => WithFactors<UniformOneUse<TR, FlippedCodes, TI>>(plan),
+        _ => WithFactors<UniformOneUse<TR, ShuffledCodes, TI>>(plan),
+    };
+
+    // The row steps' maker of a plan by TI (RowStepsOf's choice, and the factors'), made once a plan and instruction set
+    // (DescribedPlan.RowKernel); 0 for byte planes of wide integers.
+    private static nint ResolveRowSteps<TI>(DescribedPlan plan) where TI : struct, IInstructions
+    {
+        if (plan.P != 1)
+        {
+            return 0;
+        }
+
+        if (plan.UniformRuns != 0)
+        {
+            return plan.UniformRuns switch
+            {
+                1 => RowStepsByMap<OneRun, TI>(plan),
+                2 => RowStepsByMap<TwoRuns, TI>(plan),
+                4 => RowStepsByMap<FourRuns, TI>(plan),
+                _ => RowStepsByMap<EightRuns, TI>(plan),
+            };
+        }
+
+        return plan.StepsGathered ? WithSteps<GatheredRowStepsSteps<TI>>(plan) : WithFactors<DescribedRowStepsUse<TI>>(plan);
+    }
+
+    private static nint RowStepsByMap<TR, TI>(DescribedPlan plan) where TR : struct, IRunLoad where TI : struct, IInstructions => plan.Map switch
+    {
+        CodeMap.Same => WithFactors<UniformRowStepsUse<TR, SameCodes, TI>>(plan),
+        CodeMap.Flip => WithFactors<UniformRowStepsUse<TR, FlippedCodes, TI>>(plan),
+        _ => WithFactors<UniformRowStepsUse<TR, ShuffledCodes, TI>>(plan),
+    };
 
     /// <summary>
     /// How the described lane loads a span's run of its one code plane and shifts it (every span the same:
@@ -6303,7 +7088,8 @@ internal sealed partial class CpuBackend
     // scratch made once a call, each step made from them straight into its dot product.
     [SkipLocalsInit]
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe float GatheredOne<TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes) where TI : struct, IInstructions
+    private static unsafe float GatheredOne<TI, TF, TS>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
+        where TI : struct, IInstructions where TF : struct, IFactors where TS : struct, DescribedPlan.IGatheredSteps
     {
         int gpp = plan.GroupsPerPeriod, t = plan.T, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, periodBytes = plan.PeriodBytes;
         bool mins = plan.Mins, eight = t == 8;
@@ -6317,19 +7103,19 @@ internal sealed partial class CpuBackend
             sbyte* xg = x + (nint)g * groupValues;
             float* lg = lanes + (nint)g * laneFloats;
             var i = Vector256.Load((int*)(lg + 8));
-            i = TI.Dot(i, plan.GatheredStep<TI>(words, first), Vector256.Load(xg));
-            i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 1), Vector256.Load(xg + 32));
-            i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 2), Vector256.Load(xg + 64));
-            i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 3), Vector256.Load(xg + 96));
+            i = TI.Dot(i, TS.Step<TI>(plan, words, first), Vector256.Load(xg));
+            i = TI.Dot(i, TS.Step<TI>(plan, words, first + 1), Vector256.Load(xg + 32));
+            i = TI.Dot(i, TS.Step<TI>(plan, words, first + 2), Vector256.Load(xg + 64));
+            i = TI.Dot(i, TS.Step<TI>(plan, words, first + 3), Vector256.Load(xg + 96));
             if (eight)
             {
-                i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 4), Vector256.Load(xg + 128));
-                i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 5), Vector256.Load(xg + 160));
-                i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 6), Vector256.Load(xg + 192));
-                i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 7), Vector256.Load(xg + 224));
+                i = TI.Dot(i, TS.Step<TI>(plan, words, first + 4), Vector256.Load(xg + 128));
+                i = TI.Dot(i, TS.Step<TI>(plan, words, first + 5), Vector256.Load(xg + 160));
+                i = TI.Dot(i, TS.Step<TI>(plan, words, first + 6), Vector256.Load(xg + 192));
+                i = TI.Dot(i, TS.Step<TI>(plan, words, first + 7), Vector256.Load(xg + 224));
             }
 
-            plan.Factor<TI>(at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+            TF.Read<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
             f = TI.Fused(Vector256.ConvertToSingle(i), scale * Vector256.Load(lg), f);
             if (mins)
             {
@@ -6344,7 +7130,8 @@ internal sealed partial class CpuBackend
     // scratch made once a call, its steps, scales and minimums stored.
     [SkipLocalsInit]
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void GatheredRowSteps<TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, byte* into) where TI : struct, IInstructions
+    private static unsafe void GatheredRowSteps<TI, TF, TS>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, byte* into)
+        where TI : struct, IInstructions where TF : struct, IFactors where TS : struct, DescribedPlan.IGatheredSteps
     {
         int gpp = plan.GroupsPerPeriod, t = plan.T, stepBytes = plan.GroupStepBytes, periodBytes = plan.PeriodBytes;
         bool mins = plan.Mins;
@@ -6357,10 +7144,10 @@ internal sealed partial class CpuBackend
             plan.GatherWords<TI>(at, gp, words);
             for (int s = 0; s < t; s++)
             {
-                plan.GatheredStep<TI>(words, first + s).Store(to + 32 * s);
+                TS.Step<TI>(plan, words, first + s).Store(to + 32 * s);
             }
 
-            plan.Factor<TI>(at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+            TF.Read<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
             scale.Store((float*)(to + 32 * t));
             if (mins)
             {
@@ -6371,8 +7158,8 @@ internal sealed partial class CpuBackend
 
     // MadeOne for a plan with uniform runs (P = 1), its load and map as type parameters.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe float UniformOne<TR, TM, TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
-        where TR : struct, IRunLoad where TM : struct, ICodeMap where TI : struct, IInstructions
+    private static unsafe float UniformOne<TR, TM, TI, TF>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
+        where TR : struct, IRunLoad where TM : struct, ICodeMap where TI : struct, IInstructions where TF : struct, IFactors
     {
         int gpp = plan.GroupsPerPeriod, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, periodBytes = plan.PeriodBytes;
         bool mins = plan.Mins, c32 = plan.C == 32;
@@ -6411,7 +7198,7 @@ internal sealed partial class CpuBackend
                 UniformSteps<TR, TM, TI>(at, gp, offsets, shifts, counts, mask, table, c32, out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
             }
 
-            plan.Factor<TI>(at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+            TF.Read<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
             sbyte* xg = x + (nint)g * groupValues;
             float* lg = lanes + (nint)g * laneFloats;
             var i = Vector256.Load((int*)(lg + 8));
@@ -6439,8 +7226,8 @@ internal sealed partial class CpuBackend
 
     // DescribedRowSteps for a plan with uniform runs (P = 1), its load and map as type parameters.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void UniformRowSteps<TR, TM, TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, byte* into)
-        where TR : struct, IRunLoad where TM : struct, ICodeMap where TI : struct, IInstructions
+    private static unsafe void UniformRowSteps<TR, TM, TI, TF>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, byte* into)
+        where TR : struct, IRunLoad where TM : struct, ICodeMap where TI : struct, IInstructions where TF : struct, IFactors
     {
         int gpp = plan.GroupsPerPeriod, t = plan.T, stepBytes = plan.GroupStepBytes, periodBytes = plan.PeriodBytes;
         bool mins = plan.Mins, c32 = t == 8;
@@ -6491,7 +7278,7 @@ internal sealed partial class CpuBackend
                 s7.Store(to + 224);
             }
 
-            plan.Factor<TI>(at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+            TF.Read<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
             scale.Store((float*)(to + 32 * t));
             if (mins)
             {
@@ -6501,8 +7288,8 @@ internal sealed partial class CpuBackend
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe float MadeOne<TX, TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
-        where TX : struct, IStepLoad where TI : struct, IInstructions
+    private static unsafe float MadeOne<TX, TI, TF>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
+        where TX : struct, IStepLoad where TI : struct, IInstructions where TF : struct, IFactors
     {
         int gpp = plan.GroupsPerPeriod, t = plan.T, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, xStep = 4 * plan.Cg, cg = plan.Cg, p = plan.P;
         bool mins = plan.Mins;
@@ -6512,7 +7299,7 @@ internal sealed partial class CpuBackend
             int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp;
             byte* at = period < full ? row + (nint)period * plan.PeriodBytes : tail;
             plan.Steps<TI>(at, gp, out var s0, out var s1, out var s2, out var s3, out var s4, out var s5, out var s6, out var s7);
-            plan.Factor<TI>(at, gp, Math.Min(cg, chunks - g * cg) * p, out var scale, out var min);
+            TF.Read<TI>(plan, at, gp, Math.Min(cg, chunks - g * cg) * p, out var scale, out var min);
             sbyte* xg = x + (nint)g * groupValues;
             float* lg = lanes + (nint)g * laneFloats;
             var xs = Vector256.Load(lg);
