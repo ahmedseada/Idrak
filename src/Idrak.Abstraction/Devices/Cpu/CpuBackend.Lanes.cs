@@ -4063,6 +4063,16 @@ internal sealed partial class CpuBackend
         private Vector256<byte> StreamLoad(byte* period, int at, int bits)
         {
             int* group = streamAt + 4 * at;
+            if (bits == 1)
+            {
+                // Fields of one bit: the 4 groups' bytes in every 32-bit lane, byte j / 8 of them to byte j, and bit j mod 8
+                // of it tested.
+                uint four = period[group[0]] | (uint)period[group[1]] << 8 | (uint)period[group[2]] << 16 | (uint)period[group[3]] << 24;
+                var spread = Vector256.Shuffle(Vector256.Create(four).AsByte(), BitBytes);
+                var test = Vector256.Create(0x8040201008040201UL).AsByte();
+                return Vector256.Equals(spread & test, test) & Vector256.Create((byte)1);
+            }
+
             var words = Vector256.Create(StreamWord(period + group[0], bits), StreamWord(period + group[1], bits), StreamWord(period + group[2], bits),
                 StreamWord(period + group[3], bits));
             var mask = Vector256.Create((ulong)((1 << bits) - 1));
@@ -4074,6 +4084,10 @@ internal sealed partial class CpuBackend
 
             return codes.AsByte();
         }
+
+        // Byte j / 8 of 4 bytes repeated to byte j (each 128-bit half picks from its own copy of them, so the shuffle stays within
+        // the halves: StreamLoad's one-bit fields).
+        private static readonly Vector256<byte> BitBytes = Vector256.Create((byte)0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 18, 18, 18, 18, 18, 18, 18, 18, 19, 19, 19, 19, 19, 19, 19, 19);
 
         // The `bits` bytes of 8 stream fields from `p` (little-endian), and no byte past them.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -4571,6 +4585,14 @@ internal sealed partial class CpuBackend
                         break;
                     case (byte)StepRead.Stream:
                         int bits = stepBits[p];
+                        if (bits == 1)
+                        {
+                            // Fields of one bit: the 4 bits to the 4 bytes' low bits by one multiply (bit i times 2^(7i) is at bit
+                            // 8i, no two products share a bit).
+                            v = (word & Vector256.Create(0xFu)) * Vector256.Create(0x00204081u) & Vector256.Create(0x01010101u);
+                            break;
+                        }
+
                         var field = stepFields[p];
                         v = (word & field) | Vector256.ShiftLeft(Vector256.ShiftRightLogical(word, bits) & field, 8)
                             | Vector256.ShiftLeft(Vector256.ShiftRightLogical(word, 2 * bits) & field, 16) | Vector256.ShiftLeft(Vector256.ShiftRightLogical(word, 3 * bits) & field, 24);
