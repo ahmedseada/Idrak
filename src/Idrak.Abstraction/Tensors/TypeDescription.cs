@@ -524,9 +524,10 @@ public sealed partial record TypeDescription(int Values, int Bytes, NumberType C
     /// <summary>
     /// Whether <paramref name="other"/> describes the same bits: every field equal and every list's items one by one (no
     /// scales, minimums or sums null and empty alike). A description is its value: two made apart (int8's rows of one
-    /// length asked twice, <see cref="Types.RowScale"/>) are equal, so a measured choice recorded for a description (a
-    /// device's lane at a shape) holds for an equal one. Its plans are its own: each description object makes and holds
-    /// its reader, its writer and a lane's plan the first time they are needed, none kept by the value.
+    /// length asked twice, <see cref="Types.RowScale"/>) are equal, and so are their fingerprints, under which the
+    /// machine's file of measured choices records a lane at a shape. Its plans are its own: each description object makes
+    /// and holds its reader, its writer, a lane's plan and the lanes measured for its shapes the first time they are
+    /// needed, none kept by the value.
     /// </summary>
     public bool Equals(TypeDescription? other) => ReferenceEquals(this, other) || other is not null
         && Values == other.Values && Bytes == other.Bytes && Group == other.Group && GroupBytes == other.GroupBytes && MinsAdded == other.MinsAdded

@@ -1641,8 +1641,14 @@ internal sealed partial class CpuBackend
     /// </summary>
     private interface ILaneChoice
     {
-        /// <summary>The description the shape's choice is kept under (with the vector paths, the rows' class, n and k).</summary>
+        /// <summary>The weight's description: its block in the recorded choices' names, its fingerprint in the machine's file.</summary>
         TypeDescription Description { get; }
+
+        /// <summary>
+        /// The lanes measured for the description's shapes, held by the description's own CPU plan (DescribedPlan.Chosen):
+        /// by shape alone (the vector paths, the rows' class, n and k), each with the generation it was measured in.
+        /// </summary>
+        ConcurrentDictionary<(CpuVectorPaths Vectors, int Rows, int N, int K), (int Lane, int Generation)> Chosen { get; }
 
         /// <summary>The candidates that run on this CPU (1 to MostCandidates).</summary>
         int Count { get; }
@@ -1762,17 +1768,20 @@ internal sealed partial class CpuBackend
         public float* Scales { get; }
     }
 
-    // The shape's lane of `product`: kept from its measuring, or measured now (Measure).
+    // The shape's lane of `product`: kept by its description's plan from its measuring in this generation, or measured now
+    // (Measure).
     private static int Chosen<TC>(in TC product, int m, int n, int k) where TC : struct, ILaneChoice =>
-        StoredLanes.TryGetValue(ShapeOf(product, m, n, k), out int known) ? known : Measure(product, m, n, k);
+        product.Chosen.TryGetValue(ShapeOf(m, n, k), out var known) && known.Generation == Volatile.Read(ref s_lanesForgotten) ? known.Lane : Measure(product, m, n, k);
 
-    // Each shape's measured lane: by the weight's description, the vector paths allowed (a choice made under one setting is
-    // not taken under another), the rows by class (exact up to 8, then powers of two, so prompts of every length measure a
-    // few classes), n and k.
-    private static readonly ConcurrentDictionary<(TypeDescription Description, CpuVectorPaths Vectors, int Rows, int N, int K), int> StoredLanes = new();
+    // How many times this process's choices were forgotten (ForgetChoices, tests): a lane a plan kept from an earlier
+    // generation is measured again.
+    private static int s_lanesForgotten;
 
-    private static (TypeDescription, CpuVectorPaths, int, int, int) ShapeOf<TC>(in TC product, int m, int n, int k) where TC : struct, ILaneChoice =>
-        (product.Description, ComputeResources.CpuVectors, m <= 8 ? m : (int)BitOperations.RoundUpToPowerOf2((uint)m), n, k);
+    // A shape, as a description's plan keeps its measured lane (DescribedPlan.Chosen): the vector paths allowed (a choice
+    // made under one setting is not taken under another), the rows by class (exact up to 8, then powers of two, so prompts
+    // of every length measure a few classes), n and k.
+    private static (CpuVectorPaths Vectors, int Rows, int N, int K) ShapeOf(int m, int n, int k) =>
+        (ComputeResources.CpuVectors, m <= 8 ? m : (int)BitOperations.RoundUpToPowerOf2((uint)m), n, k);
 
     // A shape's name in the recorded choices (ProductRoutes.Chose): the description's block and the product's shape.
     private static string ShapeName(TypeDescription d, int m, int n, int k) =>
@@ -1819,7 +1828,7 @@ internal sealed partial class CpuBackend
             CpuChoices.Keep(LaneFileKey(product, m, n, k), best.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
-        StoredLanes[ShapeOf(product, m, n, k)] = best;
+        product.Chosen[ShapeOf(m, n, k)] = (best, Volatile.Read(ref s_lanesForgotten));
         return best;
     }
 
@@ -1855,7 +1864,7 @@ internal sealed partial class CpuBackend
     // allowed, the rows' class, n and k.
     private static string LaneFileKey<TC>(in TC product, int m, int n, int k) where TC : struct, ILaneChoice
     {
-        var (_, vectors, rows, _, _) = ShapeOf(product, m, n, k);
+        var (vectors, rows, _, _) = ShapeOf(m, n, k);
         return string.Create(System.Globalization.CultureInfo.InvariantCulture,
             $"described {product.Description.CpuFingerprint} {rows}x{k}->{n} {vectors}");
     }
@@ -1926,6 +1935,8 @@ internal sealed partial class CpuBackend
         private LaneList Lanes => described.Lanes.ForRows(m);
 
         public TypeDescription Description => description;
+
+        public ConcurrentDictionary<(CpuVectorPaths Vectors, int Rows, int N, int K), (int Lane, int Generation)> Chosen => described.Chosen;
 
         public int Count => Lanes.Count;
 
@@ -2500,6 +2511,13 @@ internal sealed partial class CpuBackend
     {
         // The pinned arrays the kernels read through pointers, kept alive with the plan.
         private readonly List<Array> held = [];
+
+        /// <summary>
+        /// The lanes measured for this plan's shapes (Chosen, Measure): the plan's own, held with it by its description (an
+        /// equal description made apart measures its own), by shape alone (the vector paths, the rows' class, n and k), each
+        /// with the generation it was measured in (a lane of an earlier one, forgotten, is measured again).
+        /// </summary>
+        public ConcurrentDictionary<(CpuVectorPaths Vectors, int Rows, int N, int K), (int Lane, int Generation)> Chosen { get; } = new();
 
         private DescribedPlan(TypeDescription d)
         {
@@ -4815,6 +4833,9 @@ internal sealed partial class CpuBackend
             format = k > 0 && k % description.UnitValues == 0 && description.CpuPlan is { } plan ? new DescribedFormat(plan, k) : default;
             return format.plan is not null;
         }
+
+        /// <summary>The lanes measured for the plan's shapes (DescribedPlan.Chosen).</summary>
+        public ConcurrentDictionary<(CpuVectorPaths Vectors, int Rows, int N, int K), (int Lane, int Generation)> Chosen => plan.Chosen;
 
         // The integer arithmetic's int8 dot products take AVX2's multiply-adds where its unsigned codes are at most 127 and
         // a byte plane each (DescribedPlan.PairsFit).

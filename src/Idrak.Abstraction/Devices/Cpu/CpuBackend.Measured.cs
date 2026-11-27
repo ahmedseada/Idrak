@@ -54,7 +54,7 @@ internal sealed partial class CpuBackend
     {
         s_lanesChosen.Clear();
         s_readChosen.Clear();
-        StoredLanes.Clear();
+        Interlocked.Increment(ref s_lanesForgotten);           // every plan's kept lanes are of an earlier generation now
         CpuChoices.Forget();
     }
 

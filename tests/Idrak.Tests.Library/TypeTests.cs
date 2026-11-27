@@ -645,6 +645,13 @@ internal abstract partial class Tests
                   && !ReferenceEquals(rowCode.Grid, copiedCode.Grid) && rowCode == copiedCode && rowCode.GetHashCode() == copiedCode.GetHashCode(),
                 $"{row}: its code's grid is held by the number type, one for its rows of every length; a copy of the type makes its own, equal by value");
 
+            // The lanes measured for its shapes are its plan's own: the product above (by `again`'s description) kept its
+            // lane in that description's plan (or its codes' plan, where the lane reads the codes alone), none in an equal
+            // description's made apart.
+            var (measured, unmeasured) = theirs.CpuPlan is { } plan ? (plan, mine.CpuPlan!) : (theirs.CpuRowCodes.CpuPlan!, mine.CpuRowCodes.CpuPlan!);
+            Check(!ReferenceEquals(measured, unmeasured) && measured.Chosen.Count > 0 && unmeasured.Chosen.Count == 0,
+                $"{row}: the product's lane is kept by its own description's plan ({measured.Chosen.Count} shapes), not by an equal one's ({unmeasured.Chosen.Count})");
+
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {row}: {stored.Length} bytes for {n} rows, relative error {error / energy:0.0e+0}, the CPU's product within {worst:0.0e+0}"));
         }
 
