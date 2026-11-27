@@ -292,6 +292,11 @@ internal sealed class BenchCommand : Command
         }
 
         progress.Clear();
+        foreach (var (product, lane) in ProductRoutes.Choices.OrderBy(c => c.Key, StringComparer.Ordinal))
+        {
+            context.Detail($"  measured lane: {product}: {lane}");
+        }
+
         var drafted = context.Option("--draft") is { } draftName
             ? BenchDraft(context, draftName, run, generator, prompt, options, Median(generated), repeats, promptTokens + tokens + 1, document)
             : [];

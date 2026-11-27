@@ -1814,6 +1814,11 @@ internal sealed partial class CpuBackend
         else if (KeptLane(product, m, n, k, count) is { } kept)
         {
             best = kept;
+            if (!ProductRoutes.Choices.ContainsKey("cpu: " + ShapeName(product.Description, m, n, k)))
+            {
+                // (A shape measured in this process keeps its times in the record; one read from the file is listed as kept.)
+                ProductRoutes.Chose("cpu", ShapeName(product.Description, m, n, k), $"{LaneName(best)} (kept from this machine's measured choices)");
+            }
         }
         else if (CpuTuning.Autotune)
         {
