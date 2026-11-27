@@ -107,6 +107,29 @@ internal abstract partial class Tests
             SameOutputsOnTyped($"{name}: LSTM steps' gradient, typed weights", typed, plain, [32, 384],
                 (w, o) => backend.LstmSequenceBackward(gates.Storage, cells.Storage, dOutput.Storage, w, o[0], o[1], 3, 2, 16, false));
 
+            // The recurrent cells' typed projections and recurrent products (h = 16), and typed states written back through
+            // their type (h = 256: rows of whole blocks of every type).
+            var recurrent = Floats(2 * 64);
+            SameOutputsOnTyped($"{name}: LSTM cell, typed projections", typed, plain, [32, 32, 96, 384, 96],
+                (p, o) => backend.LstmCell(p, recurrent.Storage, o[0], o[1], o[2], o[3], o[4], 1, 3, 2, 16));
+            SameOutputsOnTyped($"{name}: LSTM cell, a typed recurrent product", typed, plain, [32, 32, 96, 384, 96],
+                (q, o) => backend.LstmCell(projected.Storage, q, o[0], o[1], o[2], o[3], o[4], 1, 3, 2, 16));
+            SameOutputsOnTyped($"{name}: GRU cell, typed projections and recurrent product", typed, plain, [32, 96, 384],
+                (p, o) => backend.GruCell(p, p, null, o[0], o[1], o[2], 1, 3, 2, 16));
+            var wideProjected = Floats(2 * 3 * 1024);
+            var wideRecurrent = Floats(2 * 1024);
+            InPlace($"{name}: an LSTM cell's typed state", type, 2 * 256, 1, (s, _) =>
+            {
+                using var outputs = Tensor.Zeros([2 * 3 * 256], Device.Cpu);
+                using var hidden = Tensor.Zeros([2 * 256], Device.Cpu);
+                backend.LstmCell(wideProjected.Storage, wideRecurrent.Storage, s[0], hidden.Storage, outputs.Storage, null, null, 1, 3, 2, 256);
+            }, other);
+            InPlace($"{name}: a GRU cell's typed hidden state", type, 2 * 256, 1, (s, _) =>
+            {
+                using var outputs = Tensor.Zeros([2 * 3 * 256], Device.Cpu);
+                backend.GruCell(wideProjected.Storage, wideRecurrent.Storage, null, s[0], outputs.Storage, null, 1, 3, 2, 256);
+            }, other);
+
             // Operands written in place: the optimizers' parameters and moments, the cross-entropy's logits. The typed run
             // gives the float32 run's results written through the type.
             InPlace($"{name}: SGD's parameters and momentum", type, Count, 2, (s, g) => backend.SgdStep(s[0], g, s[1], Count, 0.1f, 0.9f), other);

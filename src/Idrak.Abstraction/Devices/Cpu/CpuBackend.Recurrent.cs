@@ -22,10 +22,12 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
     {
         if (batch > 0 && hiddenSize > 0)
         {
-            fixed (float* pp = V(projected), pq = V(recurrent), pc = V(cell), ph = V(hidden), po = V(output), pg = gates is null ? null : V(gates),
+            // Typed projections, recurrent product and cell read through their types a row at a time; a typed cell's new rows
+            // written back through its type.
+            fixed (float* pp = D(projected), pq = D(recurrent), pc = D(cell), ph = V(hidden), po = V(output), pg = gates is null ? null : V(gates),
                 pcs = cells is null ? null : V(cells))
             {
-                LstmForward(pp, pq, pc, ph, po, pg, pcs, step, steps, batch, hiddenSize);
+                LstmForward(pp, pq, pc, ph, po, pg, pcs, step, steps, batch, hiddenSize, RecurrentReads.Of(projected, recurrent, cell, hiddenSize, "LstmCell"));
             }
         }
 
@@ -40,10 +42,11 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             var buffer = StepBuffer((long)batch * 4 * hiddenSize);
             try
             {
-                fixed (float* pp = V(projected), pu = D(weights), pc = V(cell), po = V(output), pg = gates is null ? null : V(gates),
+                fixed (float* pp = D(projected), pu = D(weights), pc = D(cell), po = V(output), pg = gates is null ? null : V(gates),
                     pcs = cells is null ? null : V(cells), pr = buffer)
                 {
-                    LstmStepRun(pp, pu, pc, po, pg, pcs, step, previous, steps, batch, hiddenSize, pr, WeightsType(weights, "LstmStep"));
+                    LstmStepRun(pp, pu, pc, po, pg, pcs, step, previous, steps, batch, hiddenSize, pr, WeightsType(weights, "LstmStep"),
+                        RecurrentReads.Of(projected, null, cell, hiddenSize, "LstmStep"));
                 }
             }
             finally
@@ -63,13 +66,14 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             var buffer = StepBuffer((long)batch * 4 * hiddenSize);
             try
             {
-                fixed (float* pp = V(projected), pu = D(weights), pc = V(cell), po = V(output), pg = gates is null ? null : V(gates),
+                fixed (float* pp = D(projected), pu = D(weights), pc = D(cell), po = V(output), pg = gates is null ? null : V(gates),
                     pcs = cells is null ? null : V(cells), pr = buffer)
                 {
+                    var reads = RecurrentReads.Of(projected, null, cell, hiddenSize, "LstmSequence");
                     for (int i = 0; i < steps; i++)
                     {
                         LstmStepRun(pp, pu, pc, po, pg, pcs, Taken(i, steps, reverse), i == 0 ? -1 : Taken(i - 1, steps, reverse), steps, batch, hiddenSize, pr,
-                            WeightsType(weights, "LstmSequence"));
+                            WeightsType(weights, "LstmSequence"), reads);
                     }
                 }
             }
@@ -152,13 +156,13 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
 
     // An LSTM step from the recurrent product held in `recurrent` [batch, 4H]; `hidden` [batch, H] or null.
     private static void LstmForward(float* projected, float* recurrent, float* cell, float* hidden, float* output, float* gates, float* cells, int step, int steps,
-        int batch, int h) =>
-        Rows("LstmCell", new LstmRows(projected, recurrent, cell, hidden, output, gates, cells, step, steps, h, batch), batch, h, CellWork);
+        int batch, int h, RecurrentReads reads = default) =>
+        Rows("LstmCell", new LstmRows(projected, recurrent, cell, hidden, output, gates, cells, step, steps, h, batch, reads), batch, h, CellWork);
 
     // The step kernel: the previous step's hidden rows (output[n, previous]) through U [H, 4H] into `recurrent` [batch,
     // 4H], then the cell (no product at the first step: the zero initial state).
     private static void LstmStepRun(float* projected, float* weights, float* cell, float* output, float* gates, float* cells, int step, int previous, int steps,
-        int batch, int h, float* recurrent, IElementType? wType = null)
+        int batch, int h, float* recurrent, IElementType? wType = null, RecurrentReads reads = default)
     {
         if (previous >= 0)
         {
@@ -169,7 +173,7 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             new Span<float>(recurrent, batch * 4 * h).Clear();
         }
 
-        LstmForward(projected, recurrent, cell, null, output, gates, cells, step, steps, batch, h);
+        LstmForward(projected, recurrent, cell, null, output, gates, cells, step, steps, batch, h, reads);
     }
 
     // The recurrent weights' type where their words hold another type's values (the step's product reads them through it
@@ -205,22 +209,57 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
 
     // Row n: z_k = projected[n, step, k·H + j] + recurrent[n, k·H + j]; i, f, o = σ(z_0, z_1, z_3), g = tanh(z_2);
     // c = f · c_prev + i · g (fused), h = o · tanh(c).
+    // A recurrent kernel's typed inputs, each read through its type a row at a time where the row reads it (TypedRanges):
+    // the projections, the recurrent product of a cell kernel, the state (an LSTM's cell, a GRU cell's hidden state); a
+    // typed state's new row written back through its type (whole groups of its blocks a row).
+    private readonly struct RecurrentReads(TypedRanges projected, TypedRanges recurrent, TypedRanges state, IElementType? stateType)
+    {
+        public readonly TypedRanges Projected = projected, Recurrent = recurrent, State = state;
+        public readonly IElementType? StateType = stateType;
+
+        public static RecurrentReads Of(Storage projected, Storage? recurrent, Storage? state, int h, string operation)
+        {
+            var type = state is null || NativeFloats(state) ? null : state.Type;
+            if (type is not null && h % Math.Max(1, type.Description.UnitValues) != 0)
+            {
+                throw new NotSupportedException($"The CPU's {operation} writes a state of {type.Name} a row of {h} values at a time: rows are not whole groups of its {type.Description.UnitValues}.");
+            }
+
+            return new(new TypedRanges(projected, 0, operation), recurrent is null ? default : new TypedRanges(recurrent, 1, operation),
+                state is null ? default : new TypedRanges(state, 2, operation), type);
+        }
+
+        // Writes a state's new row `values` (h values) as row n of the state's words.
+        public void Store(float* words, long n, int h, float* values) =>
+            StateType!.Write(new ReadOnlySpan<float>(values, h), new Span<byte>((byte*)words + StateType.ByteCount(n * h), (int)StateType.ByteCount(h)));
+    }
+
     private struct LstmRows(float* projected, float* recurrent, float* cell, float* hidden, float* output, float* gates, float* cells, int step, int steps, int h,
-        int batch) : IRowKernel
+        int batch, RecurrentReads reads = default) : IRowKernel
     {
         private readonly float* _cellIn = cell;
         private float* _cell = cell, _hidden = hidden, _output = output, _gates = gates, _cells = cells;
+        private bool _measured;
 
         public readonly void Row<TV, TF>(int n) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long row = (long)n * steps + step;
-            var map = new LstmMap(projected + row * 4 * h, recurrent + (long)n * 4 * h, _cellIn + (long)n * h, _cell + (long)n * h, _hidden == null ? null : _hidden + (long)n * h,
+            float* p = reads.Projected.At(projected, row * 4 * h, 4 * h) + row * 4 * h, q = reads.Recurrent.At(recurrent, (long)n * 4 * h, 4 * h) + (long)n * 4 * h;
+            float* cellIn = reads.State.At(_cellIn, (long)n * h, h) + (long)n * h;
+            bool typedState = reads.StateType is not null && !_measured;
+            float* cellOut = typedState ? WorkRow(0, h) : _cell + (long)n * h;
+            var map = new LstmMap(p, q, cellIn, cellOut, _hidden == null ? null : _hidden + (long)n * h,
                 _output + row * h, _gates == null ? null : _gates + row * 4 * h, _cells == null ? null : _cells + row * h, h);
             RowMap<TV, TF, LstmMap>(ref map, h);
+            if (typedState)
+            {
+                reads.Store(_cellIn, n, h, cellOut);
+            }
         }
 
         public void Redirect(ref Scratch scratch)
         {
+            _measured = true;
             _cell = scratch.Take((long)batch * h);
             _hidden = _hidden == null ? null : scratch.Take((long)batch * h);
             _output = scratch.Take((long)batch * steps * h);
@@ -323,10 +362,13 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
     {
         if (batch > 0 && hiddenSize > 0)
         {
-            fixed (float* pp = V(projected), pq = V(recurrent), pb = hiddenBias is null ? null : V(hiddenBias), ph = V(hidden), po = V(output),
+            // Typed projections, recurrent product and hidden state read through their types a row at a time (the bias once);
+            // a typed state's new rows written back through its type.
+            fixed (float* pp = D(projected), pq = D(recurrent), wb = hiddenBias is null ? null : D(hiddenBias), ph = D(hidden), po = V(output),
                 pg = gates is null ? null : V(gates))
             {
-                GruForward(pp, pq, pb, ph, hiddenSize, ph, po, pg, step, steps, batch, hiddenSize);
+                float* pb = hiddenBias is null ? null : new TypedInput(hiddenBias, wb, 3, hiddenSize, "GruCell").Range(0, hiddenSize);
+                GruForward(pp, pq, pb, ph, hiddenSize, ph, po, pg, step, steps, batch, hiddenSize, RecurrentReads.Of(projected, recurrent, hidden, hiddenSize, "GruCell"));
             }
         }
 
@@ -341,10 +383,12 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             var buffer = StepBuffer((long)batch * 3 * hiddenSize);
             try
             {
-                fixed (float* pp = V(projected), pu = D(weights), pb = hiddenBias is null ? null : V(hiddenBias), po = V(output), pg = gates is null ? null : V(gates),
+                fixed (float* pp = D(projected), pu = D(weights), wb = hiddenBias is null ? null : D(hiddenBias), po = V(output), pg = gates is null ? null : V(gates),
                     pr = buffer)
                 {
-                    GruStepRun(pp, pu, pb, po, pg, step, previous, steps, batch, hiddenSize, pr, WeightsType(weights, "GruStep"));
+                    float* pb = hiddenBias is null ? null : new TypedInput(hiddenBias, wb, 3, hiddenSize, "GruStep").Range(0, hiddenSize);
+                    GruStepRun(pp, pu, pb, po, pg, step, previous, steps, batch, hiddenSize, pr, WeightsType(weights, "GruStep"),
+                        RecurrentReads.Of(projected, null, null, hiddenSize, "GruStep"));
                 }
             }
             finally
@@ -364,13 +408,15 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             var buffer = StepBuffer((long)batch * 3 * hiddenSize);
             try
             {
-                fixed (float* pp = V(projected), pu = D(weights), pb = hiddenBias is null ? null : V(hiddenBias), po = V(output), pg = gates is null ? null : V(gates),
+                fixed (float* pp = D(projected), pu = D(weights), wb = hiddenBias is null ? null : D(hiddenBias), po = V(output), pg = gates is null ? null : V(gates),
                     pr = buffer)
                 {
+                    float* pb = hiddenBias is null ? null : new TypedInput(hiddenBias, wb, 3, hiddenSize, "GruSequence").Range(0, hiddenSize);
+                    var reads = RecurrentReads.Of(projected, null, null, hiddenSize, "GruSequence");
                     for (int i = 0; i < steps; i++)
                     {
                         GruStepRun(pp, pu, pb, po, pg, Taken(i, steps, reverse), i == 0 ? -1 : Taken(i - 1, steps, reverse), steps, batch, hiddenSize, pr,
-                            WeightsType(weights, "GruSequence"));
+                            WeightsType(weights, "GruSequence"), reads);
                     }
                 }
             }
@@ -435,13 +481,13 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
     // A GRU step from the recurrent product in `recurrent` [batch, 3H]: the previous state read from `hiddenIn` (`stride`
     // floats a row; null: 0), the new one written to `hiddenOut` [batch, H] (or null) and output[n, step].
     private static void GruForward(float* projected, float* recurrent, float* bias, float* hiddenIn, long stride, float* hiddenOut, float* output, float* gates,
-        int step, int steps, int batch, int h) =>
-        Rows("GruCell", new GruRows(projected, recurrent, bias, hiddenIn, stride, hiddenOut, output, gates, step, steps, h, batch), batch, h, CellWork);
+        int step, int steps, int batch, int h, RecurrentReads reads = default) =>
+        Rows("GruCell", new GruRows(projected, recurrent, bias, hiddenIn, stride, hiddenOut, output, gates, step, steps, h, batch, reads), batch, h, CellWork);
 
     // The step kernel: the previous step's rows (output[n, previous]) through U [H, 3H] into `recurrent` [batch, 3H], then
     // the cell reading them as the previous state (none at the first step).
     private static void GruStepRun(float* projected, float* weights, float* bias, float* output, float* gates, int step, int previous, int steps, int batch, int h,
-        float* recurrent, IElementType? wType = null)
+        float* recurrent, IElementType? wType = null, RecurrentReads reads = default)
     {
         float* before = null;
         if (previous >= 0)
@@ -454,7 +500,7 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             new Span<float>(recurrent, batch * 3 * h).Clear();
         }
 
-        GruForward(projected, recurrent, bias, before, (long)steps * h, null, output, gates, step, steps, batch, h);
+        GruForward(projected, recurrent, bias, before, (long)steps * h, null, output, gates, step, steps, batch, h, reads);
     }
 
     private static void GruBackward(float* gates, float* output, float* dOutput, float* dHidden, float* dGates, float* dRecurrent, float* dStep, int step, int previous,
@@ -476,20 +522,29 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
 
     // Row n: r = σ(p_0 + q_0), u = σ(p_1 + q_1), a = q_2 + bias, c = tanh(p_2 + r · a) (fused), h = (1 − u) · c + u · h_prev.
     private struct GruRows(float* projected, float* recurrent, float* bias, float* hiddenIn, long stride, float* hiddenOut, float* output, float* gates, int step,
-        int steps, int h, int batch) : IRowKernel
+        int steps, int h, int batch, RecurrentReads reads = default) : IRowKernel
     {
         private float* _hidden = hiddenOut, _output = output, _gates = gates;
+        private bool _measured;
 
         public readonly void Row<TV, TF>(int n) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long row = (long)n * steps + step;
-            var map = new GruMap(projected + row * 3 * h, recurrent + (long)n * 3 * h, bias, hiddenIn == null ? null : hiddenIn + n * stride,
-                _hidden == null ? null : _hidden + (long)n * h, _output + row * h, _gates == null ? null : _gates + row * 4 * h, h);
+            float* p = reads.Projected.At(projected, row * 3 * h, 3 * h) + row * 3 * h, q = reads.Recurrent.At(recurrent, (long)n * 3 * h, 3 * h) + (long)n * 3 * h;
+            float* before = hiddenIn == null ? null : reads.State.At(hiddenIn, n * stride, h) + n * stride;
+            bool typedState = reads.StateType is not null && _hidden != null && !_measured;
+            float* after = _hidden == null ? null : typedState ? WorkRow(0, h) : _hidden + (long)n * h;
+            var map = new GruMap(p, q, bias, before, after, _output + row * h, _gates == null ? null : _gates + row * 4 * h, h);
             RowMap<TV, TF, GruMap>(ref map, h);
+            if (typedState)
+            {
+                reads.Store(_hidden, n, h, after);
+            }
         }
 
         public void Redirect(ref Scratch scratch)
         {
+            _measured = true;
             _hidden = _hidden == null ? null : scratch.Take((long)batch * h);
             _output = scratch.Take((long)batch * steps * h);
             _gates = _gates == null ? null : scratch.Take((long)batch * steps * 4 * h);
