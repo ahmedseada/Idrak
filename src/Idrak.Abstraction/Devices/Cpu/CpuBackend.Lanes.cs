@@ -2392,8 +2392,13 @@ internal sealed partial class CpuBackend
         int threads = Math.Max(1, ComputeResources.MaxCpuThreads);
         long rowBytes = Math.Max(1, parts[0].Lane.RowBytes);
         int lineFloats = Math.Max(1, LineBytes / sizeof(float));
+        // One row of x: RowTileBytes of stored rows a tile, but at most a quarter of a thread's share (as the prompts' tiles
+        // are), so a pass of few columns still gives each thread several tiles and the slower cores' last ones keep no other
+        // waiting (tq1_0 at 1x2048->2048: 48 columns a tile, 43 tiles for 24 threads, 0.021 ms; 32 columns, 64 tiles,
+        // 0.016); at most 64 tiles a thread.
+        long share = (total + 4L * threads - 1) / (4L * threads);
         var (wanted, rows) = m == 1
-            ? ((Math.Max(RowTileBytes / rowBytes, (total + 64L * threads - 1) / (64L * threads)) + lineFloats - 1) / lineFloats * lineFloats, 1)
+            ? ((Math.Max(Math.Min(RowTileBytes / rowBytes, share), (total + 64L * threads - 1) / (64L * threads)) + lineFloats - 1) / lineFloats * lineFloats, 1)
             : format.Tile(total, m, threads, (nint)rowBytes);
         int columns = (int)Math.Clamp(wanted, 1, total);
         rows = Math.Clamp(rows, 1, m);
