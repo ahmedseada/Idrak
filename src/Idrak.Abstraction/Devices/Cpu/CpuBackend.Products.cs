@@ -142,9 +142,15 @@ internal sealed unsafe partial class CpuBackend
     }
 
     // The product's tiles over the threads: each item a matrix of the batch, a panel of two vectors of columns and a group
-    // of rows, its B packed a block of k at a time.
+    // of rows, its B packed a block of k at a time; a few rows by a B as it is stored ([k, n], float32) by StreamProducts.
     private static void Products<TV, TF>(in ProductShape s) where TV : unmanaged where TF : struct, IFloats<TV>
     {
+        if (s.M <= CpuTuning.FewRows && !s.TransB && s.BType is null)
+        {
+            StreamProducts<TV, TF>(s);
+            return;
+        }
+
         int panel = 2 * TF.Count;
         int panels = (s.N + panel - 1) / panel;
         long work = (long)s.Batch * s.M * s.N * Math.Max(1, s.K);
@@ -246,6 +252,102 @@ internal sealed unsafe partial class CpuBackend
         // Row i of op(a) at k0.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float* Row(float* a, in ProductShape s, int i, int k0) => s.TransA ? a + k0 * s.Lda + i : a + i * s.Lda + k0;
+    }
+
+    // A few rows of op(a) by a B stored [k, n] of float32, read where it lies (a GGUF float32 weight as it loads): each item
+    // a matrix and a run of whole cache lines of columns, its outputs started (Start) and then B's rows read once each, in
+    // k's order, four at a time, every row of a fused into its outputs (each term fused in k's order, as Tile's: the same
+    // bits, without B packed a block at a time for each panel of 16 columns and six rows of tile computed for one). A run's
+    // outputs stay in L1 across k: as many columns as a quarter of it holds for every row, fewer to give every thread one
+    // (each B row's run then the longest the threads allow: measured, Qwen3-1.7B F32 tg32 10.0 tok/s at a run a thread,
+    // 9.6 at two, 9.4 at four, 8.5 at eight).
+    private static void StreamProducts<TV, TF>(in ProductShape s) where TV : unmanaged where TF : struct, IFloats<TV>
+    {
+        int threads = ComputeResources.MaxCpuThreads;
+        long work = (long)s.Batch * s.M * s.N * Math.Max(1, s.K);
+        int most = Math.Max(16, CpuTuning.Machine.L1 / 4 / (sizeof(float) * s.M) / 16 * 16);
+        int width = (int)Math.Clamp(((s.N + threads - 1) / threads + 15) / 16 * 16, 16, most);
+        int runs = (s.N + width - 1) / width;
+        var body = new StreamBody<TV, TF> { Shape = s, Width = width, Runs = runs };
+        int count = s.Batch * runs;
+        if (threads <= 1 || work < ParallelThreshold || count == 1)
+        {
+            body.Run(0, count);
+            return;
+        }
+
+        CpuRanges.Run(count, 1, count, threads, ref body);
+    }
+
+    private struct StreamBody<TV, TF> : IRangeBody where TV : unmanaged where TF : struct, IFloats<TV>
+    {
+        public ProductShape Shape;
+        public int Width, Runs;
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public readonly void Run(int first, int last)
+        {
+            var s = Shape;
+            int w = TF.Count;
+            for (int item = first; item < last; item++)
+            {
+                int matrix = item / Runs, j0 = item % Runs * Width, columns = Math.Min(Width, s.N - j0), whole = columns / w * w;
+                float* a = s.A + matrix * s.AStride, b = s.B + matrix * s.BStride + j0, c = s.C + (long)matrix * s.M * s.N + j0;
+                Start(s, c - j0, 0, s.M, j0, columns);
+                int p = 0;
+                for (; p + 4 <= s.K; p += 4)
+                {
+                    float* b0 = b + p * s.Ldb, b1 = b0 + s.Ldb, b2 = b1 + s.Ldb, b3 = b2 + s.Ldb;
+                    for (int i = 0; i < s.M; i++)
+                    {
+                        float x0 = A(a, s, i, p), x1 = A(a, s, i, p + 1), x2 = A(a, s, i, p + 2), x3 = A(a, s, i, p + 3);
+                        TV v0 = TF.All(x0), v1 = TF.All(x1), v2 = TF.All(x2), v3 = TF.All(x3);
+                        float* ci = c + (long)i * s.N;
+                        int j = 0;
+                        for (; j < whole; j += w)
+                        {
+                            var y = TF.Fma(v0, TF.Load(b0 + j), TF.Load(ci + j));
+                            y = TF.Fma(v1, TF.Load(b1 + j), y);
+                            y = TF.Fma(v2, TF.Load(b2 + j), y);
+                            TF.Store(ci + j, TF.Fma(v3, TF.Load(b3 + j), y));
+                        }
+
+                        for (; j < columns; j++)
+                        {
+                            float y = F1.Fma(x0, b0[j], ci[j]);
+                            y = F1.Fma(x1, b1[j], y);
+                            y = F1.Fma(x2, b2[j], y);
+                            ci[j] = F1.Fma(x3, b3[j], y);
+                        }
+                    }
+                }
+
+                for (; p < s.K; p++)
+                {
+                    float* bp = b + p * s.Ldb;
+                    for (int i = 0; i < s.M; i++)
+                    {
+                        float x = A(a, s, i, p);
+                        TV v = TF.All(x);
+                        float* ci = c + (long)i * s.N;
+                        int j = 0;
+                        for (; j < whole; j += w)
+                        {
+                            TF.Store(ci + j, TF.Fma(v, TF.Load(bp + j), TF.Load(ci + j)));
+                        }
+
+                        for (; j < columns; j++)
+                        {
+                            ci[j] = F1.Fma(x, bp[j], ci[j]);
+                        }
+                    }
+                }
+            }
+        }
+
+        // op(a)'s value at row i, k p.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float A(float* a, in ProductShape s, int i, int p) => s.TransA ? a[(long)p * s.Lda + i] : a[(long)i * s.Lda + p];
     }
 
     // Each output's start: β · c (0 where β is 0), or the bias.
