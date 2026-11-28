@@ -115,8 +115,36 @@ internal sealed partial class CpuBackend
         _ => PortableInstructions.ShiftsByLane,
     };
 
+    // Bit deposit and extract bit by bit (IInstructions.Deposit and Extract where no instruction does them): the same values.
+    private static ulong BitsDeposited(ulong value, ulong mask)
+    {
+        ulong result = 0;
+        for (ulong bit = 1; mask != 0; mask &= mask - 1, bit <<= 1)
+        {
+            result |= (value & bit) != 0 ? mask & (~mask + 1) : 0;
+        }
+
+        return result;
+    }
+
+    private static ulong BitsExtracted(ulong value, ulong mask)
+    {
+        ulong result = 0;
+        for (ulong bit = 1; mask != 0; mask &= mask - 1, bit <<= 1)
+        {
+            result |= (value & mask & (~mask + 1)) != 0 ? bit : 0;
+        }
+
+        return result;
+    }
+
     // The described lane's kind of lane (a lane id's low 4 bits: LaneOf).
     private const int DescribedLaneId = 11;
+
+    // The described lane whose one-row kernels make a codebook's indices in general registers by bit extract and deposit
+    // (DescribedPlan.DepositSteps: x86's BMI2) and read its entries a qword each, a candidate for a row of x alone where the
+    // plan's steps take it and the CPU has the instructions; its other kernels the described lane's own (the same bits).
+    private const int DepositLaneId = 13;
 
     // The float product's kind of lane, a candidate for float32 rows (DescribedPlan.FloatRows): x by W as the float32 product
     // takes a B transposed (its tiles packing W's rows as it reads them; ProductOverRows), measured against the described
@@ -184,7 +212,7 @@ internal sealed partial class CpuBackend
     private static bool NarrowOf(int lane) => (lane & NarrowLane) != 0;
 
     // A lane's name: its kind's, the instruction set where it is not the portable one, and a 128-bit twin's vectors.
-    private static string LaneName(int lane) => KindOf(lane) == ProductLaneId ? "the float32 product (W's rows packed as it reads them)" : InstructionsOf(lane) switch
+    private static string LaneName(int lane) => KindOf(lane) == ProductLaneId ? "the float32 product (W's rows packed as it reads them)" : (InstructionsOf(lane) switch
     {
         Instructions.Avx2 => DescribedLaneName + " by AVX2 and FMA",
         Instructions.Vnni => DescribedLaneName + " by AVX-VNNI",
@@ -192,7 +220,7 @@ internal sealed partial class CpuBackend
         Instructions.DotProd => DescribedLaneName + " by Arm's dot products (DotProd)",
         Instructions.DotProdWide => DescribedLaneName + " by Arm's dot products, two a step for codes past 127 (DotProd)",
         _ => DescribedLaneName,
-    } + (NarrowOf(lane) ? ", four rows of x at a time on 128-bit vectors" : "");
+    }) + (NarrowOf(lane) ? ", four rows of x at a time on 128-bit vectors" : "") + (KindOf(lane) == DepositLaneId ? ", a row's codebook indices by bit deposit (BMI2)" : "");
 
     // A lane's short name in a measurement's times (its kind's first word, its instruction set's, and /128 for a 128-bit twin).
     private static string LaneShortName(int lane) => KindOf(lane) == ProductLaneId ? "product" : DescribedLaneName.Split(' ')[0] + InstructionsOf(lane) switch
@@ -203,7 +231,7 @@ internal sealed partial class CpuBackend
         Instructions.DotProd => "/dotprod",
         Instructions.DotProdWide => "/dotprod2",
         _ => "",
-    } + (NarrowOf(lane) ? "/128" : "");
+    } + (NarrowOf(lane) ? "/128" : "") + (KindOf(lane) == DepositLaneId ? "/deposit" : "");
 
     /// <summary>
     /// A format's candidate lanes that run on this CPU (up to 16, a byte each), the first the one the others are timed
@@ -290,21 +318,38 @@ internal sealed partial class CpuBackend
         /// </summary>
         public LaneList ForRows(int m)
         {
-            if (m >= 4)
+            var kept = default(LaneList);
+            for (int i = 0; i < Count; i++)
+            {
+                // (A 128-bit twin from 4 rows; a lane whose one-row kernels alone differ, DepositLaneId's, for one row.)
+                if (!(NarrowOf(this[i]) && m < 4 || KindOf(this[i]) == DepositLaneId && m != 1))
+                {
+                    kept = kept.With(this[i]);
+                }
+            }
+
+            return kept;
+        }
+
+        /// <summary>
+        /// The described lane's deposit lanes (DepositLaneId) by AVX2 and FMA and by AVX-VNNI where the CPU has them with
+        /// BMI2 and the plan's one-row steps take them (<paramref name="deposits"/>), as WithKind lists its own.
+        /// </summary>
+        public LaneList WithDeposits(bool deposits, bool pairs)
+        {
+            bool intrinsics = ComputeResources.CpuVectors is CpuVectorPaths.Automatic or CpuVectorPaths.Native;
+            if (!(deposits && intrinsics && Bmi2.X64.IsSupported))
             {
                 return this;
             }
 
-            var wide = default(LaneList);
-            for (int i = 0; i < Count; i++)
+            var list = this;
+            if (s_avx2Lanes && pairs)
             {
-                if (!NarrowOf(this[i]))
-                {
-                    wide = wide.With(this[i]);
-                }
+                list = list.With(LaneOf(DepositLaneId, Instructions.Avx2));
             }
 
-            return wide;
+            return s_vnniLanes ? list.With(LaneOf(DepositLaneId, Instructions.Vnni)) : list;
         }
 
         public bool Contains(int lane)
@@ -455,6 +500,15 @@ internal sealed partial class CpuBackend
 
         /// <summary>The qword table[indices[2j]] in 64-bit lane j (each pair of 32-bit lanes' first index; indices non-negative).</summary>
         static abstract Vector256<long> GatherPairs(long* table, Vector256<int> indices);
+
+        /// <summary>
+        /// The low bits of <paramref name="value"/> put in the set bits of <paramref name="mask"/>, in order (x86's bit deposit,
+        /// BMI2's PDEP, where the instruction set has it; else bit by bit, the same value).
+        /// </summary>
+        static abstract ulong Deposit(ulong value, ulong mask);
+
+        /// <summary>The bits of <paramref name="value"/> under the set bits of <paramref name="mask"/>, in order, as the low bits (BMI2's PEXT; else bit by bit).</summary>
+        static abstract ulong Extract(ulong value, ulong mask);
 
         /// <summary>The cache line at <paramref name="at"/> asked for (a hint, where the instruction set has one; it never faults).</summary>
         static abstract void Prefetch(void* at);
@@ -780,6 +834,12 @@ internal sealed partial class CpuBackend
         public static Vector256<long> GatherPairs(long* table, Vector256<int> indices) => Vector256.Create(table[indices.GetElement(0)], table[indices.GetElement(2)], table[indices.GetElement(4)], table[indices.GetElement(6)]);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Deposit(ulong value, ulong mask) => BitsDeposited(value, mask);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Extract(ulong value, ulong mask) => BitsExtracted(value, mask);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Prefetch(void* at)
         {
         }
@@ -922,6 +982,12 @@ internal sealed partial class CpuBackend
         public static Vector256<long> GatherPairs(long* table, Vector256<int> indices) => Avx2.GatherVector256(table, indices.AsInt64() & Vector256.Create(0xFFFFFFFFL), 8);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Deposit(ulong value, ulong mask) => Bmi2.X64.IsSupported ? Bmi2.X64.ParallelBitDeposit(value, mask) : BitsDeposited(value, mask);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Extract(ulong value, ulong mask) => Bmi2.X64.IsSupported ? Bmi2.X64.ParallelBitExtract(value, mask) : BitsExtracted(value, mask);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Prefetch(void* at) => Sse.Prefetch0(at);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1056,6 +1122,12 @@ internal sealed partial class CpuBackend
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<long> GatherPairs(long* table, Vector256<int> indices) => Avx2.GatherVector256(table, indices.AsInt64() & Vector256.Create(0xFFFFFFFFL), 8);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Deposit(ulong value, ulong mask) => Bmi2.X64.IsSupported ? Bmi2.X64.ParallelBitDeposit(value, mask) : BitsDeposited(value, mask);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Extract(ulong value, ulong mask) => Bmi2.X64.IsSupported ? Bmi2.X64.ParallelBitExtract(value, mask) : BitsExtracted(value, mask);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Prefetch(void* at) => Sse.Prefetch0(at);
@@ -1248,6 +1320,12 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<long> GatherPairs(long* table, Vector256<int> indices) => Vector256.Create(table[indices.GetElement(0)], table[indices.GetElement(2)], table[indices.GetElement(4)], table[indices.GetElement(6)]);
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Deposit(ulong value, ulong mask) => BitsDeposited(value, mask);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Extract(ulong value, ulong mask) => BitsExtracted(value, mask);
+
         // .NET reaches no prefetch on Arm outside SVE (Sve.Prefetch*, experimental, and only where SVE runs).
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Prefetch(void* at)
@@ -1387,6 +1465,12 @@ internal sealed partial class CpuBackend
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<long> GatherPairs(long* table, Vector256<int> indices) => Vector256.Create(table[indices.GetElement(0)], table[indices.GetElement(2)], table[indices.GetElement(4)], table[indices.GetElement(6)]);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Deposit(ulong value, ulong mask) => BitsDeposited(value, mask);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Extract(ulong value, ulong mask) => BitsExtracted(value, mask);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Prefetch(void* at) => NeonInstructions.Prefetch(at);
@@ -1530,6 +1614,12 @@ internal sealed partial class CpuBackend
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<long> GatherPairs(long* table, Vector256<int> indices) => Vector256.Create(table[indices.GetElement(0)], table[indices.GetElement(2)], table[indices.GetElement(4)], table[indices.GetElement(6)]);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Deposit(ulong value, ulong mask) => BitsDeposited(value, mask);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Extract(ulong value, ulong mask) => BitsExtracted(value, mask);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Prefetch(void* at) => DotProdInstructions.Prefetch(at);
@@ -3489,11 +3579,15 @@ internal sealed partial class CpuBackend
             BlockRows = Math.Clamp(DescribedBlockBytes / (GroupValues + 4 * LaneFloats) & ~3, 4, 128);
             PlaneMask0 = planeMask == null ? default : planeMask[0];
             MapVector = Map == CodeMap.Flip ? Flip : Shuffle;
-            oneKernels = Pin<nint>(8);
+            oneKernels = Pin<nint>(16);
             tileKernels = Pin<nint>(16);
             if (Mode == DescribedMode.Integer && P == 1 && UniformRuns == 0)
             {
                 GatherSteps();                                              // false: the spans made and transposed (Steps)
+                if (natural && stepsGathered)
+                {
+                    Deposits();                                             // false: the steps' own (PlaneSteps)
+                }
             }
         }
 
@@ -4474,7 +4568,10 @@ internal sealed partial class CpuBackend
                     }
 
                     int fetch = uniform ? 1 : windowed ? (factorPieces[f] == 1 ? 4 : 5) : factorPieces[f] == 1 ? 2 : 3, slot = f < scaleFactors ? f : 2 + f - scaleFactors;
-                    kinds |= (fetch << 4 | (int)reads[f]) << (8 * slot);
+                    // (A table of up to 8 numbers, a field of up to 3 bits: its numbers in one register, a lane each by a
+                    // permute: SmallTableNumber, 6; any other reading its FactorRead.)
+                    int read = reads[f] == FactorRead.Table && factorBits[f] <= 3 ? 6 : (int)reads[f];
+                    kinds |= (fetch << 4 | read) << (8 * slot);
                 }
 
                 FactorKinds = kinds;
@@ -4714,6 +4811,15 @@ internal sealed partial class CpuBackend
                 TI.Gather((float*)plan.fTablesAt[f], bits);
         }
 
+        // A table of up to 8 numbers (a field of up to 3 bits): the table's first 8 in one register, each lane's by a permute,
+        // where a gather would read them from memory (the same numbers).
+        internal readonly struct SmallTableNumber : IFactorNumber
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<float> Of<TI>(DescribedPlan plan, Vector256<int> bits, int f) where TI : struct, IInstructions =>
+                TI.Permute(Vector256.Load((float*)plan.fTablesAt[f]), bits);
+        }
+
         internal readonly struct HalfNumber : IFactorNumber
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
@@ -4809,6 +4915,27 @@ internal sealed partial class CpuBackend
             }
 
             return f == -1 ? null : (delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float>)f;
+        }
+
+        /// <summary>
+        /// The one-row integer kernel by TI whose codebook indices are made by bit deposit (DepositSteps), or the plan's own
+        /// (OneKernel) where its steps do not take it.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> DepositKernel<TI>(int with) where TI : struct, IInstructions
+        {
+            if (!depositSteps)
+            {
+                return OneKernel<TI>(with);
+            }
+
+            nint f = oneKernels[8 + with];
+            if (f == 0)
+            {
+                oneKernels[8 + with] = f = ResolveDeposit<TI>(this);
+            }
+
+            return (delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float>)f;
         }
 
         /// <summary>
@@ -5084,6 +5211,12 @@ internal sealed partial class CpuBackend
                 return false;
             }
 
+            // A natural plan's steps of entries of 8 (lanes 2e and 2e + 1 one entry's two dwords: its 4 entries) make their
+            // indices two steps at once (PairSteps), where they have no vector factors and up to three planes.
+            bool paired = natural && book && entryWidth == 8 && Enumerable.Range(0, steps * 8).All(i => StepValue(i / 8, i % 8) % entryWidth / 4 == i % 2
+                && StepValue(i / 8, i % 8) / entryWidth == StepValue(i / 8, i % 8 & ~1) / entryWidth);
+            pairSteps = paired && vectorCount == 0 && Planes <= 3 && T % 2 == 0;
+            int indexSteps = pairSteps ? steps / 2 : steps;
             stepRead = new StepRead[Planes];
             stepMask = new Vector256<uint>[Planes];
             stepField = new Vector256<uint>[Planes];
@@ -5121,7 +5254,7 @@ internal sealed partial class CpuBackend
                 stepMask[p] = Vector256.Create(stepRead[p] == StepRead.Index ? (1u << bits) - 1 : 0x01010101u * (uint)((1 << bits) - 1));
                 stepField[p] = Vector256.Create((uint)((1 << bits) - 1));
                 int width = stepRead[p] == StepRead.Index ? bits : 4 * bits;
-                for (int s = 0; s < steps; s++)
+                for (int s = 0; s < indexSteps; s++)
                 {
                     int i = s * Planes + p;
                     for (int l = 0; l < 8; l++)
@@ -5173,13 +5306,12 @@ internal sealed partial class CpuBackend
                 Span<int> within = stackalloc int[8];
                 Span<int> factorCurrent = stackalloc int[8 * Math.Max(1, vectorCount)];
                 // (A natural plan's steps of entries of 8: lanes 2e and 2e + 1 the two dwords of one entry, a qword each pair.)
-                pairedEntries = natural && entryWidth == 8;
+                pairedEntries = paired;
                 for (int s = 0; s < steps; s++)
                 {
                     for (int l = 0; l < 8; l++)
                     {
                         within[l] = StepValue(s, l) % entryWidth / 4;
-                        pairedEntries &= within[l] == l % 2 && StepValue(s, l) / entryWidth == StepValue(s, l & ~1) / entryWidth;
                     }
 
                     bookWithin[s] = Vector256.Create<int>(within);
@@ -5274,11 +5406,12 @@ internal sealed partial class CpuBackend
             groupWordStart = Pin<int>(groups + 1);
             stepWord = Pin<int>(steps * Planes);
             vectorWord = Pin<int>(steps * Math.Max(1, vectorCount));
+            int groupSteps = pairSteps ? T / 2 : T;
             for (int gp = 0; gp < groups; gp++)
             {
                 known.Clear();
                 int start = words.Count;
-                for (int s = gp * T; s < (gp + 1) * T; s++)
+                for (int s = gp * groupSteps; s < (gp + 1) * groupSteps; s++)
                 {
                     for (int p = 0; p < Planes; p++)
                     {
@@ -5302,7 +5435,7 @@ internal sealed partial class CpuBackend
             }
 
             // A natural plan's steps' words each from two 16-byte windows of the period (Window), or none: the plan is not one.
-            if (natural && !(Windows(stepOffset, steps * Planes, out stepWindows, out stepControls) && Windows(vectorOffset, steps * vectorCount, out vectorWindows, out vectorControls)))
+            if (natural && !(Windows(stepOffset, indexSteps * Planes, out stepWindows, out stepControls) && Windows(vectorOffset, steps * vectorCount, out vectorWindows, out vectorControls)))
             {
                 return false;
             }
@@ -5325,7 +5458,7 @@ internal sealed partial class CpuBackend
                 StepKinds = kinds;
             }
 
-            StepShiftsUniform = Enumerable.Range(0, steps * Planes).All(i => stepShiftOne[i] >= 0);
+            StepShiftsUniform = Enumerable.Range(0, indexSteps * Planes).All(i => stepShiftOne[i] >= 0);
             stepsGathered = true;
             return true;
 
@@ -5477,6 +5610,15 @@ internal sealed partial class CpuBackend
 
         /// <summary>Whether each step's lanes 2e and 2e + 1 are one entry's two dwords (a natural plan's entries of 8: BookBytes' qword gathers).</summary>
         public bool PairedEntries => pairedEntries;
+
+        // Whether the steps' indices are made two steps at once (a natural plan's entries of 8, no vector factors, up to
+        // three planes): index step s's lanes 2e and 2e + 1 entry e's of steps 2s and 2s + 1 (IndexPosition), its planes'
+        // places, windows and shifts so (half the steps' making: each step's 4 entries are 4 of its 8 lanes'), each
+        // step's entries then gathered from its half (BookPair).
+        private bool pairSteps;
+
+        /// <summary>Whether the steps are made two at once (PairSteps; the one-row kernel's Pair).</summary>
+        public bool PairSteps => pairSteps;
         private int* stepWord;
         private int* vectorWord;
 
@@ -5533,6 +5675,10 @@ internal sealed partial class CpuBackend
         // The period's position of StepValue.
         private int StepPosition(int s, int l) => natural ? ((s / T) * Cg + s % T) * C + 4 * l : ((s / T) * Cg + l) * C + 4 * (s % T);
 
+        // The position index step s's lane l makes the index of (GatherSteps' planes): step s's lane l's, or (PairSteps) pair
+        // s's: lane 2e entry e of step 2s, lane 2e + 1 entry e of step 2s + 1 (each the entry's first value's).
+        private int IndexPosition(int s, int l) => pairSteps ? StepPosition(2 * s + (l & 1), l & ~1) : StepPosition(s, l);
+
         // Where step s's lane l of `plane` reads its 4 fields (positions 4s..4s + 3 of its chunk, in its span's order) by
         // `read`: 4 bytes' or digits' first byte and their shift (a digit plane: the digit); an index's or a stream's first
         // field's byte and bit in it (GatherSteps picks the dword it is read from); false where the 4 fields do not lie so.
@@ -5540,7 +5686,7 @@ internal sealed partial class CpuBackend
         {
             var d = D;
             (offset, shift) = (0, 0);
-            int position = StepPosition(s, l);
+            int position = IndexPosition(s, l);
             if (read == StepRead.Index)
             {
                 // A codebook entry's index (entries of 4 or 8 values: the 4 positions one entry's).
@@ -5699,6 +5845,185 @@ internal sealed partial class CpuBackend
             return entries + leastBytes;
         }
 
+        // A natural plan's steps of a codebook's entries of 8 (each step 4 entries, PairedEntries) with no vector factors and
+        // up to three planes, their indices made in general registers (DepositSteps): per step and plane the 8 bytes its 4
+        // entries' fields lie in (from the period's first, within it), their bits extracted in order (depositExtract) and
+        // deposited in 16-bit lanes at the plane's place (depositPlace), or (one field the 4 entries share) multiplied into
+        // each lane's place; per plane its way (DepositKinds: 1 spread, 2 shared, 3 a run, 2 bits a plane).
+        private bool depositSteps;
+        private int* depositOffset;
+        private ulong* depositExtract, depositPlace;
+
+        /// <summary>Whether a row's steps make their codebook indices by bit deposit (the deposit lane's one-row kernels).</summary>
+        public bool DepositSteps => depositSteps;
+
+        /// <summary>Each plane's way of depositing its fields (2 bits a plane: 1 spread, 2 shared by the step's entries, 3 a run, its fields back to back).</summary>
+        public int DepositKinds { get; private set; }
+
+        // The deposit steps' places (Deposits), where every step's every plane takes one way: false otherwise.
+        private bool Deposits()
+        {
+            var d = D;
+            int steps = Period / GroupValues * T;
+            if (!(Map == CodeMap.Codebook && pairedEntries && vectorCount == 0 && Planes is >= 1 and <= 3 && PeriodBytes >= 8))
+            {
+                return false;
+            }
+
+            depositOffset = Pin<int>(steps * Planes);
+            depositExtract = Pin<ulong>(steps * Planes);
+            depositPlace = Pin<ulong>(steps * Planes);
+            Span<long> bit = stackalloc long[4];
+            int kinds = 0;
+            for (int p = 0; p < Planes; p++)
+            {
+                var plane = d.Planes[p];
+                int bits = plane.Bits, low = entryLows[p], kind = 0;
+                if (bits > 16 || low + bits > 16)
+                {
+                    return false;
+                }
+
+                ulong field = (1UL << bits) - 1;
+                for (int s = 0; s < steps; s++)
+                {
+                    for (int e = 0; e < 4; e++)
+                    {
+                        int v = StepValue(s, 2 * e);
+                        var (b, sh) = plane.Place(v % d.Values / d.Code.Width);
+                        bit[e] = 8L * (v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b) + sh;
+                    }
+
+                    // (A run: the 4 fields back to back, read by a shift; else each extracted where it lies.)
+                    bool shared = bit[1] == bit[0] && bit[2] == bit[0] && bit[3] == bit[0];
+                    bool run = bit[1] == bit[0] + bits && bit[2] == bit[1] + bits && bit[3] == bit[2] + bits;
+                    bool spread = bit[0] + bits <= bit[1] && bit[1] + bits <= bit[2] && bit[2] + bits <= bit[3];
+                    int own = shared ? 2 : run ? 3 : spread ? 1 : 0;
+                    long first = bit[0], last = bit[3] + bits;
+                    int offset = (int)Math.Clamp(first / 8, 0, PeriodBytes - 8);
+                    if (own == 0 || kind != 0 && own != kind || first < 8L * offset || last > 8L * offset + 64)
+                    {
+                        return false;
+                    }
+
+                    kind = own;
+                    int i = s * Planes + p;
+                    depositOffset[i] = offset;
+                    ulong extract = 0, place = 0;
+                    for (int e = 0; e < 4; e++)
+                    {
+                        extract |= field << (int)(bit[e] - 8L * offset);
+                        place |= (shared ? 1UL : field) << (16 * e + low);
+                    }
+
+                    // (A run's "extract" is its shift: its first field's bit in the 8 bytes.)
+                    depositExtract[i] = own == 3 ? (ulong)(first - 8L * offset) : extract;
+                    depositPlace[i] = place;
+                }
+
+                kinds |= kind << (2 * p);
+            }
+
+            DepositKinds = kinds;
+            depositSteps = true;
+            return true;
+        }
+
+        /// <summary>
+        /// Step <paramref name="s"/> of the period at <paramref name="period"/> by bit deposit (DepositSteps): its 4 entries'
+        /// indices in the 16-bit lanes of one general register, each plane's fields extracted and deposited (TK0..TK2), the
+        /// entries read a qword each, the least added back: the bytes BookBytes makes of the same entries.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        internal Vector256<byte> DepositStep<TI, TK0, TK1, TK2>(byte* period, int s)
+            where TI : struct, IInstructions where TK0 : struct, IDepositPlane where TK1 : struct, IDepositPlane where TK2 : struct, IDepositPlane
+        {
+            int i = s * (TK2.Present ? 3 : TK1.Present ? 2 : 1);
+            ulong index = TK0.Make<TI>(this, period, i);
+            if (TK1.Present)
+            {
+                index |= TK1.Make<TI>(this, period, i + 1);
+            }
+
+            if (TK2.Present)
+            {
+                index |= TK2.Make<TI>(this, period, i + 2);
+            }
+
+            long* table = (long*)entryBytes;
+            return Vector256.Create(table[(ushort)index], table[(ushort)(index >> 16)], table[(ushort)(index >> 32)], table[index >> 48]).AsByte() + leastBytes;
+        }
+
+        /// <summary>A plane's fields of a deposit step (DepositSteps), into their lanes' places of the index.</summary>
+        internal interface IDepositPlane
+        {
+            static abstract bool Present { get; }
+
+            static abstract ulong Make<TI>(DescribedPlan plan, byte* period, int i) where TI : struct, IInstructions;
+        }
+
+        internal readonly struct NoDeposit : IDepositPlane
+        {
+            public static bool Present => false;
+
+            public static ulong Make<TI>(DescribedPlan plan, byte* period, int i) where TI : struct, IInstructions => 0;
+        }
+
+        // The 4 entries' own fields, in order: extracted, then deposited a 16-bit lane each.
+        internal readonly struct SpreadDeposit : IDepositPlane
+        {
+            public static bool Present => true;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static ulong Make<TI>(DescribedPlan plan, byte* period, int i) where TI : struct, IInstructions =>
+                TI.Deposit(TI.Extract(Unsafe.ReadUnaligned<ulong>(period + plan.depositOffset[i]), plan.depositExtract[i]), plan.depositPlace[i]);
+        }
+
+        // The 4 entries' fields back to back: shifted down, then deposited a 16-bit lane each (the deposit takes as many low bits
+        // as its mask has, so no extract).
+        internal readonly struct RunDeposit : IDepositPlane
+        {
+            public static bool Present => true;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static ulong Make<TI>(DescribedPlan plan, byte* period, int i) where TI : struct, IInstructions =>
+                TI.Deposit(Unsafe.ReadUnaligned<ulong>(period + plan.depositOffset[i]) >> (int)plan.depositExtract[i], plan.depositPlace[i]);
+        }
+
+        // One field the 4 entries share: extracted, then multiplied into each lane's place.
+        internal readonly struct SharedDeposit : IDepositPlane
+        {
+            public static bool Present => true;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static ulong Make<TI>(DescribedPlan plan, byte* period, int i) where TI : struct, IInstructions =>
+                TI.Extract(Unsafe.ReadUnaligned<ulong>(period + plan.depositOffset[i]), plan.depositExtract[i]) * plan.depositPlace[i];
+        }
+
+        /// <summary>The steps of a natural plan by bit deposit (DepositStep), its planes' ways as type parameters.</summary>
+        internal readonly struct DepositedSteps<TK0, TK1, TK2> : IGatheredSteps where TK0 : struct, IDepositPlane where TK1 : struct, IDepositPlane where TK2 : struct, IDepositPlane
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<byte> Step<TI>(DescribedPlan plan, Vector256<uint>* words, int s) where TI : struct, IInstructions =>
+                plan.DepositStep<TI, TK0, TK1, TK2>((byte*)words, s);
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static void Pair<TI>(DescribedPlan plan, Vector256<uint>* words, int s, out Vector256<byte> even, out Vector256<byte> odd) where TI : struct, IInstructions
+            {
+                even = plan.DepositStep<TI, TK0, TK1, TK2>((byte*)words, 2 * s);
+                odd = plan.DepositStep<TI, TK0, TK1, TK2>((byte*)words, 2 * s + 1);
+            }
+        }
+
+        // Pair step s's codebook indices (`code`: step 2s's entries' in the even lanes, 2s + 1's in the odd: PairSteps) as the
+        // two steps' integer lane bytes, each its entries' qwords, the least added back: the same bytes BookBytes makes.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        internal void BookPair<TI>(Vector256<uint> code, out Vector256<byte> even, out Vector256<byte> odd) where TI : struct, IInstructions
+        {
+            even = TI.GatherPairs((long*)entryBytes, code.AsInt32()).AsByte() + leastBytes;
+            odd = TI.GatherPairs((long*)entryBytes, (code.AsUInt64() >>> 32).AsInt32()).AsByte() + leastBytes;
+        }
+
         /// <summary>
         /// The gathered steps' readings as type parameters (CpuBackend.WithSteps): plane 0's reading in the low 4 bits, plane
         /// 1's and plane 2's in the next 4 each (0: no such plane; 1: masked bytes or an index; 3: fields of one bit spread to
@@ -5851,12 +6176,19 @@ internal sealed partial class CpuBackend
         internal interface IGatheredSteps
         {
             static abstract Vector256<byte> Step<TI>(DescribedPlan plan, Vector256<uint>* words, int s) where TI : struct, IInstructions;
+
+            /// <summary>Steps 2s and 2s + 1 of the period made from pair step s's indices (PairSteps: the plan's planes up to three, a codebook's entries of 8).</summary>
+            static abstract void Pair<TI>(DescribedPlan plan, Vector256<uint>* words, int s, out Vector256<byte> even, out Vector256<byte> odd) where TI : struct, IInstructions;
         }
 
         internal readonly struct PlanSteps : IGatheredSteps
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
             public static Vector256<byte> Step<TI>(DescribedPlan plan, Vector256<uint>* words, int s) where TI : struct, IInstructions => plan.GatheredStep<TI>(words, s);
+
+            // (Never reached: a plan of pair steps has its planes' readings as type parameters, PlaneSteps.)
+            public static void Pair<TI>(DescribedPlan plan, Vector256<uint>* words, int s, out Vector256<byte> even, out Vector256<byte> odd) where TI : struct, IInstructions =>
+                throw new NotSupportedException("A plan of pair steps reads its planes by PlaneSteps.");
         }
 
         // TH: shift by the one number every lane takes (StepShiftsUniform, chosen where the instruction set does not shift
@@ -5867,7 +6199,17 @@ internal sealed partial class CpuBackend
             where TP0 : struct, IStepPlane where TP1 : struct, IStepPlane where TP2 : struct, IStepPlane where TM : struct, IStepMap where TH : struct, IFlag
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-            public static Vector256<byte> Step<TI>(DescribedPlan plan, Vector256<uint>* words, int s) where TI : struct, IInstructions
+            public static Vector256<byte> Step<TI>(DescribedPlan plan, Vector256<uint>* words, int s) where TI : struct, IInstructions =>
+                TM.Map<TI>(plan, Code<TI>(plan, words, s), words, s);
+
+            // Steps 2s and 2s + 1 from pair step s's code (the planes' places a pair step's: PairSteps), its entries by the codebook.
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static void Pair<TI>(DescribedPlan plan, Vector256<uint>* words, int s, out Vector256<byte> even, out Vector256<byte> odd) where TI : struct, IInstructions =>
+                plan.BookPair<TI>(Code<TI>(plan, words, s), out even, out odd);
+
+            // Index step s's code: its planes' fields, each in its place.
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            private static Vector256<uint> Code<TI>(DescribedPlan plan, Vector256<uint>* words, int s) where TI : struct, IInstructions
             {
                 // (The planes a constant to the JIT, as their readings are; plane 0's bits the code's lowest: no shift.)
                 int i = s * (TP2.Present ? 3 : TP1.Present ? 2 : 1);
@@ -5882,7 +6224,7 @@ internal sealed partial class CpuBackend
                     code |= Vector256.ShiftLeft(TP2.Read<TI>(plan, Word<TI, TP2>(plan, words, i + 2), i + 2, 2), plan.stepLows[2]);
                 }
 
-                return TM.Map<TI>(plan, code, words, s);
+                return code;
             }
 
             // Entry i's gathered dword vector shifted right by its lanes' shifts (a plane read unshifted as it is).
@@ -6235,7 +6577,7 @@ internal sealed partial class CpuBackend
         // The integer arithmetic's int8 dot products take AVX2's multiply-adds where its unsigned codes are at most 127 and
         // a byte plane each (DescribedPlan.PairsFit).
         public LaneList Lanes => plan.Mode == DescribedMode.Integer
-            ? default(LaneList).WithKind(DescribedLaneId, dots: true, pairs: plan.P == 1 && plan.PairsFit)
+            ? default(LaneList).WithKind(DescribedLaneId, dots: true, pairs: plan.P == 1 && plan.PairsFit).WithDeposits(plan.Natural is { DepositSteps: true }, plan.P == 1 && plan.PairsFit)
             : plan.FloatRows ? default(LaneList).WithKind(DescribedLaneId).With(LaneOf(ProductLaneId, Instructions.Portable)) : default(LaneList).WithKind(DescribedLaneId);
 
         public int First => DescribedLaneId;
@@ -6337,7 +6679,7 @@ internal sealed partial class CpuBackend
             _ => 0,
         };
 
-        public DescribedKernels Kernels(int lane, int k, LanePointers x, byte* bytes) => new(plan, InstructionsOf(lane), NarrowOf(lane), k, x, bytes);
+        public DescribedKernels Kernels(int lane, int k, LanePointers x, byte* bytes) => new(plan, InstructionsOf(lane), NarrowOf(lane), k, x, bytes, KindOf(lane) == DepositLaneId);
     }
 
     // The described lane as RowGroups' kernels, each call by the lane's instruction set. Every stored value is made in
@@ -6351,19 +6693,20 @@ internal sealed partial class CpuBackend
         // The plan a row alone is read by: the natural one where x's codes lie so (LanePointers.Natural), else the plan.
         private readonly DescribedPlan one;
         private readonly Instructions with;
-        private readonly bool narrow;
+        private readonly bool narrow, deposit;
         private readonly int k, groups, full, tailBytes, chunks;
         private readonly nint xRow, lRow;
         private readonly float* x, lanes;
         private readonly sbyte* xq;
         private readonly byte* tail;
 
-        public DescribedKernels(DescribedPlan plan, Instructions with, bool narrow, int k, LanePointers input, byte* tail)
+        public DescribedKernels(DescribedPlan plan, Instructions with, bool narrow, int k, LanePointers input, byte* tail, bool deposit = false)
         {
             this.plan = plan;
             one = input.Natural && plan.Natural is { } own ? own : plan;
             this.with = with;
             this.narrow = narrow;
+            this.deposit = deposit;
             this.k = k;
             this.tail = tail;
             x = input.Values;
@@ -6606,7 +6949,7 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         private float IntegerOne<TI>(byte* row, int i) where TI : struct, IInstructions
         {
-            var kernel = one.OneKernel<TI>((int)with);
+            var kernel = deposit ? one.DepositKernel<TI>((int)with) : one.OneKernel<TI>((int)with);
             return kernel != null ? kernel(one, row, tail, full, groups, chunks, xq + i * xRow, lanes + i * lRow)
                 : DescribedIntegerOne<TI>(plan, row, tail, full, groups, chunks, xq + i * xRow, lanes + i * lRow);
         }
@@ -7491,6 +7834,7 @@ internal sealed partial class CpuBackend
         0 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.UnsignedNumber>>(k >> 8),
         1 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.SignedNumber>>(k >> 8),
         2 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>(k >> 8),
+        6 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.SmallTableNumber>>(k >> 8),
         3 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>(k >> 8),
         _ => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>(k >> 8),
     };
@@ -7511,6 +7855,7 @@ internal sealed partial class CpuBackend
             0 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.UnsignedNumber>>(k >> 8),
             1 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.SignedNumber>>(k >> 8),
             2 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>(k >> 8),
+        6 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.SmallTableNumber>>(k >> 8),
             3 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>(k >> 8),
             _ => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>(k >> 8),
         };
@@ -7533,6 +7878,7 @@ internal sealed partial class CpuBackend
             0 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.UnsignedNumber>>(k >> 8),
             1 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.SignedNumber>>(k >> 8),
             2 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>(k >> 8),
+        6 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.SmallTableNumber>>(k >> 8),
             3 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>(k >> 8),
             _ => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>(k >> 8),
         };
@@ -7556,6 +7902,7 @@ internal sealed partial class CpuBackend
             0 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.UnsignedNumber>>>(),
             1 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.SignedNumber>>>(),
             2 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>>(),
+            6 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.SmallTableNumber>>>(),
             3 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>>(),
             _ => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>>(),
         };
@@ -7654,18 +8001,20 @@ internal sealed partial class CpuBackend
     {
         public static bool ShiftsByLane => TI.ShiftsByLane;
 
-        public static nint Use<TS>(DescribedPlan plan) where TS : struct, DescribedPlan.IGatheredSteps =>
+        public static nint Use<TS>(DescribedPlan plan) where TS : struct, DescribedPlan.IGatheredSteps => plan.PairSteps ? Groups<TS, Yes>(plan) : Groups<TS, No>(plan);
+
+        private static nint Groups<TS, TP>(DescribedPlan plan) where TS : struct, DescribedPlan.IGatheredSteps where TP : struct, IFlag =>
             plan.GroupsPerPeriod == 1
-                ? plan.Mins ? WithFactors<NaturalOneUse<TI, TS, Yes, Yes>>(plan) : WithFactors<NaturalOneUse<TI, TS, No, Yes>>(plan)
-                : plan.Mins ? WithFactors<NaturalOneUse<TI, TS, Yes, No>>(plan) : WithFactors<NaturalOneUse<TI, TS, No, No>>(plan);
+                ? plan.Mins ? WithFactors<NaturalOneUse<TI, TS, Yes, Yes, TP>>(plan) : WithFactors<NaturalOneUse<TI, TS, No, Yes, TP>>(plan)
+                : plan.Mins ? WithFactors<NaturalOneUse<TI, TS, Yes, No, TP>>(plan) : WithFactors<NaturalOneUse<TI, TS, No, No, TP>>(plan);
     }
 
-    private readonly unsafe struct NaturalOneUse<TI, TS, TM, TG> : IFactorsUse
-        where TI : struct, IInstructions where TS : struct, DescribedPlan.IGatheredSteps where TM : struct, IFlag where TG : struct, IFlag
+    private readonly unsafe struct NaturalOneUse<TI, TS, TM, TG, TP> : IFactorsUse
+        where TI : struct, IInstructions where TS : struct, DescribedPlan.IGatheredSteps where TM : struct, IFlag where TG : struct, IFlag where TP : struct, IFlag
     {
         public static nint Use<TF>() where TF : struct, IFactors
         {
-            delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> kernel = &NaturalOne<TI, TF, TS, TM, TG>;
+            delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> kernel = &NaturalOne<TI, TF, TS, TM, TG, TP>;
             return (nint)kernel;
         }
     }
@@ -7759,6 +8108,36 @@ internal sealed partial class CpuBackend
 
         return plan.StepsGathered ? plan.IsNatural ? WithSteps<NaturalOneSteps<TI>>(plan) : WithSteps<GatheredOneSteps<TI>>(plan) : WithSpans<MadeOneSpans<TI>>(plan);
     }
+
+    // The deposit lane's one-row kernel of a natural plan (DescribedPlan.DepositSteps) by TI, its planes' ways as type
+    // parameters: NaturalOne over DepositSteps, its factors chosen as the plan's own.
+    private static nint ResolveDeposit<TI>(DescribedPlan plan) where TI : struct, IInstructions
+    {
+        int k = plan.DepositKinds;
+        return (k & 3) switch
+        {
+            1 => DepositSecond<TI, DescribedPlan.SpreadDeposit>(plan, k),
+            2 => DepositSecond<TI, DescribedPlan.SharedDeposit>(plan, k),
+            _ => DepositSecond<TI, DescribedPlan.RunDeposit>(plan, k),
+        };
+    }
+
+    private static nint DepositSecond<TI, TK0>(DescribedPlan plan, int k) where TI : struct, IInstructions where TK0 : struct, DescribedPlan.IDepositPlane => (k >> 2 & 3) switch
+    {
+        0 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, DescribedPlan.NoDeposit, DescribedPlan.NoDeposit>>(plan),
+        1 => DepositThird<TI, TK0, DescribedPlan.SpreadDeposit>(plan, k),
+        2 => DepositThird<TI, TK0, DescribedPlan.SharedDeposit>(plan, k),
+        _ => DepositThird<TI, TK0, DescribedPlan.RunDeposit>(plan, k),
+    };
+
+    private static nint DepositThird<TI, TK0, TK1>(DescribedPlan plan, int k)
+        where TI : struct, IInstructions where TK0 : struct, DescribedPlan.IDepositPlane where TK1 : struct, DescribedPlan.IDepositPlane => (k >> 4 & 3) switch
+        {
+            0 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.NoDeposit>>(plan),
+            1 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.SpreadDeposit>>(plan),
+            2 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.SharedDeposit>>(plan),
+            _ => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.RunDeposit>>(plan),
+        };
 
     private static nint OneByMap<TR, TI>(DescribedPlan plan) where TR : struct, IRunLoad where TI : struct, IInstructions => plan.Map switch
     {
@@ -8091,9 +8470,10 @@ internal sealed partial class CpuBackend
     // exactly, as GatheredOne's lane c, then the same float operations: the same bits.
     [SkipLocalsInit]
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    // TG: one group a period (its steps then the period's first 8, constants to the JIT).
-    private static unsafe float NaturalOne<TI, TF, TS, TM, TG>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
-        where TI : struct, IInstructions where TF : struct, IFactors where TS : struct, DescribedPlan.IGatheredSteps where TM : struct, IFlag where TG : struct, IFlag
+    // TG: one group a period (its steps then the period's first 8, constants to the JIT). TP: its steps made two at once
+    // (DescribedPlan.PairSteps: pair step q makes steps 2q and 2q + 1).
+    private static unsafe float NaturalOne<TI, TF, TS, TM, TG, TP>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
+        where TI : struct, IInstructions where TF : struct, IFactors where TS : struct, DescribedPlan.IGatheredSteps where TM : struct, IFlag where TG : struct, IFlag where TP : struct, IFlag
     {
         bool mins = typeof(TM) == typeof(Yes);
         int gpp = plan.GroupsPerPeriod, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, periodBytes = plan.PeriodBytes;
@@ -8105,14 +8485,35 @@ internal sealed partial class CpuBackend
             var words = (Vector256<uint>*)at;                                       // (a natural plan's steps load from the period)
             sbyte* xg = x + (nint)g * groupValues;
             float* lg = lanes + (nint)g * laneFloats;
-            var d0 = TI.Dot(default, TS.Step<TI>(plan, words, first), Vector256.Load(xg));
-            var d1 = TI.Dot(default, TS.Step<TI>(plan, words, first + 1), Vector256.Load(xg + 32));
-            var d2 = TI.Dot(default, TS.Step<TI>(plan, words, first + 2), Vector256.Load(xg + 64));
-            var d3 = TI.Dot(default, TS.Step<TI>(plan, words, first + 3), Vector256.Load(xg + 96));
-            var d4 = TI.Dot(default, TS.Step<TI>(plan, words, first + 4), Vector256.Load(xg + 128));
-            var d5 = TI.Dot(default, TS.Step<TI>(plan, words, first + 5), Vector256.Load(xg + 160));
-            var d6 = TI.Dot(default, TS.Step<TI>(plan, words, first + 6), Vector256.Load(xg + 192));
-            var d7 = TI.Dot(default, TS.Step<TI>(plan, words, first + 7), Vector256.Load(xg + 224));
+            Vector256<int> d0, d1, d2, d3, d4, d5, d6, d7;
+            if (typeof(TP) == typeof(Yes))
+            {
+                int q = first / 2;
+                TS.Pair<TI>(plan, words, q, out var s0, out var s1);
+                d0 = TI.Dot(default, s0, Vector256.Load(xg));
+                d1 = TI.Dot(default, s1, Vector256.Load(xg + 32));
+                TS.Pair<TI>(plan, words, q + 1, out var s2, out var s3);
+                d2 = TI.Dot(default, s2, Vector256.Load(xg + 64));
+                d3 = TI.Dot(default, s3, Vector256.Load(xg + 96));
+                TS.Pair<TI>(plan, words, q + 2, out var s4, out var s5);
+                d4 = TI.Dot(default, s4, Vector256.Load(xg + 128));
+                d5 = TI.Dot(default, s5, Vector256.Load(xg + 160));
+                TS.Pair<TI>(plan, words, q + 3, out var s6, out var s7);
+                d6 = TI.Dot(default, s6, Vector256.Load(xg + 192));
+                d7 = TI.Dot(default, s7, Vector256.Load(xg + 224));
+            }
+            else
+            {
+                d0 = TI.Dot(default, TS.Step<TI>(plan, words, first), Vector256.Load(xg));
+                d1 = TI.Dot(default, TS.Step<TI>(plan, words, first + 1), Vector256.Load(xg + 32));
+                d2 = TI.Dot(default, TS.Step<TI>(plan, words, first + 2), Vector256.Load(xg + 64));
+                d3 = TI.Dot(default, TS.Step<TI>(plan, words, first + 3), Vector256.Load(xg + 96));
+                d4 = TI.Dot(default, TS.Step<TI>(plan, words, first + 4), Vector256.Load(xg + 128));
+                d5 = TI.Dot(default, TS.Step<TI>(plan, words, first + 5), Vector256.Load(xg + 160));
+                d6 = TI.Dot(default, TS.Step<TI>(plan, words, first + 6), Vector256.Load(xg + 192));
+                d7 = TI.Dot(default, TS.Step<TI>(plan, words, first + 7), Vector256.Load(xg + 224));
+            }
+
             var i = LaneTotals<TI>(d0, d1, d2, d3, d4, d5, d6, d7) + Vector256.Load((int*)(lg + 8));
             TF.Read<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
             f = TI.Fused(Vector256.ConvertToSingle(i), scale * Vector256.Load(lg), f);
