@@ -1866,8 +1866,12 @@ internal sealed partial class CpuBackend
         float Single(byte* row, int i);
     }
 
-    /// <summary>x as a lane reads it: x itself, or what the lane made of it first (int8 codes and their scales; values reordered).</summary>
-    private readonly record struct LaneInput(float[] Values, bool Owned, sbyte[]? Codes, float[]? Scales, bool Natural = false)
+    /// <summary>
+    /// x as a lane reads it: x itself, or what the lane made of it first (int8 codes and their scales; values reordered).
+    /// The codes and scales lie from CodesAt and ScalesAt (elements) of their arrays: where the arrays' data start on a
+    /// cache line, so no 32-byte read of a row of x splits two lines.
+    /// </summary>
+    private readonly record struct LaneInput(float[] Values, bool Owned, sbyte[]? Codes, float[]? Scales, bool Natural = false, int CodesAt = 0, int ScalesAt = 0)
     {
         /// <summary>The pooled buffers back to the pool.</summary>
         public void Release()
@@ -2437,7 +2441,7 @@ internal sealed partial class CpuBackend
                     new Span<byte>(scratchBytes, bytes).Clear();
                 }
 
-                var kernels = format.Kernels(part.LaneId, k, new LanePointers(xv, xc, xs, input.Natural), scratchBytes);
+                var kernels = format.Kernels(part.LaneId, k, new LanePointers(xv, xc + input.CodesAt, xs + input.ScalesAt, input.Natural), scratchBytes);
                 RowGroups(ref kernels, (byte*)words + lane.Offset, rowBytes, k, format.Span(k), format.GroupBytes, part.Y, part.N, j0, j1, i0, i1);
                 if (lane.RowScale is { } scale)
                 {
@@ -6224,8 +6228,10 @@ internal sealed partial class CpuBackend
             switch (plan.Mode)
             {
                 case DescribedMode.Integer:
-                    var codes = ArrayPool<sbyte>.Shared.Rent(m * plan.CodesRow(k));
-                    var lanes = ArrayPool<float>.Shared.Rent(m * plan.LanesRow(k));
+                    // (A cache line more of each, so that the rows can start on one: a split read cost the tile 23% on a P-core.)
+                    var codes = ArrayPool<sbyte>.Shared.Rent(m * plan.CodesRow(k) + 64);
+                    var lanes = ArrayPool<float>.Shared.Rent(m * plan.LanesRow(k) + 16);
+                    int codesAt = LineStart(codes), lanesAt = LineStart(lanes);
                     // A row of x alone, read by the plan's natural one (its codes a chunk at a time, as rounded), by a lane whose
                     // instructions shift each lane by its own count in one instruction, as the natural steps shift theirs (the
                     // portable instructions shift by a select for each bit of the counts: measured slower than the gathered
@@ -6233,17 +6239,17 @@ internal sealed partial class CpuBackend
                     bool natural = m == 1 && InputOf(lane) == 1;
                     if (InstructionsOf(lane) == Instructions.Portable)
                     {
-                        RoundDescribedRows<PortableInstructions>(plan, x, codes, lanes, m, k, natural);
+                        RoundDescribedRows<PortableInstructions>(plan, x, codes, codesAt, lanes, lanesAt, m, k, natural);
                     }
                     else if (AdvSimd.Arm64.IsSupported)
                     {
-                        RoundDescribedRows<NeonInstructions>(plan, x, codes, lanes, m, k, natural);
+                        RoundDescribedRows<NeonInstructions>(plan, x, codes, codesAt, lanes, lanesAt, m, k, natural);
                     }
                     else
                     {
-                        RoundDescribedRows<Avx2Instructions>(plan, x, codes, lanes, m, k, natural);
+                        RoundDescribedRows<Avx2Instructions>(plan, x, codes, codesAt, lanes, lanesAt, m, k, natural);
                     }
-                    return new LaneInput(x, false, codes, lanes, natural);
+                    return new LaneInput(x, false, codes, lanes, natural, codesAt, lanesAt);
                 case DescribedMode.Double:
                     var wide = ArrayPool<float>.Shared.Rent(2 * m * k);
                     WidenRows(x, wide, m, k);
@@ -6501,9 +6507,10 @@ internal sealed partial class CpuBackend
 
     // x rounded to int8 for the described lane's integer arithmetic, row by row (RoundDescribedRow), over the threads where
     // x is large (a row a chunk, CpuRanges: no closure or task allocated a call, as the rows alone ran before).
-    private static void RoundDescribedRows<TI>(DescribedPlan plan, float[] x, sbyte[] codes, float[] lanes, int m, int k, bool natural) where TI : struct, IInstructions
+    private static void RoundDescribedRows<TI>(DescribedPlan plan, float[] x, sbyte[] codes, int codesAt, float[] lanes, int lanesAt, int m, int k, bool natural)
+        where TI : struct, IInstructions
     {
-        var rows = new RoundedRows<TI>(plan, x, codes, lanes, k, natural);
+        var rows = new RoundedRows<TI>(plan, x, codes, codesAt, lanes, lanesAt, k, natural);
         if (m > 1 && (long)m * k >= 1 << 16)
         {
             CpuRanges.Run(m, 1, m, Math.Max(1, ComputeResources.MaxCpuThreads), ref rows);   // `rows` is this frame's, on the stack
@@ -6514,7 +6521,8 @@ internal sealed partial class CpuBackend
     }
 
     // RoundDescribedRows' rows [first, last), each rounded on its own (the same bytes whichever thread rounds it).
-    private readonly struct RoundedRows<TI>(DescribedPlan plan, float[] x, sbyte[] codes, float[] lanes, int k, bool natural) : IRangeBody where TI : struct, IInstructions
+    private readonly struct RoundedRows<TI>(DescribedPlan plan, float[] x, sbyte[] codes, int codesAt, float[] lanes, int lanesAt, int k, bool natural) : IRangeBody
+        where TI : struct, IInstructions
     {
         private readonly int xRow = plan.CodesRow(k), lRow = plan.LanesRow(k);
 
@@ -6522,9 +6530,17 @@ internal sealed partial class CpuBackend
         {
             for (int i = first; i < last; i++)
             {
-                RoundDescribedRow<TI>(plan, x.AsSpan(i * k, k), codes.AsSpan(i * xRow, xRow), lanes.AsSpan(i * lRow, lRow), natural);
+                RoundDescribedRow<TI>(plan, x.AsSpan(i * k, k), codes.AsSpan(codesAt + i * xRow, xRow), lanes.AsSpan(lanesAt + i * lRow, lRow), natural);
             }
         }
+    }
+
+    // The element of `array` from which its data start on a cache line (where it lies now: a large array, as these are, is
+    // not moved; one moved later is read from the same element, only not on a line's start).
+    private static unsafe int LineStart<T>(T[] array) where T : unmanaged
+    {
+        nint at = (nint)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(array));
+        return (int)((64 - (at & 63)) & 63) / sizeof(T);
     }
 
     // A row of x rounded to int8 a block of 32 values at a time (the block's scale amax / 127, 0 where every value is 0; its
