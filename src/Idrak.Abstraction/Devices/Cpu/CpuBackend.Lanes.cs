@@ -1862,6 +1862,12 @@ internal sealed partial class CpuBackend
         /// <summary>Rows i..i + 3 of x by the stored row at <paramref name="row"/>, over values [p0, p1) of k.</summary>
         void Four(byte* row, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3);
 
+        /// <summary>Whether the kernels take eight rows of x at a time (Eight) where they would take four (Four).</summary>
+        bool Eights { get; }
+
+        /// <summary>Rows i..i + 7 of x by the stored row at <paramref name="row"/>, over values [p0, p1) of k, into y[0..8).</summary>
+        void Eight(byte* row, int i, int p0, int p1, float* y);
+
         /// <summary>Row i of x by the stored row at <paramref name="row"/>.</summary>
         float Single(byte* row, int i);
     }
@@ -2523,11 +2529,44 @@ internal sealed partial class CpuBackend
         }
 
         int group = RowGroup(rowBytes, j1 - j0, groupBytes);
-        float* sums = stackalloc float[4 * MostGroupRows];
+        float* sums = stackalloc float[8 * MostGroupRows];
+        float* eight = stackalloc float[8];
+
+        // Eight rows of x pass over half the values four would: the same bytes of x in the cache.
+        int span8 = Math.Max(1, span / 2);
+        bool eights = kernels.Eights;
         for (int c0 = j0; c0 < j1; c0 += group)
         {
             int count = Math.Min(group, j1 - c0);
             int i = i0;
+            for (; eights && i + 8 <= i1; i += 8)
+            {
+                // Spans of k (all of k where span8 ≥ k) by each stored row of the group: each span's partial sums added in
+                // order, the outputs written at the end.
+                new Span<float>(sums, 8 * count).Clear();
+                for (int p0 = 0; p0 < k; p0 += span8)
+                {
+                    int p1 = Math.Min(k, p0 + span8);
+                    for (int c = 0; c < count; c++)
+                    {
+                        kernels.Eight(stored + (c0 + c) * rowBytes, i, p0, p1, eight);
+                        float* into = sums + 8 * c;
+                        for (int r = 0; r < 8; r++)
+                        {
+                            into[r] += eight[r];
+                        }
+                    }
+                }
+
+                for (int c = 0; c < count; c++)
+                {
+                    for (int r = 0; r < 8; r++)
+                    {
+                        y[(i + r) * n + c0 + c] = sums[8 * c + r];
+                    }
+                }
+            }
+
             for (; i + 4 <= i1; i += 4)
             {
                 if (span >= k)
@@ -6422,6 +6461,53 @@ internal sealed partial class CpuBackend
             }
         }
 
+        // The float32 lane over values it reads as they are (16-bit or float32): eight rows of x a pass, each stored value
+        // made float32 once for the eight (DescribedSingleEight), or (the 128-bit twin) once for each four of them, its sums
+        // in the same order: every width the same bits.
+        public bool Eights => plan.Mode == DescribedMode.Single && plan.Wide != WideRead.Codes;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public void Eight(byte* row, int i, int p0, int p1, float* y)
+        {
+            if (AdvSimd.Arm64.IsSupported)
+            {
+                if (with == Instructions.Portable)
+                {
+                    EightBy<PortableInstructions>(row, i, p0, p1, y);
+                    return;
+                }
+
+                EightBy<NeonInstructions>(row, i, p0, p1, y);
+                return;
+            }
+
+            switch (with)
+            {
+                case Instructions.Vnni:
+                    EightBy<VnniInstructions>(row, i, p0, p1, y);
+                    return;
+                case Instructions.Avx2:
+                    EightBy<Avx2Instructions>(row, i, p0, p1, y);
+                    return;
+                default:
+                    EightBy<PortableInstructions>(row, i, p0, p1, y);
+                    return;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private void EightBy<TI>(byte* row, int i, int p0, int p1, float* y) where TI : struct, IInstructions
+        {
+            if (narrow)
+            {
+                DescribedSingleEight<TI, Yes>(plan, row + (nint)p0 * plan.Bytes, x + (nint)i * k + p0, k, p1 - p0, y);
+                DescribedSingleEight<TI, Yes>(plan, row + (nint)p0 * plan.Bytes, x + (nint)(i + 4) * k + p0, k, p1 - p0, y + 4);
+                return;
+            }
+
+            DescribedSingleEight<TI, No>(plan, row + (nint)p0 * plan.Bytes, x + (nint)i * k + p0, k, p1 - p0, y);
+        }
+
         // Four rows by the 256-bit kernels, or (the 128-bit twin) by the 128-bit ones.
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         private void FourBy<TI>(byte* row, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
@@ -8538,6 +8624,148 @@ internal sealed partial class CpuBackend
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
     private static unsafe float SingleOneBy<TR, TI>(TR read, int bytes, float offset, byte* row, float* x, int k) where TR : struct, ISingleRead where TI : struct, IInstructions =>
         offset == 0f ? SingleOne<TR, TI>(read, bytes, row, x, k) : SingleOne<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), bytes, row, x, k);
+
+    // DescribedSingleFour for eight rows of x (SingleEight), the plan's read of its values as there; TH (the 128-bit twin):
+    // four rows a call (SingleEightHalf128).
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DescribedSingleEight<TI, TH>(DescribedPlan plan, byte* row, float* x, int stride, int count, float* y)
+        where TI : struct, IInstructions where TH : struct, IFlag
+    {
+        float offset = (float)plan.D.CodeOffset;
+        switch (plan.Wide)
+        {
+            case WideRead.Half when plan.Half16 is { Shift: 16, Times: 1f, Special: 0, SignShift: 16 }:
+                SingleEightBy<HighHalfRead, TI, TH>(new HighHalfRead(), 2, offset, row, x, stride, count, y);
+                return;
+            case WideRead.Half when ScaledHalfRead.Takes(plan.Half16):
+                SingleEightBy<ScaledHalfRead, TI, TH>(new ScaledHalfRead(plan.Half16Vectors, plan.Half16), 2, offset, row, x, stride, count, y);
+                return;
+            case WideRead.Half:
+                SingleEightBy<HalfRead, TI, TH>(new HalfRead(plan.Half16), 2, offset, row, x, stride, count, y);
+                return;
+            case WideRead.Short:
+                SingleEightBy<ShortRead, TI, TH>(new ShortRead(plan.D.Code.Signed), 2, offset, row, x, stride, count, y);
+                return;
+            default:
+                SingleEightBy<SingleRead, TI, TH>(new SingleRead(), 4, offset, row, x, stride, count, y);
+                return;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void SingleEightBy<TR, TI, TH>(TR read, int bytes, float offset, byte* row, float* x, int stride, int count, float* y)
+        where TR : struct, ISingleRead where TI : struct, IInstructions where TH : struct, IFlag
+    {
+        if (typeof(TH) == typeof(Yes))
+        {
+            if (offset == 0f)
+            {
+                SingleEightHalf128<TR, TI>(read, bytes, row, x, stride, count, y);
+                return;
+            }
+
+            SingleEightHalf128<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), bytes, row, x, stride, count, y);
+            return;
+        }
+
+        if (offset == 0f)
+        {
+            SingleEight<TR, TI>(read, bytes, row, x, stride, count, y);
+            return;
+        }
+
+        SingleEight<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), bytes, row, x, stride, count, y);
+    }
+
+    // Eight rows of x (`stride` apart) by `count` values of `bytes` bytes each: 8 values a step made float32 in registers
+    // (TR) once for the eight rows, each multiplied with every row's matching values; a sum a row (lane j the values j mod 8
+    // in order), the last count mod 8 one at a time. The values are made once for every eight rows of x, where four rows a
+    // pass made each twice as often: the eight sums and the values made fit the registers, two sums a row would not.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void SingleEight<TR, TI>(TR read, int bytes, byte* row, float* x, int stride, int count, float* y)
+        where TR : struct, ISingleRead where TI : struct, IInstructions
+    {
+        float* x0 = x, x1 = x + stride, x2 = x + 2 * (nint)stride, x3 = x + 3 * (nint)stride, x4 = x + 4 * (nint)stride, x5 = x + 5 * (nint)stride,
+            x6 = x + 6 * (nint)stride, x7 = x + 7 * (nint)stride;
+        Vector256<float> a0 = default, a1 = default, a2 = default, a3 = default, a4 = default, a5 = default, a6 = default, a7 = default;
+        nint p = 0;
+        for (; p + 8 <= count; p += 8)
+        {
+            var w = read.Eight<TI>(row + p * bytes);
+            a0 = TI.Fused(w, Vector256.Load(x0 + p), a0);
+            a1 = TI.Fused(w, Vector256.Load(x1 + p), a1);
+            a2 = TI.Fused(w, Vector256.Load(x2 + p), a2);
+            a3 = TI.Fused(w, Vector256.Load(x3 + p), a3);
+            a4 = TI.Fused(w, Vector256.Load(x4 + p), a4);
+            a5 = TI.Fused(w, Vector256.Load(x5 + p), a5);
+            a6 = TI.Fused(w, Vector256.Load(x6 + p), a6);
+            a7 = TI.Fused(w, Vector256.Load(x7 + p), a7);
+        }
+
+        float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f, t4 = 0f, t5 = 0f, t6 = 0f, t7 = 0f;
+        for (; p < count; p++)
+        {
+            float v = read.One(row + p * bytes);
+            t0 = MathF.FusedMultiplyAdd(v, x0[p], t0);
+            t1 = MathF.FusedMultiplyAdd(v, x1[p], t1);
+            t2 = MathF.FusedMultiplyAdd(v, x2[p], t2);
+            t3 = MathF.FusedMultiplyAdd(v, x3[p], t3);
+            t4 = MathF.FusedMultiplyAdd(v, x4[p], t4);
+            t5 = MathF.FusedMultiplyAdd(v, x5[p], t5);
+            t6 = MathF.FusedMultiplyAdd(v, x6[p], t6);
+            t7 = MathF.FusedMultiplyAdd(v, x7[p], t7);
+        }
+
+        y[0] = Vector256.Sum(a0) + t0;
+        y[1] = Vector256.Sum(a1) + t1;
+        y[2] = Vector256.Sum(a2) + t2;
+        y[3] = Vector256.Sum(a3) + t3;
+        y[4] = Vector256.Sum(a4) + t4;
+        y[5] = Vector256.Sum(a5) + t5;
+        y[6] = Vector256.Sum(a6) + t6;
+        y[7] = Vector256.Sum(a7) + t7;
+    }
+
+    // SingleEight on 128-bit vectors (its 128-bit twin), four rows of x a call: each 8 values made as two halves of 4
+    // (TR.Four), a row's sum two registers (lanes 0-3, 4-7: each lane the values j mod 8 in order, as SingleEight's), added
+    // as Vector256.Sum adds a vector's halves (SumOf): the same bits as SingleEight's rows.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void SingleEightHalf128<TR, TI>(TR read, int bytes, byte* row, float* x, int stride, int count, float* y)
+        where TR : struct, ISingleRead where TI : struct, IInstructions
+    {
+        float* x0 = x, x1 = x + stride, x2 = x + 2 * (nint)stride, x3 = x + 3 * (nint)stride;
+        Vector128<float> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
+        nint p = 0;
+        for (; p + 8 <= count; p += 8)
+        {
+            byte* at = row + p * bytes;
+            var lo = read.Four<TI>(at);
+            var hi = read.Four<TI>(at + 4 * bytes);
+            a0l = TI.Fused(lo, Vector128.Load(x0 + p), a0l);
+            a0u = TI.Fused(hi, Vector128.Load(x0 + p + 4), a0u);
+            a1l = TI.Fused(lo, Vector128.Load(x1 + p), a1l);
+            a1u = TI.Fused(hi, Vector128.Load(x1 + p + 4), a1u);
+            a2l = TI.Fused(lo, Vector128.Load(x2 + p), a2l);
+            a2u = TI.Fused(hi, Vector128.Load(x2 + p + 4), a2u);
+            a3l = TI.Fused(lo, Vector128.Load(x3 + p), a3l);
+            a3u = TI.Fused(hi, Vector128.Load(x3 + p + 4), a3u);
+        }
+
+        float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f;
+        for (; p < count; p++)
+        {
+            float v = read.One(row + p * bytes);
+            t0 = MathF.FusedMultiplyAdd(v, x0[p], t0);
+            t1 = MathF.FusedMultiplyAdd(v, x1[p], t1);
+            t2 = MathF.FusedMultiplyAdd(v, x2[p], t2);
+            t3 = MathF.FusedMultiplyAdd(v, x3[p], t3);
+        }
+
+        y[0] = SumOf(a0l, a0u) + t0;
+        y[1] = SumOf(a1l, a1u) + t1;
+        y[2] = SumOf(a2l, a2u) + t2;
+        y[3] = SumOf(a3l, a3u) + t3;
+    }
 
     // Four rows of x (`stride` apart) by `count` values of `bytes` bytes each: 16 values a step made float32 in registers
     // (TR), each multiplied with the four rows' matching values; two sums a row, the last count mod 16 one at a time.

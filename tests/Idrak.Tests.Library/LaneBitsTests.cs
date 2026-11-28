@@ -343,11 +343,13 @@ internal abstract partial class Tests
     }
 
     // The hashes LaneBits makes, recorded (the CPU's lanes give these bits on any CPU): the described lane's from commit
-    // 3f1c53e2 (each type's described and stored bits), the operations' from the new design.
+    // 3f1c53e2 (each type's described and stored bits), the operations' from the new design; the float32 lane's 16-bit
+    // reads by 8 rows of x or more (bfloat16, 16-bit integers plus 0.5) recorded again when it took eight rows a pass, its
+    // sums one a row.
     private static readonly Dictionary<string, string> LaneBitsRecorded = new(StringComparer.Ordinal)
     {
         ["16-bit integers described"] = "0AD092E40E7B6807",
-        ["16-bit integers plus 0.5 described"] = "FA7F6C3A35719AF7",
+        ["16-bit integers plus 0.5 described"] = "10A2EFDF5D679CB4",
         ["16-bit integers plus 0.5 stored"] = "DDFA6AEA60DCB501",
         ["16-bit integers stored"] = "31418B4D8B89086B",
         ["3-bit codes in two planes, offset -4, an E8M0 scale a 32 values described"] = "C5324487544045EC",
@@ -360,7 +362,7 @@ internal abstract partial class Tests
         ["int8 groups of 96, a float32 scale after them stored"] = "0DEF560A171440DC",
         ["a table of 16 fractions, two a byte, a bfloat16 scale a 64 values described"] = "BE2AA77B3342A1D3",
         ["a table of 16 fractions, two a byte, a bfloat16 scale a 64 values stored"] = "592ACEBFC8208E4C",
-        ["bfloat16 described"] = "BC5B9EE8B5F7CE6C",
+        ["bfloat16 described"] = "FD7EE094DD643945",
         ["bfloat16 stored"] = "12F3BE79F0791B5E",
         ["float64 described"] = "EA0FB746D0C4EF70",
         ["float64 stored"] = "93B42CD81DA75319",
