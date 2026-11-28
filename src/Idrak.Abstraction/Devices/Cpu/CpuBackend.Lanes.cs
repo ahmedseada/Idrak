@@ -146,6 +146,11 @@ internal sealed partial class CpuBackend
     // plan's steps take it and the CPU has the instructions; its other kernels the described lane's own (the same bits).
     private const int DepositLaneId = 13;
 
+    // The described lane over its plan's exact twin (DescribedPlan.Exact: its 16-bit float factors made with no subnormal
+    // float32 an operand of a multiply, HalfVectors.OfExact), a candidate where the plan reads such factors; its kernels the
+    // described lane's own (the same bits).
+    private const int ExactLaneId = 14;
+
     // The float product's kind of lane, a candidate for float32 rows (DescribedPlan.FloatRows): x by W as the float32 product
     // takes a B transposed (its tiles packing W's rows as it reads them; ProductOverRows), measured against the described
     // lane's at each shape, the faster kept (its sums in their own order, so its own bits).
@@ -220,7 +225,8 @@ internal sealed partial class CpuBackend
         Instructions.DotProd => DescribedLaneName + " by Arm's dot products (DotProd)",
         Instructions.DotProdWide => DescribedLaneName + " by Arm's dot products, two a step for codes past 127 (DotProd)",
         _ => DescribedLaneName,
-    }) + (NarrowOf(lane) ? ", four rows of x at a time on 128-bit vectors" : "") + (KindOf(lane) == DepositLaneId ? ", a row's codebook indices by bit deposit (BMI2)" : "");
+    }) + (NarrowOf(lane) ? ", four rows of x at a time on 128-bit vectors" : "") + (KindOf(lane) == DepositLaneId ? ", a row's codebook indices by bit deposit (BMI2)" : "")
+        + (KindOf(lane) == ExactLaneId ? ", 16-bit float factors with no subnormal multiply operand" : "");
 
     // A lane's short name in a measurement's times (its kind's first word, its instruction set's, and /128 for a 128-bit twin).
     private static string LaneShortName(int lane) => KindOf(lane) == ProductLaneId ? "product" : DescribedLaneName.Split(' ')[0] + InstructionsOf(lane) switch
@@ -231,7 +237,7 @@ internal sealed partial class CpuBackend
         Instructions.DotProd => "/dotprod",
         Instructions.DotProdWide => "/dotprod2",
         _ => "",
-    } + (NarrowOf(lane) ? "/128" : "") + (KindOf(lane) == DepositLaneId ? "/deposit" : "");
+    } + (NarrowOf(lane) ? "/128" : "") + (KindOf(lane) == DepositLaneId ? "/deposit" : "") + (KindOf(lane) == ExactLaneId ? "/exact" : "");
 
     /// <summary>
     /// A format's candidate lanes that run on this CPU (up to 16, a byte each), the first the one the others are timed
@@ -350,6 +356,26 @@ internal sealed partial class CpuBackend
             }
 
             return s_vnniLanes ? list.With(LaneOf(DepositLaneId, Instructions.Vnni)) : list;
+        }
+
+        /// <summary>
+        /// The described lane's exact lanes (ExactLaneId) by AVX2 and FMA and by AVX-VNNI where the CPU has them and the plan
+        /// has an exact twin (<paramref name="exact"/>), as WithKind lists its own.
+        /// </summary>
+        public LaneList WithExact(bool exact, bool pairs)
+        {
+            if (!(exact && ComputeResources.CpuVectors is CpuVectorPaths.Automatic or CpuVectorPaths.Native))
+            {
+                return this;
+            }
+
+            var list = this;
+            if (s_avx2Lanes && pairs)
+            {
+                list = list.With(LaneOf(ExactLaneId, Instructions.Avx2));
+            }
+
+            return s_vnniLanes ? list.With(LaneOf(ExactLaneId, Instructions.Vnni)) : list;
         }
 
         public bool Contains(int lane)
@@ -3432,19 +3458,59 @@ internal sealed partial class CpuBackend
             }
 
             plan.Finish();
-            if (plan.StepsGathered && plan.C == 32 && plan.T == 8 && plan.Cg == 8)
+            plan.NaturalOf(d, false);
+            if (plan.Mode == DescribedMode.Integer && plan.HalfSlots)
             {
-                // Its one-row kernel's plan: the same description with a chunk a step (natural), where its steps gather so.
-                var own = new DescribedPlan(d) { natural = true };
-                if (own.Narrow())
+                // Its exact twin (the exact lane's): the same description, its 16-bit float factors read by OfExact.
+                var exact = new DescribedPlan(d) { exactHalves = true };
+                if (exact.Narrow())
                 {
-                    own.Finish();
-                    plan.Natural = own.StepsGathered ? own : null;
+                    exact.Finish();
+                    exact.NaturalOf(d, true);
+                    plan.Exact = exact;
                 }
             }
 
             return plan;
         }
+
+        // Its one-row kernel's plan: the same description with a chunk a step (natural), where its steps gather so.
+        private void NaturalOf(TypeDescription d, bool exact)
+        {
+            if (StepsGathered && C == 32 && T == 8 && Cg == 8)
+            {
+                var own = new DescribedPlan(d) { natural = true, exactHalves = exact };
+                if (own.Narrow())
+                {
+                    own.Finish();
+                    Natural = own.StepsGathered ? own : null;
+                }
+            }
+        }
+
+        // Whether the factor kinds read a 16-bit float (a slot's number 3: HalfNumber).
+        private bool HalfSlots
+        {
+            get
+            {
+                for (int slot = 0; slot < 4; slot++)
+                {
+                    int kind = FactorKinds >> (8 * slot) & 0xFF;
+                    if (kind != 0 && (kind & 15) == 3)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        }
+
+        /// <summary>The plan the exact lane reads by (ExactLaneId): its 16-bit float factors read with no subnormal multiply operand (OfExact). Null where its factors read none.</summary>
+        public DescribedPlan? Exact { get; private set; }
+
+        // Whether this plan is an exact twin (its 16-bit float factors read by OfExact: ExactHalfNumber).
+        private bool exactHalves;
 
         /// <summary>
         /// The plan a row of x alone is read by (NaturalOne), where this one's steps are gathered (chunks of 32): the same
@@ -4776,7 +4842,7 @@ internal sealed partial class CpuBackend
                     int fetch = uniform ? 1 : windowed ? (factorPieces[f] == 1 ? 4 : 5) : factorPieces[f] == 1 ? 2 : 3, slot = f < scaleFactors ? f : 2 + f - scaleFactors;
                     // (A table of up to 8 numbers, a field of up to 3 bits: its numbers in one register, a lane each by a
                     // permute: SmallTableNumber, 6; any other reading its FactorRead.)
-                    int read = reads[f] == FactorRead.Table && factorBits[f] <= 3 ? 6 : (int)reads[f];
+                    int read = reads[f] == FactorRead.Table && factorBits[f] <= 3 ? 6 : reads[f] == FactorRead.Half && exactHalves ? 7 : (int)reads[f];
                     kinds |= (fetch << 4 | read) << (8 * slot);
                 }
 
@@ -5031,6 +5097,14 @@ internal sealed partial class CpuBackend
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
             public static Vector256<float> Of<TI>(DescribedPlan plan, Vector256<int> bits, int f) where TI : struct, IInstructions =>
                 plan.fHalvesAt[f].Of(bits) + Vector256.Create(plan.fBiasAt[f]);
+        }
+
+        // An exact twin's 16-bit float factor: the same number by OfExact.
+        internal readonly struct ExactHalfNumber : IFactorNumber
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+            public static Vector256<float> Of<TI>(DescribedPlan plan, Vector256<int> bits, int f) where TI : struct, IInstructions =>
+                plan.fHalvesAt[f].OfExact(bits) + Vector256.Create(plan.fBiasAt[f]);
         }
 
         internal readonly struct SingleNumber : IFactorNumber
@@ -6784,6 +6858,7 @@ internal sealed partial class CpuBackend
         // a byte plane each (DescribedPlan.PairsFit).
         public LaneList Lanes => plan.Mode == DescribedMode.Integer
             ? default(LaneList).WithKind(DescribedLaneId, dots: true, pairs: plan.P == 1 && plan.PairsFit).WithDeposits(plan.Natural is { DepositSteps: true }, plan.P == 1 && plan.PairsFit)
+                .WithExact(plan.Exact is not null, plan.P == 1 && plan.PairsFit)
             : plan.FloatRows ? default(LaneList).WithKind(DescribedLaneId).With(LaneOf(ProductLaneId, Instructions.Portable)) : default(LaneList).WithKind(DescribedLaneId);
 
         public int First => DescribedLaneId;
@@ -6885,7 +6960,8 @@ internal sealed partial class CpuBackend
             _ => 0,
         };
 
-        public DescribedKernels Kernels(int lane, int k, LanePointers x, byte* bytes) => new(plan, InstructionsOf(lane), NarrowOf(lane), k, x, bytes, KindOf(lane) == DepositLaneId);
+        public DescribedKernels Kernels(int lane, int k, LanePointers x, byte* bytes) =>
+            new(KindOf(lane) == ExactLaneId && plan.Exact is { } exact ? exact : plan, InstructionsOf(lane), NarrowOf(lane), k, x, bytes, KindOf(lane) == DepositLaneId);
     }
 
     // The described lane as RowGroups' kernels, each call by the lane's instruction set. Every stored value is made in
@@ -8042,6 +8118,7 @@ internal sealed partial class CpuBackend
         2 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>(k >> 8),
         6 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.SmallTableNumber>>(k >> 8),
         3 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>(k >> 8),
+        7 => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.ExactHalfNumber>>(k >> 8),
         _ => FactorsSecond<TU, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>(k >> 8),
     };
 
@@ -8063,6 +8140,7 @@ internal sealed partial class CpuBackend
             2 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>(k >> 8),
         6 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.SmallTableNumber>>(k >> 8),
             3 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>(k >> 8),
+            7 => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.ExactHalfNumber>>(k >> 8),
             _ => FactorsThird<TU, T0, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>(k >> 8),
         };
 
@@ -8086,6 +8164,7 @@ internal sealed partial class CpuBackend
             2 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>(k >> 8),
         6 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.SmallTableNumber>>(k >> 8),
             3 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>(k >> 8),
+            7 => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.ExactHalfNumber>>(k >> 8),
             _ => FactorsFourth<TU, T0, T1, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>(k >> 8),
         };
 
@@ -8110,6 +8189,7 @@ internal sealed partial class CpuBackend
             2 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.TableNumber>>>(),
             6 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.SmallTableNumber>>>(),
             3 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.HalfNumber>>>(),
+            7 => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.ExactHalfNumber>>>(),
             _ => TU.Use<SlotFactors<T0, T1, T2, DescribedPlan.Field<TB, DescribedPlan.SingleNumber>>>(),
         };
 
@@ -9727,11 +9807,44 @@ internal sealed partial class CpuBackend
             return !found;
         }
 
+        // The first code whose shifted bits are a normal float32 (its exponent field 1), and a subnormal one's float32 as its
+        // integer times this (2^(shift - 149) times the power and factor), where the power and factor are a power of two
+        // that keeps it a normal float32 (Of's exact way for those codes); else 0 (Of multiplies them as they are).
+        private readonly Vector256<int> normalStart = Vector256.Create(Subnormals(h, factor) != 0f ? 1 << (23 - h.Shift) : 0);
+        private readonly Vector256<float> subnormalTimes = Vector256.Create(Subnormals(h, factor));
+
+        private static float Subnormals((int SignShift, int Magnitude, int Shift, float Times, int Special) h, float factor)
+        {
+            int bits = BitConverter.SingleToInt32Bits(h.Times * factor);
+            double times = Math.ScaleB(1d, h.Shift - 149) * h.Times * factor;
+            return h.Shift is > 0 and <= 23 && bits > 0 && (bits & 0x7FFFFF) == 0 && times >= BitConverter.Int32BitsToSingle(0x00800000) && times <= float.MaxValue
+                ? (float)times : 0f;
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<float> Of(Vector256<int> bits)
         {
             var m = bits & magnitude;
             var value = (Vector256.ShiftLeft(m, shift).AsSingle() * times).AsInt32();
+            value |= Vector256.GreaterThanOrEqual(m, special) & Vector256.Create(0x7F800000);
+            return (value | Vector256.ShiftLeft(bits & sign, 16)).AsSingle();
+        }
+
+        /// <summary>
+        /// Of's numbers, each the same, with no subnormal float32 an operand of a multiply: a code whose shifted bits are a
+        /// subnormal float32 (the code a subnormal) by its integer converted and times subnormalTimes, its multiply's operand
+        /// zero (where the power takes it: Subnormals; else as Of). x86 P-cores take a microcode assist for a subnormal
+        /// operand, about a hundred cycles a vector: q6_k's one-row kernel at 1x2048->2048 on a P-core 1.63 ms with its
+        /// weights' scales as they come (its superblock's float16 scale mostly subnormal), 0.64 with every weight 100 times
+        /// larger; an E-core 1.10 either way. Six operations more than Of's: the factor reads of the exact lane alone
+        /// (ExactLaneId), a measured candidate.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<float> OfExact(Vector256<int> bits)
+        {
+            var m = bits & magnitude;
+            var low = Vector256.LessThan(m, normalStart);
+            var value = ((Vector256.AndNot(Vector256.ShiftLeft(m, shift), low).AsSingle() * times) + (Vector256.ConvertToSingle(m) * subnormalTimes & low.AsSingle())).AsInt32();
             value |= Vector256.GreaterThanOrEqual(m, special) & Vector256.Create(0x7F800000);
             return (value | Vector256.ShiftLeft(bits & sign, 16)).AsSingle();
         }
