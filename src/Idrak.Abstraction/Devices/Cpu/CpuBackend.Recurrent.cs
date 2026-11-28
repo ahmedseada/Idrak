@@ -241,6 +241,7 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
         private float* _cell = cell, _hidden = hidden, _output = output, _gates = gates, _cells = cells;
         private bool _measured;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int n) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long row = (long)n * steps + step;
@@ -307,6 +308,7 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
         private readonly float* _dCellIn = dCell;
         private float* _dCell = dCell, _dGates = dGates, _dStep = dStep;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int n) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long row = (long)n * steps + step;
@@ -527,6 +529,7 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
         private float* _hidden = hiddenOut, _output = output, _gates = gates;
         private bool _measured;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int n) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long row = (long)n * steps + step;
@@ -584,6 +587,7 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
         private readonly float* _dHiddenIn = dHidden;
         private float* _dHidden = dHidden, _dGates = dGates, _dRecurrent = dRecurrent, _dStep = dStep;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int n) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long row = (long)n * steps + step;

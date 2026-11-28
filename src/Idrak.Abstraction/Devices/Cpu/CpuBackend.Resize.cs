@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
+using System.Runtime.CompilerServices;
 
 namespace Idrak.Abstraction.Devices.Cpu;
 
@@ -32,6 +33,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int p) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             int c = p % channels, across = xTaps > 0 ? outWidth : width;

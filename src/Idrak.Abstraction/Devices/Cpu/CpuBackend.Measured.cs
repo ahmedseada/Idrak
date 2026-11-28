@@ -44,8 +44,8 @@ internal sealed partial class CpuBackend
     /// <summary>A width every operation takes instead of its measured one, where it runs here (the lane-bits proof); null: measured.</summary>
     internal static Lanes? ForcedLanes;
 
-    // A choice of width: by the operation, its shape's classes and the vector paths setting.
-    private readonly record struct LanesKey(string Operation, int A, int B, CpuVectorPaths Vectors);
+    // A choice of width: by the operation, its shape's classes, the vector paths setting and the threads it runs on.
+    private readonly record struct LanesKey(string Operation, int A, int B, CpuVectorPaths Vectors, int Threads);
 
     private static readonly ConcurrentDictionary<LanesKey, Lanes> s_lanesChosen = new();
 
@@ -69,8 +69,8 @@ internal sealed partial class CpuBackend
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static Lanes ChosenLanes<TR>(string operation, int a, int b, ref TR run) where TR : struct, ILanesRun =>
-        ForcedLanes is { } forced && LanesRun(forced) ? forced : s_lanesChosen.TryGetValue(new LanesKey(operation, a, b, ComputeResources.CpuVectors), out var lanes) ? lanes
-            : MeasureLanes(new LanesKey(operation, a, b, ComputeResources.CpuVectors), ref run);
+        ForcedLanes is { } forced && LanesRun(forced) ? forced : s_lanesChosen.TryGetValue(new LanesKey(operation, a, b, ComputeResources.CpuVectors, ComputeResources.MaxCpuThreads), out var lanes) ? lanes
+            : MeasureLanes(new LanesKey(operation, a, b, ComputeResources.CpuVectors, ComputeResources.MaxCpuThreads), ref run);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Lanes MeasureLanes<TR>(LanesKey key, ref TR run) where TR : struct, ILanesRun
@@ -86,7 +86,7 @@ internal sealed partial class CpuBackend
         }
 
         string shape = string.Create(CultureInfo.InvariantCulture, $"{key.Operation} 2^{key.A}x2^{key.B}");
-        string fileKey = string.Create(CultureInfo.InvariantCulture, $"lanes {shape} {key.Vectors}");
+        string fileKey = string.Create(CultureInfo.InvariantCulture, $"lanes {shape} {key.Vectors} t{key.Threads}");
         Lanes best = WidestLanes;
         if (CpuChoices.TryGet(fileKey, out var kept) && Enum.TryParse<Lanes>(kept, out var known) && Listed(candidates[..count], known))
         {
@@ -195,7 +195,10 @@ internal sealed partial class CpuBackend
     }
 
     // The elements [first, n) in chunks over the threads where they pass the cut-over (any split gives the same bits: each
-    // element its own).
+    // element its own). Compiled optimized from its first call, as its chunks' body is: a width's kernel is measured
+    // against the others on its first calls (ChosenLanes), and unoptimized code there times the vector widths' operations
+    // as calls.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void Spread<TK, TV, TF>(ref TK kernel, long first, long n, int work) where TK : struct, IMap where TV : unmanaged where TF : struct, IFloats<TV>
     {
         int threads = ComputeResources.MaxCpuThreads;
@@ -236,6 +239,7 @@ internal sealed partial class CpuBackend
         public TK Kernel;
         public nint First;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Run(int first, int last) => Steps<TK, TV, TF>(ref Kernel, First + first, First + last);
     }
 
@@ -292,6 +296,8 @@ internal sealed partial class CpuBackend
         public void Redirect(ref Scratch scratch) => Kernel.Redirect(ref scratch);
     }
 
+    // (Compiled optimized from its first call, as Spread is, and every row kernel's Row.)
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void SpreadRows<TK, TV, TF>(ref TK kernel, int first, int end, long cost) where TK : struct, IRowKernel where TV : unmanaged where TF : struct, IFloats<TV>
     {
         int threads = ComputeResources.MaxCpuThreads, rows = end - first;
@@ -317,6 +323,7 @@ internal sealed partial class CpuBackend
         public TK Kernel;
         public int First;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Run(int first, int last)
         {
             for (int r = First + first; r < First + last; r++)

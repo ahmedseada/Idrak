@@ -15,6 +15,7 @@ internal sealed unsafe partial class CpuBackend
     // y = e^(x - shift), returning nothing (the sum is taken apart).
     private struct ExpShiftMap(float* x, float* y, float shift) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> =>
             TF.Store(y + i, Fn<TV, TF>.Exp(TF.Sub(TF.Load(x + i), TF.All(shift))));
     }
@@ -29,24 +30,28 @@ internal sealed unsafe partial class CpuBackend
     // y = x · scale.
     private struct ScaleMap(float* x, float* y, float scale) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(y + i, TF.Mul(TF.Load(x + i), TF.All(scale)));
     }
 
     // y = x / d.
     private struct DivideMap(float* x, float* y, float d) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(y + i, TF.Div(TF.Load(x + i), TF.All(d)));
     }
 
     // y = x - shift.
     private struct ShiftMap(float* x, float* y, float shift) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(y + i, TF.Sub(TF.Load(x + i), TF.All(shift)));
     }
 
     // y = scale · x + mask (no mask: scale · x), rounded once.
     private struct ScaleMaskMap(float* x, float* mask, float* y, float scale) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> =>
             TF.Store(y + i, mask == null ? TF.Mul(TF.All(scale), TF.Load(x + i)) : TF.Fma(TF.All(scale), TF.Load(x + i), TF.Load(mask + i)));
     }
@@ -96,6 +101,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV> =>
             SoftmaxRow<TV, TF>(x + (long)r * cols, _y + (long)r * cols, cols, log);
 
@@ -123,6 +129,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             float* row = _y + (long)r * cols;
@@ -154,6 +161,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _dx = dx;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long at = (long)r * cols;
@@ -178,6 +186,7 @@ internal sealed unsafe partial class CpuBackend
 
     private struct SoftmaxBackMap(float* y, float* dy, float* dx, float s, bool log) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             TV v = TF.Load(y + i), g = TF.Load(dy + i), d = TF.Load(dx + i);
@@ -199,6 +208,7 @@ internal sealed unsafe partial class CpuBackend
     // y = x · inv · (gain + offset) (no gain: x · inv).
     private struct GainMap(float* x, float* gain, float* y, float inv, float offset) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var v = TF.Mul(TF.Load(x + i), TF.All(inv));
@@ -257,6 +267,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y, _sum = sum, _inv = inv;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long at = (long)r * cols;
@@ -311,6 +322,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _dx = dx;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long at = (long)r * cols;
@@ -325,6 +337,7 @@ internal sealed unsafe partial class CpuBackend
 
     private struct RmsBackMap(float* dy, float* y, float* dx, float inv, float mean) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> =>
             TF.Store(dx + i, TF.Fma(TF.All(inv), TF.Fma(Fn<TV, TF>.Neg(TF.Load(y + i)), TF.All(mean), TF.Load(dy + i)), TF.Load(dx + i)));
     }
@@ -368,6 +381,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y, _stats = stats;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long at = (long)r * cols;
@@ -391,6 +405,7 @@ internal sealed unsafe partial class CpuBackend
 
     private struct LayerMap(float* x, float* gamma, float* beta, float* y, float mean, float inv) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var normalized = TF.Mul(TF.Sub(TF.Load(x + i), TF.All(mean)), TF.All(inv));
@@ -462,6 +477,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _dx = dx;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long at = (long)r * cols;
@@ -498,6 +514,7 @@ internal sealed unsafe partial class CpuBackend
 
     private struct LayerBackMap(float* x, float* gamma, float* dy, float* dx, float mean, float inv, float sumHat, float sumHatX, int n) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var hat = TF.Mul(TF.Sub(TF.Load(x + i), TF.All(mean)), TF.All(inv));
@@ -599,6 +616,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long at = (long)r * stride;
@@ -690,6 +708,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _yq = yq, _yk = yk, _yv = yv;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             int queries = batch * steps * heads, keys = batch * steps * kvHeads;
@@ -794,6 +813,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _c = c;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long at = (long)r * cols;
@@ -806,6 +826,7 @@ internal sealed unsafe partial class CpuBackend
 
     private struct RowVectorMap(float* a, float* v, float* c, bool gelu) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var sum = TF.Add(TF.Load(a + i), TF.Load(v + i));
@@ -930,6 +951,7 @@ internal sealed unsafe partial class CpuBackend
         private float* _dst = dst;
         private int _dstStride = dstStride;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             float* s = src + (long)r * srcStride, d = _dst + (long)r * _dstStride;
@@ -953,6 +975,7 @@ internal sealed unsafe partial class CpuBackend
     // y += x.
     private struct AccumulateMap(float* x, float* y) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(y + i, TF.Add(TF.Load(y + i), TF.Load(x + i)));
     }
 
@@ -1077,6 +1100,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long index = indices[i];

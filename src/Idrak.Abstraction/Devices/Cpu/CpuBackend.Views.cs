@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using Idrak.Abstraction.Operations;
 
 namespace Idrak.Abstraction.Devices.Cpu;
@@ -347,6 +348,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _p = p, _g = g, _m = m, _v = v;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var grad = TF.Mul(TF.Load(_g + i), TF.All(factor));

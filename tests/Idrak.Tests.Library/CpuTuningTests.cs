@@ -66,13 +66,13 @@ internal abstract partial class Tests
             Measure(CpuVectorPaths.Automatic);
             var lines = Lines();
             Check(lines.Length >= 3 && lines[1] == CpuChoices.Identity, $"the file names the machine ({CpuChoices.Identity}): {string.Join(" | ", lines.Take(2))}");
-            Check(lines.Any(l => l.StartsWith("lanes Unary Exp 2^12x2^0 Automatic\t", StringComparison.Ordinal)), "auto's choice kept under auto");
+            Check(lines.Any(l => l.StartsWith($"lanes Unary Exp 2^12x2^0 Automatic t{ComputeResources.MaxCpuThreads}\t", StringComparison.Ordinal)), "auto's choice kept under auto");
             Measure(CpuVectorPaths.Scalar);
             lines = Lines();
             Check(ProductRoutes.Choices.TryGetValue("cpu: Unary Exp 2^12x2^0", out var chosen) && chosen.StartsWith("one float at a time (the only candidate)", StringComparison.Ordinal),
                 $"under scalar one float at a time, the only candidate (nothing measured): {chosen}");
-            Check(!lines.Any(l => l.Contains(" Scalar\t", StringComparison.Ordinal) && l.Contains("Exp", StringComparison.Ordinal)), "nothing measured under scalar is kept");
-            Check(lines.Any(l => l.StartsWith("lanes Unary Exp 2^12x2^0 Automatic\t", StringComparison.Ordinal)), "auto's choice still there");
+            Check(!lines.Any(l => l.Contains(" Scalar ", StringComparison.Ordinal) && l.Contains("Exp", StringComparison.Ordinal)), "nothing measured under scalar is kept");
+            Check(lines.Any(l => l.StartsWith($"lanes Unary Exp 2^12x2^0 Automatic t{ComputeResources.MaxCpuThreads}\t", StringComparison.Ordinal)), "auto's choice still there");
 
             Environment.SetEnvironmentVariable("IDRAK_TUNING_CACHE", "0");
             Check(CpuChoices.FilePath is null, "IDRAK_TUNING_CACHE=0 keeps no file");

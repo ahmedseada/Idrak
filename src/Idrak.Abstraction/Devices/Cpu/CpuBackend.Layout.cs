@@ -420,6 +420,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int o) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             float* sums = WorkRow(0, Math.Max(1, inner));
@@ -448,6 +449,7 @@ internal sealed unsafe partial class CpuBackend
     // y (+)= scale · s (AxisMap's last step).
     private struct AxisStoreMap(float* s, float* y, float scale, bool accumulate) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var value = TF.Mul(TF.All(scale), TF.Load(s + i));
@@ -461,6 +463,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _dx = dx;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int o) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long first = (long)o * inner;
@@ -481,6 +484,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int o) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var map = new AxisMap(x, _y, o, dim, inner, scale, accumulate, broadcast);
@@ -492,6 +496,7 @@ internal sealed unsafe partial class CpuBackend
 
     private struct AxisMap(float* x, float* y, int o, int dim, int inner, float scale, bool accumulate, bool broadcast) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             if (broadcast)
@@ -597,6 +602,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _m = mean, _v = variance, _i = invStd;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int g) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             float count = (float)outer * inner;
@@ -628,6 +634,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _sa = sumA, _sab = sumAB;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int g) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             _sa[g] += GroupSum<TV, TF>(a, null, outer, groups, inner, g, 0f, 0, ta);
@@ -686,6 +693,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int run) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             int g = run % groups;
@@ -702,6 +710,7 @@ internal sealed unsafe partial class CpuBackend
 
     private struct GroupMap(float* x, float* x2, float* y, int kind, float a, float b, float inv, float count) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var v = TF.Load(x + i);
@@ -756,6 +765,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _w = weight, _dg = dgain, _dd = ddirection;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int r) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long at = (long)r * columns;

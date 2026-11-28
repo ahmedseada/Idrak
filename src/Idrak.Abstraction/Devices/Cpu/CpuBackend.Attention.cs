@@ -84,6 +84,7 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
     // y += w · x, rounded once.
     private struct WeightedMap(float* x, float* y, float w) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(y + i, TF.Fma(TF.All(w), TF.Load(x + i), TF.Load(y + i)));
     }
 
@@ -151,6 +152,7 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
     {
         private float* _y = y, _lse = lse;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int row) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             int h = row / rowsPerHead, i = row % rowsPerHead;
@@ -206,6 +208,7 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
     {
         private float* _y = y, _lse = lse;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int row) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             int h = row / rows, i = row % rows, g = h / Math.Max(1, heads / kvHeads), b = h / headsPerTable;
@@ -294,6 +297,7 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
     {
         private float* _dq = dq, _dk = dkeys, _dv = dvalues;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int g) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             int group = Math.Max(1, heads / kvHeads);

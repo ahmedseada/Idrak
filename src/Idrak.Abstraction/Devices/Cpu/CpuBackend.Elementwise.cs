@@ -202,6 +202,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(_y + i, TFn.Of<TV, TF>(TF.Load(x + i)));
 
         public void Redirect(ref Scratch scratch) => _y = scratch.Take(n);
@@ -212,6 +213,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _c = c;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(_c + i, TFn.Of<TV, TF>(TF.Load(a + i), TF.Load(b + i)));
 
         public void Redirect(ref Scratch scratch) => _c = scratch.Take(n);
@@ -222,6 +224,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _dx = dx;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> =>
             TF.Store(_dx + i, TF.Fma(TF.Load(dy + i), TFn.Of<TV, TF>(TF.Load(x + i), TF.Load(y + i)), TF.Load(_dx + i)));
 
@@ -249,6 +252,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(_y + i, TF.All(value));
 
         public void Redirect(ref Scratch scratch) => _y = scratch.Take(n);
@@ -394,6 +398,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _da = da, _db = db;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             TV va = TF.Load(a + i), vb = TF.Load(b + i), g = TF.Load(dy + i);
@@ -440,6 +445,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             for (int j = 0; j < TF.Count; j++)
@@ -475,6 +481,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _dx = dx;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             for (int j = 0; j < TF.Count; j++)
@@ -510,6 +517,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> =>
             TF.Store(_y + i, Fn<TV, TF>.Min(Fn<TV, TF>.Max(TF.Load(x + i), TF.All(min)), TF.All(max)));
 
@@ -540,6 +548,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _dx = dx;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var v = TF.Load(x + i);
@@ -573,6 +582,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var v = TF.Load(x + i);
@@ -605,6 +615,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _dx = dx;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var g = TF.Load(dy + i);
@@ -638,6 +649,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> =>
             TF.Store(_y + i, TF.Select(TF.Equal(TF.Load(c + i), TF.All(0f)), TF.Load(b + i), TF.Load(a + i)));
 
@@ -661,6 +673,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _da = da, _db = db;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var zero = TF.Equal(TF.Load(c + i), TF.All(0f));
@@ -709,6 +722,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(_y + i, TF.Fma(TF.All(alpha), TF.Load(x + i), TF.All(beta)));
 
         public void Redirect(ref Scratch scratch) => _y = scratch.Take(n);
@@ -739,6 +753,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(_y + i, TF.Fma(TF.All(alpha), TF.Load(x + i), TF.Load(_y + i)));
 
         public void Redirect(ref Scratch scratch) => _y = scratch.Take(n);
@@ -768,6 +783,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _c = c;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(_c + i, TF.Fma(TF.Load(a + i), TF.Load(b + i), TF.Load(_c + i)));
 
         public void Redirect(ref Scratch scratch) => _c = scratch.Take(n);
@@ -799,6 +815,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Store(_y + i, TF.Fma(TF.All(scale), TF.All(s), TF.Load(_y + i)));
 
         public void Redirect(ref Scratch scratch) => _y = scratch.Take(n);
@@ -838,6 +855,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV> =>
             TF.Store(_y + i, TF.Div(TF.All(1f), TF.Sqrt(TF.Add(TF.Load(x + i), TF.All(eps)))));
 
@@ -917,6 +935,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _dg = dgate, _du = dup;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             TV g = TF.Load(gate + i), u = TF.Load(up + i), d = TF.Load(dy + i), act, slope;
@@ -1023,6 +1042,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             float keep = 1f - p;
@@ -1069,6 +1089,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _p = p, _v = v;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var step = TF.Load(g + i);
@@ -1113,6 +1134,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _p = p, _m = m, _v = v;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var grad = TF.Load(g + i);
@@ -1226,6 +1248,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _sums = sums;
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public readonly void Row<TV, TF>(int c) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             long start = c * (long)SumChunk;
