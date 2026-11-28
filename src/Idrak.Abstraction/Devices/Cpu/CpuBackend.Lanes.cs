@@ -8141,7 +8141,7 @@ internal sealed partial class CpuBackend
         public static bool Takes((int SignShift, int Magnitude, int Shift, float Times, int Special) half) => half.Times != 1f && half.SignShift is 0 or 16;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => v.Of(TI.Widen((ushort*)at));
+        public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => v.OfSigned(TI.Widen((short*)at));
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector128<float> Four<TI>(byte* at) where TI : struct, IInstructions => DescribedPlan.HalfBits(FourShorts(at), h);
@@ -8772,7 +8772,8 @@ internal sealed partial class CpuBackend
     internal readonly struct HalfVectors((int SignShift, int Magnitude, int Shift, float Times, int Special) h, float factor)
     {
         private readonly Vector256<int> magnitude = Vector256.Create(h.Magnitude), special = Vector256.Create(h.Special == 0 ? int.MaxValue : h.Special),
-            sign = Vector256.Create(h.SignShift == 0 ? 0 : 0x8000);
+            sign = Vector256.Create(h.SignShift == 0 ? 0 : 0x8000), below = Vector256.Create(h.Special == 0 ? int.MaxValue : h.Special - 1),
+            top = Vector256.Create(h.SignShift == 0 ? 0 : int.MinValue);
         private readonly Vector256<float> times = Vector256.Create(h.Times * factor);
         private readonly int shift = h.Shift;
 
@@ -8783,6 +8784,20 @@ internal sealed partial class CpuBackend
             var value = (Vector256.ShiftLeft(m, shift).AsSingle() * times).AsInt32();
             value |= Vector256.GreaterThanOrEqual(m, special) & Vector256.Create(0x7F800000);
             return (value | Vector256.ShiftLeft(bits & sign, 16)).AsSingle();
+        }
+
+        /// <summary>
+        /// Of from the 16-bit values sign-extended (each lane's bits 15-31 its bit 15): the sign is the lane's top bit as it
+        /// is (no shift), the magnitude its low bits as Of's, and the specials by one compare, greater than their start less
+        /// one: the same number of each value.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<float> OfSigned(Vector256<int> bits)
+        {
+            var m = bits & magnitude;
+            var value = (Vector256.ShiftLeft(m, shift).AsSingle() * times).AsInt32();
+            value |= Vector256.GreaterThan(m, below) & Vector256.Create(0x7F800000);
+            return (value | (bits & top)).AsSingle();
         }
     }
 
