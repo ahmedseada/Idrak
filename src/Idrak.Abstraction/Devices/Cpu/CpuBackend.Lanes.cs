@@ -8164,8 +8164,11 @@ internal sealed partial class CpuBackend
                     continue;
                 }
 
+                // (Four rows of x a pass where the instruction set dots them together, IInstructions.RowsTogether, as
+                // IntegerTile takes them: the portable instructions' four a pass spilled their registers, half as fast as a
+                // row a pass on a P-core.)
                 var f = (Vector256<float>*)sums + c * count;
-                for (; r + 4 <= count; r += 4, xg += 4 * xRow, lg += 4 * lRow)
+                for (; TI.RowsTogether && r + 4 <= count; r += 4, xg += 4 * xRow, lg += 4 * lRow)
                 {
                     f[r] = WideRow<TX, TI>(f[r], s0, s1, s2, s3, s4, s5, s6, s7, xg, xStep, lg, cg, top);
                     f[r + 1] = WideRow<TX, TI>(f[r + 1], s0, s1, s2, s3, s4, s5, s6, s7, xg + xRow, xStep, lg + lRow, cg, top);
