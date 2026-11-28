@@ -1986,6 +1986,12 @@ internal sealed partial class CpuBackend
 
         /// <summary>Row i of x by the stored row at <paramref name="row"/>.</summary>
         float Single(byte* row, int i);
+
+        /// <summary>
+        /// Row i of x by <paramref name="count"/> stored rows from <paramref name="rows"/> (<paramref name="rowBytes"/>
+        /// apart), stored row c's product into y[c]: Single's for each, in one call where the kernel takes the rows itself.
+        /// </summary>
+        void Rows(byte* rows, nint rowBytes, int count, int i, float* y);
     }
 
     /// <summary>
@@ -2828,11 +2834,7 @@ internal sealed partial class CpuBackend
     {
         if (i1 - i0 == 1)
         {
-            for (int c = j0; c < j1; c++)
-            {
-                y[i0 * ld + c] = kernels.Single(stored + c * rowBytes, i0);
-            }
-
+            kernels.Rows(stored + j0 * rowBytes, rowBytes, j1 - j0, i0, y + i0 * ld + j0);
             return;
         }
 
@@ -5185,7 +5187,7 @@ internal sealed partial class CpuBackend
 
         /// <summary>The one-row integer kernel by TI (<paramref name="with"/>: its Instructions value), or null where DescribedIntegerOne's dispatch reads the plan.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> OneKernel<TI>(int with) where TI : struct, IInstructions
+        internal delegate*<DescribedPlan, byte*, nint, int, byte*, int, int, int, int, sbyte*, float*, float*, void> OneKernel<TI>(int with) where TI : struct, IInstructions
         {
             nint f = oneKernels[with];
             if (f == 0)
@@ -5194,7 +5196,7 @@ internal sealed partial class CpuBackend
                 oneKernels[with] = f = f == 0 ? -1 : f;
             }
 
-            return f == -1 ? null : (delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float>)f;
+            return f == -1 ? null : (delegate*<DescribedPlan, byte*, nint, int, byte*, int, int, int, int, sbyte*, float*, float*, void>)f;
         }
 
         /// <summary>
@@ -5202,7 +5204,7 @@ internal sealed partial class CpuBackend
         /// (OneKernel) where its steps do not take it.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> DepositKernel<TI>(int with) where TI : struct, IInstructions
+        internal delegate*<DescribedPlan, byte*, nint, int, byte*, int, int, int, int, sbyte*, float*, float*, void> DepositKernel<TI>(int with) where TI : struct, IInstructions
         {
             if (!depositSteps)
             {
@@ -5215,7 +5217,7 @@ internal sealed partial class CpuBackend
                 oneKernels[8 + with] = f = ResolveDeposit<TI>(this);
             }
 
-            return (delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float>)f;
+            return (delegate*<DescribedPlan, byte*, nint, int, byte*, int, int, int, int, sbyte*, float*, float*, void>)f;
         }
 
         /// <summary>
@@ -7206,6 +7208,63 @@ internal sealed partial class CpuBackend
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public void Rows(byte* rows, nint rowBytes, int count, int i, float* y)
+        {
+            if (AdvSimd.Arm64.IsSupported)
+            {
+                switch (with)
+                {
+                    case Instructions.DotProd:
+                        RowsBy<DotProdInstructions>(rows, rowBytes, count, i, y);
+                        return;
+                    case Instructions.DotProdWide:
+                        RowsBy<WideDotProdInstructions>(rows, rowBytes, count, i, y);
+                        return;
+                    case Instructions.Neon:
+                        RowsBy<NeonInstructions>(rows, rowBytes, count, i, y);
+                        return;
+                    default:
+                        RowsBy<PortableInstructions>(rows, rowBytes, count, i, y);
+                        return;
+                }
+            }
+
+            switch (with)
+            {
+                case Instructions.Vnni:
+                    RowsBy<VnniInstructions>(rows, rowBytes, count, i, y);
+                    return;
+                case Instructions.Avx2:
+                    RowsBy<Avx2Instructions>(rows, rowBytes, count, i, y);
+                    return;
+                default:
+                    RowsBy<PortableInstructions>(rows, rowBytes, count, i, y);
+                    return;
+            }
+        }
+
+        // The integer lane's rows by its plan's one-row kernel, which takes them all in one call (its loop over the rows
+        // inside, each row's last period copied into `tail` as Tail copies it); any other's a row at a time.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private void RowsBy<TI>(byte* rows, nint rowBytes, int count, int i, float* y) where TI : struct, IInstructions
+        {
+            if (plan.Mode == DescribedMode.Integer)
+            {
+                var kernel = deposit ? one.DepositKernel<TI>((int)with) : one.OneKernel<TI>((int)with);
+                if (kernel != null)
+                {
+                    kernel(one, rows, rowBytes, count, tail, tailBytes, full, groups, chunks, xq + i * xRow, lanes + i * lRow, y);
+                    return;
+                }
+            }
+
+            for (int c = 0; c < count; c++)
+            {
+                y[c] = SingleBy<TI>(rows + c * rowBytes, i);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         private float SingleBy<TI>(byte* row, int i) where TI : struct, IInstructions
         {
             switch (plan.Mode)
@@ -7232,8 +7291,15 @@ internal sealed partial class CpuBackend
         private float IntegerOne<TI>(byte* row, int i) where TI : struct, IInstructions
         {
             var kernel = deposit ? one.DepositKernel<TI>((int)with) : one.OneKernel<TI>((int)with);
-            return kernel != null ? kernel(one, row, tail, full, groups, chunks, xq + i * xRow, lanes + i * lRow)
-                : DescribedIntegerOne<TI>(plan, row, tail, full, groups, chunks, xq + i * xRow, lanes + i * lRow);
+            if (kernel == null)
+            {
+                return DescribedIntegerOne<TI>(plan, row, tail, full, groups, chunks, xq + i * xRow, lanes + i * lRow);
+            }
+
+            // (The row's last period in `tail` already: Tail.)
+            float y;
+            kernel(one, row, 0, 1, tail, 0, full, groups, chunks, xq + i * xRow, lanes + i * lRow, &y);
+            return y;
         }
     }
 
@@ -8199,7 +8265,7 @@ internal sealed partial class CpuBackend
     {
         public static nint Use<TF>() where TF : struct, IFactors
         {
-            delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> kernel = &UniformOne<TG, TI, TF, TE, TM>;
+            delegate*<DescribedPlan, byte*, nint, int, byte*, int, int, int, int, sbyte*, float*, float*, void> kernel = &UniformOne<TG, TI, TF, TE, TM>;
             return (nint)kernel;
         }
     }
@@ -8209,7 +8275,7 @@ internal sealed partial class CpuBackend
     {
         public static nint Use<TF>() where TF : struct, IFactors
         {
-            delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> kernel = &GatheredOne<TI, TF, TS, TE, TM>;
+            delegate*<DescribedPlan, byte*, nint, int, byte*, int, int, int, int, sbyte*, float*, float*, void> kernel = &GatheredOne<TI, TF, TS, TE, TM>;
             return (nint)kernel;
         }
     }
@@ -8218,7 +8284,7 @@ internal sealed partial class CpuBackend
     {
         public static nint Use<TF>() where TF : struct, IFactors
         {
-            delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> kernel = &MadeOne<EightChunks, TI, TF, TS>;
+            delegate*<DescribedPlan, byte*, nint, int, byte*, int, int, int, int, sbyte*, float*, float*, void> kernel = &MadeOne<EightChunks, TI, TF, TS>;
             return (nint)kernel;
         }
     }
@@ -8300,7 +8366,7 @@ internal sealed partial class CpuBackend
     {
         public static nint Use<TF>() where TF : struct, IFactors
         {
-            delegate*<DescribedPlan, byte*, byte*, int, int, int, sbyte*, float*, float> kernel = &NaturalOne<TI, TF, TS, TM, TG, TP>;
+            delegate*<DescribedPlan, byte*, nint, int, byte*, int, int, int, int, sbyte*, float*, float*, void> kernel = &NaturalOne<TI, TF, TS, TM, TG, TP>;
             return (nint)kernel;
         }
     }
@@ -8712,42 +8778,47 @@ internal sealed partial class CpuBackend
     [SkipLocalsInit]
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     // TE: 8 steps a group (else 4); TM: minimums. Constants to the JIT, as the tile's (GatheredOneSteps).
-    private static unsafe float GatheredOne<TI, TF, TS, TE, TM>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
+    private static unsafe void GatheredOne<TI, TF, TS, TE, TM>(DescribedPlan plan, byte* rows, nint rowBytes, int count, byte* tail, int tailBytes, int full, int groups, int chunks, sbyte* x, float* lanes, float* y)
         where TI : struct, IInstructions where TF : struct, IFactors where TS : struct, DescribedPlan.IGatheredSteps where TE : struct, IFlag where TM : struct, IFlag
     {
         bool mins = typeof(TM) == typeof(Yes), eight = typeof(TE) == typeof(Yes);
         int gpp = plan.GroupsPerPeriod, t = eight ? 8 : 4, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, periodBytes = plan.PeriodBytes;
         Vector256<uint>* words = stackalloc Vector256<uint>[Math.Max(1, plan.MostGroupWords)];
-        Vector256<float> f = default;
-        for (int g = 0; g < groups; g++)
+        for (int c = 0; c < count; c++)
         {
-            int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp, first = gp * t;
-            byte* at = period < full ? row + (nint)period * periodBytes : tail;
-            plan.GatherWords<TI>(at, gp, words);
-            sbyte* xg = x + (nint)g * groupValues;
-            float* lg = lanes + (nint)g * laneFloats;
-            var i = Vector256.Load((int*)(lg + 8));
-            i = TI.Dot(i, TS.Step<TI>(plan, words, first), Vector256.Load(xg));
-            i = TI.Dot(i, TS.Step<TI>(plan, words, first + 1), Vector256.Load(xg + 32));
-            i = TI.Dot(i, TS.Step<TI>(plan, words, first + 2), Vector256.Load(xg + 64));
-            i = TI.Dot(i, TS.Step<TI>(plan, words, first + 3), Vector256.Load(xg + 96));
-            if (eight)
+            byte* row = rows + c * rowBytes;
+            OneTail(row, tail, tailBytes, full, periodBytes);
+            Vector256<float> f = default;
+            for (int g = 0; g < groups; g++)
             {
-                i = TI.Dot(i, TS.Step<TI>(plan, words, first + 4), Vector256.Load(xg + 128));
-                i = TI.Dot(i, TS.Step<TI>(plan, words, first + 5), Vector256.Load(xg + 160));
-                i = TI.Dot(i, TS.Step<TI>(plan, words, first + 6), Vector256.Load(xg + 192));
-                i = TI.Dot(i, TS.Step<TI>(plan, words, first + 7), Vector256.Load(xg + 224));
+                int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp, first = gp * t;
+                byte* at = period < full ? row + (nint)period * periodBytes : tail;
+                plan.GatherWords<TI>(at, gp, words);
+                sbyte* xg = x + (nint)g * groupValues;
+                float* lg = lanes + (nint)g * laneFloats;
+                var i = Vector256.Load((int*)(lg + 8));
+                i = TI.Dot(i, TS.Step<TI>(plan, words, first), Vector256.Load(xg));
+                i = TI.Dot(i, TS.Step<TI>(plan, words, first + 1), Vector256.Load(xg + 32));
+                i = TI.Dot(i, TS.Step<TI>(plan, words, first + 2), Vector256.Load(xg + 64));
+                i = TI.Dot(i, TS.Step<TI>(plan, words, first + 3), Vector256.Load(xg + 96));
+                if (eight)
+                {
+                    i = TI.Dot(i, TS.Step<TI>(plan, words, first + 4), Vector256.Load(xg + 128));
+                    i = TI.Dot(i, TS.Step<TI>(plan, words, first + 5), Vector256.Load(xg + 160));
+                    i = TI.Dot(i, TS.Step<TI>(plan, words, first + 6), Vector256.Load(xg + 192));
+                    i = TI.Dot(i, TS.Step<TI>(plan, words, first + 7), Vector256.Load(xg + 224));
+                }
+
+                TF.Read<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+                f = TI.Fused(Vector256.ConvertToSingle(i), scale * Vector256.Load(lg), f);
+                if (mins)
+                {
+                    f = TI.Fused(min, Vector256.Load(lg + 16), f);
+                }
             }
 
-            TF.Read<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
-            f = TI.Fused(Vector256.ConvertToSingle(i), scale * Vector256.Load(lg), f);
-            if (mins)
-            {
-                f = TI.Fused(min, Vector256.Load(lg + 16), f);
-            }
+            y[c] = Vector256.Sum(f);
         }
-
-        return Vector256.Sum(f);
     }
 
     // GatheredOne by a natural plan (DescribedPlan.Natural: x's codes a chunk at a time as rounded): each step's dword
@@ -8758,58 +8829,74 @@ internal sealed partial class CpuBackend
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     // TG: one group a period (its steps then the period's first 8, constants to the JIT). TP: its steps made two at once
     // (DescribedPlan.PairSteps: pair step q makes steps 2q and 2q + 1).
-    private static unsafe float NaturalOne<TI, TF, TS, TM, TG, TP>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
+    private static unsafe void NaturalOne<TI, TF, TS, TM, TG, TP>(DescribedPlan plan, byte* rows, nint rowBytes, int count, byte* tail, int tailBytes, int full, int groups, int chunks, sbyte* x, float* lanes, float* y)
         where TI : struct, IInstructions where TF : struct, IFactors where TS : struct, DescribedPlan.IGatheredSteps where TM : struct, IFlag where TG : struct, IFlag where TP : struct, IFlag
     {
         bool mins = typeof(TM) == typeof(Yes);
         int gpp = plan.GroupsPerPeriod, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, periodBytes = plan.PeriodBytes;
-        Vector256<float> f = default;
-        for (int g = 0; g < groups; g++)
+        for (int c = 0; c < count; c++)
         {
-            int period = typeof(TG) == typeof(Yes) ? g : g / gpp, gp = g - period * gpp, first = typeof(TG) == typeof(Yes) ? 0 : gp * 8;
-            byte* at = period < full ? row + (nint)period * periodBytes : tail;
-            var words = (Vector256<uint>*)at;                                       // (a natural plan's steps load from the period)
-            sbyte* xg = x + (nint)g * groupValues;
-            float* lg = lanes + (nint)g * laneFloats;
-            Vector256<int> d0, d1, d2, d3, d4, d5, d6, d7;
-            if (typeof(TP) == typeof(Yes))
+            byte* row = rows + c * rowBytes;
+            OneTail(row, tail, tailBytes, full, periodBytes);
+            Vector256<float> f = default;
+            for (int g = 0; g < groups; g++)
             {
-                int q = first / 2;
-                TS.Pair<TI>(plan, words, q, out var s0, out var s1);
-                d0 = TI.Dot(default, s0, Vector256.Load(xg));
-                d1 = TI.Dot(default, s1, Vector256.Load(xg + 32));
-                TS.Pair<TI>(plan, words, q + 1, out var s2, out var s3);
-                d2 = TI.Dot(default, s2, Vector256.Load(xg + 64));
-                d3 = TI.Dot(default, s3, Vector256.Load(xg + 96));
-                TS.Pair<TI>(plan, words, q + 2, out var s4, out var s5);
-                d4 = TI.Dot(default, s4, Vector256.Load(xg + 128));
-                d5 = TI.Dot(default, s5, Vector256.Load(xg + 160));
-                TS.Pair<TI>(plan, words, q + 3, out var s6, out var s7);
-                d6 = TI.Dot(default, s6, Vector256.Load(xg + 192));
-                d7 = TI.Dot(default, s7, Vector256.Load(xg + 224));
-            }
-            else
-            {
-                d0 = TI.Dot(default, TS.Step<TI>(plan, words, first), Vector256.Load(xg));
-                d1 = TI.Dot(default, TS.Step<TI>(plan, words, first + 1), Vector256.Load(xg + 32));
-                d2 = TI.Dot(default, TS.Step<TI>(plan, words, first + 2), Vector256.Load(xg + 64));
-                d3 = TI.Dot(default, TS.Step<TI>(plan, words, first + 3), Vector256.Load(xg + 96));
-                d4 = TI.Dot(default, TS.Step<TI>(plan, words, first + 4), Vector256.Load(xg + 128));
-                d5 = TI.Dot(default, TS.Step<TI>(plan, words, first + 5), Vector256.Load(xg + 160));
-                d6 = TI.Dot(default, TS.Step<TI>(plan, words, first + 6), Vector256.Load(xg + 192));
-                d7 = TI.Dot(default, TS.Step<TI>(plan, words, first + 7), Vector256.Load(xg + 224));
+                int period = typeof(TG) == typeof(Yes) ? g : g / gpp, gp = g - period * gpp, first = typeof(TG) == typeof(Yes) ? 0 : gp * 8;
+                byte* at = period < full ? row + (nint)period * periodBytes : tail;
+                var words = (Vector256<uint>*)at;                                       // (a natural plan's steps load from the period)
+                sbyte* xg = x + (nint)g * groupValues;
+                float* lg = lanes + (nint)g * laneFloats;
+                Vector256<int> d0, d1, d2, d3, d4, d5, d6, d7;
+                if (typeof(TP) == typeof(Yes))
+                {
+                    int q = first / 2;
+                    TS.Pair<TI>(plan, words, q, out var s0, out var s1);
+                    d0 = TI.Dot(default, s0, Vector256.Load(xg));
+                    d1 = TI.Dot(default, s1, Vector256.Load(xg + 32));
+                    TS.Pair<TI>(plan, words, q + 1, out var s2, out var s3);
+                    d2 = TI.Dot(default, s2, Vector256.Load(xg + 64));
+                    d3 = TI.Dot(default, s3, Vector256.Load(xg + 96));
+                    TS.Pair<TI>(plan, words, q + 2, out var s4, out var s5);
+                    d4 = TI.Dot(default, s4, Vector256.Load(xg + 128));
+                    d5 = TI.Dot(default, s5, Vector256.Load(xg + 160));
+                    TS.Pair<TI>(plan, words, q + 3, out var s6, out var s7);
+                    d6 = TI.Dot(default, s6, Vector256.Load(xg + 192));
+                    d7 = TI.Dot(default, s7, Vector256.Load(xg + 224));
+                }
+                else
+                {
+                    d0 = TI.Dot(default, TS.Step<TI>(plan, words, first), Vector256.Load(xg));
+                    d1 = TI.Dot(default, TS.Step<TI>(plan, words, first + 1), Vector256.Load(xg + 32));
+                    d2 = TI.Dot(default, TS.Step<TI>(plan, words, first + 2), Vector256.Load(xg + 64));
+                    d3 = TI.Dot(default, TS.Step<TI>(plan, words, first + 3), Vector256.Load(xg + 96));
+                    d4 = TI.Dot(default, TS.Step<TI>(plan, words, first + 4), Vector256.Load(xg + 128));
+                    d5 = TI.Dot(default, TS.Step<TI>(plan, words, first + 5), Vector256.Load(xg + 160));
+                    d6 = TI.Dot(default, TS.Step<TI>(plan, words, first + 6), Vector256.Load(xg + 192));
+                    d7 = TI.Dot(default, TS.Step<TI>(plan, words, first + 7), Vector256.Load(xg + 224));
+                }
+
+                var i = LaneTotals<TI>(d0, d1, d2, d3, d4, d5, d6, d7) + Vector256.Load((int*)(lg + 8));
+                TF.Read<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+                f = TI.Fused(Vector256.ConvertToSingle(i), scale * Vector256.Load(lg), f);
+                if (mins)
+                {
+                    f = TI.Fused(min, Vector256.Load(lg + 16), f);
+                }
             }
 
-            var i = LaneTotals<TI>(d0, d1, d2, d3, d4, d5, d6, d7) + Vector256.Load((int*)(lg + 8));
-            TF.Read<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
-            f = TI.Fused(Vector256.ConvertToSingle(i), scale * Vector256.Load(lg), f);
-            if (mins)
-            {
-                f = TI.Fused(min, Vector256.Load(lg + 16), f);
-            }
+            y[c] = Vector256.Sum(f);
         }
+    }
 
-        return Vector256.Sum(f);
+    // A one-row kernel's stored row short of whole periods: its last period's bytes (as stored) into the zeros of `tail`,
+    // as DescribedKernels.Tail copies them.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe void OneTail(byte* row, byte* tail, int tailBytes, int full, int periodBytes)
+    {
+        if (tailBytes > 0)
+        {
+            new ReadOnlySpan<byte>(row + (nint)full * periodBytes, tailBytes).CopyTo(new Span<byte>(tail, tailBytes));
+        }
     }
 
     // Lane c: the sum of d_c's 8 lanes (32-bit integers, exactly: wrapping adds, every sum within them): pairs of lanes by
@@ -8830,81 +8917,91 @@ internal sealed partial class CpuBackend
     // MadeOne for a plan with uniform runs (P = 1): its steps loaded or gathered (TG: LoadedGroup, GatheredRunsGroup, by
     // the plan's load and map), 8 a group (TE, else 4), minimums (TM), each a type parameter chosen once a plan (OneBySteps).
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe float UniformOne<TG, TI, TF, TE, TM>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
+    private static unsafe void UniformOne<TG, TI, TF, TE, TM>(DescribedPlan plan, byte* rows, nint rowBytes, int count, byte* tail, int tailBytes, int full, int groups, int chunks, sbyte* x, float* lanes, float* y)
         where TG : struct, IGroupSteps<TG> where TI : struct, IInstructions where TF : struct, IFactors where TE : struct, IFlag where TM : struct, IFlag
     {
         int gpp = plan.GroupsPerPeriod, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, periodBytes = plan.PeriodBytes;
         bool mins = typeof(TM) == typeof(Yes), c32 = typeof(TE) == typeof(Yes);
         var steps = TG.Of(plan);
-        Vector256<float> f = default;
-        for (int g = 0; g < groups; g++)
+        for (int c = 0; c < count; c++)
         {
-            int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp;
-            byte* at = period < full ? row + (nint)period * periodBytes : tail;
-            steps.Make<TI>(plan, at, gp, null, out var s0, out var s1, out var s2, out var s3, out var s4, out var s5, out var s6, out var s7);
-            TF.Read<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
-            sbyte* xg = x + (nint)g * groupValues;
-            float* lg = lanes + (nint)g * laneFloats;
-            var i = Vector256.Load((int*)(lg + 8));
-            i = TI.Dot(i, s0, Vector256.Load(xg));
-            i = TI.Dot(i, s1, Vector256.Load(xg + 32));
-            i = TI.Dot(i, s2, Vector256.Load(xg + 64));
-            i = TI.Dot(i, s3, Vector256.Load(xg + 96));
-            if (c32)
+            byte* row = rows + c * rowBytes;
+            OneTail(row, tail, tailBytes, full, periodBytes);
+            Vector256<float> f = default;
+            for (int g = 0; g < groups; g++)
             {
-                i = TI.Dot(i, s4, Vector256.Load(xg + 128));
-                i = TI.Dot(i, s5, Vector256.Load(xg + 160));
-                i = TI.Dot(i, s6, Vector256.Load(xg + 192));
-                i = TI.Dot(i, s7, Vector256.Load(xg + 224));
+                int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp;
+                byte* at = period < full ? row + (nint)period * periodBytes : tail;
+                steps.Make<TI>(plan, at, gp, null, out var s0, out var s1, out var s2, out var s3, out var s4, out var s5, out var s6, out var s7);
+                TF.Read<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+                sbyte* xg = x + (nint)g * groupValues;
+                float* lg = lanes + (nint)g * laneFloats;
+                var i = Vector256.Load((int*)(lg + 8));
+                i = TI.Dot(i, s0, Vector256.Load(xg));
+                i = TI.Dot(i, s1, Vector256.Load(xg + 32));
+                i = TI.Dot(i, s2, Vector256.Load(xg + 64));
+                i = TI.Dot(i, s3, Vector256.Load(xg + 96));
+                if (c32)
+                {
+                    i = TI.Dot(i, s4, Vector256.Load(xg + 128));
+                    i = TI.Dot(i, s5, Vector256.Load(xg + 160));
+                    i = TI.Dot(i, s6, Vector256.Load(xg + 192));
+                    i = TI.Dot(i, s7, Vector256.Load(xg + 224));
+                }
+
+                f = TI.Fused(Vector256.ConvertToSingle(i), scale * Vector256.Load(lg), f);
+                if (mins)
+                {
+                    f = TI.Fused(min, Vector256.Load(lg + 16), f);
+                }
             }
 
-            f = TI.Fused(Vector256.ConvertToSingle(i), scale * Vector256.Load(lg), f);
-            if (mins)
-            {
-                f = TI.Fused(min, Vector256.Load(lg + 16), f);
-            }
+            y[c] = Vector256.Sum(f);
         }
-
-        return Vector256.Sum(f);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe float MadeOne<TX, TI, TF, TS>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
+    private static unsafe void MadeOne<TX, TI, TF, TS>(DescribedPlan plan, byte* rows, nint rowBytes, int count, byte* tail, int tailBytes, int full, int groups, int chunks, sbyte* x, float* lanes, float* y)
         where TX : struct, IStepLoad where TI : struct, IInstructions where TF : struct, IFactors where TS : struct, DescribedPlan.ISpanCodes
     {
         int gpp = plan.GroupsPerPeriod, t = plan.T, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, xStep = 4 * plan.Cg, cg = plan.Cg, p = plan.P;
         bool mins = plan.Mins;
-        Vector256<float> f = default;
-        for (int g = 0; g < groups; g++)
+        for (int c = 0; c < count; c++)
         {
-            int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp;
-            byte* at = period < full ? row + (nint)period * plan.PeriodBytes : tail;
-            plan.Steps<TI, TS>(at, gp, out var s0, out var s1, out var s2, out var s3, out var s4, out var s5, out var s6, out var s7);
-            TF.Read<TI>(plan, at, gp, Math.Min(cg, chunks - g * cg) * p, out var scale, out var min);
-            sbyte* xg = x + (nint)g * groupValues;
-            float* lg = lanes + (nint)g * laneFloats;
-            var xs = Vector256.Load(lg);
-            var i = Vector256.Load((int*)(lg + 8));
-            i = TI.Dot(i, s0, TX.Load<TI>(xg));
-            i = TI.Dot(i, s1, TX.Load<TI>(xg + xStep));
-            i = TI.Dot(i, s2, TX.Load<TI>(xg + 2 * xStep));
-            i = TI.Dot(i, s3, TX.Load<TI>(xg + 3 * xStep));
-            if (t == 8)
+            byte* row = rows + c * rowBytes;
+            OneTail(row, tail, tailBytes, full, plan.PeriodBytes);
+            Vector256<float> f = default;
+            for (int g = 0; g < groups; g++)
             {
-                i = TI.Dot(i, s4, TX.Load<TI>(xg + 4 * xStep));
-                i = TI.Dot(i, s5, TX.Load<TI>(xg + 5 * xStep));
-                i = TI.Dot(i, s6, TX.Load<TI>(xg + 6 * xStep));
-                i = TI.Dot(i, s7, TX.Load<TI>(xg + 7 * xStep));
+                int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp;
+                byte* at = period < full ? row + (nint)period * plan.PeriodBytes : tail;
+                plan.Steps<TI, TS>(at, gp, out var s0, out var s1, out var s2, out var s3, out var s4, out var s5, out var s6, out var s7);
+                TF.Read<TI>(plan, at, gp, Math.Min(cg, chunks - g * cg) * p, out var scale, out var min);
+                sbyte* xg = x + (nint)g * groupValues;
+                float* lg = lanes + (nint)g * laneFloats;
+                var xs = Vector256.Load(lg);
+                var i = Vector256.Load((int*)(lg + 8));
+                i = TI.Dot(i, s0, TX.Load<TI>(xg));
+                i = TI.Dot(i, s1, TX.Load<TI>(xg + xStep));
+                i = TI.Dot(i, s2, TX.Load<TI>(xg + 2 * xStep));
+                i = TI.Dot(i, s3, TX.Load<TI>(xg + 3 * xStep));
+                if (t == 8)
+                {
+                    i = TI.Dot(i, s4, TX.Load<TI>(xg + 4 * xStep));
+                    i = TI.Dot(i, s5, TX.Load<TI>(xg + 5 * xStep));
+                    i = TI.Dot(i, s6, TX.Load<TI>(xg + 6 * xStep));
+                    i = TI.Dot(i, s7, TX.Load<TI>(xg + 7 * xStep));
+                }
+
+                f = TI.Fused(Vector256.ConvertToSingle(i), scale * xs, f);
+                if (mins)
+                {
+                    f = TI.Fused(min, Vector256.Load(lg + 16), f);
+                }
             }
 
-            f = TI.Fused(Vector256.ConvertToSingle(i), scale * xs, f);
-            if (mins)
-            {
-                f = TI.Fused(min, Vector256.Load(lg + 16), f);
-            }
+            y[c] = Vector256.Sum(plan.LaneWeights is { } w ? f * w : f);
         }
-
-        return Vector256.Sum(plan.LaneWeights is { } w ? f * w : f);
     }
 
     /// <summary>How the float32 lane makes 8 stored values of 2 or 4 bytes each float32 in registers (and one, for a row's tail).</summary>
