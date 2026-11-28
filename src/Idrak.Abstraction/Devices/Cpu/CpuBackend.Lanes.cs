@@ -6136,6 +6136,22 @@ internal sealed partial class CpuBackend
         private int* depositOffset;
         private ulong* depositExtract, depositPlace;
 
+        // Per plane its one extract (or a run's shift) and place masks where every step's are the same (DepositUniform):
+        // each step's 8 bytes read so its fields lie at the same bits of them.
+        private ulong* depositPlaneExtract, depositPlanePlace;
+
+        /// <summary>
+        /// Whether every deposit step's plane reads its fields at the same bits of its 8 bytes (each plane's masks one pair,
+        /// DescribedPlan's plane slots: the kernel reads them once, not a pair a step).
+        /// </summary>
+        public bool DepositUniform { get; private set; }
+
+        /// <summary>
+        /// The planes whose 8 bytes are the plane before's at every deposit step (bit p: plane p's), so a step reads them
+        /// once for both.
+        /// </summary>
+        public int DepositShares { get; private set; }
+
         /// <summary>Whether a row's steps make their codebook indices by bit deposit (the deposit lane's one-row kernels).</summary>
         public bool DepositSteps => depositSteps;
 
@@ -6155,8 +6171,11 @@ internal sealed partial class CpuBackend
             depositOffset = Pin<int>(steps * Planes);
             depositExtract = Pin<ulong>(steps * Planes);
             depositPlace = Pin<ulong>(steps * Planes);
-            Span<long> bit = stackalloc long[4];
+            depositPlaneExtract = Pin<ulong>(Planes);
+            depositPlanePlace = Pin<ulong>(Planes);
+            var bit = new long[steps, 4];
             int kinds = 0;
+            bool uniform = true;
             for (int p = 0; p < Planes; p++)
             {
                 var plane = d.Planes[p];
@@ -6173,16 +6192,27 @@ internal sealed partial class CpuBackend
                     {
                         int v = StepValue(s, 2 * e);
                         var (b, sh) = plane.Place(v % d.Values / d.Code.Width);
-                        bit[e] = 8L * (v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b) + sh;
+                        bit[s, e] = 8L * (v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b) + sh;
                     }
+                }
 
+                // Where the steps' fields lie alike (each step's 4 the same bits apart from its first, its first at the same
+                // bit of a byte), each step's 8 bytes from its first field's byte less one count of bytes for every step
+                // (the least that keeps every step's within the period and its fields within its 8 bytes): its fields then
+                // at the same bits of each step's 8 bytes. Else (or where no count does) each step's from its first field's
+                // byte, kept within the period.
+                int back = Alike(bit, steps, bits) ? Back(bit, steps, bits) : -1;
+                uniform &= back >= 0;
+                for (int s = 0; s < steps; s++)
+                {
+                    long b0 = bit[s, 0], b1 = bit[s, 1], b2 = bit[s, 2], b3 = bit[s, 3];
                     // (A run: the 4 fields back to back, read by a shift; else each extracted where it lies.)
-                    bool shared = bit[1] == bit[0] && bit[2] == bit[0] && bit[3] == bit[0];
-                    bool run = bit[1] == bit[0] + bits && bit[2] == bit[1] + bits && bit[3] == bit[2] + bits;
-                    bool spread = bit[0] + bits <= bit[1] && bit[1] + bits <= bit[2] && bit[2] + bits <= bit[3];
+                    bool shared = b1 == b0 && b2 == b0 && b3 == b0;
+                    bool run = b1 == b0 + bits && b2 == b1 + bits && b3 == b2 + bits;
+                    bool spread = b0 + bits <= b1 && b1 + bits <= b2 && b2 + bits <= b3;
                     int own = shared ? 2 : run ? 3 : spread ? 1 : 0;
-                    long first = bit[0], last = bit[3] + bits;
-                    int offset = (int)Math.Clamp(first / 8, 0, PeriodBytes - 8);
+                    long first = b0, last = b3 + bits;
+                    int offset = back >= 0 ? (int)(first / 8) - back : (int)Math.Clamp(first / 8, 0, PeriodBytes - 8);
                     if (own == 0 || kind != 0 && own != kind || first < 8L * offset || last > 8L * offset + 64)
                     {
                         return false;
@@ -6194,7 +6224,7 @@ internal sealed partial class CpuBackend
                     ulong extract = 0, place = 0;
                     for (int e = 0; e < 4; e++)
                     {
-                        extract |= field << (int)(bit[e] - 8L * offset);
+                        extract |= field << (int)(bit[s, e] - 8L * offset);
                         place |= (shared ? 1UL : field) << (16 * e + low);
                     }
 
@@ -6203,12 +6233,78 @@ internal sealed partial class CpuBackend
                     depositPlace[i] = place;
                 }
 
+                depositPlaneExtract[p] = depositExtract[p];
+                depositPlanePlace[p] = depositPlace[p];
+                for (int s = 1; s < steps; s++)
+                {
+                    uniform &= depositExtract[s * Planes + p] == depositPlaneExtract[p] && depositPlace[s * Planes + p] == depositPlanePlace[p];
+                }
+
                 kinds |= kind << (2 * p);
             }
 
             DepositKinds = kinds;
+            DepositUniform = uniform;
+            int shares = 0;
+            for (int p = 1; p < Planes; p++)
+            {
+                bool same = true;
+                for (int s = 0; s < steps && same; s++)
+                {
+                    same = depositOffset[s * Planes + p] == depositOffset[s * Planes + p - 1];
+                }
+
+                shares |= same ? 1 << p : 0;
+            }
+
+            DepositShares = shares;
             depositSteps = true;
             return true;
+
+            // Whether every step's 4 fields lie the same bits apart from its first, its first at the same bit of a byte.
+            static bool Alike(long[,] bit, int steps, int bits)
+            {
+                for (int s = 1; s < steps; s++)
+                {
+                    if (bit[s, 0] % 8 != bit[0, 0] % 8)
+                    {
+                        return false;
+                    }
+
+                    for (int e = 1; e < 4; e++)
+                    {
+                        if (bit[s, e] - bit[s, 0] != bit[0, e] - bit[0, 0])
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+
+            // The least count of bytes each step's 8 bytes start before its first field's byte so that every step's lie
+            // within the period and hold its fields; −1 where none does.
+            int Back(long[,] bit, int steps, int bits)
+            {
+                for (int back = 0; back < 8; back++)
+                {
+                    bool fits = true;
+                    for (int s = 0; s < steps && fits; s++)
+                    {
+                        long first = bit[s, 0], last = Math.Max(Math.Max(bit[s, 0], bit[s, 1]), Math.Max(bit[s, 2], bit[s, 3])) + bits;
+                        long offset = first / 8 - back;
+                        fits = offset >= 0 && offset + 8 <= PeriodBytes && last <= 8 * offset + 64;
+                    }
+
+                    if (fits)
+                    {
+                        return back;
+                    }
+                }
+
+                return -1;
+            }
         }
 
         /// <summary>
@@ -6217,38 +6313,52 @@ internal sealed partial class CpuBackend
         /// entries read a qword each, the least added back: the bytes BookBytes makes of the same entries.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        internal Vector256<byte> DepositStep<TI, TK0, TK1, TK2>(byte* period, int s)
+        // TU: the plan's planes uniform (DepositUniform): each plane's masks its slots', one pair for every step. T1, T2:
+        // planes 1 and 2 take the plane before's 8 bytes (DepositShares).
+        internal Vector256<byte> DepositStep<TI, TK0, TK1, TK2, TU, T1, T2>(byte* period, int s)
             where TI : struct, IInstructions where TK0 : struct, IDepositPlane where TK1 : struct, IDepositPlane where TK2 : struct, IDepositPlane
+            where TU : struct, IFlag where T1 : struct, IFlag where T2 : struct, IFlag
         {
             int i = s * (TK2.Present ? 3 : TK1.Present ? 2 : 1);
-            ulong index = TK0.Make<TI>(this, period, i);
+            ulong bytes = Unsafe.ReadUnaligned<ulong>(period + depositOffset[i]);
+            ulong index = TK0.Make<TI, TU>(this, bytes, i, 0);
             if (TK1.Present)
             {
-                index |= TK1.Make<TI>(this, period, i + 1);
+                bytes = typeof(T1) == typeof(Yes) ? bytes : Unsafe.ReadUnaligned<ulong>(period + depositOffset[i + 1]);
+                index |= TK1.Make<TI, TU>(this, bytes, i + 1, 1);
             }
 
             if (TK2.Present)
             {
-                index |= TK2.Make<TI>(this, period, i + 2);
+                bytes = typeof(T2) == typeof(Yes) ? bytes : Unsafe.ReadUnaligned<ulong>(period + depositOffset[i + 2]);
+                index |= TK2.Make<TI, TU>(this, bytes, i + 2, 2);
             }
 
             long* table = (long*)entryBytes;
             return Vector256.Create(table[(ushort)index], table[(ushort)(index >> 16)], table[(ushort)(index >> 32)], table[index >> 48]).AsByte() + leastBytes;
         }
 
+        // Step-and-plane entry i's (plane p's) extract mask or a run's shift, and its place mask: the plane's slots' where
+        // the planes are uniform (TU), the same address every step, so the kernel's code reads each once.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal ulong ExtractOf<TU>(int i, int p) where TU : struct, IFlag => typeof(TU) == typeof(Yes) ? depositPlaneExtract[p] : depositExtract[i];
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal ulong PlaceOf<TU>(int i, int p) where TU : struct, IFlag => typeof(TU) == typeof(Yes) ? depositPlanePlace[p] : depositPlace[i];
+
         /// <summary>A plane's fields of a deposit step (DepositSteps), into their lanes' places of the index.</summary>
         internal interface IDepositPlane
         {
             static abstract bool Present { get; }
 
-            static abstract ulong Make<TI>(DescribedPlan plan, byte* period, int i) where TI : struct, IInstructions;
+            static abstract ulong Make<TI, TU>(DescribedPlan plan, ulong bytes, int i, int p) where TI : struct, IInstructions where TU : struct, IFlag;
         }
 
         internal readonly struct NoDeposit : IDepositPlane
         {
             public static bool Present => false;
 
-            public static ulong Make<TI>(DescribedPlan plan, byte* period, int i) where TI : struct, IInstructions => 0;
+            public static ulong Make<TI, TU>(DescribedPlan plan, ulong bytes, int i, int p) where TI : struct, IInstructions where TU : struct, IFlag => 0;
         }
 
         // The 4 entries' own fields, in order: extracted, then deposited a 16-bit lane each.
@@ -6257,8 +6367,8 @@ internal sealed partial class CpuBackend
             public static bool Present => true;
 
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-            public static ulong Make<TI>(DescribedPlan plan, byte* period, int i) where TI : struct, IInstructions =>
-                TI.Deposit(TI.Extract(Unsafe.ReadUnaligned<ulong>(period + plan.depositOffset[i]), plan.depositExtract[i]), plan.depositPlace[i]);
+            public static ulong Make<TI, TU>(DescribedPlan plan, ulong bytes, int i, int p) where TI : struct, IInstructions where TU : struct, IFlag =>
+                TI.Deposit(TI.Extract(bytes, plan.ExtractOf<TU>(i, p)), plan.PlaceOf<TU>(i, p));
         }
 
         // The 4 entries' fields back to back: shifted down, then deposited a 16-bit lane each (the deposit takes as many low bits
@@ -6268,8 +6378,8 @@ internal sealed partial class CpuBackend
             public static bool Present => true;
 
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-            public static ulong Make<TI>(DescribedPlan plan, byte* period, int i) where TI : struct, IInstructions =>
-                TI.Deposit(Unsafe.ReadUnaligned<ulong>(period + plan.depositOffset[i]) >> (int)plan.depositExtract[i], plan.depositPlace[i]);
+            public static ulong Make<TI, TU>(DescribedPlan plan, ulong bytes, int i, int p) where TI : struct, IInstructions where TU : struct, IFlag =>
+                TI.Deposit(bytes >> (int)plan.ExtractOf<TU>(i, p), plan.PlaceOf<TU>(i, p));
         }
 
         // One field the 4 entries share: extracted, then multiplied into each lane's place.
@@ -6278,22 +6388,24 @@ internal sealed partial class CpuBackend
             public static bool Present => true;
 
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-            public static ulong Make<TI>(DescribedPlan plan, byte* period, int i) where TI : struct, IInstructions =>
-                TI.Extract(Unsafe.ReadUnaligned<ulong>(period + plan.depositOffset[i]), plan.depositExtract[i]) * plan.depositPlace[i];
+            public static ulong Make<TI, TU>(DescribedPlan plan, ulong bytes, int i, int p) where TI : struct, IInstructions where TU : struct, IFlag =>
+                TI.Extract(bytes, plan.ExtractOf<TU>(i, p)) * plan.PlaceOf<TU>(i, p);
         }
 
         /// <summary>The steps of a natural plan by bit deposit (DepositStep), its planes' ways as type parameters.</summary>
-        internal readonly struct DepositedSteps<TK0, TK1, TK2> : IGatheredSteps where TK0 : struct, IDepositPlane where TK1 : struct, IDepositPlane where TK2 : struct, IDepositPlane
+        internal readonly struct DepositedSteps<TK0, TK1, TK2, TU, T1, T2> : IGatheredSteps
+            where TK0 : struct, IDepositPlane where TK1 : struct, IDepositPlane where TK2 : struct, IDepositPlane where TU : struct, IFlag
+            where T1 : struct, IFlag where T2 : struct, IFlag
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
             public static Vector256<byte> Step<TI>(DescribedPlan plan, Vector256<uint>* words, int s) where TI : struct, IInstructions =>
-                plan.DepositStep<TI, TK0, TK1, TK2>((byte*)words, s);
+                plan.DepositStep<TI, TK0, TK1, TK2, TU, T1, T2>((byte*)words, s);
 
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
             public static void Pair<TI>(DescribedPlan plan, Vector256<uint>* words, int s, out Vector256<byte> even, out Vector256<byte> odd) where TI : struct, IInstructions
             {
-                even = plan.DepositStep<TI, TK0, TK1, TK2>((byte*)words, 2 * s);
-                odd = plan.DepositStep<TI, TK0, TK1, TK2>((byte*)words, 2 * s + 1);
+                even = plan.DepositStep<TI, TK0, TK1, TK2, TU, T1, T2>((byte*)words, 2 * s);
+                odd = plan.DepositStep<TI, TK0, TK1, TK2, TU, T1, T2>((byte*)words, 2 * s + 1);
             }
         }
 
@@ -8463,32 +8575,47 @@ internal sealed partial class CpuBackend
 
     // The deposit lane's one-row kernel of a natural plan (DescribedPlan.DepositSteps) by TI, its planes' ways as type
     // parameters: NaturalOne over DepositSteps, its factors chosen as the plan's own.
-    private static nint ResolveDeposit<TI>(DescribedPlan plan) where TI : struct, IInstructions
+    private static nint ResolveDeposit<TI>(DescribedPlan plan) where TI : struct, IInstructions =>
+        plan.DepositUniform ? DepositShared<TI, Yes>(plan) : DepositShared<TI, No>(plan);
+
+    // TU: the plan's planes uniform (DescribedPlan.DepositUniform), each plane's masks read once; T1, T2: planes 1 and 2
+    // take the plane before's bytes (DepositShares).
+    private static nint DepositShared<TI, TU>(DescribedPlan plan) where TI : struct, IInstructions where TU : struct, IFlag => (plan.DepositShares >> 1 & 3) switch
+    {
+        0 => DepositFirst<TI, TU, No, No>(plan),
+        1 => DepositFirst<TI, TU, Yes, No>(plan),
+        2 => DepositFirst<TI, TU, No, Yes>(plan),
+        _ => DepositFirst<TI, TU, Yes, Yes>(plan),
+    };
+
+    private static nint DepositFirst<TI, TU, T1, T2>(DescribedPlan plan) where TI : struct, IInstructions where TU : struct, IFlag where T1 : struct, IFlag where T2 : struct, IFlag
     {
         int k = plan.DepositKinds;
         return (k & 3) switch
         {
-            1 => DepositSecond<TI, DescribedPlan.SpreadDeposit>(plan, k),
-            2 => DepositSecond<TI, DescribedPlan.SharedDeposit>(plan, k),
-            _ => DepositSecond<TI, DescribedPlan.RunDeposit>(plan, k),
+            1 => DepositSecond<TI, TU, T1, T2, DescribedPlan.SpreadDeposit>(plan, k),
+            2 => DepositSecond<TI, TU, T1, T2, DescribedPlan.SharedDeposit>(plan, k),
+            _ => DepositSecond<TI, TU, T1, T2, DescribedPlan.RunDeposit>(plan, k),
         };
     }
 
-    private static nint DepositSecond<TI, TK0>(DescribedPlan plan, int k) where TI : struct, IInstructions where TK0 : struct, DescribedPlan.IDepositPlane => (k >> 2 & 3) switch
-    {
-        0 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, DescribedPlan.NoDeposit, DescribedPlan.NoDeposit>>(plan),
-        1 => DepositThird<TI, TK0, DescribedPlan.SpreadDeposit>(plan, k),
-        2 => DepositThird<TI, TK0, DescribedPlan.SharedDeposit>(plan, k),
-        _ => DepositThird<TI, TK0, DescribedPlan.RunDeposit>(plan, k),
-    };
-
-    private static nint DepositThird<TI, TK0, TK1>(DescribedPlan plan, int k)
-        where TI : struct, IInstructions where TK0 : struct, DescribedPlan.IDepositPlane where TK1 : struct, DescribedPlan.IDepositPlane => (k >> 4 & 3) switch
+    private static nint DepositSecond<TI, TU, T1, T2, TK0>(DescribedPlan plan, int k)
+        where TI : struct, IInstructions where TU : struct, IFlag where T1 : struct, IFlag where T2 : struct, IFlag where TK0 : struct, DescribedPlan.IDepositPlane => (k >> 2 & 3) switch
         {
-            0 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.NoDeposit>>(plan),
-            1 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.SpreadDeposit>>(plan),
-            2 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.SharedDeposit>>(plan),
-            _ => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.RunDeposit>>(plan),
+            0 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, DescribedPlan.NoDeposit, DescribedPlan.NoDeposit, TU, T1, T2>>(plan),
+            1 => DepositThird<TI, TU, T1, T2, TK0, DescribedPlan.SpreadDeposit>(plan, k),
+            2 => DepositThird<TI, TU, T1, T2, TK0, DescribedPlan.SharedDeposit>(plan, k),
+            _ => DepositThird<TI, TU, T1, T2, TK0, DescribedPlan.RunDeposit>(plan, k),
+        };
+
+    private static nint DepositThird<TI, TU, T1, T2, TK0, TK1>(DescribedPlan plan, int k)
+        where TI : struct, IInstructions where TU : struct, IFlag where T1 : struct, IFlag where T2 : struct, IFlag
+        where TK0 : struct, DescribedPlan.IDepositPlane where TK1 : struct, DescribedPlan.IDepositPlane => (k >> 4 & 3) switch
+        {
+            0 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.NoDeposit, TU, T1, T2>>(plan),
+            1 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.SpreadDeposit, TU, T1, T2>>(plan),
+            2 => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.SharedDeposit, TU, T1, T2>>(plan),
+            _ => NaturalOneSteps<TI>.Use<DescribedPlan.DepositedSteps<TK0, TK1, DescribedPlan.RunDeposit, TU, T1, T2>>(plan),
         };
 
     private static nint OneByMap<TR, TI>(DescribedPlan plan) where TR : struct, IRunLoad where TI : struct, IInstructions => plan.Map switch
