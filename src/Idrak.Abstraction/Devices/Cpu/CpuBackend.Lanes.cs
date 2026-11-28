@@ -118,6 +118,20 @@ internal sealed partial class CpuBackend
     // The described lane's kind of lane (a lane id's low 4 bits: LaneOf).
     private const int DescribedLaneId = 11;
 
+    // The float product's kind of lane, a candidate for float32 rows (DescribedPlan.FloatRows): x by W as the float32 product
+    // takes a B transposed (its tiles packing W's rows as it reads them; ProductOverRows), measured against the described
+    // lane's at each shape, the faster kept (its sums in their own order, so its own bits).
+    private const int ProductLaneId = 12;
+
+    // The product of x by float32 rows (W [n, k] where they lie, its rows `lane.RowBytes` apart) by the float32 product.
+    private static unsafe void ProductOverRows(StoredLane lane, float[] x, float[] y, int m, int n, int k)
+    {
+        fixed (float* a = x, w = lane.Words, c = y)
+        {
+            Product(a, (float*)((byte*)w + lane.Offset), null, c, 1, m, n, k, false, true, 0f, ldb: lane.RowBytes / 4);
+        }
+    }
+
     // The described lane's name in the recorded choices.
     private const string DescribedLaneName = "described lane (any type read from its description alone, its values decoded in registers inside the dot products)";
 
@@ -170,7 +184,7 @@ internal sealed partial class CpuBackend
     private static bool NarrowOf(int lane) => (lane & NarrowLane) != 0;
 
     // A lane's name: its kind's, the instruction set where it is not the portable one, and a 128-bit twin's vectors.
-    private static string LaneName(int lane) => InstructionsOf(lane) switch
+    private static string LaneName(int lane) => KindOf(lane) == ProductLaneId ? "the float32 product (W's rows packed as it reads them)" : InstructionsOf(lane) switch
     {
         Instructions.Avx2 => DescribedLaneName + " by AVX2 and FMA",
         Instructions.Vnni => DescribedLaneName + " by AVX-VNNI",
@@ -181,7 +195,7 @@ internal sealed partial class CpuBackend
     } + (NarrowOf(lane) ? ", four rows of x at a time on 128-bit vectors" : "");
 
     // A lane's short name in a measurement's times (its kind's first word, its instruction set's, and /128 for a 128-bit twin).
-    private static string LaneShortName(int lane) => DescribedLaneName.Split(' ')[0] + InstructionsOf(lane) switch
+    private static string LaneShortName(int lane) => KindOf(lane) == ProductLaneId ? "product" : DescribedLaneName.Split(' ')[0] + InstructionsOf(lane) switch
     {
         Instructions.Avx2 => "/avx2",
         Instructions.Vnni => "/avx-vnni",
@@ -2078,7 +2092,16 @@ internal sealed partial class CpuBackend
 
         public int Unmeasured => described.Unmeasured;
 
-        public void Run(int laneId) => FormatProduct<DescribedFormat, DescribedKernels>(described, laneId, lane, x, y, m, n, k);
+        public void Run(int laneId)
+        {
+            if (KindOf(laneId) == ProductLaneId)
+            {
+                ProductOverRows(lane, x, y, m, n, k);
+                return;
+            }
+
+            FormatProduct<DescribedFormat, DescribedKernels>(described, laneId, lane, x, y, m, n, k);
+        }
     }
 
     // The product of a weight of `description` by the described lane: the shape's lane among its candidates (Chosen), then
@@ -2118,7 +2141,14 @@ internal sealed partial class CpuBackend
         }
 
         FusedInHardware.Ensure();
-        FormatProduct<DescribedFormat, DescribedKernels>(described, described.Lanes[index], new StoredLane(words, length, k, RowBytesOf(description, k)), x, y, m, n, k);
+        var stored = new StoredLane(words, length, k, RowBytesOf(description, k));
+        if (KindOf(described.Lanes[index]) == ProductLaneId)
+        {
+            ProductOverRows(stored, x, y, m, n, k);
+            return true;
+        }
+
+        FormatProduct<DescribedFormat, DescribedKernels>(described, described.Lanes[index], stored, x, y, m, n, k);
         return true;
     }
 
@@ -2190,9 +2220,34 @@ internal sealed partial class CpuBackend
             var (values, output, n) = products[j];
             var lane = codes is null ? new StoredLane(D(values), values.Length, k, RowBytesOf(description, k)) : RowCodesLane(description, D(values), values.Length, k);
             float[] y = D(output);
-            int chosen = Chosen(new LaneCandidates(described, codes ?? description, lane, x, y, m, n, k), m, n, k);
+            var candidates = new LaneCandidates(described, codes ?? description, lane, x, y, m, n, k);
+            int chosen = Chosen(candidates, m, n, k);
+            if (KindOf(chosen) == ProductLaneId)
+            {
+                candidates.Run(chosen);                                  // (the float product's: its own, not a pass's part)
+                parts[j] = new RowPart(lane, y, 0, chosen);
+                continue;
+            }
+
             parts[j] = new RowPart(lane, y, n, chosen);
         }
+
+        // The parts the float product ran (none columns left) out of the pass.
+        int kept = 0;
+        for (int j = 0; j < count; j++)
+        {
+            if (parts[j].N > 0)
+            {
+                parts[kept++] = parts[j];
+            }
+        }
+
+        if (kept == 0)
+        {
+            return true;
+        }
+
+        count = kept;
 
         FormatMany<DescribedFormat, DescribedKernels>(described, ((ReadOnlySpan<RowPart>)parts)[..count], x, m, k);
         return true;
@@ -2884,6 +2939,9 @@ internal sealed partial class CpuBackend
 
         /// <summary>Whether the type has no scales or minimums (a code's number its value: the float lanes skip the factors).</summary>
         public bool Plain => factors == 0;
+
+        /// <summary>Whether a row is float32 values as they are (float32's own bits, no offset, no factor): the float product reads them too.</summary>
+        public bool FloatRows => Mode == DescribedMode.Single && Wide == WideRead.Single && Offset == 0 && Plain;
 
         /// <summary>The 16-bit float reading: its sign shift, magnitude mask, mantissa shift, the power of two it is times, and where its specials start (0: none).</summary>
         public (int SignShift, int Magnitude, int Shift, float Times, int Special) Half16 { get; private set; }
@@ -6114,7 +6172,7 @@ internal sealed partial class CpuBackend
         // a byte plane each (DescribedPlan.PairsFit).
         public LaneList Lanes => plan.Mode == DescribedMode.Integer
             ? default(LaneList).WithKind(DescribedLaneId, dots: true, pairs: plan.P == 1 && plan.PairsFit)
-            : default(LaneList).WithKind(DescribedLaneId);
+            : plan.FloatRows ? default(LaneList).WithKind(DescribedLaneId).With(LaneOf(ProductLaneId, Instructions.Portable)) : default(LaneList).WithKind(DescribedLaneId);
 
         public int First => DescribedLaneId;
 

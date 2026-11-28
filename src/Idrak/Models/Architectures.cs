@@ -422,14 +422,15 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
         return values;
     }
 
-    public Tensor? ReadStored(string name, IReadOnlyList<int> stored, Device device) => Kept(name, stored, device, Writes);
+    public Tensor? ReadStored(string name, IReadOnlyList<int> stored, Device device) => Kept(name, stored, device, Writes, weight: true);
 
     // A vector the layers read as it is (a norm's gain or shift, a bias): its stored type, whatever the weights are written as.
-    public Tensor? ReadAsStored(string name, IReadOnlyList<int> shape, Device device) => Kept(name, shape, device, writes: null);
+    public Tensor? ReadAsStored(string name, IReadOnlyList<int> shape, Device device) => Kept(name, shape, device, writes: null, weight: false);
 
     // The tensor as kept: of writes (as it gives itself for this tensor's rows) where given and its rows are whole groups
-    // of that type's blocks, else of its stored type; null where that is the device's own float32 (read as values then).
-    private Tensor? Kept(string name, IReadOnlyList<int> stored, Device device, IElementType? writes)
+    // of that type's blocks, else of its stored type; null where that is the device's own float32 (read as values then),
+    // but a weight matrix where the device's stored product reads float32 rows itself (BackendCapabilities.StoredFloat32).
+    private Tensor? Kept(string name, IReadOnlyList<int> stored, Device device, IElementType? writes, bool weight)
     {
         if (Deferred || architecture.TensorName(name) is not { } storedName || !reader.Contains(storedName) || !reader.ShapeOf(storedName).SequenceEqual(stored)
             || Adapter is not null && storedName.EndsWith(".weight", StringComparison.Ordinal) && Adapter.Updates(storedName[..^".weight".Length]))
@@ -444,7 +445,7 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
         int columns = stored[^1];
         long values = stored.Aggregate(1L, (a, b) => a * b);
         var target = writes?.ForRow(columns) is { } asked && asked.ByteCount(2L * columns) == 2 * asked.ByteCount(columns) ? asked : type;
-        if (target.Native == NativeKind.Float32)
+        if (target.Native == NativeKind.Float32 && !(weight && stored.Count == 2 && device.Backend.Capabilities.StoredFloat32))
         {
             return null;                                                    // the device's own float32: read as values
         }
