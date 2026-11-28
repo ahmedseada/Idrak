@@ -3,6 +3,7 @@
 
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace Idrak.Abstraction.Devices.Cpu;
 
@@ -378,6 +379,12 @@ internal sealed unsafe partial class CpuBackend
     // between B's stored rows (k's rows, or n's where transposed).
     private static void Pack(float* b, long ldb, bool transB, int k0, int kc, int j0, int columns, int panel, float* packed)
     {
+        if (transB && Avx.IsSupported && panel == 16 && columns == 16)
+        {
+            PackRows16(b + j0 * ldb + k0, ldb, kc, packed);
+            return;
+        }
+
         for (int kk = 0; kk < kc; kk++)
         {
             float* to = packed + kk * panel;
@@ -396,6 +403,66 @@ internal sealed unsafe partial class CpuBackend
             for (int j = columns; j < panel; j++)
             {
                 to[j] = 0f;
+            }
+        }
+    }
+
+    // Pack of 16 stored rows of B (transposed: `ldb` floats apart, kc values of k each from `rows`): 8 values of 8 rows at a
+    // time transposed in registers (AVX's unpacks and lane permutes, an 8x8 transpose), each k's 16 values side by side as
+    // Pack places them; the values left past a multiple of 8 one at a time. The same values in the same places: a rearrangement
+    // of float32 values into float32 (no wider copy), where Pack's scalar loop read each value by a strided load
+    // (Qwen3-1.7B F32's products, 128x2048->2048, one P-core: 8.9 ms with it, 7.4 with B packed once a panel for all of k,
+    // the time only).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void PackRows16(float* rows, long ldb, int kc, float* packed)
+    {
+        int kk = 0;
+        for (; kk + 8 <= kc; kk += 8)
+        {
+            for (int half = 0; half < 2; half++)
+            {
+                float* r = rows + (8 * half) * ldb + kk;
+                var r0 = Avx.LoadVector256(r);
+                var r1 = Avx.LoadVector256(r + ldb);
+                var r2 = Avx.LoadVector256(r + 2 * ldb);
+                var r3 = Avx.LoadVector256(r + 3 * ldb);
+                var r4 = Avx.LoadVector256(r + 4 * ldb);
+                var r5 = Avx.LoadVector256(r + 5 * ldb);
+                var r6 = Avx.LoadVector256(r + 6 * ldb);
+                var r7 = Avx.LoadVector256(r + 7 * ldb);
+                var t0 = Avx.UnpackLow(r0, r1);
+                var t1 = Avx.UnpackHigh(r0, r1);
+                var t2 = Avx.UnpackLow(r2, r3);
+                var t3 = Avx.UnpackHigh(r2, r3);
+                var t4 = Avx.UnpackLow(r4, r5);
+                var t5 = Avx.UnpackHigh(r4, r5);
+                var t6 = Avx.UnpackLow(r6, r7);
+                var t7 = Avx.UnpackHigh(r6, r7);
+                var u0 = Avx.Shuffle(t0, t2, 0x44);
+                var u1 = Avx.Shuffle(t0, t2, 0xEE);
+                var u2 = Avx.Shuffle(t1, t3, 0x44);
+                var u3 = Avx.Shuffle(t1, t3, 0xEE);
+                var u4 = Avx.Shuffle(t4, t6, 0x44);
+                var u5 = Avx.Shuffle(t4, t6, 0xEE);
+                var u6 = Avx.Shuffle(t5, t7, 0x44);
+                var u7 = Avx.Shuffle(t5, t7, 0xEE);
+                float* to = packed + kk * 16 + 8 * half;
+                Avx.Store(to, Avx.Permute2x128(u0, u4, 0x20));
+                Avx.Store(to + 16, Avx.Permute2x128(u1, u5, 0x20));
+                Avx.Store(to + 32, Avx.Permute2x128(u2, u6, 0x20));
+                Avx.Store(to + 48, Avx.Permute2x128(u3, u7, 0x20));
+                Avx.Store(to + 64, Avx.Permute2x128(u0, u4, 0x31));
+                Avx.Store(to + 80, Avx.Permute2x128(u1, u5, 0x31));
+                Avx.Store(to + 96, Avx.Permute2x128(u2, u6, 0x31));
+                Avx.Store(to + 112, Avx.Permute2x128(u3, u7, 0x31));
+            }
+        }
+
+        for (; kk < kc; kk++)
+        {
+            for (int j = 0; j < 16; j++)
+            {
+                packed[kk * 16 + j] = rows[j * ldb + kk];
             }
         }
     }
