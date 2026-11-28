@@ -429,7 +429,7 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
 
     // The tensor as kept: of writes (as it gives itself for this tensor's rows) where given and its rows are whole groups
     // of that type's blocks, else of its stored type; null where that is the device's own float32 (read as values then),
-    // but a weight matrix where the device's stored product reads float32 rows itself (BackendCapabilities.StoredFloat32).
+    // but a weight matrix where the device's stored product reads float32 rows itself (Backend.StoredFloat32).
     private Tensor? Kept(string name, IReadOnlyList<int> stored, Device device, IElementType? writes, bool weight)
     {
         if (Deferred || architecture.TensorName(name) is not { } storedName || !reader.Contains(storedName) || !reader.ShapeOf(storedName).SequenceEqual(stored)
@@ -445,7 +445,7 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
         int columns = stored[^1];
         long values = stored.Aggregate(1L, (a, b) => a * b);
         var target = writes?.ForRow(columns) is { } asked && asked.ByteCount(2L * columns) == 2 * asked.ByteCount(columns) ? asked : type;
-        if (target.Native == NativeKind.Float32 && !(weight && stored.Count == 2 && device.Backend.Capabilities.StoredFloat32))
+        if (target.Native == NativeKind.Float32 && !(weight && stored.Count == 2 && device.Backend.StoredFloat32))
         {
             return null;                                                    // the device's own float32: read as values
         }

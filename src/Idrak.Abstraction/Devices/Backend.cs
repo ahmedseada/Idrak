@@ -666,6 +666,15 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// </summary>
     public virtual bool MergesAttention(Operation operation, int dim, AttentionVariant variant) => false;
 
+    /// <summary>
+    /// Whether this backend's own stored product (<see cref="StoredMatMulKernel"/>) reads a float32 weight kept as stored
+    /// (n rows of k values, its storage described as float32) by its own lane: a loader then keeps a float32 checkpoint's
+    /// weight matrices as stored, as it keeps every other type's, rather than as float32 values transposed. Default: no
+    /// (they are read as values). A member of the backend, not of <see cref="Capabilities"/>: a device may make its
+    /// capabilities from the CPU's (a record copied with its own limits), and the stored product is its own.
+    /// </summary>
+    public virtual bool StoredFloat32 => false;
+
     /// <summary>What the device reports about its hardware, for listings and diagnostics; empty when it reports nothing.</summary>
     public virtual BackendHardware Hardware => new();
 

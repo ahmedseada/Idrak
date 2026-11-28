@@ -44,12 +44,4 @@ public sealed record BackendCapabilities
     /// (every tensor a copy, as before views).
     /// </summary>
     public IReadOnlySet<Operations.Operation> StridedInputs { get; init; } = new HashSet<Operations.Operation>();
-
-    /// <summary>
-    /// Whether the device's own stored product (<c>Backend.StoredMatMulKernel</c>) reads a float32 weight kept as stored
-    /// (n rows of k values, its storage described as float32) by its own lane: a loader then keeps a float32 checkpoint's
-    /// weight matrices as stored, as it keeps every other type's, rather than as float32 values transposed. Default: no
-    /// (they are read as values).
-    /// </summary>
-    public bool StoredFloat32 { get; init; }
 }
