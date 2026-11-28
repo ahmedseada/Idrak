@@ -24,17 +24,21 @@ internal sealed class PerplexityCommand : Command
     public override string Usage =>
         "MODEL FILE [options]\n\n" +
         "The text is tokenized and read in windows of --window tokens (each window starts afresh); every token after\n" +
-        "the first of a window is scored. Lower is better; compare runs on the same text and window.\n\n" +
+        "the first of a window is scored (from the --score-from'th). Lower is better; compare runs on the same text,\n" +
+        "window and scored tokens.\n\n" +
         "Options:\n" +
         "      --context N       the model's context length; --adapter DIR: merge an adapter first\n" +
         ModelChoices.WeightsHelp + "\n" +
         "      --window N        tokens per window (default the context, at most 1024)\n" +
-        "      --max-tokens N    score only the first N tokens of the text\n\n" +
+        "      --max-tokens N    score only the first N tokens of the text\n" +
+        "      --score-from N    score each window's tokens from its Nth on, the first N predicted from those before\n" +
+        "                        (default 1: every token after the first; 257 with --window 512: the tokens\n" +
+        "                        llama.cpp's perplexity tool scores, its windows' second halves)\n\n" +
         "Examples:\n" +
         "  idrak score org/model wiki.txt\n" +
         "  idrak score org/model wiki.txt -j";
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions.Where(o => o != "--kv"), ModelChoices.WeightsOption, "--window", "--max-tokens"];   // scored without a KV cache
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions.Where(o => o != "--kv"), ModelChoices.WeightsOption, "--window", "--max-tokens", "--score-from"];   // scored without a KV cache
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = ModelChoices.ShortForms.Where(p => p.Key != "-k").Append(KeyValuePair.Create("-w", ModelChoices.WeightsOption)).ToDictionary();
 
@@ -66,6 +70,12 @@ internal sealed class PerplexityCommand : Command
             throw new UsageException($"--window needs 2 to {model.MaxPositions} tokens (the model's context), not {window}.");
         }
 
+        int from = context.IntOption("--score-from", 1);
+        if (from < 1 || from >= window)
+        {
+            throw new UsageException($"--score-from needs 1 to {window - 1} (a window's tokens), not {from}.");
+        }
+
         var ids = tokenizer.Encode(File.ReadAllText(file));
         int maxTokens = context.IntOption("--max-tokens", int.MaxValue);
         if (maxTokens < 2)
@@ -83,7 +93,7 @@ internal sealed class PerplexityCommand : Command
             throw new InvalidOperationException($"{file} has {ids.Count} token(s); perplexity needs at least 2.");
         }
 
-        var result = Measure(model, ids, window, context.Device, (done, total) => context.Detail($"  {done} of {total} tokens"));
+        var result = Measure(model, ids, window, context.Device, (done, total) => context.Detail($"  {done} of {total} tokens"), from);
         context.Write(string.Create(CultureInfo.InvariantCulture, $"{choice.Model} on {context.Device}: perplexity {result.Perplexity:F3}"));
         context.Write(string.Create(CultureInfo.InvariantCulture, $"{result.Scored} tokens scored in {result.Windows} window(s) of up to {window} · mean negative log-likelihood {result.MeanNll:F4} · {result.Seconds:F1} s"));
         context.WriteJson(new JsonObject
@@ -96,6 +106,7 @@ internal sealed class PerplexityCommand : Command
             ["tokens"] = ids.Count,
             ["scored_tokens"] = result.Scored,
             ["window"] = window,
+            ["score_from"] = from,
             ["windows"] = result.Windows,
             ["seconds"] = result.Seconds,
         });
@@ -105,8 +116,11 @@ internal sealed class PerplexityCommand : Command
     /// <summary>The outcome of <see cref="Measure"/>.</summary>
     internal sealed record Result(double Perplexity, double MeanNll, int Scored, int Windows, double Seconds);
 
-    /// <summary>Scores <paramref name="ids"/> in windows: every position predicts the next token from the window so far.</summary>
-    internal static Result Measure(PretrainedModel model, IReadOnlyList<int> ids, int window, Device device, Action<int, int>? progress = null)
+    /// <summary>
+    /// Scores <paramref name="ids"/> in windows: every position predicts the next token from the window so far, the
+    /// tokens from each window's <paramref name="from"/>th on scored (1: every token after the first).
+    /// </summary>
+    internal static Result Measure(PretrainedModel model, IReadOnlyList<int> ids, int window, Device device, Action<int, int>? progress = null, int from = 1)
     {
         var watch = Stopwatch.StartNew();
         var network = model.Network;
@@ -117,7 +131,7 @@ internal sealed class PerplexityCommand : Command
         for (int start = 0; start + 1 < ids.Count; start += window)
         {
             int length = Math.Min(window, ids.Count - start);
-            if (length < 2)
+            if (length <= from)
             {
                 break;
             }
@@ -126,8 +140,8 @@ internal sealed class PerplexityCommand : Command
             var input = Tensor.From([.. ids.Skip(start).Take(length).Select(i => (float)i)], [1, length], device);
             var hidden = network.ForwardFirst(input, network.Count - 1);
             var flat = hidden.Reshape(length, hidden.Shape[^1]);
-            int[] rows = [.. Enumerable.Range(0, length - 1)];
-            int[] targets = [.. ids.Skip(start + 1).Take(length - 1)];
+            int[] rows = [.. Enumerable.Range(from - 1, length - from)];
+            int[] targets = [.. ids.Skip(start + from).Take(length - from)];
             var logProbabilities = Losses.TokenLogProbabilities(flat, head.Forward, rows, targets);
             sum -= logProbabilities.Sum(v => (double)v);
             scored += logProbabilities.Length;
