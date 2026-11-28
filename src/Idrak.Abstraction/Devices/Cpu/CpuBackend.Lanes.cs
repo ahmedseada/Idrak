@@ -5741,6 +5741,26 @@ internal sealed partial class CpuBackend
             }
 
             StepShiftsUniform = Enumerable.Range(0, indexSteps * Planes).All(i => stepShiftOne[i] >= 0);
+            // A natural plan of one plane and one group a period: its steps whose 8 dwords are 32 bytes of the period in
+            // order (their windows 16 bytes apart, each lane's dword the next 4 bytes), each read by one 32-byte load.
+            if (natural && Planes == 1 && groups == 1 && indexSteps == 8)
+            {
+                int plain = 0;
+                for (int i = 0; i < 8; i++)
+                {
+                    int* lanes = stepOffset + 8 * i;
+                    bool inOrder = lanes[0] + 32 <= PeriodBytes && stepWindows[2 * i] == lanes[0] && stepWindows[2 * i + 1] == lanes[0] + 16;
+                    for (int l = 1; l < 8 && inOrder; l++)
+                    {
+                        inOrder = lanes[l] == lanes[0] + 4 * l;
+                    }
+
+                    plain |= inOrder ? 1 << i : 0;
+                }
+
+                PlainSteps = plain;
+            }
+
             stepsGathered = true;
             return true;
 
@@ -5915,6 +5935,12 @@ internal sealed partial class CpuBackend
 
         /// <summary>Whether the integer lane's steps are gathered (GatherSteps: GatheredOne, GatheredFour).</summary>
         public bool StepsGathered => stepsGathered;
+
+        /// <summary>
+        /// A natural plan's steps (of one plane, one group a period) whose word is 32 bytes of the period in order, each read
+        /// by one 32-byte load where the others take two windows and a shuffle: bit s step s's (PlainSet's flags).
+        /// </summary>
+        public int PlainSteps { get; private set; }
 
         /// <summary>Group <paramref name="gp"/>'s distinct dword vectors of the period at <paramref name="period"/> into <paramref name="words"/> (GatherSteps).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
@@ -6426,6 +6452,37 @@ internal sealed partial class CpuBackend
         /// </summary>
         public int StepKinds { get; private set; }
 
+        /// <summary>Which of a natural plan's 8 steps read their word by one 32-byte load (PlainSteps), as constants to the JIT.</summary>
+        internal interface IPlainSteps
+        {
+            static abstract bool Plain(int i);
+        }
+
+        internal readonly struct NoPlainSteps : IPlainSteps
+        {
+            public static bool Plain(int i) => false;
+        }
+
+        // Step i's flag T_i (i a constant in the kernel's steps: the test folds away).
+        internal readonly struct PlainSet<T0, T1, T2, T3, T4, T5, T6, T7> : IPlainSteps
+            where T0 : struct, IFlag where T1 : struct, IFlag where T2 : struct, IFlag where T3 : struct, IFlag
+            where T4 : struct, IFlag where T5 : struct, IFlag where T6 : struct, IFlag where T7 : struct, IFlag
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public static bool Plain(int i) => i switch
+            {
+                0 => typeof(T0) == typeof(Yes),
+                1 => typeof(T1) == typeof(Yes),
+                2 => typeof(T2) == typeof(Yes),
+                3 => typeof(T3) == typeof(Yes),
+                4 => typeof(T4) == typeof(Yes),
+                5 => typeof(T5) == typeof(Yes),
+                6 => typeof(T6) == typeof(Yes),
+                7 => typeof(T7) == typeof(Yes),
+                _ => false,
+            };
+        }
+
         /// <summary>How a step's plane is made from its shifted dword (GatheredStep's readings).</summary>
         internal interface IStepPlane
         {
@@ -6589,8 +6646,10 @@ internal sealed partial class CpuBackend
         // lanes by their own counts in one instruction: CpuBackend.StepShiftsOf; the portable instructions' shift by lanes is
         // a select for each bit of the counts, some twenty operations, one shift is one), else by the lanes' own.
         // TL: the plan is natural (its words loaded from the period, which `words` is: Load), else gathered words.
-        internal readonly struct PlaneSteps<TP0, TP1, TP2, TM, TH, TL> : IGatheredSteps
+        // TW: which steps' words are plain (PlainSteps: one 32-byte load each), as flags.
+        internal readonly struct PlaneSteps<TP0, TP1, TP2, TM, TH, TL, TW> : IGatheredSteps
             where TP0 : struct, IStepPlane where TP1 : struct, IStepPlane where TP2 : struct, IStepPlane where TM : struct, IStepMap where TH : struct, IFlag
+            where TW : struct, IPlainSteps
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
             public static Vector256<byte> Step<TI>(DescribedPlan plan, Vector256<uint>* words, int s) where TI : struct, IInstructions =>
@@ -6625,7 +6684,8 @@ internal sealed partial class CpuBackend
             [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
             private static Vector256<uint> Word<TI, TP>(DescribedPlan plan, Vector256<uint>* words, int i) where TI : struct, IInstructions where TP : struct, IStepPlane
             {
-                var word = typeof(TL) == typeof(Yes) ? Window<TI>((byte*)words, plan.stepWindows + 2 * i, plan.stepControls[i]) : words[plan.stepWord[i]];
+                var word = typeof(TL) != typeof(Yes) ? words[plan.stepWord[i]]
+                    : TW.Plain(i) ? Vector256.Load((byte*)words + plan.stepWindows[2 * i]).AsUInt32() : Window<TI>((byte*)words, plan.stepWindows + 2 * i, plan.stepControls[i]);
                 return !TP.Shifted ? word : typeof(TH) == typeof(Yes) ? word >>> plan.stepShiftOne[i] : TI.ShiftRight(word, plan.stepShift[i]);
             }
         }
@@ -8547,8 +8607,37 @@ internal sealed partial class CpuBackend
     // Whether the steps' words are loaded from the period (a natural plan's: DescribedPlan.IsNatural), as their last.
     private static nint StepLoadsOf<TU, TP0, TP1, TP2, TM, TH>(DescribedPlan plan)
         where TU : struct, IStepsUse where TP0 : struct, DescribedPlan.IStepPlane where TP1 : struct, DescribedPlan.IStepPlane where TP2 : struct, DescribedPlan.IStepPlane
-        where TM : struct, DescribedPlan.IStepMap where TH : struct, IFlag => plan.IsNatural
-        ? TU.Use<DescribedPlan.PlaneSteps<TP0, TP1, TP2, TM, TH, Yes>>(plan) : TU.Use<DescribedPlan.PlaneSteps<TP0, TP1, TP2, TM, TH, No>>(plan);
+        where TM : struct, DescribedPlan.IStepMap where TH : struct, IFlag => !plan.IsNatural
+        ? TU.Use<DescribedPlan.PlaneSteps<TP0, TP1, TP2, TM, TH, No, DescribedPlan.NoPlainSteps>>(plan)
+        : plan.PlainSteps == 0 ? TU.Use<DescribedPlan.PlaneSteps<TP0, TP1, TP2, TM, TH, Yes, DescribedPlan.NoPlainSteps>>(plan)
+        : PlainOf<TU, TP0, TP1, TP2, TM, TH, Flagged, Flagged, Flagged, Flagged, Flagged, Flagged, Flagged, Flagged>(plan, 0);
+
+    // A natural plan's plain steps (DescribedPlan.PlainSteps) as flags, a step at a time: PlainOf's flags so far (Flagged:
+    // not yet) and step i's from the plan, the last handing the set to TU. Made once a plan and kernel, never a call.
+    private static nint PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, T2, T3, T4, T5, T6, T7>(DescribedPlan plan, int i)
+        where TU : struct, IStepsUse where TP0 : struct, DescribedPlan.IStepPlane where TP1 : struct, DescribedPlan.IStepPlane where TP2 : struct, DescribedPlan.IStepPlane
+        where TM : struct, DescribedPlan.IStepMap where TH : struct, IFlag where T0 : struct, IFlag where T1 : struct, IFlag where T2 : struct, IFlag where T3 : struct, IFlag
+        where T4 : struct, IFlag where T5 : struct, IFlag where T6 : struct, IFlag where T7 : struct, IFlag
+    {
+        bool plain = (plan.PlainSteps >> i & 1) != 0;
+        return i switch
+        {
+            0 => plain ? PlainOf<TU, TP0, TP1, TP2, TM, TH, Yes, T1, T2, T3, T4, T5, T6, T7>(plan, 1) : PlainOf<TU, TP0, TP1, TP2, TM, TH, No, T1, T2, T3, T4, T5, T6, T7>(plan, 1),
+            1 => plain ? PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, Yes, T2, T3, T4, T5, T6, T7>(plan, 2) : PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, No, T2, T3, T4, T5, T6, T7>(plan, 2),
+            2 => plain ? PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, Yes, T3, T4, T5, T6, T7>(plan, 3) : PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, No, T3, T4, T5, T6, T7>(plan, 3),
+            3 => plain ? PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, T2, Yes, T4, T5, T6, T7>(plan, 4) : PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, T2, No, T4, T5, T6, T7>(plan, 4),
+            4 => plain ? PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, T2, T3, Yes, T5, T6, T7>(plan, 5) : PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, T2, T3, No, T5, T6, T7>(plan, 5),
+            5 => plain ? PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, T2, T3, T4, Yes, T6, T7>(plan, 6) : PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, T2, T3, T4, No, T6, T7>(plan, 6),
+            6 => plain ? PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, T2, T3, T4, T5, Yes, T7>(plan, 7) : PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, T2, T3, T4, T5, No, T7>(plan, 7),
+            7 => plain ? PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, T2, T3, T4, T5, T6, Yes>(plan, 8) : PlainOf<TU, TP0, TP1, TP2, TM, TH, T0, T1, T2, T3, T4, T5, T6, No>(plan, 8),
+            _ => TU.Use<DescribedPlan.PlaneSteps<TP0, TP1, TP2, TM, TH, Yes, DescribedPlan.PlainSet<T0, T1, T2, T3, T4, T5, T6, T7>>>(plan),
+        };
+    }
+
+    // (PlainOf's flag of a step not yet read.)
+    private readonly struct Flagged : IFlag
+    {
+    }
 
     // The one-row integer kernel of a plan by TI, its choices as type parameters (DescribedIntegerOne's, and the factors'):
     // made once a plan and instruction set (DescribedPlan.OneKernel); 0 for byte planes of wide integers (their dispatch).
