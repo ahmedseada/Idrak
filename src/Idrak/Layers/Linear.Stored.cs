@@ -49,6 +49,60 @@ public sealed partial class Linear
     }
 
     /// <summary>
+    /// The products of 2 or 3 layers over weights as stored, of one type, no bias, adapter or cap, reading the same input
+    /// (the queries, keys and values), in one device pass (Backend.StoredMatMulMany); null where the layers do not fit or
+    /// the device has no such pass for them (the caller runs each on its own).
+    /// </summary>
+    internal static Tensor[]? StoredMany(Tensor input, Linear[] layers)
+    {
+        int k = input.Shape[^1], m = input.Size / Math.Max(1, k);
+        var description = layers[0]._stored?.Storage.Description;
+        foreach (var layer in layers)
+        {
+            if (layer._stored is not { } w || layer.Bias is not null || layer.Adapter is not null || layer._softcap is not null || layer._tiedTo is not null
+                || w.Shape[1] != k || w.Device != input.Device || description is null || !Equals(w.Storage.Description, description))
+            {
+                return null;
+            }
+        }
+
+        if (m == 0)
+        {
+            return null;
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var x = input.Contiguous();
+        var outputs = new Tensor[layers.Length];
+        for (int j = 0; j < layers.Length; j++)
+        {
+            outputs[j] = Tensor.Empty([.. input.Shape[..^1], layers[j]._stored!.Shape[0]], input.Device);
+        }
+
+        var (a, b) = (layers[0]._stored!, layers[1]._stored!);
+        bool done = layers.Length == 2
+            ? input.Backend.StoredMatMulMany(x.Storage, m, k, [(a.Storage, outputs[0].Storage, a.Shape[0]), (b.Storage, outputs[1].Storage, b.Shape[0])])
+            : input.Backend.StoredMatMulMany(x.Storage, m, k, [(a.Storage, outputs[0].Storage, a.Shape[0]), (b.Storage, outputs[1].Storage, b.Shape[0]),
+                (layers[2]._stored!.Storage, outputs[2].Storage, layers[2]._stored!.Shape[0])]);
+        if (!done)
+        {
+            foreach (var output in outputs)
+            {
+                output.Dispose();
+            }
+
+            return null;
+        }
+
+        for (int j = 0; j < outputs.Length; j++)
+        {
+            outputs[j] = Tensor.Traced("matmul_stored_many", outputs[j], start);
+        }
+
+        return outputs;
+    }
+
+    /// <summary>
     /// act(gate) · up of a feed-forward block's gate and up projections (<paramref name="gateUp"/>: the two layers, each over
     /// a weight as stored, of one type and shape, no bias, adapter or cap), their products and the activation in one device
     /// pass (Backend.StoredMatMulGatedPair) where the device has one for the type and shape; null otherwise and while

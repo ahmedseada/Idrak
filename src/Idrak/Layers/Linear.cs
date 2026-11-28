@@ -166,6 +166,13 @@ public sealed partial class Linear : Module, IAdaptableLinear, ITiedWeights, INa
             return Tensor.MatMulMany(input, weights, biases);
         }
 
+        // Weights as stored, of one type (the queries, keys and values; the gate and up): the products in one device pass
+        // where the device has one (Backend.StoredMatMulMany), each output as its own product computes it.
+        if (!Autograd.IsEnabled && layers.Length is > 1 and <= 3 && input.Backend.StoredMatMulManyAvailable(rows) && StoredMany(input, layers) is { } stored)
+        {
+            return stored;
+        }
+
         var results = new Tensor[layers.Length];
 
         // Training: the layers read one flattened view of the input, so their input gradients add up in its one buffer

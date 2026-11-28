@@ -12,7 +12,7 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] LaneBitsGroup =
     [
         ("lane bits: the CPU's described lane over stored weights (q4_k, q4_0, mxfp4, q6_k, bfloat16, float64, int2 and int64 from their types' descriptions; the types made of a description alone, int8 groups under a shared float32 level among them, and the fallbacks' types, each taking the reading no built-in type takes (codes one value at a time, through the byte table, a codebook's entries of 2 and 1 values, factors a lane at a time), by 128 rows too; 1, 3, 4, 5, 9 and 70 rows of fixed operands) gives commit 3f1c53e2's recorded bits (the shared levels' and the fallbacks' recorded since) by every instruction set that runs here, and the new design's operations (element-wise, rows, products, attention, sums) give one hash each by every width (512, 256, 128 bits, one float): the same list on any CPU", LaneBits),
-        ("lane bits: the gate/up pair's one pass over stored weights (StoredMatMulGatedPair: q4_k, q8_0, tq1_0, iq1_s, q5_0, int8 rows under a float32 scale, float16, bfloat16 and float32; 1, 3, 70 and 128 rows; SiLU, GELU, ReLU and tanh · sigmoid) gives act(gate) · up as the two products alone and GatedActivation give it, bit for bit, and the grouped products (StoredMatMulMany) each product's own bits", GatedPairBits),
+        ("lane bits: the gate/up pair's one pass over stored weights (StoredMatMulGatedPair: q4_k, q8_0, tq1_0, iq1_s, q5_0, int8 rows under a float32 scale, float16, bfloat16 and float32; 1, 3, 70 and 128 rows; SiLU, GELU, ReLU and tanh · sigmoid) gives act(gate) · up as the two products alone and GatedActivation give it, bit for bit, and the grouped products (StoredMatMulMany: the two, and three of 75, 75 and 29 rows as a block's queries, keys and values are) each product's own bits", GatedPairBits),
     ];
 
     internal static void GatedPairBits(Device device)
@@ -35,6 +35,7 @@ internal abstract partial class Tests
             var random = new Random(LaneBitsSeed("pair " + name));
             using var gate = Tensor.Stored(type, LaneBitsBytes(type.Description, k, n, random), [n, k], device);
             using var up = Tensor.Stored(type, LaneBitsBytes(type.Description, k, n, random), [n, k], device);
+            using var third = Tensor.Stored(type, LaneBitsBytes(type.Description, k, 29, random), [29, k], device);
             foreach (int m in (int[])[1, 3, 70, 128])
             {
                 using var x = Tensor.From(LaneBitsValues(random, (long)m * k), [m, k], device);
@@ -49,6 +50,12 @@ internal abstract partial class Tests
                 float[] gateValues = g.ToArray(), upValues = u.ToArray();
                 Check(backend.StoredMatMulMany(x.Storage, m, k, [(gate.Storage, gate2.Storage, n), (up.Storage, up2.Storage, n)]), $"{name}, {m} rows: no grouped pass");
                 Check(gate2.ToArray().AsSpan().SequenceEqual(gateValues) && up2.ToArray().AsSpan().SequenceEqual(upValues), $"{name}, {m} rows: the grouped products differ from each one's own");
+                using var t1 = Tensor.Empty([m * 29], device);
+                using var t2 = Tensor.Empty([m * 29], device);
+                backend.StoredMatMul(x.Storage, third.Storage, t1.Storage, m, 29, k);
+                Check(backend.StoredMatMulMany(x.Storage, m, k, [(gate.Storage, gate2.Storage, n), (up.Storage, up2.Storage, n), (third.Storage, t2.Storage, 29)]), $"{name}, {m} rows: no grouped pass of three");
+                Check(gate2.ToArray().AsSpan().SequenceEqual(gateValues) && up2.ToArray().AsSpan().SequenceEqual(upValues) && t2.ToArray().AsSpan().SequenceEqual(t1.ToArray()),
+                    $"{name}, {m} rows: the grouped products of three differ from each one's own");
                 for (int activation = 0; activation < 4; activation++)
                 {
                     backend.GatedActivation(g.Storage, u.Storage, hidden.Storage, m * n, activation);
