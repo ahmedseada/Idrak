@@ -40,8 +40,10 @@ internal sealed unsafe partial class CpuBackend
     {
         string shape = string.Create(CultureInfo.InvariantCulture, $"read {key.Kind} 2^{key.Size}");
         string fileKey = string.Create(CultureInfo.InvariantCulture, $"{shape} {key.Vectors}");
+        // What the candidates are: the code of both reads (CpuCode: the kind's lane and the type's own read).
+        string variant = "c" + CpuCode.Of(typeof(ReadCandidates), type.GetType()) + "/type.kind";
         bool native = false;
-        if (CpuChoices.TryGet(fileKey, out var kept) && kept is "kind" or "type")
+        if (CpuChoices.TryGet(fileKey, variant, out var kept) && kept is "kind" or "type")
         {
             native = kept == "kind";
         }
@@ -58,7 +60,7 @@ internal sealed unsafe partial class CpuBackend
                     $"{(native ? "the kind's lane" : "the type's read")} (the type's read {times[0]:0.####} ms, the kind's lane {times[1]:0.####} ms)"));
             }
 
-            CpuChoices.Keep(fileKey, native ? "kind" : "type");
+            CpuChoices.Keep(fileKey, variant, native ? "kind" : "type");
         }
 
         s_readChosen[key] = native;

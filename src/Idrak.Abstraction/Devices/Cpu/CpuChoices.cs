@@ -16,8 +16,11 @@ namespace Idrak.Abstraction.Devices.Cpu;
 /// described lane), measured once with every candidate timed alike (<see cref="RoundTimes{TC}"/>) and kept in a file of
 /// this machine's own (the processor, its threads and the instruction sets the runtime runs with), so the next process
 /// reads it instead of measuring again. The key holds the vector paths setting (IDRAK_CPU_VECTORS): a choice made under
-/// one setting is never taken under another. <c>IDRAK_TUNING_CACHE=0</c> keeps none (measured each process); a path keeps
-/// them there. Every candidate gives the same bits, so a choice changes speed alone.
+/// one setting is never taken under another; and the code its candidates ran (CpuCode's fingerprint of their IL: a
+/// variant of the shape's group), so a build whose candidates changed measures again while one whose candidates are as
+/// they were reads it, and two builds run in turn each keep their own. A group keeps its <see cref="MostVariants"/> most
+/// recently measured variants (each entry's time measured after its value). <c>IDRAK_TUNING_CACHE=0</c> keeps none
+/// (measured each process); a path keeps them there. Every candidate gives the same bits, so a choice changes speed alone.
 /// </summary>
 internal static class CpuChoices
 {
@@ -28,6 +31,9 @@ internal static class CpuChoices
 
     // A round's run of a candidate at least this long (its calls repeated, every candidate the same number of times).
     private const double SampleMs = 0.05;
+
+    /// <summary>The variants (codes, builds) a group keeps: the most recently measured.</summary>
+    internal const int MostVariants = 4;
 
     private static readonly ConcurrentDictionary<string, string> s_kept = new(StringComparer.Ordinal);
     private static readonly Lock s_gate = new();
@@ -74,18 +80,34 @@ internal static class CpuChoices
         }
     }
 
-    /// <summary>The kept choice under <paramref name="key"/> (with the vector paths setting in it), if any.</summary>
-    public static bool TryGet(string key, out string value)
+    /// <summary>
+    /// The kept choice of <paramref name="group"/> (a shape, with the vector paths setting and the threads in it) under
+    /// <paramref name="variant"/> (what its candidates were: "c" and CpuCode's fingerprint), if any.
+    /// </summary>
+    public static bool TryGet(string group, string variant, out string value)
     {
         EnsureLoaded();
-        return s_kept.TryGetValue(key, out value!);
+        if (s_kept.TryGetValue(group + " " + variant, out var entry))
+        {
+            int tab = entry.IndexOf('\t', StringComparison.Ordinal);
+            value = tab < 0 ? entry : entry[..tab];
+            return true;
+        }
+
+        value = "";
+        return false;
     }
 
-    /// <summary>Keeps <paramref name="value"/> under <paramref name="key"/>: here, and in this machine's file when one is kept.</summary>
-    public static void Keep(string key, string value)
+    /// <summary>
+    /// Keeps <paramref name="value"/> for <paramref name="group"/> under <paramref name="variant"/>: here, and in this
+    /// machine's file when one is kept, with the time it was measured; the group's variants past the
+    /// <see cref="MostVariants"/> most recent are dropped.
+    /// </summary>
+    public static void Keep(string group, string variant, string value)
     {
         EnsureLoaded();
-        s_kept[key] = value;
+        string key = group + " " + variant, entry = value + "\t" + DateTime.UtcNow.Ticks.ToString(CultureInfo.InvariantCulture);
+        s_kept[key] = entry;
         if (FilePath is not { } file)
         {
             return;
@@ -95,7 +117,13 @@ internal static class CpuChoices
         {
             using var held = TuningFiles.Lock(file);
             var entries = Read(file);
-            entries[key] = value;
+            entries[key] = entry;
+            foreach (string old in Older(entries, group))
+            {
+                entries.Remove(old);
+                s_kept.TryRemove(old, out _);
+            }
+
             string temporary = file + "." + Environment.ProcessId.ToString(CultureInfo.InvariantCulture) + ".tmp";
             var text = new StringBuilder();
             text.Append(Magic).Append('\n').Append(Identity).Append('\n');
@@ -111,6 +139,25 @@ internal static class CpuChoices
         {
             // A folder that cannot be written keeps the choice in this process alone.
         }
+    }
+
+    // The group's variants (keys of its words and one more) past the MostVariants most recently measured.
+    private static List<string> Older(Dictionary<string, string> entries, string group)
+    {
+        var variants = new List<(string Key, long Measured)>();
+        foreach (var (key, entry) in entries)
+        {
+            if (key.Length > group.Length + 1 && key.StartsWith(group, StringComparison.Ordinal) && key[group.Length] == ' '
+                && key.IndexOf(' ', group.Length + 1) < 0)
+            {
+                int tab = entry.IndexOf('\t', StringComparison.Ordinal);
+                long measured = tab >= 0 && long.TryParse(entry.AsSpan(tab + 1), NumberStyles.None, CultureInfo.InvariantCulture, out long ticks) ? ticks : 0;
+                variants.Add((key, measured));
+            }
+        }
+
+        variants.Sort((a, b) => b.Measured.CompareTo(a.Measured) is var order and not 0 ? order : string.CompareOrdinal(a.Key, b.Key));
+        return [.. variants.Skip(MostVariants).Select(v => v.Key)];
     }
 
     /// <summary>Forgets the choices read or made in this process (tests); the file stays.</summary>

@@ -1983,7 +1983,7 @@ internal sealed partial class CpuBackend
             ProductRoutes.Chose("cpu", ShapeName(product.Description, m, n, k),
                 string.Create(System.Globalization.CultureInfo.InvariantCulture,
                     $"{LaneName(best)} ({string.Join(", ", Enumerable.Range(0, count).Select(i => $"{LaneShortName(product.Candidate(i))} {times[i]:0.###} ms"))})"));
-            CpuChoices.Keep(LaneFileKey(product, m, n, k), best.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            CpuChoices.Keep(LaneFileKey(product, m, n, k), LaneVariant(product, count), best.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         product.Chosen[ShapeOf(m, n, k)] = (best, Volatile.Read(ref s_lanesForgotten));
@@ -1998,10 +1998,10 @@ internal sealed partial class CpuBackend
         public void Run(int index) => _product.Run(_product.Candidate(index));
     }
 
-    // The machine's kept lane for the shape (CpuChoices), where it is among the candidates.
+    // The machine's kept lane for the shape (CpuChoices) among these candidates as they are now, where it is one of them.
     private static int? KeptLane<TC>(in TC product, int m, int n, int k, int count) where TC : struct, ILaneChoice
     {
-        if (!CpuChoices.TryGet(LaneFileKey(product, m, n, k), out var kept)
+        if (!CpuChoices.TryGet(LaneFileKey(product, m, n, k), LaneVariant(product, count), out var kept)
             || !int.TryParse(kept, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int lane))
         {
             return null;
@@ -2025,6 +2025,20 @@ internal sealed partial class CpuBackend
         var (vectors, threads, rows, _, _) = ShapeOf(m, n, k);
         return string.Create(System.Globalization.CultureInfo.InvariantCulture,
             $"described {product.Description.CpuFingerprint} {rows}x{k}->{n} {vectors} t{threads}");
+    }
+
+    // What a shape's candidates are, as its kept choice names them (CpuChoices' variant): the code they run (CpuCode's
+    // fingerprint of what the described lane's candidates reach: every lane's kernels, by every instruction set, and the
+    // float32 product), then their lanes.
+    private static string LaneVariant<TC>(in TC product, int count) where TC : struct, ILaneChoice
+    {
+        var text = new System.Text.StringBuilder("c").Append(CpuCode.Of(typeof(LaneCandidates))).Append('/');
+        for (int c = 0; c < count; c++)
+        {
+            text.Append(c == 0 ? "" : ".").Append(product.Candidate(c).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        return text.ToString();
     }
 
     // A description's fingerprint: SHA-256 of its fields as text (each list's items, never a type's name), 16 hex digits.

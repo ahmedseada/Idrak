@@ -87,8 +87,16 @@ internal sealed partial class CpuBackend
 
         string shape = string.Create(CultureInfo.InvariantCulture, $"{key.Operation} 2^{key.A}x2^{key.B}");
         string fileKey = string.Create(CultureInfo.InvariantCulture, $"lanes {shape} {key.Vectors} t{key.Threads}");
+        // What the candidates are: the code the operation's run reaches (CpuCode: its kernel's, by every width), then the
+        // widths that run here.
+        var variant = new System.Text.StringBuilder("c").Append(CpuCode.Of(typeof(TR))).Append('/');
+        for (int c = 0; c < count; c++)
+        {
+            variant.Append(c == 0 ? "" : ".").Append(candidates[c]);
+        }
+
         Lanes best = WidestLanes;
-        if (CpuChoices.TryGet(fileKey, out var kept) && Enum.TryParse<Lanes>(kept, out var known) && Listed(candidates[..count], known))
+        if (CpuChoices.TryGet(fileKey, variant.ToString(), out var kept) && Enum.TryParse<Lanes>(kept, out var known) && Listed(candidates[..count], known))
         {
             best = known;
         }
@@ -115,7 +123,7 @@ internal sealed partial class CpuBackend
             }
 
             ProductRoutes.Chose("cpu", shape, $"{LanesName(best)} ({listed})");
-            CpuChoices.Keep(fileKey, best.ToString());
+            CpuChoices.Keep(fileKey, variant.ToString(), best.ToString());
         }
 
         s_lanesChosen[key] = best;

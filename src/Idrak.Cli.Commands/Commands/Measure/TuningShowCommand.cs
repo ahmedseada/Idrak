@@ -188,7 +188,9 @@ internal sealed class TuningShowCommand : Command
     }
 
     // The format's line, the machine's identity (the processor, threads, architecture, runtime and instruction sets), then
-    // "key<TAB>value" per choice ("lanes Op 2^a x2^b paths" a width, "described ..." the described lane's variant).
+    // "key<TAB>value" per choice ("lanes Op 2^a x2^b paths" a width, "described ..." the described lane's variant; a key's
+    // last word what its candidates were, "c", CpuCode's fingerprint of their code and their names), and after the value
+    // the time it was measured.
     private static IEnumerable<Entry> ReadCpu(string path)
     {
         var lines = File.ReadAllLines(path);
@@ -202,7 +204,8 @@ internal sealed class TuningShowCommand : Command
             int tab = line.IndexOf('\t', StringComparison.Ordinal);
             if (tab > 0)
             {
-                yield return new Entry(lines[1], line[..tab], line[(tab + 1)..]);
+                int end = line.IndexOf('\t', tab + 1);
+                yield return new Entry(lines[1], line[..tab], end < 0 ? line[(tab + 1)..] : line[(tab + 1)..end]);
             }
         }
     }

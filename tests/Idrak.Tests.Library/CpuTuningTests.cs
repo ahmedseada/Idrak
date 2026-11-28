@@ -18,6 +18,7 @@ internal abstract partial class Tests
         ("cpu tuning: the CPU's memory is the system's (/proc/meminfo, the lowest cgroup v1 or v2 limit above the process with its usage less inactive file cache) where the runtime's figure is its heap budget (Mono), held to the runtime's heap limit where it has one (CoreCLR: unchanged), the runtime's where the system reports none; both listed, labelled", CpuSystemMemory),
         ("cpu tuning: the cores are named by their groups from /proc/cpuinfo and cpufreq (part numbers and highest frequencies, raw; the system's name where given; x86's model name as before)", CpuCoreGroups),
         ("cpu tuning: the measured choices are timed alike (every candidate warmed once, then the same rounds in the same order) and kept per machine (a file of its own, its identity the processor, threads and instruction sets) under the vector paths setting: a scalar choice never taken under auto, nor auto's under scalar; IDRAK_TUNING_CACHE=0 keeps none", CpuChoicesKept),
+        ("cpu tuning: a kept choice names what its candidates are (their code, CpuCode's fingerprint of the IL they reach with every token named, and their names): read under the same, measured again under any other, each shape keeping its four most recently measured; the described lane's code reaches every instruction set's kernels and the float32 product, and no attention", CpuChoicesNamed),
         ("cpu tuning: the vector paths (IDRAK_CPU_VECTORS auto, native, portable, scalar) parse; portable 128-bit vectors where the runtime reports no NEON; the description says what runs", CpuVectorPathsChosen),
         ("cpu tuning: one result on every CPU (plan 37, P0 and P0b): exp, log, the sigmoids, GELU, softmax, log-softmax, sin, cos and pow with their gradients, layer norm, batch statistics over short runs in chunks, the gated activations, few-row products, the sums past one chunk, the sampler's weights and the host's double functions (PortableMath) hash to the pinned bits (the same with DOTNET_EnableAVX512=0, DOTNET_EnableAVX2=0, DOTNET_EnableHWIntrinsic=0 and IDRAK_CPU_VECTORS=scalar, portable or native)", CpuOneResult),
         ("cpu tuning: the portable math (plan 37, P0b): the CPU's float sin and cos lanes give their scalar form's bits and are within an ulp of MathF's over [-1e4, 1e4]; PortableMath's sin, cos, tan, atan, atan2, tanh, pow, log2 and log10 are within a few ulp of Math's, with its special cases; integer powers, log2 of powers of two and log10 of powers of ten exact", CpuPortableMath),
@@ -66,16 +67,103 @@ internal abstract partial class Tests
             Measure(CpuVectorPaths.Automatic);
             var lines = Lines();
             Check(lines.Length >= 3 && lines[1] == CpuChoices.Identity, $"the file names the machine ({CpuChoices.Identity}): {string.Join(" | ", lines.Take(2))}");
-            Check(lines.Any(l => l.StartsWith($"lanes Unary Exp 2^12x2^0 Automatic t{ComputeResources.MaxCpuThreads}\t", StringComparison.Ordinal)), "auto's choice kept under auto");
+            Check(lines.Any(l => l.StartsWith($"lanes Unary Exp 2^12x2^0 Automatic t{ComputeResources.MaxCpuThreads} c", StringComparison.Ordinal)), "auto's choice kept under auto");
             Measure(CpuVectorPaths.Scalar);
             lines = Lines();
             Check(ProductRoutes.Choices.TryGetValue("cpu: Unary Exp 2^12x2^0", out var chosen) && chosen.StartsWith("one float at a time (the only candidate)", StringComparison.Ordinal),
                 $"under scalar one float at a time, the only candidate (nothing measured): {chosen}");
             Check(!lines.Any(l => l.Contains(" Scalar ", StringComparison.Ordinal) && l.Contains("Exp", StringComparison.Ordinal)), "nothing measured under scalar is kept");
-            Check(lines.Any(l => l.StartsWith($"lanes Unary Exp 2^12x2^0 Automatic t{ComputeResources.MaxCpuThreads}\t", StringComparison.Ordinal)), "auto's choice still there");
+            Check(lines.Any(l => l.StartsWith($"lanes Unary Exp 2^12x2^0 Automatic t{ComputeResources.MaxCpuThreads} c", StringComparison.Ordinal)), "auto's choice still there");
 
             Environment.SetEnvironmentVariable("IDRAK_TUNING_CACHE", "0");
             Check(CpuChoices.FilePath is null, "IDRAK_TUNING_CACHE=0 keeps no file");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("IDRAK_TUNING_CACHE", setting);
+            ComputeResources.CpuVectors = vectors;
+            CpuTuning.Autotune = autotune;
+            CpuBackend.ForgetChoices();
+            try
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    internal static void CpuChoicesNamed(Device device)
+    {
+        if (device.Backend is not CpuBackend || !FirstRun(nameof(CpuChoicesNamed)))
+        {
+            return;
+        }
+
+        // The described lane's code: every lane's kernels by every instruction set, the float32 product, nothing of attention.
+        var candidates = typeof(CpuBackend).GetNestedType("LaneCandidates", System.Reflection.BindingFlags.NonPublic) ?? throw new Exception("no LaneCandidates");
+        var walked = CpuCode.Walked(candidates);
+        foreach (string reached in (string[])["CpuBackend+VnniInstructions::", "CpuBackend+Avx2Instructions::", "CpuBackend+NeonInstructions::", "CpuBackend+PortableInstructions::",
+                     "CpuBackend+DescribedKernels::", "CpuBackend+DescribedPlan::", "::Void ProductOverRows(", "CpuBackend+CpuRanges::"])
+        {
+            Check(walked.Any(w => w.Contains(reached, StringComparison.Ordinal)), $"the described lane's code reaches {reached} ({walked.Count} methods)");
+        }
+
+        Check(!walked.Any(w => w.Contains("Attention", StringComparison.Ordinal) || w.Contains("Attend", StringComparison.Ordinal)), "the described lane's code reaches no attention");
+        string code = CpuCode.Of(candidates);
+        Check(code.Length == 16 && code.All(Uri.IsHexDigit) && CpuCode.Of(candidates) == code, $"one fingerprint of 16 hex digits: {code}");
+
+        string folder = Path.Combine(Path.GetTempPath(), "idrak-cpu-named-" + Guid.NewGuid().ToString("N"));
+        string? setting = Environment.GetEnvironmentVariable("IDRAK_TUNING_CACHE");
+        var vectors = ComputeResources.CpuVectors;
+        bool autotune = CpuTuning.Autotune;
+        try
+        {
+            Environment.SetEnvironmentVariable("IDRAK_TUNING_CACHE", folder);
+            CpuTuning.Autotune = true;
+            ComputeResources.CpuVectors = CpuVectorPaths.Automatic;
+            CpuBackend.ForgetChoices();
+            string file = CpuChoices.FilePath ?? throw new Exception("no file under a folder setting");
+
+            // Variants of a group: each read under its own name alone; the four most recently measured kept; a key of the
+            // group's words alone (an earlier build's) left as it is.
+            CpuChoices.Keep("test shape", "cA", "1");
+            Check(CpuChoices.TryGet("test shape", "cA", out var one) && one == "1" && !CpuChoices.TryGet("test shape", "cB", out _), "a variant read under its own name alone");
+            File.AppendAllText(file, "test shape\tolder\n");
+            foreach (string variant in (string[])["cB", "cC", "cD", "cE"])
+            {
+                Thread.Sleep(2);
+                CpuChoices.Keep("test shape", variant, variant[1..]);
+            }
+
+            var group = File.ReadAllLines(file).Where(l => l.StartsWith("test shape ", StringComparison.Ordinal)).ToArray();
+            Check(group.Length == CpuChoices.MostVariants && !group.Any(l => l.StartsWith("test shape cA\t", StringComparison.Ordinal))
+                && group.Any(l => l.StartsWith("test shape cE\tE\t", StringComparison.Ordinal)), $"the four most recent kept: {string.Join(" | ", group)}");
+            Check(File.ReadAllLines(file).Contains("test shape\tolder"), "an earlier build's key left as it is");
+
+            // A width kept under other code (its fingerprint changed) is measured again, its new choice kept beside it.
+            using (var x = Tensor.From([.. Enumerable.Range(0, 3001).Select(i => i * 0.001f)], [3001], device))
+            using (var y = x.Exp())
+            {
+                GC.KeepAlive(y.ToArray());
+            }
+
+            string prefix = $"lanes Unary Exp 2^12x2^0 Automatic t{ComputeResources.MaxCpuThreads} c";
+            string? kept = File.ReadAllLines(file).FirstOrDefault(l => l.StartsWith(prefix, StringComparison.Ordinal));
+            Check(kept is not null && kept.Length > prefix.Length + 17 && kept[prefix.Length..(prefix.Length + 16)].All(Uri.IsHexDigit) && kept[prefix.Length + 16] == '/',
+                $"the key names the code and the candidates: {kept}");
+            string other = prefix + "0000000000000000" + kept![(prefix.Length + 16)..];
+            File.WriteAllLines(file, [.. File.ReadAllLines(file).Select(l => l == kept ? other : l)]);
+            CpuBackend.ForgetChoices();
+            using (var x = Tensor.From([.. Enumerable.Range(0, 3001).Select(i => i * 0.001f)], [3001], device))
+            using (var y = x.Exp())
+            {
+                GC.KeepAlive(y.ToArray());
+            }
+
+            var both = File.ReadAllLines(file).Where(l => l.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+            Check(both.Length == 2 && both.Contains(other), $"measured again under its own code, the other kept beside it: {string.Join(" | ", both)}");
         }
         finally
         {
