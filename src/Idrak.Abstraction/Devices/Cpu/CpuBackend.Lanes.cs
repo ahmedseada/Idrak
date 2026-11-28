@@ -2372,8 +2372,8 @@ internal sealed partial class CpuBackend
 
     // The tiles of `parts` in one range over the threads (CpuRanges, a tile a chunk): columns and rows of x, each part's
     // tiles after the other's; each output its own product's, whichever thread runs it. One row of x: columns in whole cache
-    // lines of y (16 floats), so tiles on other threads do not write into the same lines as each output is written. More
-    // rows: the format's tile (IRowFormat.Tile). Part p reads x as inputs[slots[p]].
+    // lines of y (the machine's line's floats), so tiles on other threads do not write into the same lines as each output
+    // is written. More rows: the format's tile (IRowFormat.Tile). Part p reads x as inputs[slots[p]].
     private static void RowTiles<TF, TK>(TF format, ReadOnlySpan<RowPart> parts, ThreeInputs inputs, ReadOnlySpan<int> slots, int m, int k)
         where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
     {
@@ -2385,8 +2385,9 @@ internal sealed partial class CpuBackend
 
         int threads = Math.Max(1, ComputeResources.MaxCpuThreads);
         long rowBytes = Math.Max(1, parts[0].Lane.RowBytes);
+        int lineFloats = Math.Max(1, LineBytes / sizeof(float));
         var (wanted, rows) = m == 1
-            ? ((Math.Max(RowTileBytes / rowBytes, (total + 64L * threads - 1) / (64L * threads)) + 15) / 16 * 16, 1)
+            ? ((Math.Max(RowTileBytes / rowBytes, (total + 64L * threads - 1) / (64L * threads)) + lineFloats - 1) / lineFloats * lineFloats, 1)
             : format.Tile(total, m, threads, (nint)rowBytes);
         int columns = (int)Math.Clamp(wanted, 1, total);
         rows = Math.Clamp(rows, 1, m);
@@ -2498,8 +2499,8 @@ internal sealed partial class CpuBackend
             // Blocks of rows of x by groups of stored rows (the kernels' tiles: each stored row's values made in registers once
             // a block of rows of x, a group of values at a time, the group's x staying in the cache across the stored rows).
             int columns = Math.Min(RowGroup(rowBytes, j1 - j0, groupBytes), Math.Max(1, MostBlockSums / block));
-            byte* pairRoom = stackalloc byte[32 * columns * block + 63];
-            byte* pairSums = (byte*)(((nint)pairRoom + 63) & ~(nint)63);              // whole cache lines: no sum split across two
+            byte* pairRoom = stackalloc byte[32 * columns * block + LineBytes - 1];
+            byte* pairSums = (byte*)LineAbove((nint)pairRoom);                         // whole cache lines: no sum split across two
             float* made = stackalloc float[columns * block];
             for (int i = i0; i < i1; i += block)
             {
@@ -3036,13 +3037,14 @@ internal sealed partial class CpuBackend
         public int Groups(int k) => (k + GroupValues - 1) / GroupValues;
 
         /// <summary>
-        /// Bytes a row of x takes as the integer lane's int8 codes (RoundDescribedRow): its whole groups, then a cache line, so
-        /// the rows of a block of x (a whole group a multiple of 256 bytes) do not all fall in the same sets of the cache.
+        /// Bytes a row of x takes as the integer lane's int8 codes (RoundDescribedRow): its whole groups, then a cache line
+        /// (the machine's: CpuInfo), so the rows of a block of x (a whole group a multiple of 256 bytes) do not all fall in
+        /// the same sets of the cache.
         /// </summary>
-        public int CodesRow(int k) => Groups(k) * GroupValues + 64;
+        public int CodesRow(int k) => Groups(k) * GroupValues + LineBytes;
 
-        /// <summary>Floats a row of x's lane data takes in the integer lane (LaneFloats a group, then a cache line's 16).</summary>
-        public int LanesRow(int k) => Groups(k) * LaneFloats + 16;
+        /// <summary>Floats a row of x's lane data takes in the integer lane (LaneFloats a group, then a cache line's floats).</summary>
+        public int LanesRow(int k) => Groups(k) * LaneFloats + LineBytes / sizeof(float);
 
         /// <summary>
         /// Rows of x the integer lane's tiles take at once (IRowKernels.Block): as many as one group's codes and lane data of
@@ -6229,8 +6231,8 @@ internal sealed partial class CpuBackend
             {
                 case DescribedMode.Integer:
                     // (A cache line more of each, so that the rows can start on one: a split read cost the tile 23% on a P-core.)
-                    var codes = ArrayPool<sbyte>.Shared.Rent(m * plan.CodesRow(k) + 64);
-                    var lanes = ArrayPool<float>.Shared.Rent(m * plan.LanesRow(k) + 16);
+                    var codes = ArrayPool<sbyte>.Shared.Rent(m * plan.CodesRow(k) + LineBytes);
+                    var lanes = ArrayPool<float>.Shared.Rent(m * plan.LanesRow(k) + LineBytes / sizeof(float));
                     int codesAt = LineStart(codes), lanesAt = LineStart(lanes);
                     // A row of x alone, read by the plan's natural one (its codes a chunk at a time, as rounded), by a lane whose
                     // instructions shift each lane by its own count in one instruction, as the natural steps shift theirs (the
@@ -6540,8 +6542,14 @@ internal sealed partial class CpuBackend
     private static unsafe int LineStart<T>(T[] array) where T : unmanaged
     {
         nint at = (nint)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(array));
-        return (int)((64 - (at & 63)) & 63) / sizeof(T);
+        return (int)(LineAbove(at) - at) / sizeof(T);
     }
+
+    // The machine's cache line in bytes (CpuInfo: the system's, or its fallback).
+    private static readonly int LineBytes = CpuInfo.Current.CacheLine;
+
+    // The first address at or past `at` on a cache line's start.
+    private static nint LineAbove(nint at) => at + (LineBytes - at % LineBytes) % LineBytes;
 
     // A row of x rounded to int8 a block of 32 values at a time (the block's scale amax / 127, 0 where every value is 0; its
     // codes value · 127 / amax rounded to even), laid out as the plan's steps are (XPlace): each block put in its span's
