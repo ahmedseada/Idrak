@@ -2402,7 +2402,7 @@ internal sealed partial class CpuBackend
         RowPart p0, LaneInput x0, RowPart p1, LaneInput x1, RowPart p2, LaneInput x2) : IRangeBody
         where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
     {
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
         public void Run(int from, int to)
         {
             for (int t = from; t < to; t++)

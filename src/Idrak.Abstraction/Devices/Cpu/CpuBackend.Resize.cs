@@ -161,6 +161,7 @@ internal sealed unsafe partial class CpuBackend
     // as it is), then value · scale + shift (fused).
     private struct ResizeDownMap(float* rows, int across, float* weights, int taps, float* output, float scale, float shift) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint ox) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             TV v;

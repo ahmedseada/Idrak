@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
 
 namespace Idrak.Abstraction.Devices.Cpu;
 
@@ -22,60 +23,298 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float AttendRow<TV, TF>(float* q, RowsIn keys, RowsIn values, int start, int end, int dim, float scale, float cap, float* y, float* scores,
         long keyStep, long valueStep)
-        where TV : unmanaged where TF : struct, IFloats<TV>
+        where TV : unmanaged where TF : struct, IFloats<TV> =>
+        AttendRows<TV, TF, No>(q, null, keys, values, start, end, dim, scale, cap, y, null, scores, keyStep, valueStep, out _);
+
+    // AttendRow for one query row (TTwo No) or two (Yes: q1's row into y1, its scores after q0's n, its log-sum-exp into
+    // `second`) over the same keys [start, end): each the same numbers by the same operations as alone. The keys' dot products
+    // are made several at once in registers, each its sixteen lanes in order and Tree16's tree (DotsAtOnce), the rows'
+    // weighted values summed in registers a run of the row at a time, each output in key order.
+    // Its parts are methods of their own, each compiled optimized from its first call (a method the JIT inlines all of
+    // stays small: in one method this size the JIT stopped inlining, and the vectors' operations were calls, compiled
+    // unoptimized for their first calls).
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static float AttendRows<TV, TF, TTwo>(float* q0, float* q1, RowsIn keys, RowsIn values, int start, int end, int dim, float scale, float cap,
+        float* y0, float* y1, float* scores, long keyStep, long valueStep, out float second)
+        where TV : unmanaged where TF : struct, IFloats<TV> where TTwo : struct, IFlag
     {
-        var output = new Span<float>(y, dim);
-        output.Clear();
+        bool two = typeof(TTwo) == typeof(Yes);
+        new Span<float>(y0, dim).Clear();
+        if (two)
+        {
+            new Span<float>(y1, dim).Clear();
+        }
+
         if (end <= start)
         {
+            second = float.NegativeInfinity;
             return float.NegativeInfinity;
         }
 
         int n = end - start;
-        float max = float.NegativeInfinity;
-        int block = keys.Typed ? BlockRows(n, keyStep, dim) : n, first = 0, last = 0;
-        float* k0 = null;
-        for (int c = 0; c < n; c++)
+        float* s0 = scores, s1 = scores + n;
+        float max0 = float.NegativeInfinity, max1 = float.NegativeInfinity;
+        int block = keys.Typed ? BlockRows(n, keyStep, dim) : n;
+        for (int first = 0; first < n; first += block)
         {
-            if (c >= last)
+            int last = Math.Min(n, first + block);
+            float* k0 = keys.Row((start + first) * keyStep, (last - first - 1) * keyStep + dim) - first * keyStep;
+            ScoreKeys<TV, TF, TTwo>(q0, q1, k0, keyStep, first, last, dim, scale, cap, s0, s1, ref max0, ref max1);
+        }
+
+        float sum0 = ExpSum<TV, TF>(s0, n, max0), sum1 = two ? ExpSum<TV, TF>(s1, n, max1) : 0f;
+        block = values.Typed ? BlockRows(n, valueStep, dim) : n;
+        for (int first = 0; first < n; first += block)
+        {
+            int last = Math.Min(n, first + block);
+            float* v0 = values.Row((start + first) * valueStep, (last - first - 1) * valueStep + dim) - first * valueStep;
+            WeightedRuns<TV, TF, TTwo>(v0, valueStep, s0, s1, first, last, y0, y1, dim);
+        }
+
+        var divide = new DivideMap(y0, y0, sum0);
+        RowMap<TV, TF, DivideMap>(ref divide, dim);
+        if (two)
+        {
+            var divide1 = new DivideMap(y1, y1, sum1);
+            RowMap<TV, TF, DivideMap>(ref divide1, dim);
+            second = max1 + LogOf(sum1);
+        }
+        else
+        {
+            second = float.NegativeInfinity;
+        }
+
+        return max0 + LogOf(sum0);
+    }
+
+    // The scores of keys [first, last) (key c at k + c · keyStep) for q0 (into s0 at c) and q1 (Yes: into s1), each row's
+    // largest so far kept: four dot products at once where the width holds a sum's sixteen lanes in one or two vectors,
+    // then each times the scale (and capped) in key order.
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static void ScoreKeys<TV, TF, TTwo>(float* q0, float* q1, float* k, long keyStep, int first, int last, int dim, float scale, float cap,
+        float* s0, float* s1, ref float max0, ref float max1)
+        where TV : unmanaged where TF : struct, IFloats<TV> where TTwo : struct, IFlag
+    {
+        bool two = typeof(TTwo) == typeof(Yes);
+        int c = first;
+        if ((TF.Count == 8 || TF.Count == 16) && (dim & 15) == 0)
+        {
+            for (; c + 4 <= last && !two; c += 4)
             {
-                (first, last) = (c, Math.Min(n, c + block));
-                k0 = keys.Row((start + c) * keyStep, (last - c - 1) * keyStep + dim);
+                DotsAtOnce<TV, TF>(q0, q0, k + c * keyStep, k + (c + 1) * keyStep, k + (c + 2) * keyStep, k + (c + 3) * keyStep, dim).Store(s0 + c);
             }
 
-            var terms = new DotTerms(q, k0 + (c - first) * keyStep);
-            float s = Reduce16<TV, TF, DotTerms>(ref terms, dim) * scale;
+            for (; c + 2 <= last && two; c += 2)
+            {
+                float* ka = k + c * keyStep, kb = ka + keyStep;
+                var d = DotsAtOnce<TV, TF>(q0, q1, ka, kb, ka, kb, dim);
+                s0[c] = d.GetElement(0);
+                s0[c + 1] = d.GetElement(1);
+                s1[c] = d.GetElement(2);
+                s1[c + 1] = d.GetElement(3);
+            }
+        }
+
+        for (; c < last; c++)
+        {
+            s0[c] = DotOf<TV, TF>(q0, k + c * keyStep, dim);
+            if (two)
+            {
+                s1[c] = DotOf<TV, TF>(q1, k + c * keyStep, dim);
+            }
+        }
+
+        ScaleKeys(s0, first, last, scale, cap, ref max0);
+        if (two)
+        {
+            ScaleKeys(s1, first, last, scale, cap, ref max1);
+        }
+    }
+
+    // q · k over dim values: Reduce16's sum.
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static float DotOf<TV, TF>(float* q, float* k, int dim) where TV : unmanaged where TF : struct, IFloats<TV>
+    {
+        var terms = new DotTerms(q, k);
+        return Reduce16<TV, TF, DotTerms>(ref terms, dim);
+    }
+
+    // Each key's dot product in s [first, last) made its score: times the scale, soft-capped where the variant caps (the
+    // CPU's own tanh), in key order, the row's largest kept.
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static void ScaleKeys(float* s, int first, int last, float scale, float cap, ref float max)
+    {
+        float m = max;
+        for (int c = first; c < last; c++)
+        {
+            float v = s[c] * scale;
             if (cap > 0f)
             {
-                s = Fn<float, F1>.Tanh(s / cap) * cap;
+                v = Fn<float, F1>.Tanh(v / cap) * cap;
             }
 
-            scores[c] = s;
-            max = Fn<float, F1>.Max(max, s);
+            s[c] = v;
+            m = Fn<float, F1>.Max(m, v);
         }
 
-        var exp = new ExpShiftMap(scores, scores, max);
+        max = m;
+    }
+
+    // A row's scores made e^(s - max) in place, and their sum (Reduce16's).
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static float ExpSum<TV, TF>(float* s, int n, float max) where TV : unmanaged where TF : struct, IFloats<TV>
+    {
+        var exp = new ExpShiftMap(s, s, max);
         RowMap<TV, TF, ExpShiftMap>(ref exp, n);
-        var sumTerms = new SumTerms(scores);
-        float sum = Reduce16<TV, TF, SumTerms>(ref sumTerms, n);
-        block = values.Typed ? BlockRows(n, valueStep, dim) : n;
-        last = 0;
-        float* v0 = null;
-        for (int c = 0; c < n; c++)
+        var terms = new SumTerms(s);
+        return Reduce16<TV, TF, SumTerms>(ref terms, n);
+    }
+
+    // ln x (the CPU's own), optimized from its first call.
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static float LogOf(float x) => Fn<float, F1>.Log(x);
+
+    // Four dot products of dim (a multiple of 16) values at once: qa · ka, qa · kb, qb · kc, qb · kd, each Reduce16's sum
+    // (element i into lane i mod 16, each lane in order, then Tree16's tree), its lanes held in registers: the 256-bit
+    // lanes two vectors a sum (lanes 0-7, 8-15), the 512-bit one.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<float> DotsAtOnce<TV, TF>(float* qa, float* qb, float* ka, float* kb, float* kc, float* kd, int dim)
+        where TV : unmanaged where TF : struct, IFloats<TV>
+    {
+        if (TF.Count == 16)
         {
-            if (c >= last)
+            Vector512<float> a = default, b = default, c = default, d = default;
+            for (nint i = 0; i < dim; i += 16)
             {
-                (first, last) = (c, Math.Min(n, c + block));
-                v0 = values.Row((start + c) * valueStep, (last - c - 1) * valueStep + dim);
+                var x = Vector512.Load(qa + i);
+                var z = Vector512.Load(qb + i);
+                a = F512.Fma(x, Vector512.Load(ka + i), a);
+                b = F512.Fma(x, Vector512.Load(kb + i), b);
+                c = F512.Fma(z, Vector512.Load(kc + i), c);
+                d = F512.Fma(z, Vector512.Load(kd + i), d);
             }
 
-            var axpy = new WeightedMap(v0 + (c - first) * valueStep, y, scores[c]);
-            RowMap<TV, TF, WeightedMap>(ref axpy, dim);
+            return Vector128.Create(Tree8(a.GetLower() + a.GetUpper()), Tree8(b.GetLower() + b.GetUpper()), Tree8(c.GetLower() + c.GetUpper()),
+                Tree8(d.GetLower() + d.GetUpper()));
         }
 
-        var divide = new DivideMap(y, y, sum);
-        RowMap<TV, TF, DivideMap>(ref divide, dim);
-        return max + Fn<float, F1>.Log(sum);
+        Vector256<float> a0 = default, a1 = default, b0 = default, b1 = default, c0 = default, c1 = default, d0 = default, d1 = default;
+        for (nint i = 0; i < dim; i += 16)
+        {
+            var x0 = Vector256.Load(qa + i);
+            var x1 = Vector256.Load(qa + i + 8);
+            a0 = F256.Fma(x0, Vector256.Load(ka + i), a0);
+            a1 = F256.Fma(x1, Vector256.Load(ka + i + 8), a1);
+            b0 = F256.Fma(x0, Vector256.Load(kb + i), b0);
+            b1 = F256.Fma(x1, Vector256.Load(kb + i + 8), b1);
+            var z0 = Vector256.Load(qb + i);
+            var z1 = Vector256.Load(qb + i + 8);
+            c0 = F256.Fma(z0, Vector256.Load(kc + i), c0);
+            c1 = F256.Fma(z1, Vector256.Load(kc + i + 8), c1);
+            d0 = F256.Fma(z0, Vector256.Load(kd + i), d0);
+            d1 = F256.Fma(z1, Vector256.Load(kd + i + 8), d1);
+        }
+
+        return Vector128.Create(Tree8(a0 + a1), Tree8(b0 + b1), Tree8(c0 + c1), Tree8(d0 + d1));
+    }
+
+    // Tree16's tree past its first step (lanes j + 8 added into j): lanes j + 4, then + 2, then + 1, the same additions.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float Tree8(Vector256<float> v)
+    {
+        var w = v.GetLower() + v.GetUpper();
+        var x = w + Vector128.Shuffle(w, Vector128.Create(2, 3, 2, 3));
+        return (x + Vector128.Shuffle(x, Vector128.Create(1, 1, 1, 1))).ToScalar();
+    }
+
+    // y0 (and y1) += Σ_c w_c · v_c over keys [first, last) of the values at v (key c at c · step), w the rows' weights (s0,
+    // s1 at c): a run of each row a few vectors long summed in registers over the keys, each output its terms fused in key
+    // order onto what y held, as WeightedMap a key at a time; the run's tail a float at a time.
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static void WeightedRuns<TV, TF, TTwo>(float* v, long step, float* s0, float* s1, int first, int last, float* y0, float* y1, int dim)
+        where TV : unmanaged where TF : struct, IFloats<TV> where TTwo : struct, IFlag
+    {
+        bool two = typeof(TTwo) == typeof(Yes);
+        int width = 4 * TF.Count, d = 0;
+        if (TF.Count > 1)
+        {
+            for (; d + width <= dim; d += width)
+            {
+                TV a0 = TF.Load(y0 + d), a1 = TF.Load(y0 + d + TF.Count), a2 = TF.Load(y0 + d + 2 * TF.Count), a3 = TF.Load(y0 + d + 3 * TF.Count);
+                TV b0 = two ? TF.Load(y1 + d) : a0, b1 = two ? TF.Load(y1 + d + TF.Count) : a1, b2 = two ? TF.Load(y1 + d + 2 * TF.Count) : a2,
+                    b3 = two ? TF.Load(y1 + d + 3 * TF.Count) : a3;
+                for (int c = first; c < last; c++)
+                {
+                    float* at = v + c * step + d;
+                    TV x0 = TF.Load(at), x1 = TF.Load(at + TF.Count), x2 = TF.Load(at + 2 * TF.Count), x3 = TF.Load(at + 3 * TF.Count);
+                    var w = TF.All(s0[c]);
+                    a0 = TF.Fma(w, x0, a0);
+                    a1 = TF.Fma(w, x1, a1);
+                    a2 = TF.Fma(w, x2, a2);
+                    a3 = TF.Fma(w, x3, a3);
+                    if (two)
+                    {
+                        var u = TF.All(s1[c]);
+                        b0 = TF.Fma(u, x0, b0);
+                        b1 = TF.Fma(u, x1, b1);
+                        b2 = TF.Fma(u, x2, b2);
+                        b3 = TF.Fma(u, x3, b3);
+                    }
+                }
+
+                TF.Store(y0 + d, a0);
+                TF.Store(y0 + d + TF.Count, a1);
+                TF.Store(y0 + d + 2 * TF.Count, a2);
+                TF.Store(y0 + d + 3 * TF.Count, a3);
+                if (two)
+                {
+                    TF.Store(y1 + d, b0);
+                    TF.Store(y1 + d + TF.Count, b1);
+                    TF.Store(y1 + d + 2 * TF.Count, b2);
+                    TF.Store(y1 + d + 3 * TF.Count, b3);
+                }
+            }
+
+            for (; d + TF.Count <= dim; d += TF.Count)
+            {
+                TV a = TF.Load(y0 + d), b = two ? TF.Load(y1 + d) : a;
+                for (int c = first; c < last; c++)
+                {
+                    var x = TF.Load(v + c * step + d);
+                    a = TF.Fma(TF.All(s0[c]), x, a);
+                    if (two)
+                    {
+                        b = TF.Fma(TF.All(s1[c]), x, b);
+                    }
+                }
+
+                TF.Store(y0 + d, a);
+                if (two)
+                {
+                    TF.Store(y1 + d, b);
+                }
+            }
+        }
+
+        for (; d < dim; d++)
+        {
+            float a = y0[d], b = two ? y1[d] : 0f;
+            for (int c = first; c < last; c++)
+            {
+                float x = v[c * step + d];
+                a = F1.Fma(s0[c], x, a);
+                if (two)
+                {
+                    b = F1.Fma(s1[c], x, b);
+                }
+            }
+
+            y0[d] = a;
+            if (two)
+            {
+                y1[d] = b;
+            }
+        }
     }
 
     // The rows of `step` elements a typed operand's block takes: a chunk's worth of values, one row at least.
@@ -92,6 +331,7 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
     [ThreadStatic]
     private static float[]? t_scores;
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float[] ScoresBuffer(int count)
     {
         var buffer = t_scores;
@@ -111,14 +351,15 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
 
     public override void AttentionTiledKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default) =>
-        Causal(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant, "AttentionTiled");
+        Causal(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant, "AttentionTiled", pairs: true);
 
     // `at`: views' planes read where they lie (q, keys and values each from its element offset, steps by HeadSteps), or
     // null for packed operands.
     // `views`: operands of any strides, each row gathered from where its values lie (RowsIn's view mode), the steps packed.
+    // `pairs`: a prompt's (many rows): query rows that share their keys taken two at a time (CausalRows' paired units).
     private static void Causal(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead,
         int steps, int capacity, int dim, float scale, AttentionVariant variant, string operation, (long Q, long K, long V, HeadSteps Steps)? at = null,
-        (TensorLayout? Q, TensorLayout? K, TensorLayout? V)? views = null)
+        (TensorLayout? Q, TensorLayout? K, TensorLayout? V)? views = null, bool pairs = false)
     {
         int rows = heads * rowsPerHead;
         if (rows <= 0 || dim <= 0)
@@ -131,9 +372,16 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
             long start = IndicesOf(position, pp)[0];
             var (oq, ok, ov, layout) = at ?? (0, 0, 0, default);
             var (vq, vk, vv) = views ?? (null, null, null);
-            var kernel = new CausalRows(Read(q, pq, oq, 0, operation, vq), Read(keys, pk, ok, 1, operation, vk), Read(values, pv, ov, 2, operation, vv), py, pl,
-                (int)start, rowsPerHead, Math.Max(1, steps), capacity, dim, scale, variant, rows, default, false, 1, layout);
-            Rows(operation, kernel, rows, dim * Math.Min(capacity, (int)start + Math.Max(1, steps)), 2);
+            var rowsOfQ = Read(q, pq, oq, 0, operation, vq);
+            steps = Math.Max(1, steps);
+
+            // A prompt's query heads that share a key/value head (rowsPerHead a multiple of steps) see the same keys at each
+            // position: two of them a unit, the keys read once for both (q's rows where they lie: a typed or gathered q's
+            // row is the thread's buffer).
+            int paired = pairs && !rowsOfQ.Typed && rowsPerHead % steps == 0 && rowsPerHead / steps >= 2 ? steps * ((rowsPerHead / steps + 1) / 2) : 0;
+            var kernel = new CausalRows(rowsOfQ, Read(keys, pk, ok, 1, operation, vk), Read(values, pv, ov, 2, operation, vv), py, pl,
+                (int)start, rowsPerHead, steps, capacity, dim, scale, variant, rows, default, false, 1, layout, paired);
+            Rows(operation, kernel, paired > 0 ? heads * paired : rows, dim * Math.Min(capacity, (int)start + steps), paired > 0 ? 4 : 2);
         }
     }
 
@@ -146,33 +394,58 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
     // at h · VHead + c · VRow (a view's planes read where they are); all 0: packed ([heads, rows, dim] each).
     private readonly record struct HeadSteps(long QHead, long QRow, long KHead, long KRow, long VHead, long VRow);
 
-    // Row h · rowsPerHead + i sees cached positions up to position + i mod steps (from its window's first).
+    // Row h · rowsPerHead + i sees cached positions up to position + i mod steps (from its window's first). `paired` (units
+    // a head; 0: a row a unit): unit u of head h takes rows i + 2j · steps and i + (2j + 1) · steps (the second where the
+    // head has it), u = j · steps + i, which see the same keys.
     private struct CausalRows(RowsIn q, RowsIn keys, RowsIn values, float* y, float* lse, int position, int rowsPerHead, int steps, int capacity, int dim,
-        float scale, AttentionVariant variant, int rows, Indices starts, bool started, int headsPerRow, HeadSteps layout = default) : IRowKernel
+        float scale, AttentionVariant variant, int rows, Indices starts, bool started, int headsPerRow, HeadSteps layout = default, int paired = 0) : IRowKernel
     {
         private float* _y = y, _lse = lse;
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        public readonly void Row<TV, TF>(int row) where TV : unmanaged where TF : struct, IFloats<TV>
+        public readonly void Row<TV, TF>(int unit) where TV : unmanaged where TF : struct, IFloats<TV>
         {
+            int row = unit, other = -1;
+            if (paired > 0)
+            {
+                int w = unit % paired, j = 2 * (w / steps);
+                row = unit / paired * rowsPerHead + j * steps + w % steps;
+                other = j + 1 < rowsPerHead / steps ? row + steps : -1;
+            }
+
             int h = row / rowsPerHead, i = row % rowsPerHead;
             int end = Math.Min(capacity, position + i % steps + 1), start = variant.Start(end);
             if (started)
             {
                 start = (int)Math.Clamp(Math.Max(start, starts[(long)(h / headsPerRow) * steps + i % steps]), 0, Math.Max(0, end));
             }
-            var scores = ScoresBuffer(Math.Max(1, end - start));
+            var scores = ScoresBuffer(Math.Max(1, end - start) * (other >= 0 ? 2 : 1));
             fixed (float* ps = scores)
             {
                 long outRow = variant.OutputRow(row, rowsPerHead, steps);
                 var at = layout.QRow == 0 && layout.KRow == 0 && layout.VRow == 0
                     ? new HeadSteps((long)rowsPerHead * dim, dim, (long)capacity * dim, dim, (long)capacity * dim, dim)
                     : layout;
-                float l = AttendRow<TV, TF>(q.Row(h * at.QHead + i * at.QRow, dim), keys.Plus(h * at.KHead), values.Plus(h * at.VHead), start, end, dim, scale,
-                    variant.Softcap, _y + outRow * dim, ps, at.KRow, at.VRow);
-                if (_lse != null)
+                float* q0 = q.Row(h * at.QHead + i * at.QRow, dim);
+                if (other >= 0)
                 {
-                    _lse[row] = l;
+                    float* q1 = q.Row(h * at.QHead + (i + steps) * at.QRow, dim);
+                    float l = AttendRows<TV, TF, Yes>(q0, q1, keys.Plus(h * at.KHead), values.Plus(h * at.VHead), start, end, dim, scale, variant.Softcap,
+                        _y + outRow * dim, _y + variant.OutputRow(other, rowsPerHead, steps) * dim, ps, at.KRow, at.VRow, out float l1);
+                    if (_lse != null)
+                    {
+                        _lse[row] = l;
+                        _lse[other] = l1;
+                    }
+                }
+                else
+                {
+                    float l = AttendRow<TV, TF>(q0, keys.Plus(h * at.KHead), values.Plus(h * at.VHead), start, end, dim, scale, variant.Softcap,
+                        _y + outRow * dim, ps, at.KRow, at.VRow);
+                    if (_lse != null)
+                    {
+                        _lse[row] = l;
+                    }
                 }
             }
         }

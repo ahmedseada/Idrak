@@ -491,12 +491,22 @@ internal sealed partial class CpuBackend
 
     // The sum of `terms` over [0, n): element i into lane i mod 16, each lane in order (the full blocks of 16 by the width,
     // the tail a float at a time into its lanes), then the lanes added in a fixed tree. The same bits by every width.
+    // (Its lanes a local of the caller's frame, not a stackalloc: a method with a stackalloc is not inlined into a loop, so
+    // a row kernel's sums in a loop were calls, compiled unoptimized for their first calls and tiered up while the rows ran.)
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static unsafe float Reduce16<TV, TF, TT>(ref TT terms, nint n) where TV : unmanaged where TF : struct, IFloats<TV> where TT : struct, ITerms
     {
-        float* lanes = stackalloc float[16];
-        Lanes16<TV, TF, TT>(ref terms, n, lanes);
-        return Tree16(lanes);
+        Unsafe.SkipInit(out SixteenLanes lanes);
+        float* at = (float*)&lanes;
+        Lanes16<TV, TF, TT>(ref terms, n, at);
+        return Tree16(at);
+    }
+
+    // Reduce16's sixteen lanes on the stack.
+    [InlineArray(16)]
+    internal struct SixteenLanes
+    {
+        private float _lane;
     }
 
     // The sixteen lanes of Reduce16 before they are added.
@@ -564,19 +574,17 @@ internal sealed partial class CpuBackend
         }
     }
 
-    // Sixteen lanes added in a fixed tree: lane j with lane j + 8, then + 4, + 2, + 1.
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    // Sixteen lanes added in a fixed tree: lane j with lane j + 8, then + 4, + 2, + 1. A call of its own, compiled optimized
+    // from its first call: where a sum's terms were inlined, the JIT's inlining budget was spent before it, and it was a
+    // call compiled unoptimized until it tiered up.
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
     internal static unsafe float Tree16(float* lanes)
     {
-        for (int s = 8; s >= 1; s >>= 1)
-        {
-            for (int j = 0; j < s; j++)
-            {
-                lanes[j] += lanes[j + s];
-            }
-        }
-
-        return lanes[0];
+        float a0 = lanes[0] + lanes[8], a1 = lanes[1] + lanes[9], a2 = lanes[2] + lanes[10], a3 = lanes[3] + lanes[11];
+        float a4 = lanes[4] + lanes[12], a5 = lanes[5] + lanes[13], a6 = lanes[6] + lanes[14], a7 = lanes[7] + lanes[15];
+        float b0 = a0 + a4, b1 = a1 + a5, b2 = a2 + a6, b3 = a3 + a7;
+        float c0 = b0 + b2, c1 = b1 + b3;
+        return c0 + c1;
     }
 
     // Σ x[i].

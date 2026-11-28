@@ -271,6 +271,7 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
 
     private struct LstmMap(float* p, float* q, float* cellIn, float* cellOut, float* hidden, float* output, float* gates, float* cells, int h) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint j) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var input = Fn<TV, TF>.Sigmoid(TF.Add(TF.Load(p + j), TF.Load(q + j)));
@@ -330,6 +331,7 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
     // dc'·i·(1 − g²), dh·t·o(1 − o)); dCell = dc'·f.
     private struct LstmBackMap(float* g, float* c, float* cPrevious, float* dy, float* dh, float* dcIn, float* dcOut, float* dz, float* ds, int h) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint j) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var one = TF.All(1f);
@@ -556,6 +558,7 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
 
     private struct GruMap(float* p, float* q, float* bias, float* hiddenIn, float* hiddenOut, float* output, float* gates, int h) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint j) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var reset = Fn<TV, TF>.Sigmoid(TF.Add(TF.Load(p + j), TF.Load(q + j)));
@@ -609,6 +612,7 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
     // dq = (dp_0, dp_1, dc·r); dHidden = dh·u.
     private struct GruBackMap(float* g, float* hPrevious, float* dy, float* dhIn, float* dhOut, float* dp, float* dq, float* ds, int h) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint j) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var one = TF.All(1f);

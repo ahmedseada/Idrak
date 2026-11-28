@@ -239,7 +239,7 @@ internal sealed partial class CpuBackend
         public TK Kernel;
         public nint First;
 
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
         public void Run(int first, int last) => Steps<TK, TV, TF>(ref Kernel, First + first, First + last);
     }
 
@@ -323,7 +323,7 @@ internal sealed partial class CpuBackend
         public TK Kernel;
         public int First;
 
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
         public void Run(int first, int last)
         {
             for (int r = First + first; r < First + last; r++)

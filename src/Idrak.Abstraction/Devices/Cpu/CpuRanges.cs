@@ -39,11 +39,15 @@ internal sealed partial class CpuBackend
         [ThreadStatic]
         private static bool t_inside;
 
+        // (This loop's methods are compiled optimized from their first calls, as the bodies they run are: run by every thread
+        // of a call, their unoptimized and then instrumented first code was what each thread ran around every chunk.)
+
         /// <summary>
         /// Runs <paramref name="body"/> over the <paramref name="chunks"/> chunks of <paramref name="size"/> items of
         /// [0, <paramref name="count"/>), on up to <paramref name="threads"/> threads (the caller's among them). The body is
         /// read in place through its address, so it must be a local of the caller (on its stack) for the whole call.
         /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static void Run<TBody>(int chunks, int size, int count, int threads, ref TBody body) where TBody : struct, IRangeBody
         {
             int helpers = Math.Min(Math.Min(chunks, threads), Environment.ProcessorCount) - 1;
@@ -82,6 +86,7 @@ internal sealed partial class CpuBackend
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void Invoke<TBody>(void* body, int first, int last) where TBody : struct, IRangeBody => Unsafe.AsRef<TBody>(body).Run(first, last);
 
         // One calling thread's loop: its helpers (work items queued again on each call) and the state of the call running.
@@ -112,6 +117,7 @@ internal sealed partial class CpuBackend
 
             public bool Busy { get; private set; }
 
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
             public void Run(delegate*<void*, int, int, void> invoke, void* body, int chunks, int size, int count, int helpers)
             {
                 Busy = true;
@@ -147,6 +153,7 @@ internal sealed partial class CpuBackend
             }
 
             // A helper: joins the open call (one queued for an earlier call joins the one running now, or leaves when none is).
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
             public void Help()
             {
                 int state = Volatile.Read(ref _active);
@@ -174,6 +181,7 @@ internal sealed partial class CpuBackend
             }
 
             // Takes the next chunk until none is left.
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
             private void Work()
             {
                 try
@@ -343,6 +351,7 @@ internal sealed partial class CpuBackend
             }
 
             /// <summary>Runs the call on the crew, or false at once when another caller holds it.</summary>
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
             public bool TryRun(delegate*<void*, int, int, void> invoke, void* body, int chunks, int size, int count, int helpers)
             {
                 if (Interlocked.CompareExchange(ref _owned, 1, 0) != 0)
@@ -395,6 +404,7 @@ internal sealed partial class CpuBackend
 
             // A member's part of the call open now: joins while it is open, takes chunks, leaves. False when the call does not
             // take this member (its helpers are fewer).
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
             private bool Join(int index)
             {
                 long state = Volatile.Read(ref _active.Value);
@@ -429,6 +439,7 @@ internal sealed partial class CpuBackend
             }
 
             // Takes the next chunk until none is left.
+            [MethodImpl(MethodImplOptions.AggressiveOptimization)]
             private void Work()
             {
                 try
@@ -466,6 +477,7 @@ internal sealed partial class CpuBackend
                 public bool Asleep => Volatile.Read(ref _sleeping.Value) != 0;
 
                 // The caller's, after the epoch moved: a member asleep is woken (one going to sleep saw the epoch or is woken here).
+                [MethodImpl(MethodImplOptions.AggressiveOptimization)]
                 public void Wake()
                 {
                     if (Volatile.Read(ref _sleeping.Value) != 0 && Interlocked.Exchange(ref _sleeping.Value, 0) != 0)
@@ -474,6 +486,7 @@ internal sealed partial class CpuBackend
                     }
                 }
 
+                [MethodImpl(MethodImplOptions.AggressiveOptimization)]
                 private void Loop()
                 {
                     t_inside = true;

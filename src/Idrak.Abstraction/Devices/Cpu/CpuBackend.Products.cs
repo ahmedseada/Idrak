@@ -284,7 +284,7 @@ internal sealed unsafe partial class CpuBackend
         public ProductShape Shape;
         public int Width, Runs;
 
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
         public readonly void Run(int first, int last)
         {
             var s = Shape;

@@ -225,12 +225,12 @@ internal sealed unsafe partial class CpuBackend
         {
             var at = new HeadSteps(heads > 1 ? qh : 0, rowsPerHead > 1 ? qr : dim, heads > 1 ? kh : 0, capacity > 1 ? kr : dim, heads > 1 ? vh : 0, capacity > 1 ? vr : dim);
             Causal(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant, "AttentionTiled",
-                (qLayout.Offset, keysLayout.Offset, valuesLayout.Offset, at));
+                (qLayout.Offset, keysLayout.Offset, valuesLayout.Offset, at), pairs: true);
             return;
         }
 
         // Any other layout: each row gathered from where its values lie (RowsIn's view mode), never a copy of the view.
-        Causal(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant, "AttentionTiled", null, (qLayout, keysLayout, valuesLayout));
+        Causal(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant, "AttentionTiled", null, (qLayout, keysLayout, valuesLayout), pairs: true);
     }
 
     public override void AttentionTiledStridedBackwardKernel(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values,

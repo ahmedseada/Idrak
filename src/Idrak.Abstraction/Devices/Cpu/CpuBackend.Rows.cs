@@ -23,6 +23,7 @@ internal sealed unsafe partial class CpuBackend
     // Σ e^(x - shift).
     private struct ExpSumTerms(float* x, float shift) : ITerms
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly TV Take<TV, TF>(TV sum, nint i) where TV : unmanaged where TF : struct, IFloats<TV> =>
             TF.Add(sum, Fn<TV, TF>.Exp(TF.Sub(TF.Load(x + i), TF.All(shift))));
     }
@@ -196,13 +197,22 @@ internal sealed unsafe partial class CpuBackend
 
     // ------------------------------------------------------------------ RMS normalization
 
-    // 1 / √(mean(x²) + eps) of a row of n.
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    // 1 / √(mean(x²) + eps) of a row of n. (A call of its own, compiled optimized from its first call: the row kernels that
+    // inlined it spent the JIT's inlining budget on it and left their other parts calls of unoptimized code.)
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
     private static float RmsInverse<TV, TF>(float* x, int n, float eps) where TV : unmanaged where TF : struct, IFloats<TV>
     {
         var terms = new SquareTerms(x);
         float sum = Reduce16<TV, TF, SquareTerms>(ref terms, n);
         return 1f / MathF.Sqrt(sum / n + eps);
+    }
+
+    // Σ (a + b)² of a row of n, the sums written to s: Reduce16's (a call of its own, as RmsInverse).
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static float AddSquares<TV, TF>(float* a, float* b, float* s, int n) where TV : unmanaged where TF : struct, IFloats<TV>
+    {
+        var terms = new AddSquareTerms(a, b, s);
+        return Reduce16<TV, TF, AddSquareTerms>(ref terms, n);
     }
 
     // y = x · inv · (gain + offset) (no gain: x · inv).
@@ -275,8 +285,7 @@ internal sealed unsafe partial class CpuBackend
             float factor;
             if (b != null)
             {
-                var terms = new AddSquareTerms(x + at, b + at, _sum + at);
-                float squares = Reduce16<TV, TF, AddSquareTerms>(ref terms, cols);
+                float squares = AddSquares<TV, TF>(x + at, b + at, _sum + at, cols);
                 factor = 1f / MathF.Sqrt(squares / cols + eps);
                 source = _sum + at;
             }
@@ -499,12 +508,14 @@ internal sealed unsafe partial class CpuBackend
     // Σ dy · gamma.
     private struct LayerBackTerms(float* gamma, float* dy) : ITerms
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly TV Take<TV, TF>(TV sum, nint i) where TV : unmanaged where TF : struct, IFloats<TV> => TF.Fma(TF.Load(dy + i), TF.Load(gamma + i), sum);
     }
 
     // Σ dy · gamma · xhat.
     private struct LayerBackWeighted(float* x, float* gamma, float* dy, float mean, float inv) : ITerms
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly TV Take<TV, TF>(TV sum, nint i) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var hat = TF.Mul(TF.Sub(TF.Load(x + i), TF.All(mean)), TF.All(inv));
@@ -530,6 +541,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _dg = dgamma, _db = dbeta, _sg = sumG, _sb = sumB;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint j) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             TV g = _sg == null ? TF.All(0f) : TF.Load(_sg + j), b = _sb == null ? TF.All(0f) : TF.Load(_sb + j);
@@ -723,10 +735,7 @@ internal sealed unsafe partial class CpuBackend
             float* gain = part == 0 ? gainQ : part == 1 ? gainK : null;
             if (gain != null)
             {
-                float eps = part == 0 ? epsQ : epsK;
-                float inv = RmsInverse<TV, TF>(source, cols, eps);
-                var map = new GainMap(source, gain, target, inv, part == 0 ? offsetQ : offsetK);
-                RowMap<TV, TF, GainMap>(ref map, cols);
+                NormRow<TV, TF>(source, gain, target, cols, part == 0 ? epsQ : epsK, part == 0 ? offsetQ : offsetK);
             }
             else
             {
@@ -751,9 +760,27 @@ internal sealed unsafe partial class CpuBackend
             }
             else
             {
-                var rope = new RopeHalfMap(target, target, c, sn, half, 1f);
-                RowMap<TV, TF, RopeHalfMap>(ref rope, half);
+                RopeRow<TV, TF>(target, c, sn, half);
             }
+        }
+
+        // The row's RMS norm with its gain (its parts in methods of their own, compiled optimized from their first calls:
+        // inside this Row the JIT's inlining budget was spent before them, and they were calls of unoptimized code).
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+        private static void NormRow<TV, TF>(float* source, float* gain, float* target, int cols, float eps, float offset)
+            where TV : unmanaged where TF : struct, IFloats<TV>
+        {
+            float inv = RmsInverse<TV, TF>(source, cols, eps);
+            var map = new GainMap(source, gain, target, inv, offset);
+            RowMap<TV, TF, GainMap>(ref map, cols);
+        }
+
+        // The row's rotation of its two halves.
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+        private static void RopeRow<TV, TF>(float* target, float* cos, float* sin, int half) where TV : unmanaged where TF : struct, IFloats<TV>
+        {
+            var rope = new RopeHalfMap(target, target, cos, sin, half, 1f);
+            RowMap<TV, TF, RopeHalfMap>(ref rope, half);
         }
 
         public void Redirect(ref Scratch scratch)
@@ -767,6 +794,7 @@ internal sealed unsafe partial class CpuBackend
     // Pairs (p, p + half) of a row rotated, both read before either is written (the row may be rotated in place).
     private struct RopeHalfMap(float* x, float* y, float* cos, float* sin, int half, float sign) : IRowMap
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint p) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             TV a = TF.Load(x + p), b = TF.Load(x + p + half), c = TF.Load(cos + p), s = TF.Mul(TF.All(sign), TF.Load(sin + p));
@@ -885,6 +913,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _y = y, _s = sums;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint j) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             var s = _s == null ? TF.All(0f) : TF.Load(_s + j);
@@ -1158,6 +1187,7 @@ internal sealed unsafe partial class CpuBackend
     {
         private float* _table = table;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Step<TV, TF>(nint j) where TV : unmanaged where TF : struct, IFloats<TV>
         {
             for (int i = first; i < last; i++)
