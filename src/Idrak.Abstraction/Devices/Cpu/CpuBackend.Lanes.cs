@@ -2624,11 +2624,14 @@ internal sealed partial class CpuBackend
                 {
                     int count = Math.Min(columns, j1 - c0);
                     kernels.Tile(stored + c0 * rowBytes, rowBytes, count, i, rows, pairSums, made);
-                    for (int c = 0; c < count; c++)
+                    // (A row of y at a time: its outputs side by side, where a column at a time wrote one a row, n floats apart.)
+                    for (int r = 0; r < rows; r++)
                     {
-                        for (int r = 0; r < rows; r++)
+                        float* from = made + r;
+                        int at = (i + r) * n + c0;
+                        for (int c = 0; c < count; c++)
                         {
-                            y[(i + r) * n + c0 + c] = made[c * rows + r];
+                            y[at + c] = from[c * rows];
                         }
                     }
                 }
@@ -2667,11 +2670,12 @@ internal sealed partial class CpuBackend
                     }
                 }
 
-                for (int c = 0; c < count; c++)
+                for (int r = 0; r < 8; r++)
                 {
-                    for (int r = 0; r < 8; r++)
+                    int at = (i + r) * n + c0;
+                    for (int c = 0; c < count; c++)
                     {
-                        y[(i + r) * n + c0 + c] = sums[8 * c + r];
+                        y[at + c] = sums[8 * c + r];
                     }
                 }
             }
