@@ -135,17 +135,19 @@ internal sealed partial class CpuBackend : Backend, IMemoryReport
 
         if (data is null)
         {
-            // A miss while the pool holds at least as much in other sizes: as much of those goes first, the least recently
-            // used sizes first (rule 77), so the process does not grow. Shapes that repeat (a training step, a prompt pass's
-            // layers) keep hitting their sizes; shapes that change (lines of other widths, page after page) would otherwise
-            // leave every earlier size cached and grow the process until the machine runs out. Emptying the whole pool on
-            // every such miss (as before) also dropped the sizes still in use: a prompt pass interleaves a dozen sizes a
-            // layer, so each layer allocated its activations anew (about 1 GB of fresh arrays a pass).
+            // A miss while the pool caches more than is in use: as much as the miss takes goes first, the least recently
+            // used sizes first (rule 77), so the process does not grow past twice what it uses. Shapes that change (lines
+            // of other widths, page after page) would otherwise leave every earlier size cached and grow the process until
+            // the machine runs out. Freeing as much whenever the pool held as much as the miss took (as before) dropped
+            // the sizes a cycle reuses: a decoding step's misses freed the prompt pass's blocks, and a prompt pass's layer
+            // allocating any size it did not last time freed its feed-forward block's (then the least recently used), so
+            // each layer's activations were allocated anew (Qwen3-1.7B Q4_K, a bench run: [128, 6144] 128 of 588
+            // allocations from the pool, [1, 2048] 32,088 of 48,077), into memory the process had not touched.
             if (releaseCache)
             {
                 ReleaseCachedMemory();
             }
-            else if (_memory.Usage.Cached >= bytes)
+            else if (_memory.Usage is var usage && usage.Cached > usage.InUse)
             {
                 ReleaseCachedFor(bytes);
             }

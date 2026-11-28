@@ -17,7 +17,7 @@ internal abstract partial class DesktopTests : Tests
     private static readonly (string Name, Action<Device> Run)[] BackendDisposeGroup =
     [
         ("backend dispose: a separate CPU backend gives its pool back; Allocate, Upload, Download and an operation after it throw ObjectDisposedException naming the backend; Return is a no-op and a second Dispose does nothing; the device's own backend ignores Dispose", d => { CpuOnly(d); SeparateCpuBackendDisposes(); }),
-        ("backend dispose: a miss in the CPU pool while it caches as much in other sizes frees only as much as it needs, the least recently used sizes first (rule 77: in use plus cached does not grow), so the sizes still in use stay cached and hit", d => { CpuOnly(d); CpuPoolFreesOnlyWhatAMissNeeds(); }),
+        ("backend dispose: a miss in the CPU pool while it caches more than is in use frees only as much as it needs, the least recently used sizes first (rule 77: in use plus cached does not grow past twice what is in use), so the sizes still in use stay cached and hit; while it caches no more than is in use, a miss frees nothing and every cached size hits again (a cycle of sizes, such as a prompt pass's layers between decoding steps, keeps its blocks)", d => { CpuOnly(d); CpuPoolFreesOnlyWhatAMissNeeds(); }),
         ("backend dispose: creating, using and disposing a separate backend of the GPU again and again leaves the driver's free memory where it started (within its granularity; not measured where the driver reports a CPU device, whose free memory is the host's), and each disposed one refuses calls", SeparateGpuBackendReturnsMemory),
     ];
 
@@ -56,7 +56,8 @@ internal abstract partial class DesktopTests : Tests
     }
 
     // Sizes 200 (given back first) and 100 (given back last) cached; a miss of 150 frees the 200 block only: the cache keeps
-    // the 100 block, the process holds no more than before (in use + cached), and the next 100 is a hit.
+    // the 100 block, the process holds no more than before (in use + cached), and the next 100 is a hit. Then with 1000
+    // floats in use and the two sizes cached, a miss of 150 frees nothing and both hit.
     private static void CpuPoolFreesOnlyWhatAMissNeeds()
     {
         var backend = Device.Cpu.CreateSeparateBackend(new SeparateBackendOptions("pool test", 16L << 20));
@@ -76,6 +77,25 @@ internal abstract partial class DesktopTests : Tests
             Check(backend.GetMemoryUsage().Cached == 0, $"the size still in use is a hit: {backend.GetMemoryUsage()}");
             backend.Return(missed);
             backend.Return(again);
+
+            // With more in use than cached (a model's weights, the live activations), a miss frees nothing: the cycle's
+            // sizes, given back, all hit on the next round.
+            backend.ReleaseCachedMemory();
+            var held = backend.Allocate(1000, zeroed: false);
+            var a = backend.Allocate(200, zeroed: false);
+            var b = backend.Allocate(100, zeroed: false);
+            backend.Return(a);
+            backend.Return(b);
+            var cycled = backend.GetMemoryUsage();
+            var fresh = backend.Allocate(150, zeroed: false);
+            Check(backend.GetMemoryUsage().Cached == cycled.Cached, $"a miss while the pool caches less than is in use frees nothing: before {cycled}, after {backend.GetMemoryUsage()}");
+            var a2 = backend.Allocate(200, zeroed: false);
+            var b2 = backend.Allocate(100, zeroed: false);
+            Check(backend.GetMemoryUsage().Cached == 0, $"both cached sizes hit after the miss: {backend.GetMemoryUsage()}");
+            backend.Return(held);
+            backend.Return(fresh);
+            backend.Return(a2);
+            backend.Return(b2);
         }
         finally
         {
