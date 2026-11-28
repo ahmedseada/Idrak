@@ -1981,8 +1981,17 @@ internal sealed partial class CpuBackend
         /// <summary>Whether the kernels take eight rows of x at a time (Eight) where they would take four (Four).</summary>
         bool Eights { get; }
 
-        /// <summary>Rows i..i + 7 of x by the stored row at <paramref name="row"/>, over values [p0, p1) of k, into y[0..8).</summary>
-        void Eight(byte* row, int i, int p0, int p1, float* y);
+        /// <summary>
+        /// Rows i..i + 7 of x by the stored row at <paramref name="row"/>, over values [p0, p1) of k, into y[0..8);
+        /// <paramref name="plain"/> the span's scan (Scans: 1 plain, 0 not), or −1: Eight scans it itself.
+        /// </summary>
+        void Eight(byte* row, int i, int p0, int p1, float* y, int plain);
+
+        /// <summary>Whether Eight scans each span of a stored row first (its values' reading has a plain way: Plain).</summary>
+        bool Scans { get; }
+
+        /// <summary>Whether values [p0, p1) of the stored row at <paramref name="row"/> read the plain way (the scan Eight makes).</summary>
+        bool Plain(byte* row, int p0, int p1);
 
         /// <summary>Row i of x by the stored row at <paramref name="row"/>.</summary>
         float Single(byte* row, int i);
@@ -2877,21 +2886,36 @@ internal sealed partial class CpuBackend
         // Eight rows of x pass over half the values four would: the same bytes of x in the cache.
         int span8 = Math.Max(1, span / 2);
         bool eights = kernels.Eights;
+        // Where the eight-row kernel scans each span first, each stored row's spans are scanned once a group (a bit a
+        // span), not once for every eight rows of x passing over them.
+        ulong* plains = stackalloc ulong[MostGroupRows];
+        bool scanned = eights && kernels.Scans && i1 - i0 >= 16 && (k + span8 - 1) / span8 <= 64;
         for (int c0 = j0; c0 < j1; c0 += group)
         {
             int count = Math.Min(group, j1 - c0);
+            for (int c = 0; scanned && c < count; c++)
+            {
+                ulong bits = 0;
+                for (int p0 = 0, b = 0; p0 < k; p0 += span8, b++)
+                {
+                    bits |= kernels.Plain(stored + (c0 + c) * rowBytes, p0, Math.Min(k, p0 + span8)) ? 1UL << b : 0;
+                }
+
+                plains[c] = bits;
+            }
+
             int i = i0;
             for (; eights && i + 8 <= i1; i += 8)
             {
                 // Spans of k (all of k where span8 ≥ k) by each stored row of the group: each span's partial sums added in
                 // order, the outputs written at the end.
                 new Span<float>(sums, 8 * count).Clear();
-                for (int p0 = 0; p0 < k; p0 += span8)
+                for (int p0 = 0, b = 0; p0 < k; p0 += span8, b++)
                 {
                     int p1 = Math.Min(k, p0 + span8);
                     for (int c = 0; c < count; c++)
                     {
-                        kernels.Eight(stored + (c0 + c) * rowBytes, i, p0, p1, eight);
+                        kernels.Eight(stored + (c0 + c) * rowBytes, i, p0, p1, eight, scanned ? (int)(plains[c] >> b & 1) : -1);
                         float* into = sums + 8 * c;
                         for (int r = 0; r < 8; r++)
                         {
@@ -7285,45 +7309,51 @@ internal sealed partial class CpuBackend
         public bool Eights => plan.Mode == DescribedMode.Single && plan.Wide != WideRead.Codes;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        public void Eight(byte* row, int i, int p0, int p1, float* y)
+        public void Eight(byte* row, int i, int p0, int p1, float* y, int plain)
         {
             if (AdvSimd.Arm64.IsSupported)
             {
                 if (with == Instructions.Portable)
                 {
-                    EightBy<PortableInstructions>(row, i, p0, p1, y);
+                    EightBy<PortableInstructions>(row, i, p0, p1, y, plain);
                     return;
                 }
 
-                EightBy<NeonInstructions>(row, i, p0, p1, y);
+                EightBy<NeonInstructions>(row, i, p0, p1, y, plain);
                 return;
             }
 
             switch (with)
             {
                 case Instructions.Vnni:
-                    EightBy<VnniInstructions>(row, i, p0, p1, y);
+                    EightBy<VnniInstructions>(row, i, p0, p1, y, plain);
                     return;
                 case Instructions.Avx2:
-                    EightBy<Avx2Instructions>(row, i, p0, p1, y);
+                    EightBy<Avx2Instructions>(row, i, p0, p1, y, plain);
                     return;
                 default:
-                    EightBy<PortableInstructions>(row, i, p0, p1, y);
+                    EightBy<PortableInstructions>(row, i, p0, p1, y, plain);
                     return;
             }
         }
 
+        // The float32 lane over 16-bit floats read through HalfVectors (float16): its spans scanned for specials first.
+        public bool Scans => plan.Mode == DescribedMode.Single && plan.Wide == WideRead.Half && HalfVectors.Scales(plan.Half16);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool Plain(byte* row, int p0, int p1) => plan.Half16Vectors.Plain(row + (nint)p0 * plan.Bytes, p1 - p0);
+
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        private void EightBy<TI>(byte* row, int i, int p0, int p1, float* y) where TI : struct, IInstructions
+        private void EightBy<TI>(byte* row, int i, int p0, int p1, float* y, int plain) where TI : struct, IInstructions
         {
             if (narrow)
             {
-                DescribedSingleEight<TI, Yes>(plan, row + (nint)p0 * plan.Bytes, x + (nint)i * k + p0, k, p1 - p0, y);
-                DescribedSingleEight<TI, Yes>(plan, row + (nint)p0 * plan.Bytes, x + (nint)(i + 4) * k + p0, k, p1 - p0, y + 4);
+                DescribedSingleEight<TI, Yes>(plan, row + (nint)p0 * plan.Bytes, x + (nint)i * k + p0, k, p1 - p0, y, plain);
+                DescribedSingleEight<TI, Yes>(plan, row + (nint)p0 * plan.Bytes, x + (nint)(i + 4) * k + p0, k, p1 - p0, y + 4, plain);
                 return;
             }
 
-            DescribedSingleEight<TI, No>(plan, row + (nint)p0 * plan.Bytes, x + (nint)i * k + p0, k, p1 - p0, y);
+            DescribedSingleEight<TI, No>(plan, row + (nint)p0 * plan.Bytes, x + (nint)i * k + p0, k, p1 - p0, y, plain);
         }
 
         // Four rows by the 256-bit kernels, or (the 128-bit twin) by the 128-bit ones.
@@ -9665,7 +9695,8 @@ internal sealed partial class CpuBackend
     // DescribedSingleFour for eight rows of x (SingleEight), the plan's read of its values as there; TH (the 128-bit twin):
     // four rows a call (SingleEightHalf128).
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void DescribedSingleEight<TI, TH>(DescribedPlan plan, byte* row, float* x, int stride, int count, float* y)
+    // `plain`: the span's scan made once for its group of stored rows (RowGroups: 1 plain, 0 not), or −1: scanned here.
+    private static unsafe void DescribedSingleEight<TI, TH>(DescribedPlan plan, byte* row, float* x, int stride, int count, float* y, int plain)
         where TI : struct, IInstructions where TH : struct, IFlag
     {
         float offset = (float)plan.D.CodeOffset;
@@ -9674,7 +9705,7 @@ internal sealed partial class CpuBackend
             case WideRead.Half when plan.Half16 is { Shift: 16, Times: 1f, Special: 0, SignShift: 16 }:
                 SingleEightBy<HighHalfRead, TI, TH>(new HighHalfRead(), offset, row, x, stride, count, y);
                 return;
-            case WideRead.Half when HalfVectors.Scales(plan.Half16) && plan.Half16Vectors.Plain(row, count):
+            case WideRead.Half when HalfVectors.Scales(plan.Half16) && (plain < 0 ? plan.Half16Vectors.Plain(row, count) : plain != 0):
                 SingleEightBy<ScaledHalfRead<Yes>, TI, TH>(new ScaledHalfRead<Yes>(plan.Half16Vectors, plan.Half16), offset, row, x, stride, count, y);
                 return;
             case WideRead.Half when HalfVectors.Scales(plan.Half16):
