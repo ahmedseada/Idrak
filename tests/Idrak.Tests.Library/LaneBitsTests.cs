@@ -12,7 +12,59 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] LaneBitsGroup =
     [
         ("lane bits: the CPU's described lane over stored weights (q4_k, q4_0, mxfp4, q6_k, bfloat16, float64, int2 and int64 from their types' descriptions; the types made of a description alone, int8 groups under a shared float32 level among them, and the fallbacks' types, each taking the reading no built-in type takes (codes one value at a time, through the byte table, a codebook's entries of 2 and 1 values, factors a lane at a time), by 128 rows too; 1, 3, 4, 5, 9 and 70 rows of fixed operands) gives commit 3f1c53e2's recorded bits (the shared levels' and the fallbacks' recorded since) by every instruction set that runs here, and the new design's operations (element-wise, rows, products, attention, sums) give one hash each by every width (512, 256, 128 bits, one float): the same list on any CPU", LaneBits),
+        ("lane bits: the gate/up pair's one pass over stored weights (StoredMatMulGatedPair: q4_k, q8_0, tq1_0, iq1_s, q5_0, int8 rows under a float32 scale, float16, bfloat16 and float32; 1, 3, 70 and 128 rows; SiLU, GELU, ReLU and tanh · sigmoid) gives act(gate) · up as the two products alone and GatedActivation give it, bit for bit, and the grouped products (StoredMatMulMany) each product's own bits", GatedPairBits),
     ];
+
+    internal static void GatedPairBits(Device device)
+    {
+        if (device.Backend is not CpuBackend || !FirstRun(nameof(GatedPairBits)))
+        {
+            return;
+        }
+
+        var backend = device.Backend;
+        var types = new (string Name, IElementType Type, int K, int N)[]
+        {
+            ("q4_k", Idrak.Types.Q4_K.Type, 512, 75), ("q8_0", Idrak.Types.Q8_0.Type, 320, 75), ("tq1_0", Idrak.Types.TQ1_0.Type, 512, 75),
+            ("iq1_s", Idrak.Types.IQ1_S.Type, 512, 75), ("q5_0", Idrak.Types.Q5_0.Type, 320, 75), ("int8 rows", Idrak.Abstraction.Types.I8.Type.ForRow(320), 320, 75),
+            ("float16", Idrak.Abstraction.Types.F16.Type, 520, 75), ("bfloat16", Idrak.Abstraction.Types.BF16.Type, 520, 75), ("float32", Idrak.Abstraction.Types.F32.Type, 520, 75),
+        };
+        int checkedPairs = 0;
+        foreach (var (name, type, k, n) in types)
+        {
+            var random = new Random(LaneBitsSeed("pair " + name));
+            using var gate = Tensor.Stored(type, LaneBitsBytes(type.Description, k, n, random), [n, k], device);
+            using var up = Tensor.Stored(type, LaneBitsBytes(type.Description, k, n, random), [n, k], device);
+            foreach (int m in (int[])[1, 3, 70, 128])
+            {
+                using var x = Tensor.From(LaneBitsValues(random, (long)m * k), [m, k], device);
+                using var g = Tensor.Empty([m * n], device);
+                using var u = Tensor.Empty([m * n], device);
+                using var hidden = Tensor.Empty([m * n], device);
+                using var gate2 = Tensor.Empty([m * n], device);
+                using var up2 = Tensor.Empty([m * n], device);
+                using var paired = Tensor.Empty([m * n], device);
+                backend.StoredMatMul(x.Storage, gate.Storage, g.Storage, m, n, k);
+                backend.StoredMatMul(x.Storage, up.Storage, u.Storage, m, n, k);
+                float[] gateValues = g.ToArray(), upValues = u.ToArray();
+                Check(backend.StoredMatMulMany(x.Storage, m, k, [(gate.Storage, gate2.Storage, n), (up.Storage, up2.Storage, n)]), $"{name}, {m} rows: no grouped pass");
+                Check(gate2.ToArray().AsSpan().SequenceEqual(gateValues) && up2.ToArray().AsSpan().SequenceEqual(upValues), $"{name}, {m} rows: the grouped products differ from each one's own");
+                for (int activation = 0; activation < 4; activation++)
+                {
+                    backend.GatedActivation(g.Storage, u.Storage, hidden.Storage, m * n, activation);
+                    Check(backend.StoredEpilogueFused(0, activation, type.Description, m, n, k) == true, $"{name}, {m} rows: the CPU says it has no pair pass for activation {activation}");
+                    Check(backend.StoredMatMulGatedPair(activation, x.Storage, m, k, [(gate.Storage, gate2.Storage, n), (up.Storage, up2.Storage, n)], paired.Storage),
+                        $"{name}, {m} rows, activation {activation}: no pair pass");
+                    float[] expected = hidden.ToArray(), made = paired.ToArray();
+                    int differ = Enumerable.Range(0, expected.Length).Count(i => BitConverter.SingleToInt32Bits(expected[i]) != BitConverter.SingleToInt32Bits(made[i]));
+                    Check(differ == 0, $"{name}, {m} rows, activation {activation}: {differ} of {expected.Length} values differ from the products' and GatedActivation's");
+                    checkedPairs++;
+                }
+            }
+        }
+
+        Console.WriteLine($"    {checkedPairs} pair passes, each act(gate) · up bit for bit as the products and GatedActivation make it");
+    }
 
     private static float[] LaneBitsValues(Random random, long count) => [.. Enumerable.Range(0, (int)count).Select(_ => random.NextSingle() * 2 - 1)];
 

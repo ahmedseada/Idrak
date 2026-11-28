@@ -2407,6 +2407,217 @@ internal sealed partial class CpuBackend
         return true;
     }
 
+    // The gate/up pair's pass (StoredMatMulGatedPairKernel) is the CPU's one way for every description the described lane
+    // reads (or reads the codes of): the two products and act(gate) · up in each tile, where the composition (the grouped
+    // products, then GatedActivation) reads both products again after every core wrote its own. Not the residual and norm.
+    public override bool? StoredEpilogueFused(int kind, int detail, TypeDescription description, int m, int n, int k) =>
+        kind == 0 && detail is >= 0 and <= 3 && m > 0 && n > 0 && k > 0
+        && (DescribedFormat.Reads(description, k, out _) || RowCodesOf(description, k) is { } codes && DescribedFormat.Reads(codes, k, out _));
+
+    // A feed-forward block's gate and up products of one description and n, and hidden = act(gate) · up (the activation
+    // as GatedActivationKernel's kind: 0 SiLU, 1 GELU, 2 ReLU, 3 tanh · sigmoid) in one pass (DescribedGatedPair): each
+    // tile makes the gate's and the up's outputs of its columns and rows of x, by each one's own measured lane, and writes
+    // their activation into hidden while they are in its core's cache; the products' outputs are the measuring's and the
+    // composition's room alone. Each value of hidden is the same as the products and GatedActivation make it, bit for
+    // bit. False for any other operands (the caller composes them).
+    public override bool StoredMatMulGatedPairKernel(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage Output, int Columns)> products,
+        Storage hidden)
+    {
+        var description = products.Length > 0 ? products[0].Values.Description : null;
+        if (products.Length != 2 || activation is < 0 or > 3 || m <= 0 || k <= 0 || description is null || products[0].Columns != products[1].Columns
+            || hidden is not CpuStorage || hidden.ElementCount < (long)m * products[0].Columns || x is not CpuStorage)
+        {
+            return false;
+        }
+
+        var group = new ThreeProducts();
+        for (int j = 0; j < 2; j++)
+        {
+            var (values, output, n) = products[j];
+            if (values is not CpuStorage || !Equals(values.Description, description) || n <= 0 || values.ElementCount < (long)n * k || output is not CpuStorage
+                || output.ElementCount < (long)m * n)
+            {
+                return false;
+            }
+
+            group[j] = products[j];
+        }
+
+        if (!DescribedGatedPair(description, D(x), m, k, group, D(hidden), activation))
+        {
+            return false;
+        }
+
+        s_describedMultiplied = true;
+        return true;
+    }
+
+    // The gate and up products (products[0], [1], one description, n columns each) and act(gate) · up into `hidden`: each
+    // by its own lane for the shape among the described lane's candidates (measured here first where it has not been), then
+    // one pass whose tiles make both products' outputs of their columns and rows of x and their activation
+    // (GatedMany). Where either's lane is the float32 product (a float32 weight's measured choice), the grouped products,
+    // then the activation over them. False where the described lane does not read the description at k.
+    private static unsafe bool DescribedGatedPair(TypeDescription description, float[] x, int m, int k, ThreeProducts products, float[] hidden, int activation)
+    {
+        FusedInHardware.Ensure();
+        TypeDescription? codes = null;
+        if (!DescribedFormat.Reads(description, k, out var described))
+        {
+            codes = RowCodesOf(description, k);
+            if (codes is null || !DescribedFormat.Reads(codes, k, out described))
+            {
+                return false;
+            }
+        }
+
+        ThreeParts parts = new();
+        bool tiled = true;
+        for (int j = 0; j < 2; j++)
+        {
+            var (values, output, n) = products[j];
+            var lane = codes is null ? new StoredLane(D(values), values.Length, k, RowBytesOf(description, k)) : RowCodesLane(description, D(values), values.Length, k);
+            float[] y = D(output);
+            int chosen = Chosen(new LaneCandidates(described, codes ?? description, lane, x, y, m, n, k), m, n, k);
+            tiled &= KindOf(chosen) != ProductLaneId;
+            parts[j] = new RowPart(lane, y, n, chosen);
+        }
+
+        if (!tiled)
+        {
+            DescribedGrouped(description, x, m, k, products, 2);
+            fixed (float* g = D(products[0].Output), u = D(products[1].Output), h = hidden)
+            {
+                Gated(g, u, h, (long)m * products[0].Columns, activation);
+            }
+
+            return true;
+        }
+
+        GatedMany<DescribedFormat, DescribedKernels>(described, parts[0], parts[1], x, m, k, hidden, activation);
+        return true;
+    }
+
+    // The columns and rows of x a tile of a pass of `total` columns takes (RowTiles): one row of x, RowTileBytes of stored
+    // rows but at most a quarter of a thread's share (as the prompts' tiles are), so a pass of few columns still gives each
+    // thread several tiles and the slower cores' last ones keep no other waiting (tq1_0 at 1x2048->2048: 48 columns a tile,
+    // 43 tiles for 24 threads, 0.021 ms; 32 columns, 64 tiles, 0.016), at most 64 tiles a thread, in whole cache lines of y
+    // (the machine's line's floats); more rows, the format's tile (IRowFormat.Tile).
+    private static (int Columns, int Rows) TileShape<TF, TK>(TF format, int total, int m, int threads, long rowBytes)
+        where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
+    {
+        int lineFloats = Math.Max(1, LineBytes / sizeof(float));
+        long share = (total + 4L * threads - 1) / (4L * threads);
+        var (wanted, rows) = m == 1
+            ? ((Math.Max(Math.Min(RowTileBytes / rowBytes, share), (total + 64L * threads - 1) / (64L * threads)) + lineFloats - 1) / lineFloats * lineFloats, 1)
+            : format.Tile(total, m, threads, (nint)rowBytes);
+        return ((int)Math.Clamp(wanted, 1, total), Math.Clamp(rows, 1, m));
+    }
+
+    // The gate/up pair's tiles over the threads (GatedTileRange, a tile a chunk): x prepared once for each preparation the
+    // two lanes read, then tiles of both products' columns. More rows of x: as many tiles as a grouped pass of the two makes
+    // (TileShape over 2n columns, each pair tile half that many columns), the same rows of x a tile, so each output is made
+    // by the kernels a grouped pass makes it by. A row of x: a product of the n columns alone's tile (whole cache lines of
+    // hidden), both parts' columns of it (measured, 1x2048->6144 at 24 threads, ms, two rounds: iq1_s 0.1136, 0.1134 by
+    // half a pass's tile against 0.1103, 0.1123; tq1_0 0.0846, 0.0844 against 0.0838, 0.0838).
+    private static unsafe void GatedMany<TF, TK>(TF format, RowPart gate, RowPart up, float[] x, int m, int k, float[] hidden, int activation)
+        where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
+    {
+        bool shared = format.InputOf(up.LaneId) == format.InputOf(gate.LaneId);
+        LaneInput xg = default, xu = default;
+        try
+        {
+            xg = format.Prepare(gate.LaneId, x, m, k);
+            xu = shared ? xg : format.Prepare(up.LaneId, x, m, k);
+            int n = gate.N, threads = Math.Max(1, ComputeResources.MaxCpuThreads);
+            var (columns, rows) = TileShape<TF, TK>(format, m == 1 ? n : 2 * n, m, threads, Math.Max(1, gate.Lane.RowBytes));
+            columns = Math.Clamp(m == 1 ? columns : (columns + 1) / 2, 1, n);
+            int rowBlocks = (m + rows - 1) / rows, tiles = (n + columns - 1) / columns * rowBlocks;
+            fixed (float* h = hidden)
+            {
+                var body = new GatedTileRange<TF, TK>(format, activation, m, k, columns, rows, rowBlocks, gate, xg, up, xu, (nint)h);
+                CpuRanges.Run(tiles, 1, tiles, threads, ref body);                     // `body` is this frame's, on the stack
+            }
+        }
+        finally
+        {
+            xg.Release();
+            if (!shared)
+            {
+                xu.Release();
+            }
+        }
+    }
+
+    // GatedMany's range: tile t is its column block t / rowBlocks and its block of rows of x t mod rowBlocks; the gate's and
+    // the up's outputs of it into the thread's room for the tile (a row of the tile's columns after another), then
+    // act(gate) · up of each into hidden (n a row) as they are there.
+    private readonly unsafe struct GatedTileRange<TF, TK>(TF format, int activation, int m, int k, int columns, int rows, int rowBlocks,
+        RowPart gate, LaneInput xg, RowPart up, LaneInput xu, nint hidden) : IRangeBody
+        where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
+    {
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+        public void Run(int from, int to)
+        {
+            int n = gate.N, room = columns * rows;
+            float[] outputs = ArrayPool<float>.Shared.Rent(2 * room);
+            try
+            {
+                fixed (float* both = outputs)
+                {
+                    float* g = both, u = both + room, h = (float*)hidden;
+                    for (int t = from; t < to; t++)
+                    {
+                        int j0 = t / rowBlocks * columns, i0 = t % rowBlocks * rows;
+                        int j1 = Math.Min(n, j0 + columns), i1 = Math.Min(m, i0 + rows), width = j1 - j0;
+                        // (Output (i, c) of the tile at room[(i − i0) · width + c − j0].)
+                        nint origin = (nint)i0 * width + j0;
+                        FormatColumns<TF, TK>(format, gate, xg, k, j0, j1, i0, i1, g - origin, width);
+                        FormatColumns<TF, TK>(format, up, xu, k, j0, j1, i0, i1, u - origin, width);
+                        for (int r = 0; r < i1 - i0; r++)
+                        {
+                            GatedRow(activation, g + r * width, u + r * width, h + (nint)(i0 + r) * n + j0, width);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(outputs);
+            }
+        }
+    }
+
+    // h = act(g) · u over `count` values (the activation as Gated's kind), each value its own, by the widest vectors the CPU
+    // accelerates (every width gives the same bits: CpuBackend.Floats.cs).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void GatedRow(int activation, float* g, float* u, float* h, int count)
+    {
+        switch (activation)
+        {
+            case 0: GatedSteps(new Map2<GatedSilu>(g, u, h, count), count); break;
+            case 1: GatedSteps(new Map2<GatedGelu>(g, u, h, count), count); break;
+            case 2: GatedSteps(new Map2<GatedRelu>(g, u, h, count), count); break;
+            default: GatedSteps(new Map2<GatedTanhSigmoid>(g, u, h, count), count); break;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void GatedSteps<TK>(TK kernel, int count) where TK : struct, IMap
+    {
+        if (Vector256.IsHardwareAccelerated)
+        {
+            Steps<TK, Vector256<float>, F256>(ref kernel, 0, count);
+        }
+        else if (Vector128.IsHardwareAccelerated)
+        {
+            Steps<TK, Vector128<float>, F128>(ref kernel, 0, count);
+        }
+        else
+        {
+            Steps<TK, float, F1>(ref kernel, 0, count);
+        }
+    }
+
     // One product of a pass over stored rows: its weight, output, columns and lane.
     private readonly record struct RowPart(StoredLane Lane, float[] Y, int N, int LaneId);
 
@@ -2494,18 +2705,7 @@ internal sealed partial class CpuBackend
         }
 
         int threads = Math.Max(1, ComputeResources.MaxCpuThreads);
-        long rowBytes = Math.Max(1, parts[0].Lane.RowBytes);
-        int lineFloats = Math.Max(1, LineBytes / sizeof(float));
-        // One row of x: RowTileBytes of stored rows a tile, but at most a quarter of a thread's share (as the prompts' tiles
-        // are), so a pass of few columns still gives each thread several tiles and the slower cores' last ones keep no other
-        // waiting (tq1_0 at 1x2048->2048: 48 columns a tile, 43 tiles for 24 threads, 0.021 ms; 32 columns, 64 tiles,
-        // 0.016); at most 64 tiles a thread.
-        long share = (total + 4L * threads - 1) / (4L * threads);
-        var (wanted, rows) = m == 1
-            ? ((Math.Max(Math.Min(RowTileBytes / rowBytes, share), (total + 64L * threads - 1) / (64L * threads)) + lineFloats - 1) / lineFloats * lineFloats, 1)
-            : format.Tile(total, m, threads, (nint)rowBytes);
-        int columns = (int)Math.Clamp(wanted, 1, total);
-        rows = Math.Clamp(rows, 1, m);
+        var (columns, rows) = TileShape<TF, TK>(format, total, m, threads, Math.Max(1, parts[0].Lane.RowBytes));
         int rowBlocks = (m + rows - 1) / rows;
         int t1 = (parts[0].N + columns - 1) / columns * rowBlocks;
         int t2 = parts.Length > 1 ? t1 + (parts[1].N + columns - 1) / columns * rowBlocks : t1;
@@ -2518,7 +2718,7 @@ internal sealed partial class CpuBackend
 
     // RowTiles' range: tile t of part p (its tiles from t_p) is its column block t / rowBlocks and its block of rows of x
     // t mod rowBlocks, by the part's lane and that lane's x.
-    private readonly struct RowTileRange<TF, TK>(TF format, int m, int k, int columns, int rows, int rowBlocks, int t1, int t2,
+    private readonly unsafe struct RowTileRange<TF, TK>(TF format, int m, int k, int columns, int rows, int rowBlocks, int t1, int t2,
         RowPart p0, LaneInput x0, RowPart p1, LaneInput x1, RowPart p2, LaneInput x2) : IRangeBody
         where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
     {
@@ -2529,15 +2729,19 @@ internal sealed partial class CpuBackend
             {
                 var (part, input, local) = t < t1 ? (p0, x0, t) : t < t2 ? (p1, x1, t - t1) : (p2, x2, t - t2);
                 int j0 = local / rowBlocks * columns, i0 = local % rowBlocks * rows;
-                FormatColumns<TF, TK>(format, part, input, k, j0, Math.Min(part.N, j0 + columns), i0, Math.Min(m, i0 + rows));
+                fixed (float* y = part.Y)
+                {
+                    FormatColumns<TF, TK>(format, part, input, k, j0, Math.Min(part.N, j0 + columns), i0, Math.Min(m, i0 + rows), y, part.N);
+                }
             }
         }
     }
 
-    // Columns [j0, j1) of a part's y for rows [i0, i1) of x by the part's lane (RowGroups with the format's kernels): the
-    // scratch the kernels take (its bytes cleared), pinned with the operands for the tile.
+    // Columns [j0, j1) of a part's product for rows [i0, i1) of x by the part's lane (RowGroups with the format's kernels),
+    // output (i, c) into y[i · ld + c] (the part's y, or a tile's own outputs: GatedTileRange): the scratch the kernels take
+    // (its bytes cleared), pinned with the operands for the tile.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void FormatColumns<TF, TK>(TF format, in RowPart part, LaneInput input, int k, int j0, int j1, int i0, int i1)
+    private static unsafe void FormatColumns<TF, TK>(TF format, in RowPart part, LaneInput input, int k, int j0, int j1, int i0, int i1, float* y, nint ld)
         where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
     {
         var lane = part.Lane;
@@ -2558,18 +2762,16 @@ internal sealed partial class CpuBackend
                 }
 
                 var kernels = format.Kernels(part.LaneId, k, new LanePointers(xv, xc + input.CodesAt, xs + input.ScalesAt, input.Natural), scratchBytes);
-                RowGroups(ref kernels, (byte*)words + lane.Offset, rowBytes, k, format.Span(k), format.GroupBytes, part.Y, part.N, j0, j1, i0, i1);
+                RowGroups(ref kernels, (byte*)words + lane.Offset, rowBytes, k, format.Span(k), format.GroupBytes, y, ld, j0, j1, i0, i1);
                 if (lane.RowScale is { } scale)
                 {
                     // The codes alone multiplied: each output times its row's scale.
-                    float[] y = part.Y;
-                    int n = part.N;
                     for (int c = j0; c < j1; c++)
                     {
                         float factor = RowScaleAt(scale, (byte*)words + c * rowBytes, (int)rowBytes);
                         for (int i = i0; i < i1; i++)
                         {
-                            y[(long)i * n + c] *= factor;
+                            y[i * ld + c] *= factor;
                         }
                     }
                 }
@@ -2584,7 +2786,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    // Columns [j0, j1) of y (n a row) for rows [i0, i1) of x (k a row) by `kernels` over the stored rows at `stored`. One row
+    // Columns [j0, j1) of y (output (i, c) at y[i · ld + c]) for rows [i0, i1) of x (k a row) by `kernels` over the stored rows at `stored`. One row
     // of x: each stored row read once, in order. More: a group of stored rows (RowGroup, `groupBytes`) at a time, four rows
     // of x at a time against each of the group's rows (each row's values made in registers again for each four), the rows
     // left over one at a time.
@@ -2594,7 +2796,7 @@ internal sealed partial class CpuBackend
     // as FormatColumns and RowTileRange.Run are: a format's kernels inline into it only when it is optimized, and the
     // first passes of a run would otherwise call them through unoptimized code.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void RowGroups<TK>(ref TK kernels, byte* stored, nint rowBytes, int k, int span, int groupBytes, float[] y, int n,
+    private static unsafe void RowGroups<TK>(ref TK kernels, byte* stored, nint rowBytes, int k, int span, int groupBytes, float* y, nint ld,
         int j0, int j1, int i0, int i1)
         where TK : struct, IRowKernels
     {
@@ -2602,7 +2804,7 @@ internal sealed partial class CpuBackend
         {
             for (int c = j0; c < j1; c++)
             {
-                y[i0 * n + c] = kernels.Single(stored + c * rowBytes, i0);
+                y[i0 * ld + c] = kernels.Single(stored + c * rowBytes, i0);
             }
 
             return;
@@ -2628,7 +2830,7 @@ internal sealed partial class CpuBackend
                     for (int r = 0; r < rows; r++)
                     {
                         float* from = made + r;
-                        int at = (i + r) * n + c0;
+                        nint at = (i + r) * ld + c0;
                         for (int c = 0; c < count; c++)
                         {
                             y[at + c] = from[c * rows];
@@ -2672,7 +2874,7 @@ internal sealed partial class CpuBackend
 
                 for (int r = 0; r < 8; r++)
                 {
-                    int at = (i + r) * n + c0;
+                    nint at = (i + r) * ld + c0;
                     for (int c = 0; c < count; c++)
                     {
                         y[at + c] = sums[8 * c + r];
@@ -2688,11 +2890,11 @@ internal sealed partial class CpuBackend
                     for (int c = 0; c < count; c++)
                     {
                         kernels.Four(stored + (c0 + c) * rowBytes, i, 0, k, out float s0, out float s1, out float s2, out float s3);
-                        int at = i * n + c0 + c;
+                        nint at = i * ld + c0 + c;
                         y[at] = s0;
-                        y[at + n] = s1;
-                        y[at + 2 * n] = s2;
-                        y[at + 3 * n] = s3;
+                        y[at + ld] = s1;
+                        y[at + 2 * ld] = s2;
+                        y[at + 3 * ld] = s3;
                     }
 
                     continue;
@@ -2715,11 +2917,11 @@ internal sealed partial class CpuBackend
 
                 for (int c = 0; c < count; c++)
                 {
-                    int at = i * n + c0 + c;
+                    nint at = i * ld + c0 + c;
                     y[at] = sums[4 * c];
-                    y[at + n] = sums[4 * c + 1];
-                    y[at + 2 * n] = sums[4 * c + 2];
-                    y[at + 3 * n] = sums[4 * c + 3];
+                    y[at + ld] = sums[4 * c + 1];
+                    y[at + 2 * ld] = sums[4 * c + 2];
+                    y[at + 3 * ld] = sums[4 * c + 3];
                 }
             }
 
@@ -2727,7 +2929,7 @@ internal sealed partial class CpuBackend
             {
                 for (int c = 0; c < count; c++)
                 {
-                    y[i * n + c0 + c] = kernels.Single(stored + (c0 + c) * rowBytes, i);
+                    y[i * ld + c0 + c] = kernels.Single(stored + (c0 + c) * rowBytes, i);
                 }
             }
         }

@@ -861,6 +861,11 @@ public sealed class FeedForward : Module
         }
         else
         {
+            if (Linear.StoredGatedPair(input, _gateUp, Activation) is { } paired)
+            {
+                return Down.Forward(paired);                               // the products and act(gate) · up in one pass
+            }
+
             var projected = Linear.ForwardMany(input, _gateUp);
             var (gate, up, kind) = (projected[0], projected[1], Activation);
             bool recompute = ActivationMemory.RecomputeFeedForward && Autograd.IsEnabled;
@@ -884,6 +889,11 @@ public sealed class FeedForward : Module
         if (Gate is null)
         {
             return Activate(Up.Forward(input));
+        }
+
+        if (Linear.StoredGatedPair(input, _gateUp, Activation) is { } paired)
+        {
+            return paired;
         }
 
         var projected = Linear.ForwardMany(input, _gateUp);

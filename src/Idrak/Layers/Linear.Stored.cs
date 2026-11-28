@@ -48,6 +48,48 @@ public sealed partial class Linear
         return y;
     }
 
+    /// <summary>
+    /// act(gate) · up of a feed-forward block's gate and up projections (<paramref name="gateUp"/>: the two layers, each over
+    /// a weight as stored, of one type and shape, no bias, adapter or cap), their products and the activation in one device
+    /// pass (Backend.StoredMatMulGatedPair) where the device has one for the type and shape; null otherwise and while
+    /// gradients are recorded (the caller composes them: the products, then <see cref="Tensor.GatedActivation"/>).
+    /// </summary>
+    internal static Tensor? StoredGatedPair(Tensor input, Linear[] gateUp, FeedForwardActivation activation)
+    {
+        if (Autograd.IsEnabled || gateUp is not [var gate, var up] || gate._stored is not { } g || up._stored is not { } u || !Plain(gate) || !Plain(up)
+            || g.Storage.Description is not { } description || !Equals(description, u.Storage.Description) || g.Shape[0] != u.Shape[0] || g.Shape[1] != u.Shape[1]
+            || input.Shape[^1] != g.Shape[1] || g.Device != input.Device || u.Device != input.Device)
+        {
+            return null;
+        }
+
+        int n = g.Shape[0], k = g.Shape[1], m = input.Size / Math.Max(1, k);
+        if (m == 0 || input.Backend.StoredEpilogueFused(0, (int)activation, description, m, n, k) == false)
+        {
+            return null;
+        }
+
+        using var gathered = ForwardHooks.Listening ? Offloading.Gather(gateUp) : null;   // a sharded run's weights of both layers (plan 23, C6)
+        using var offload = Offloading.EnterMany(gateUp, input);         // offloaded weights of both staged together
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var x = input.Contiguous();
+        var gateOut = Tensor.Empty([m * n], input.Device, track: false);
+        var upOut = Tensor.Empty([m * n], input.Device, track: false);
+        var hidden = Tensor.Empty([.. input.Shape[..^1], n], input.Device);
+        bool done = input.Backend.StoredMatMulGatedPair((int)activation, x.Storage, m, k, [(g.Storage, gateOut.Storage, n), (u.Storage, upOut.Storage, n)], hidden.Storage);
+        gateOut.Dispose();                                               // the products' room: freed once the pass read it
+        upOut.Dispose();
+        if (!done)
+        {
+            hidden.Dispose();
+            return null;
+        }
+
+        return Tensor.Traced("matmul_gated_pair_stored", hidden, start);
+
+        static bool Plain(Linear layer) => layer.Bias is null && layer.Adapter is null && layer._softcap is null && layer._tiedTo is null;
+    }
+
     // Whether a tied table is stored in a type of its own (the product then reads it as stored).
     private static bool StoredTable(Tensor table) => table.Storage.Typed && table.Type.Native != NativeKind.Float32;
 }
