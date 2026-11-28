@@ -8830,6 +8830,9 @@ internal sealed partial class CpuBackend
     /// <summary>How the float32 lane makes 8 stored values of 2 or 4 bytes each float32 in registers (and one, for a row's tail).</summary>
     private unsafe interface ISingleRead
     {
+        /// <summary>The bytes of a stored value (a constant to the JIT: a step's address one addressing mode).</summary>
+        static abstract int Bytes { get; }
+
         Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions;
 
         /// <summary>Eight's first 4 values, over 128 bits (the 128-bit twins' four-row kernels).</summary>
@@ -8841,6 +8844,8 @@ internal sealed partial class CpuBackend
     // A 16-bit float with float32's exponent bits and bias (bfloat16's description): float32's high half, by a shift.
     private readonly unsafe struct HighHalfRead : ISingleRead
     {
+        public static int Bytes => 2;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => Vector256.ShiftLeft(TI.Widen((ushort*)at), 16).AsSingle();
 
@@ -8858,6 +8863,8 @@ internal sealed partial class CpuBackend
     // Any other 16-bit float by its bits (DescribedPlan.HalfBits).
     private readonly unsafe struct HalfRead((int SignShift, int Magnitude, int Shift, float Times, int Special) h) : ISingleRead
     {
+        public static int Bytes => 2;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => DescribedPlan.HalfBits(TI.Widen((ushort*)at), h);
 
@@ -8870,14 +8877,15 @@ internal sealed partial class CpuBackend
 
     // A 16-bit float whose reading rebiases by a power of two other than 1 (float16's: HalfBits multiplies every value, so
     // its vectors made once a plan give its bits exactly, DescribedPlan.Half16Vectors): 8 values made in registers by one
-    // mask, shift, multiply, compare and the sign's two operations, with no test of the reading's fields a step.
-    private readonly unsafe struct ScaledHalfRead(HalfVectors v, (int SignShift, int Magnitude, int Shift, float Times, int Special) h) : ISingleRead
+    // mask, shift, multiply, compare and the sign's two operations, with no test of the reading's fields a step; TP (Yes:
+    // values whose codes hold no special, HalfVectors.Plain), by one shift, mask and multiply, the sign carried (OfSigned).
+    private readonly unsafe struct ScaledHalfRead<TP>(HalfVectors v, (int SignShift, int Magnitude, int Shift, float Times, int Special) h) : ISingleRead
+        where TP : struct, IFlag
     {
-        /// <summary>Whether a reading is one this read gives the bits of: its power not 1, its sign (where it has one) bit 15's.</summary>
-        public static bool Takes((int SignShift, int Magnitude, int Shift, float Times, int Special) half) => half.Times != 1f && half.SignShift is 0 or 16;
+        public static int Bytes => 2;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => v.OfSigned(TI.Widen((short*)at));
+        public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => v.OfSigned<TI, TP>(TI.Widen((short*)at));
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector128<float> Four<TI>(byte* at) where TI : struct, IInstructions => DescribedPlan.HalfBits(FourShorts(at), h);
@@ -8889,6 +8897,8 @@ internal sealed partial class CpuBackend
     // A 16-bit integer (two's complement where signed).
     private readonly unsafe struct ShortRead(bool signed) : ISingleRead
     {
+        public static int Bytes => 2;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions =>
             Vector256.ConvertToSingle(signed ? TI.Widen((short*)at) : TI.Widen((ushort*)at));
@@ -8904,6 +8914,8 @@ internal sealed partial class CpuBackend
     // float32 as stored.
     private readonly unsafe struct SingleRead : ISingleRead
     {
+        public static int Bytes => 4;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => Vector256.Load((float*)at);
 
@@ -8917,6 +8929,8 @@ internal sealed partial class CpuBackend
     // A read plus the code offset (a description with one; one without takes the read alone).
     private readonly unsafe struct SingleOffset<TR>(TR read, float offset) : ISingleRead where TR : struct, ISingleRead
     {
+        public static int Bytes => TR.Bytes;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => read.Eight<TI>(at) + Vector256.Create(offset);
 
@@ -9191,46 +9205,49 @@ internal sealed partial class CpuBackend
         switch (plan.Wide)
         {
             case WideRead.Half when plan.Half16 is { Shift: 16, Times: 1f, Special: 0, SignShift: 16 }:
-                SingleFourBy<HighHalfRead, TI>(new HighHalfRead(), 2, offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
+                SingleFourBy<HighHalfRead, TI>(new HighHalfRead(), offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
-            case WideRead.Half when ScaledHalfRead.Takes(plan.Half16):
-                SingleFourBy<ScaledHalfRead, TI>(new ScaledHalfRead(plan.Half16Vectors, plan.Half16), 2, offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
+            case WideRead.Half when HalfVectors.Scales(plan.Half16) && plan.Half16Vectors.Plain(row, count):
+                SingleFourBy<ScaledHalfRead<Yes>, TI>(new ScaledHalfRead<Yes>(plan.Half16Vectors, plan.Half16), offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
+                break;
+            case WideRead.Half when HalfVectors.Scales(plan.Half16):
+                SingleFourBy<ScaledHalfRead<No>, TI>(new ScaledHalfRead<No>(plan.Half16Vectors, plan.Half16), offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
             case WideRead.Half:
-                SingleFourBy<HalfRead, TI>(new HalfRead(plan.Half16), 2, offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
+                SingleFourBy<HalfRead, TI>(new HalfRead(plan.Half16), offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
             case WideRead.Short:
-                SingleFourBy<ShortRead, TI>(new ShortRead(plan.D.Code.Signed), 2, offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
+                SingleFourBy<ShortRead, TI>(new ShortRead(plan.D.Code.Signed), offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
             default:
-                SingleFourBy<SingleRead, TI>(new SingleRead(), 4, offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
+                SingleFourBy<SingleRead, TI>(new SingleRead(), offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void SingleFourBy<TR, TI>(TR read, int bytes, float offset, bool narrow, byte* row, float* x, int stride, int count,
+    private static unsafe void SingleFourBy<TR, TI>(TR read, float offset, bool narrow, byte* row, float* x, int stride, int count,
         out float y0, out float y1, out float y2, out float y3) where TR : struct, ISingleRead where TI : struct, IInstructions
     {
         if (offset == 0f)
         {
             if (narrow)
             {
-                SingleFour128<TR, TI>(read, bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+                SingleFour128<TR, TI>(read, row, x, stride, count, out y0, out y1, out y2, out y3);
                 return;
             }
 
-            SingleFour<TR, TI>(read, bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+            SingleFour<TR, TI>(read, row, x, stride, count, out y0, out y1, out y2, out y3);
             return;
         }
 
         if (narrow)
         {
-            SingleFour128<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+            SingleFour128<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), row, x, stride, count, out y0, out y1, out y2, out y3);
             return;
         }
 
-        SingleFour<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+        SingleFour<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), row, x, stride, count, out y0, out y1, out y2, out y3);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
@@ -9239,17 +9256,18 @@ internal sealed partial class CpuBackend
         float offset = (float)plan.D.CodeOffset;
         return plan.Wide switch
         {
-            WideRead.Half when plan.Half16 is { Shift: 16, Times: 1f, Special: 0, SignShift: 16 } => SingleOneBy<HighHalfRead, TI>(new HighHalfRead(), 2, offset, row, x, k),
-            WideRead.Half when ScaledHalfRead.Takes(plan.Half16) => SingleOneBy<ScaledHalfRead, TI>(new ScaledHalfRead(plan.Half16Vectors, plan.Half16), 2, offset, row, x, k),
-            WideRead.Half => SingleOneBy<HalfRead, TI>(new HalfRead(plan.Half16), 2, offset, row, x, k),
-            WideRead.Short => SingleOneBy<ShortRead, TI>(new ShortRead(plan.D.Code.Signed), 2, offset, row, x, k),
-            _ => SingleOneBy<SingleRead, TI>(new SingleRead(), 4, offset, row, x, k),
+            WideRead.Half when plan.Half16 is { Shift: 16, Times: 1f, Special: 0, SignShift: 16 } => SingleOneBy<HighHalfRead, TI>(new HighHalfRead(), offset, row, x, k),
+            WideRead.Half when HalfVectors.Scales(plan.Half16) && plan.Half16Vectors.Plain(row, k) => SingleOneBy<ScaledHalfRead<Yes>, TI>(new ScaledHalfRead<Yes>(plan.Half16Vectors, plan.Half16), offset, row, x, k),
+            WideRead.Half when HalfVectors.Scales(plan.Half16) => SingleOneBy<ScaledHalfRead<No>, TI>(new ScaledHalfRead<No>(plan.Half16Vectors, plan.Half16), offset, row, x, k),
+            WideRead.Half => SingleOneBy<HalfRead, TI>(new HalfRead(plan.Half16), offset, row, x, k),
+            WideRead.Short => SingleOneBy<ShortRead, TI>(new ShortRead(plan.D.Code.Signed), offset, row, x, k),
+            _ => SingleOneBy<SingleRead, TI>(new SingleRead(), offset, row, x, k),
         };
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private static unsafe float SingleOneBy<TR, TI>(TR read, int bytes, float offset, byte* row, float* x, int k) where TR : struct, ISingleRead where TI : struct, IInstructions =>
-        offset == 0f ? SingleOne<TR, TI>(read, bytes, row, x, k) : SingleOne<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), bytes, row, x, k);
+    private static unsafe float SingleOneBy<TR, TI>(TR read, float offset, byte* row, float* x, int k) where TR : struct, ISingleRead where TI : struct, IInstructions =>
+        offset == 0f ? SingleOne<TR, TI>(read, row, x, k) : SingleOne<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), row, x, k);
 
     // DescribedSingleFour for eight rows of x (SingleEight), the plan's read of its values as there; TH (the 128-bit twin):
     // four rows a call (SingleEightHalf128).
@@ -9261,54 +9279,57 @@ internal sealed partial class CpuBackend
         switch (plan.Wide)
         {
             case WideRead.Half when plan.Half16 is { Shift: 16, Times: 1f, Special: 0, SignShift: 16 }:
-                SingleEightBy<HighHalfRead, TI, TH>(new HighHalfRead(), 2, offset, row, x, stride, count, y);
+                SingleEightBy<HighHalfRead, TI, TH>(new HighHalfRead(), offset, row, x, stride, count, y);
                 return;
-            case WideRead.Half when ScaledHalfRead.Takes(plan.Half16):
-                SingleEightBy<ScaledHalfRead, TI, TH>(new ScaledHalfRead(plan.Half16Vectors, plan.Half16), 2, offset, row, x, stride, count, y);
+            case WideRead.Half when HalfVectors.Scales(plan.Half16) && plan.Half16Vectors.Plain(row, count):
+                SingleEightBy<ScaledHalfRead<Yes>, TI, TH>(new ScaledHalfRead<Yes>(plan.Half16Vectors, plan.Half16), offset, row, x, stride, count, y);
+                return;
+            case WideRead.Half when HalfVectors.Scales(plan.Half16):
+                SingleEightBy<ScaledHalfRead<No>, TI, TH>(new ScaledHalfRead<No>(plan.Half16Vectors, plan.Half16), offset, row, x, stride, count, y);
                 return;
             case WideRead.Half:
-                SingleEightBy<HalfRead, TI, TH>(new HalfRead(plan.Half16), 2, offset, row, x, stride, count, y);
+                SingleEightBy<HalfRead, TI, TH>(new HalfRead(plan.Half16), offset, row, x, stride, count, y);
                 return;
             case WideRead.Short:
-                SingleEightBy<ShortRead, TI, TH>(new ShortRead(plan.D.Code.Signed), 2, offset, row, x, stride, count, y);
+                SingleEightBy<ShortRead, TI, TH>(new ShortRead(plan.D.Code.Signed), offset, row, x, stride, count, y);
                 return;
             default:
-                SingleEightBy<SingleRead, TI, TH>(new SingleRead(), 4, offset, row, x, stride, count, y);
+                SingleEightBy<SingleRead, TI, TH>(new SingleRead(), offset, row, x, stride, count, y);
                 return;
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void SingleEightBy<TR, TI, TH>(TR read, int bytes, float offset, byte* row, float* x, int stride, int count, float* y)
+    private static unsafe void SingleEightBy<TR, TI, TH>(TR read, float offset, byte* row, float* x, int stride, int count, float* y)
         where TR : struct, ISingleRead where TI : struct, IInstructions where TH : struct, IFlag
     {
         if (typeof(TH) == typeof(Yes))
         {
             if (offset == 0f)
             {
-                SingleEightHalf128<TR, TI>(read, bytes, row, x, stride, count, y);
+                SingleEightHalf128<TR, TI>(read, row, x, stride, count, y);
                 return;
             }
 
-            SingleEightHalf128<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), bytes, row, x, stride, count, y);
+            SingleEightHalf128<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), row, x, stride, count, y);
             return;
         }
 
         if (offset == 0f)
         {
-            SingleEight<TR, TI>(read, bytes, row, x, stride, count, y);
+            SingleEight<TR, TI>(read, row, x, stride, count, y);
             return;
         }
 
-        SingleEight<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), bytes, row, x, stride, count, y);
+        SingleEight<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), row, x, stride, count, y);
     }
 
-    // Eight rows of x (`stride` apart) by `count` values of `bytes` bytes each: 8 values a step made float32 in registers
+    // Eight rows of x (`stride` apart) by `count` values of TR.Bytes bytes each: 8 values a step made float32 in registers
     // (TR) once for the eight rows, each multiplied with every row's matching values; a sum a row (lane j the values j mod 8
     // in order), the last count mod 8 one at a time. The values are made once for every eight rows of x, where four rows a
     // pass made each twice as often: the eight sums and the values made fit the registers, two sums a row would not.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void SingleEight<TR, TI>(TR read, int bytes, byte* row, float* x, int stride, int count, float* y)
+    private static unsafe void SingleEight<TR, TI>(TR read, byte* row, float* x, int stride, int count, float* y)
         where TR : struct, ISingleRead where TI : struct, IInstructions
     {
         float* x0 = x, x1 = x + stride, x2 = x + 2 * (nint)stride, x3 = x + 3 * (nint)stride, x4 = x + 4 * (nint)stride, x5 = x + 5 * (nint)stride,
@@ -9317,7 +9338,7 @@ internal sealed partial class CpuBackend
         nint p = 0;
         for (; p + 8 <= count; p += 8)
         {
-            var w = read.Eight<TI>(row + p * bytes);
+            var w = read.Eight<TI>(row + p * TR.Bytes);
             a0 = TI.Fused(w, Vector256.Load(x0 + p), a0);
             a1 = TI.Fused(w, Vector256.Load(x1 + p), a1);
             a2 = TI.Fused(w, Vector256.Load(x2 + p), a2);
@@ -9331,7 +9352,7 @@ internal sealed partial class CpuBackend
         float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f, t4 = 0f, t5 = 0f, t6 = 0f, t7 = 0f;
         for (; p < count; p++)
         {
-            float v = read.One(row + p * bytes);
+            float v = read.One(row + p * TR.Bytes);
             t0 = MathF.FusedMultiplyAdd(v, x0[p], t0);
             t1 = MathF.FusedMultiplyAdd(v, x1[p], t1);
             t2 = MathF.FusedMultiplyAdd(v, x2[p], t2);
@@ -9356,7 +9377,7 @@ internal sealed partial class CpuBackend
     // (TR.Four), a row's sum two registers (lanes 0-3, 4-7: each lane the values j mod 8 in order, as SingleEight's), added
     // as Vector256.Sum adds a vector's halves (SumOf): the same bits as SingleEight's rows.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void SingleEightHalf128<TR, TI>(TR read, int bytes, byte* row, float* x, int stride, int count, float* y)
+    private static unsafe void SingleEightHalf128<TR, TI>(TR read, byte* row, float* x, int stride, int count, float* y)
         where TR : struct, ISingleRead where TI : struct, IInstructions
     {
         float* x0 = x, x1 = x + stride, x2 = x + 2 * (nint)stride, x3 = x + 3 * (nint)stride;
@@ -9364,9 +9385,9 @@ internal sealed partial class CpuBackend
         nint p = 0;
         for (; p + 8 <= count; p += 8)
         {
-            byte* at = row + p * bytes;
+            byte* at = row + p * TR.Bytes;
             var lo = read.Four<TI>(at);
-            var hi = read.Four<TI>(at + 4 * bytes);
+            var hi = read.Four<TI>(at + 4 * TR.Bytes);
             a0l = TI.Fused(lo, Vector128.Load(x0 + p), a0l);
             a0u = TI.Fused(hi, Vector128.Load(x0 + p + 4), a0u);
             a1l = TI.Fused(lo, Vector128.Load(x1 + p), a1l);
@@ -9380,7 +9401,7 @@ internal sealed partial class CpuBackend
         float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f;
         for (; p < count; p++)
         {
-            float v = read.One(row + p * bytes);
+            float v = read.One(row + p * TR.Bytes);
             t0 = MathF.FusedMultiplyAdd(v, x0[p], t0);
             t1 = MathF.FusedMultiplyAdd(v, x1[p], t1);
             t2 = MathF.FusedMultiplyAdd(v, x2[p], t2);
@@ -9393,10 +9414,10 @@ internal sealed partial class CpuBackend
         y[3] = SumOf(a3l, a3u) + t3;
     }
 
-    // Four rows of x (`stride` apart) by `count` values of `bytes` bytes each: 16 values a step made float32 in registers
+    // Four rows of x (`stride` apart) by `count` values of TR.Bytes bytes each: 16 values a step made float32 in registers
     // (TR), each multiplied with the four rows' matching values; two sums a row, the last count mod 16 one at a time.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void SingleFour<TR, TI>(TR read, int bytes, byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+    private static unsafe void SingleFour<TR, TI>(TR read, byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
         where TR : struct, ISingleRead where TI : struct, IInstructions
     {
         nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
@@ -9404,8 +9425,8 @@ internal sealed partial class CpuBackend
         int p = 0;
         for (; p + 16 <= count; p += 16)
         {
-            var lo = read.Eight<TI>(row + (nint)p * bytes);
-            var hi = read.Eight<TI>(row + (nint)(p + 8) * bytes);
+            var lo = read.Eight<TI>(row + (nint)p * TR.Bytes);
+            var hi = read.Eight<TI>(row + (nint)(p + 8) * TR.Bytes);
             float* xp = x + p;
             a0 = TI.Fused(lo, Vector256.Load(xp), a0);
             b0 = TI.Fused(hi, Vector256.Load(xp + 8), b0);
@@ -9420,7 +9441,7 @@ internal sealed partial class CpuBackend
         float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f;
         for (; p < count; p++)
         {
-            float w = read.One(row + (nint)p * bytes);
+            float w = read.One(row + (nint)p * TR.Bytes);
             t0 = MathF.FusedMultiplyAdd(w, x[p], t0);
             t1 = MathF.FusedMultiplyAdd(w, x[r1 + p], t1);
             t2 = MathF.FusedMultiplyAdd(w, x[r2 + p], t2);
@@ -9436,7 +9457,7 @@ internal sealed partial class CpuBackend
     // SingleFour on 128-bit vectors (its 128-bit twin): each 8 values made as two halves of 4 (TR.Four), each sum a register
     // a half.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void SingleFour128<TR, TI>(TR read, int bytes, byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+    private static unsafe void SingleFour128<TR, TI>(TR read, byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
         where TR : struct, ISingleRead where TI : struct, IInstructions
     {
         nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
@@ -9445,11 +9466,11 @@ internal sealed partial class CpuBackend
         int p = 0;
         for (; p + 16 <= count; p += 16)
         {
-            byte* at = row + (nint)p * bytes;
+            byte* at = row + (nint)p * TR.Bytes;
             var lol = read.Four<TI>(at);
-            var lou = read.Four<TI>(at + 4 * bytes);
-            var hil = read.Four<TI>(at + 8 * bytes);
-            var hiu = read.Four<TI>(at + 12 * bytes);
+            var lou = read.Four<TI>(at + 4 * TR.Bytes);
+            var hil = read.Four<TI>(at + 8 * TR.Bytes);
+            var hiu = read.Four<TI>(at + 12 * TR.Bytes);
             float* xp = x + p;
             a0l = TI.Fused(lol, Vector128.Load(xp), a0l);
             a0u = TI.Fused(lou, Vector128.Load(xp + 4), a0u);
@@ -9472,7 +9493,7 @@ internal sealed partial class CpuBackend
         float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f;
         for (; p < count; p++)
         {
-            float w = read.One(row + (nint)p * bytes);
+            float w = read.One(row + (nint)p * TR.Bytes);
             t0 = MathF.FusedMultiplyAdd(w, x[p], t0);
             t1 = MathF.FusedMultiplyAdd(w, x[r1 + p], t1);
             t2 = MathF.FusedMultiplyAdd(w, x[r2 + p], t2);
@@ -9487,28 +9508,28 @@ internal sealed partial class CpuBackend
 
     // SingleFour for one row of x, 32 values a step in four sums.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe float SingleOne<TR, TI>(TR read, int bytes, byte* row, float* x, int k) where TR : struct, ISingleRead where TI : struct, IInstructions
+    private static unsafe float SingleOne<TR, TI>(TR read, byte* row, float* x, int k) where TR : struct, ISingleRead where TI : struct, IInstructions
     {
         Vector256<float> a = default, b = default, c = default, d = default;
         int p = 0;
         for (; p + 32 <= k; p += 32)
         {
-            byte* at = row + (nint)p * bytes;
+            byte* at = row + (nint)p * TR.Bytes;
             a = TI.Fused(read.Eight<TI>(at), Vector256.Load(x + p), a);
-            b = TI.Fused(read.Eight<TI>(at + 8 * bytes), Vector256.Load(x + p + 8), b);
-            c = TI.Fused(read.Eight<TI>(at + 16 * bytes), Vector256.Load(x + p + 16), c);
-            d = TI.Fused(read.Eight<TI>(at + 24 * bytes), Vector256.Load(x + p + 24), d);
+            b = TI.Fused(read.Eight<TI>(at + 8 * TR.Bytes), Vector256.Load(x + p + 8), b);
+            c = TI.Fused(read.Eight<TI>(at + 16 * TR.Bytes), Vector256.Load(x + p + 16), c);
+            d = TI.Fused(read.Eight<TI>(at + 24 * TR.Bytes), Vector256.Load(x + p + 24), d);
         }
 
         for (; p + 8 <= k; p += 8)
         {
-            a = TI.Fused(read.Eight<TI>(row + (nint)p * bytes), Vector256.Load(x + p), a);
+            a = TI.Fused(read.Eight<TI>(row + (nint)p * TR.Bytes), Vector256.Load(x + p), a);
         }
 
         float t = 0f;
         for (; p < k; p++)
         {
-            t = MathF.FusedMultiplyAdd(read.One(row + (nint)p * bytes), x[p], t);
+            t = MathF.FusedMultiplyAdd(read.One(row + (nint)p * TR.Bytes), x[p], t);
         }
 
         return Vector256.Sum((a + b) + (c + d)) + t;
@@ -9654,6 +9675,57 @@ internal sealed partial class CpuBackend
             top = Vector256.Create(h.SignShift == 0 ? 0 : int.MinValue);
         private readonly Vector256<float> times = Vector256.Create(h.Times * factor);
         private readonly int shift = h.Shift;
+        private readonly Vector256<uint> counts = Vector256.Create((uint)h.Shift);
+
+        // A sign-extended code shifted, masked to its sign (bit 31: bit 15's copy) and magnitude, where the reading's sign is
+        // bit 15 or none and its magnitude shifted stays below bit 31 (plainly); else nothing.
+        private readonly Vector256<int> carried = Vector256.Create(Carried(h));
+
+        // The codes' magnitude and the first special (as 16-bit lanes, a span's scan: Plain); a reading without specials
+        // has none past its magnitude.
+        private readonly short codeMagnitude = (short)h.Magnitude, specialBelow = (short)(h.Special == 0 ? short.MaxValue : h.Special - 1);
+        private readonly bool plainly = Carried(h) != 0;
+
+        /// <summary>Whether a reading is one the float32 lane's ScaledHalfRead gives the bits of: its power not 1, its sign (where it has one) bit 15's.</summary>
+        public static bool Scales((int SignShift, int Magnitude, int Shift, float Times, int Special) half) => half.Times != 1f && half.SignShift is 0 or 16;
+
+        // The sign and magnitude bits of a shifted sign-extended code (Plain's way), or 0 where the reading has them elsewhere.
+        private static int Carried((int SignShift, int Magnitude, int Shift, float Times, int Special) h) =>
+            h.SignShift is 0 or 16 && h.Shift is >= 0 and < 31 && h.Magnitude is > 0 and <= 0x7FFF && ((long)h.Magnitude << h.Shift) < 1L << 31
+                ? (h.SignShift == 16 ? int.MinValue : 0) | h.Magnitude << h.Shift : 0;
+
+        /// <summary>
+        /// Whether the `count` 16-bit codes at `row` hold no special code (none at or past the reading's first special) and
+        /// the reading's sign and magnitude shift plainly (Carried): their values then by OfSigned's plain way (one shift,
+        /// mask and multiply, the sign carried by the multiply), each the same number. The scan reads each code once (16 a
+        /// compare); the plain way spares 5 of a step's 9 operations, which the CPU's slower cores feel most (Qwen3-1.7B's
+        /// float16 weights: none special).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public unsafe bool Plain(byte* row, int count)
+        {
+            if (!plainly)
+            {
+                return false;
+            }
+
+            var any = Vector256<short>.Zero;
+            var mask = Vector256.Create(codeMagnitude);
+            var limit = Vector256.Create(specialBelow);
+            int i = 0;
+            for (; i + 16 <= count; i += 16)
+            {
+                any |= Vector256.GreaterThan(Vector256.Load((short*)row + i) & mask, limit);
+            }
+
+            bool found = any != Vector256<short>.Zero;
+            for (; i < count && !found; i++)
+            {
+                found = (((short*)row)[i] & codeMagnitude) > specialBelow;
+            }
+
+            return !found;
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<float> Of(Vector256<int> bits)
@@ -9667,13 +9739,20 @@ internal sealed partial class CpuBackend
         /// <summary>
         /// Of from the 16-bit values sign-extended (each lane's bits 15-31 its bit 15): the sign is the lane's top bit as it
         /// is (no shift), the magnitude its low bits as Of's, and the specials by one compare, greater than their start less
-        /// one: the same number of each value.
+        /// one: the same number of each value. TP (Yes: codes Plain found none special in): the code shifted whole and masked
+        /// to its sign and magnitude, times the power: the multiply carries the sign, the same number of each value.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        public Vector256<float> OfSigned(Vector256<int> bits)
+        public Vector256<float> OfSigned<TI, TP>(Vector256<int> bits) where TI : struct, IInstructions where TP : struct, IFlag
         {
+            if (typeof(TP) == typeof(Yes))
+            {
+                return ((TI.ShiftsByLane ? TI.ShiftLeft(bits.AsUInt32(), counts).AsInt32() : Vector256.ShiftLeft(bits, shift)) & carried).AsSingle() * times;
+            }
+
             var m = bits & magnitude;
-            var value = (Vector256.ShiftLeft(m, shift).AsSingle() * times).AsInt32();
+            var value = ((TI.ShiftsByLane ? TI.ShiftLeft(m.AsUInt32(), counts).AsInt32() : Vector256.ShiftLeft(m, shift)).AsSingle() * times).AsInt32();
+
             value |= Vector256.GreaterThan(m, below) & Vector256.Create(0x7F800000);
             return (value | (bits & top)).AsSingle();
         }

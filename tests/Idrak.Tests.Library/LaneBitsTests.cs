@@ -13,7 +13,71 @@ internal abstract partial class Tests
     [
         ("lane bits: the CPU's described lane over stored weights (q4_k, q4_0, mxfp4, q6_k, bfloat16, float64, int2 and int64 from their types' descriptions; the types made of a description alone, int8 groups under a shared float32 level among them, and the fallbacks' types, each taking the reading no built-in type takes (codes one value at a time, through the byte table, a codebook's entries of 2 and 1 values, factors a lane at a time), by 128 rows too; 1, 3, 4, 5, 9 and 70 rows of fixed operands) gives commit 3f1c53e2's recorded bits (the shared levels' and the fallbacks' recorded since) by every instruction set that runs here, and the new design's operations (element-wise, rows, products, attention, sums) give one hash each by every width (512, 256, 128 bits, one float): the same list on any CPU", LaneBits),
         ("lane bits: the gate/up pair's one pass over stored weights (StoredMatMulGatedPair: q4_k, q8_0, tq1_0, iq1_s, q5_0, int8 rows under a float32 scale, float16, bfloat16 and float32; 1, 3, 70 and 128 rows; SiLU, GELU, ReLU and tanh · sigmoid) gives act(gate) · up as the two products alone and GatedActivation give it, bit for bit, and the grouped products (StoredMatMulMany: the two, and three of 75, 75 and 29 rows as a block's queries, keys and values are) each product's own bits", GatedPairBits),
+        ("lane bits: float16 rows holding infinities, NaNs (in some spans of 1024 values, so a span's plain read and one with its specials both run), subnormals and signed zeros, by every lane that reads them at 1, 8 and 37 rows of x: each output the float64 sum of the stored values times x within float32's rounding, an infinity or a NaN where that sum is one", HalfSpecialsRead),
     ];
+
+    internal static void HalfSpecialsRead(Device device)
+    {
+        if (device.Backend is not CpuBackend || !FirstRun(nameof(HalfSpecialsRead)))
+        {
+            return;
+        }
+
+        // Rows of float16 codes: random values (subnormals among them), one with +inf in its second span of 1024, one with a
+        // NaN in its first, one with -inf and +inf (a NaN sum), one of subnormals alone, one of zeros of both signs.
+        const int K = 2048, N = 6;
+        var random = new Random(LaneBitsSeed("float16 specials"));
+        var codes = new ushort[N * K];
+        for (int p = 0; p < K; p++)
+        {
+            double v = Math.Sqrt(-2 * Math.Log(1 - random.NextDouble())) * Math.Cos(2 * Math.PI * random.NextDouble()) * 0.02;
+            codes[p] = p % 97 == 3 ? (ushort)(random.Next(1, 0x400) | (random.Next(2) << 15)) : BitConverter.HalfToUInt16Bits((Half)v);
+            codes[4 * K + p] = (ushort)(random.Next(1, 0x400) | (random.Next(2) << 15));
+            codes[5 * K + p] = (ushort)(random.Next(2) << 15);
+        }
+
+        Array.Copy(codes, 0, codes, K, K);
+        Array.Copy(codes, 0, codes, 2 * K, K);
+        Array.Copy(codes, 0, codes, 3 * K, K);
+        codes[K + 1500] = 0x7C00;
+        codes[2 * K + 100] = 0x7E01;
+        codes[3 * K + 5] = 0xFC00;
+        codes[3 * K + 1800] = 0x7C00;
+        var words = new float[N * K / 2];
+        Buffer.BlockCopy(codes, 0, words, 0, codes.Length * 2);
+        var d = Idrak.Abstraction.Types.F16.Type.Description;
+        var lanes = CpuBackend.DescribedLanesOf(d, K);
+        int checkedOutputs = 0;
+        foreach (int m in (int[])[1, 8, 37])
+        {
+            var x = LaneBitsValues(random, (long)m * K);
+            for (int lane = 0; lane < lanes.Count; lane++)
+            {
+                var y = new float[m * N];
+                Check(CpuBackend.DescribedRowLane(lane, d, words, words.Length, x, y, m, N, K), $"float16, {m} rows: its {lanes[lane]} does not run here");
+                for (int i = 0; i < m; i++)
+                {
+                    for (int j = 0; j < N; j++)
+                    {
+                        double sum = 0, size = 0;
+                        for (int p = 0; p < K; p++)
+                        {
+                            double t = (double)BitConverter.UInt16BitsToHalf(codes[j * K + p]) * x[i * K + p];
+                            sum += t;
+                            size += Math.Abs(t);
+                        }
+
+                        float got = y[i * N + j];
+                        bool right = double.IsNaN(sum) ? float.IsNaN(got) : double.IsInfinity(sum) ? got == (float)sum : Math.Abs(got - sum) <= 1e-5 * size + 1e-30;
+                        Check(right, $"float16 by its {lanes[lane]}, {m} rows: output ({i}, {j}) is {got:R}, the float64 sum {sum:R} (terms' size {size:R})");
+                        checkedOutputs++;
+                    }
+                }
+            }
+        }
+
+        Console.WriteLine($"    {checkedOutputs} outputs over float16 rows with infinities, NaNs, subnormals and signed zeros, each the float64 sum's (within float32's rounding) or its special");
+    }
 
     internal static void GatedPairBits(Device device)
     {
