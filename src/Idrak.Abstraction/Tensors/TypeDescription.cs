@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Numerics;
+using System.Runtime.Intrinsics;
 
 namespace Idrak.Abstraction;
 
@@ -2319,6 +2320,75 @@ internal sealed class DescribedEncoder
             return x > mids[r] ? r + 1 : x < mids[r] ? r : Even(r, r + 1);
         }
 
+        // Uniform's ranks four targets at a time, from the first, as many fours as there are (returned: the targets done):
+        // each target (y − c0) · t made in float32 as Uniform's caller makes it, then every step Uniform's in float64 (the
+        // step's estimate, the numbers Values holds as first + r · step, their midpoints as mids holds them), a tie between
+        // two numbers by Even itself: the same ranks, the encoder's codes the same bytes. (A -w load's encoding spent 59% of
+        // its time in Uniform a target at a time: Qwen3-1.7B as q4_k.)
+        private int UniformFours(ReadOnlySpan<float> y, float t, float c0, Span<float> numbers, Span<int> ranks)
+        {
+            int last = Count - 1, i = 0;
+            bool keep = !ranks.IsEmpty;
+            var start = Vector256.Create(first);
+            var by = Vector256.Create(inverse);
+            var gap = Vector256.Create(step);
+            var top = Vector256.Create((double)last);
+            var below = Vector256.Create((double)(last - 1));
+            var one = Vector256<double>.One;
+            var offset = Vector128.Create(c0);
+            var times = Vector128.Create(t);
+            Span<double> r4 = stackalloc double[4];
+            for (; i + 4 <= y.Length; i += 4)
+            {
+                var xf = (Vector128.Create(y.Slice(i, 4)) - offset) * times;
+                var x = Vector256.Create(Vector128.WidenLower(xf), Vector128.WidenUpper(xf));
+                var q = (x - start) * by;
+                // (Lanes past either end: rank 0 for none above the first, NaN among them, and the last at or past it.)
+                var low = ~Vector256.GreaterThan(q, Vector256<double>.Zero);
+                var high = Vector256.GreaterThanOrEqual(q, top);
+                var ends = low | high;
+                var r = Vector256.ConditionalSelect(ends, Vector256<double>.Zero, Vector256.Min(Vector256.Floor(q), below));
+                while (true)
+                {
+                    var down = Vector256.GreaterThan(r, Vector256<double>.Zero) & Vector256.LessThan(x, start + r * gap) & ~ends;
+                    if (down.AsUInt64() == Vector256<ulong>.Zero)
+                    {
+                        break;
+                    }
+
+                    r -= one & down;
+                }
+
+                while (true)
+                {
+                    var up = Vector256.LessThan(r, below) & Vector256.GreaterThanOrEqual(x, start + (r + one) * gap) & ~ends;
+                    if (up.AsUInt64() == Vector256<ulong>.Zero)
+                    {
+                        break;
+                    }
+
+                    r += one & up;
+                }
+
+                var mid = (start + r * gap + (start + (r + one) * gap)) / 2;
+                var above = Vector256.GreaterThan(x, mid);
+                var tie = ~(above | Vector256.LessThan(x, mid)) & ~ends;
+                var rank = Vector256.ConditionalSelect(low, Vector256<double>.Zero, Vector256.ConditionalSelect(high, top, r + (one & above)));
+                rank.CopyTo(r4);
+                for (int j = 0; j < 4; j++)
+                {
+                    int rj = tie.AsUInt64().GetElement(j) != 0 ? Even((int)r4[j], (int)r4[j] + 1) : (int)r4[j];
+                    numbers[i + j] = Floats[rj];
+                    if (keep)
+                    {
+                        ranks[i + j] = rj;
+                    }
+                }
+            }
+
+            return i;
+        }
+
         private int Even(int a, int b) => (Codes[a] & 1) == 0 ? a : b;
 
         /// <summary>
@@ -2374,7 +2444,8 @@ internal sealed class DescribedEncoder
             bool keep = !ranks.IsEmpty;
             if (uniform)
             {
-                for (int i = 0; i < y.Length; i++)
+                int i = Vector256.IsHardwareAccelerated ? UniformFours(y, t, c0, numbers, ranks) : 0;
+                for (; i < y.Length; i++)
                 {
                     int r = Uniform((y[i] - c0) * t);
                     numbers[i] = Floats[r];

@@ -20,6 +20,7 @@ internal abstract partial class Tests
         ("types: the built-in list holds each type once, each valid and written, its native kind from its description; every description equal by value to a copy of itself and to no other type's", TypesBuiltInList),
         ("types: every built-in and alien type read through the default matches its description's own decode, bit for bit", TypesReadAsDescribed),
         ("types: the arithmetic rounding of wide codes is the table's rounding on every narrow float and integer", TypesWideRounding),
+        ("types: an evenly spaced grid's targets four at a time take the ranks one at a time takes (midpoints, ties, ends, NaN)", TypesUniformFours),
         ("types: the encoder writes every alien type: finite, every code reachable, its error against the least-squares bound", TypesEncoderWrites),
         ("types: wide scale levels' numbers ordered, stored and rounded by their own arithmetic", TypesWideLevels),
         ("types: Q8_1's and Q8_K's sums written from the values stored and read back", TypesSums),
@@ -225,6 +226,67 @@ internal abstract partial class Tests
         }
 
         Console.WriteLine($"  {numbers.Count} number types, {samples} values: the arithmetic rounding is the table's on every one");
+    }
+
+    // The encoder's grids of evenly spaced numbers (integers of every width, signed or not, with and without a bias)
+    // quantize targets four at a time (Grid.Quantize's vectors, where they are accelerated): each target's rank and number
+    // the ones its own call takes (a target alone takes the one-at-a-time way), over targets at every number, every
+    // midpoint and its neighbours, past both ends, zeros, NaN and infinities, under scales and offsets.
+    private static void TypesUniformFours(Device device)
+    {
+        CpuOnly(device);
+        var random = new Random(17);
+        long targets = 0;
+        int grids = 0;
+        foreach (int bits in Enumerable.Range(1, 12))
+        {
+            foreach (bool signed in new[] { true, false })
+            {
+                foreach (double bias in new[] { 0, -0.5, 3.25 })
+                {
+                    var grid = DescribedEncoder.Grid.Of(NumberType.Integer(bits, signed), bias)!;
+                    grids++;
+                    var v = grid.Values;
+                    var ys = new List<float> { 0f, -0f, float.NaN, float.PositiveInfinity, float.NegativeInfinity, 1e30f, -1e30f };
+                    for (int i = 0; i < v.Length; i++)
+                    {
+                        ys.Add((float)v[i]);
+                        if (i + 1 < v.Length)
+                        {
+                            float mid = (float)((v[i] + v[i + 1]) / 2);
+                            ys.AddRange([mid, MathF.BitDecrement(mid), MathF.BitIncrement(mid)]);
+                        }
+                    }
+
+                    ys.AddRange([(float)(v[0] - 1), (float)(v[^1] + 1), (float)(v[^1] + 0.5), (float)(v[0] - 0.5)]);
+                    for (int i = 0; i < 400; i++)
+                    {
+                        ys.Add((float)((random.NextDouble() * 2.4 - 1.2) * Math.Max(Math.Abs(v[0]), Math.Abs(v[^1]))));
+                    }
+
+                    foreach (var (t, c0) in new[] { (1f, 0f), (0.37f, 0.25f), (2.5f, -1.75f) })
+                    {
+                        // y = x / t + c0, so (y − c0) · t lands near the grid's numbers and midpoints.
+                        var y = ys.Select(x => x / t + c0).ToArray();
+                        var numbers = new float[y.Length];
+                        var ranks = new int[y.Length];
+                        grid.Quantize(y, t, c0, numbers, ranks);
+                        var one = new float[1];
+                        var rank = new int[1];
+                        for (int i = 0; i < y.Length; i++)
+                        {
+                            grid.Quantize(y.AsSpan(i, 1), t, c0, one, rank);
+                            Check(rank[0] == ranks[i] && BitConverter.SingleToInt32Bits(one[0]) == BitConverter.SingleToInt32Bits(numbers[i]),
+                                $"{bits}-bit {(signed ? "signed" : "unsigned")} + {bias}: target {y[i].ToString("R", CultureInfo.InvariantCulture)} (t {t}, c0 {c0}) takes rank {ranks[i]} four at a time, {rank[0]} alone");
+                        }
+
+                        targets += y.Length;
+                    }
+                }
+            }
+        }
+
+        Console.WriteLine($"  {grids} grids, {targets} targets: four at a time the ranks one at a time takes");
     }
 
     private static void TypesEncoderWrites(Device device)
